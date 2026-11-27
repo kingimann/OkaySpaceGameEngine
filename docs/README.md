@@ -83,7 +83,7 @@ How to build a game with the editor and the ready-made parts.
 - [In-game UI](ui/in_game_ui.md) and [ui_catalogue.md](ui_catalogue.md) (every UI component, style and icon).
 
 **Multiplayer and online**
-- [Multiplayer](online/multiplayer.md), [Relay](online/relay.md), [Dedicated servers](online/dedicated-server.md), [Anti-cheat](online/anticheat.md).
+- [Multiplayer](online/multiplayer.md), [Relay](online/relay.md), [Dedicated servers](online/dedicated-server.md), [Anti-cheat](online/anticheat.md), [OkayAntiCheat audit and design](online/okay_anticheat.md).
 - [Accounts](online/accounts.md), [Supabase backend](online/supabase-backend.md) (accounts, cloud saves, leaderboards), [Voice server](audio/voice-server.md).
 
 **Exporting a game**

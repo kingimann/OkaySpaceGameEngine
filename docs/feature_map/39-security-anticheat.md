@@ -5,12 +5,13 @@ paths or tampered files. It pulls together the anti-cheat in the network layer (
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
 safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/online/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
-hardening items are merged. The opt-in detection engine (39.12) was added afterwards.
+hardening items are merged. The opt-in detection engine (39.12) was added afterwards. On 2026-11-26 the owner asked for all of it as one module, OkayAntiCheat: the audit and the plan in rounds are
+`docs/online/okay_anticheat.md`.
 
 ## 39. Security & anti-cheat
 
 ### 39.1 Server authority checks and gameplay validation
-- **System:** Server Anti-Cheat
+- **System:** OkayAntiCheat
 - **What:** What the server refuses from a client: moving, despawning or writing something it doesn't own, spawning prefabs off a list, flooding SyncVars or RPCs, speed hacks, forged hit claims, and writing server-only variables. Opt-in per scene; a new Anti-Cheat Config starts safe.
 - **Parts:**
   - 39.1.1 Rules and kicks - `Net/AntiCheat` - `AntiCheatSettings`, the `.okayac` text format, refusal counts, kick after N in a minute, a rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
@@ -104,7 +105,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "sign my build and enforce the check in the launcher", "why does the launcher refuse my modded game?"
 
 ### 39.5 Runtime checks and the clock heartbeat
-- **System:** Server Anti-Cheat
+- **System:** OkayAntiCheat
 - **What:** Checks that run while a game plays on Windows: a debugger, an unknown loaded module, and a game clock that runs fast or slow (speed hacks). The decision logic is plain code tested everywhere; the probes are Windows-only.
 - **Parts:**
   - 39.5.1 Debugger check - `shared/AntiCheatChecks.hpp` - `IsDebuggerPresent` and `CheckRemoteDebuggerPresent` every 5 s
@@ -125,7 +126,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "why was RTSS flagged?", "turn on the server clock check"
 
 ### 39.6 Reports, bans, appeals and the hardware hash
-- **System:** Server Anti-Cheat
+- **System:** OkayAntiCheat
 - **What:** The human side of anti-cheat: players report cheaters, games report what their checks found, admins ban an account or a machine, players see and appeal their bans. Everything is enforced by Supabase row-level security and logged to `admin_log`.
 - **Parts:**
   - 39.6.1 Backend calls - `shared/AntiCheatBackend.hpp` - every call is built as a `Request` and its answer parsed by a plain function, so both are unit tested without a server
@@ -253,7 +254,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "list the weak spots in the account code", "sign the updater with the anti-cheat key"
 
 ### 39.12 Detection engine: behavioural detectors, risk score, evidence export
-- **System:** Server Anti-Cheat
+- **System:** OkayAntiCheat
 - **What:** An opt-in server-side layer that watches what clients claim over time (positions, aim, shots, counters, packets), keeps a decaying risk score per player and escalates through log, flag, rate-limit, shadow-restrict, kick and ban request. It uses only what the server saw and its own physics, so it cannot be patched out of a client; it cannot see anything the server never receives. Off unless `detect.enabled`.
 - **Parts:**
   - 39.12.1 Movement detectors - `Net/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
@@ -281,7 +282,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"
 
 ### 39.13 Cheat simulator and hardening audit
-- **System:** Server Anti-Cheat
+- **System:** OkayAntiCheat
 - **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/online/anticheat.md`.
 - **Parts:**
   - 39.13.1 The simulator - `Net/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets

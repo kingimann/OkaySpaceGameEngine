@@ -128,8 +128,8 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "start my game as a dedicated server with anti-cheat on", "list my server in the browser"
 
 ### 16.6 Anti-cheat (server side)
-- **System:** Server Anti-Cheat - The server checks what players send, spots cheaters, and handles reports and bans.
-  Home: `engine/include/okay/Net/AntiCheat.hpp`, `shared/AntiCheatBackend.hpp`. Entry: `engine/include/okay/Net/AntiCheat.hpp`. Also called: anti-cheat, AntiCheat, bans, cheat detection. Fix: shared/AntiCheat* (reports, bans, client checks) and Net/AntiCheat (server checks) go into one folder when okay/Online exists (architecture.md).
+- **System:** OkayAntiCheat - The server checks what players send, spots cheaters, and handles reports, evidence, bans and appeals; the game's own checks add evidence.
+  Home: `engine/include/okay/Net/AntiCheat.hpp`, `shared/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/` (planned). Entry: `engine/include/okay/Net/AntiCheat.hpp`. Also called: Server Anti-Cheat, anti-cheat, AntiCheat, okayac, bans, cheat detection. Fix: round 2 of `docs/online/okay_anticheat.md` moves `Net/AntiCheat*`, `Net/CheatDetect*` and `shared/AntiCheat*` into `engine/include/okay/AntiCheat/`.
 - **What:** The opt-in checks the server makes on everything a client sends: who may move or spawn what, SyncVar and RPC limits, hit claims, the clock heartbeat and join tickets. The full cross-cutting picture (client integrity, bans, keys) is area 39.
 - **Parts:**
   - 16.6.1 Rules, violations and kicks - `Net/AntiCheat` - `AntiCheatSettings` (parsed from `.okayac`), refusal counts, kick after N in a minute, rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
@@ -142,7 +142,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/AntiCheat`, `Net/ClockCheck`, `Net/SessionTicket`, `Components/AntiCheatConfig`, `Components/NetValidator`
 - **API:** `AntiCheat`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `SetAntiCheatKickHandler`, `ClaimHit`, `ValidateHit`, `NetValidator::TopUp`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, `on_cheat_detected`, `on_validate_rpc`, nodes On Cheat Detected, On Validate Rpc, Reject Rpc, Server Budget
 - **Editor:** Inspector: Anti-Cheat Config and Net Validator (Add Component menu); File > Build Settings > Server page for the basics
-- **Docs:** `docs/online/anticheat.md`, `docs/online/multiplayer.md` (Server authority, Anti-cheat)
+- **Docs:** `docs/online/anticheat.md`, `docs/online/multiplayer.md` (Server authority, Anti-cheat), `docs/online/okay_anticheat.md` (OkayAntiCheat audit and plan)
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph2`, `net_anticheat_ph3`, `net_anticheat_ph4`, `net_anticheat_components`, `net_anticheat_p2`, `net_token_policy`, `net_lagcomp`
 - **Status:** Works - nine test files cover each phase; all 14 hardening items are on main per `git log` (#350, #357, #360, #363, #365, #368, #372, #376, #384, #392, #394)
 - **Open:** the audit table is `docs/online/anticheat.md` (items 5 and 6 are code on main but not deployed); respawns are not replicated (docs: the server's Health respawns on its own); `maxClockDrift` needs every player updated (older clients never answer)

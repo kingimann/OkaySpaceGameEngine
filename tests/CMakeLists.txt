@@ -1653,6 +1653,8 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_executable(test_own_switches test_own_switches.cpp)
 target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME own_switches COMMAND test_own_switches)
+# The configured okay::platform default (cmake/OkayPlatform.cmake: own on Linux since #1341, sdl2 elsewhere): the default-build check expects it.
+target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_PLATFORM="${OKAY_PLATFORM_BACKEND}")
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)

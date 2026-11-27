@@ -111,7 +111,7 @@ void TestModel(const fs::path& tmp) {
     CHECK(CountKind(p, OutLine::Note, "Commands run in the project"));
     CHECK(p.Submit("scene list"));
     CHECK(WaitIdle(p, pump));
-    CHECK(CountKind(p, OutLine::Out, "Assets/PanelGame.okayscene"));
+    CHECK(CountKind(p, OutLine::Out, "Assets/Scenes/PanelGame.okayscene"));
 
     // clear empties the panel.
     CHECK(p.Submit("clear"));

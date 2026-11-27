@@ -1750,6 +1750,17 @@ struct Parser {
         *value = static_cast<uint64_t>(it->second.cval);
         return true;
     }
+    // A class declared at namespace scope (`struct X;`) when a class of its name exists in another namespace: decorated
+    // X@ns as its definition would be (Round 33), so the two never share a decorated name.
+    void ns_dup_name(StructDef* fwd) const {
+        if (ns_mangled.empty() || cur_locals != nullptr) return;
+        for (const StructDef& other : structs)
+            if (other.name == fwd->name && other.parent < 0 && other.ns != current_ns) {
+                fwd->sym_name = fwd->name + "@" + ns_mangled;
+                fwd->ns_dup = true;
+                return;
+            }
+    }
     // The class around class ctx for name lookup: the class it is nested in, or for a lambda's closure class the class of
     // the member function the lambda is written in ([expr.prim.lambda.closure] 13, [basic.lookup.unqual]; Round 33,
     // JsRegExp.cpp's `Entry e = stack.back();` in a lambda found another class's Entry).
@@ -1942,10 +1953,15 @@ struct Parser {
                     continue;
                 }
             }
+            bool member_fn_named = false;  // Outer::name( is a call of a member function when Outer has one of that name
+            if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0)
+                for (const Method& m : structs[static_cast<size_t>(t->struct_id)].methods)
+                    if (m.name == tokens[at + 1].text) member_fn_named = true;
             if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 &&
-                !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen)) {
+                !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen && member_fn_named)) {
                 // Character::Bone where Bone is a class nested in Character: that class, also when another namespace
-                // has a type of the same name (HumanoidMotion::Bone, an enumeration; Round 29).
+                // has a type of the same name (HumanoidMotion::Bone, an enumeration; Round 29). Also before '(' when
+                // Outer has no member function of that name (`new VM::Impl()`, Round 33).
                 int nested = -1;
                 for (size_t k = 0; k < structs.size(); ++k)
                     if (structs[k].parent == t->struct_id && structs[k].name == tokens[at + 1].text) nested = static_cast<int>(k);
@@ -2185,7 +2201,12 @@ struct Parser {
                             fwd.name = name;
                             fwd.incomplete = true;
                             fwd.ns = current_ns;
-                            if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
+                            if (!open_structs.empty()) {  // class X; inside a class (decorated Inner@Outer, Round 33)
+                                fwd.parent = open_structs.back();
+                                fwd.sym_name = name + "@" + structs[static_cast<size_t>(fwd.parent)].symname();
+                            } else {
+                                ns_dup_name(&fwd);
+                            }
                             fwd.cxx = true;
                             fwd.is_class = as_class;
                             fwd.is_union = as_union;
@@ -2232,13 +2253,28 @@ struct Parser {
                 return false;
             }
             int id = find_struct(name);
+            if (id >= 0 && is(TSemi) && !open_structs.empty() && structs[static_cast<size_t>(id)].parent != open_structs.back())
+                id = -1;
+            // `struct ArrayObj;` in okay::script beside js's ArrayObj: a class of this namespace (Round 33).
+            if (id >= 0 && is(TSemi) && open_structs.empty() && cur_locals == nullptr &&
+                (structs[static_cast<size_t>(id)].parent >= 0 || structs[static_cast<size_t>(id)].ns != current_ns))
+                id = -1;  // `struct Impl;` in a class declares that class's own Impl ([dcl.type.elab] 2), even when another
+                          // class has one (Round 33: Runtime's Impl was taken for JavaScriptVM's)
             if (id < 0) {
                 // class X; or struct X *p; before X is defined: an incomplete class, completed by its definition later.
                 StructDef fwd;
                 fwd.name = name;
                 fwd.incomplete = true;
                 fwd.ns = current_ns;
-                if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
+                if (!open_structs.empty()) {
+                    // class X; inside a class: decorated Inner@Outer already, as its definition will be (Round 33: two
+                    // declared nested classes of one name, Runtime::Impl and JavaScriptVM::Impl, were both "Impl", so
+                    // unique_ptr<Impl> of one was the instance of the other).
+                    fwd.parent = open_structs.back();
+                    fwd.sym_name = name + "@" + structs[static_cast<size_t>(fwd.parent)].symname();
+                } else {
+                    ns_dup_name(&fwd);
+                }
                 fwd.cxx = true;
                 fwd.is_class = as_class;
                 fwd.is_union = as_union;
@@ -3473,8 +3509,96 @@ struct Parser {
         for (const Method& m : structs[static_cast<size_t>(sid)].methods)
             if (m.name == "<ctor>" && m.params.size() == 1 && is_init_list_class(m.params[0])) {
                 *list_type = m.params[0];
+                // At the list itself: an item that is plainly an object of another class that E cannot be made from
+                // makes the initializer-list constructor not viable ([over.match.list] 1: then every constructor is
+                // tried). Round 33, JavaScriptVM.cpp's `return {std::istream_iterator<std::string>(in), {}};` for a
+                // vector<string> took the strings' list constructor and crashed.
+                if (at < tokens.size() && tokens[at].kind == TLBrace && list_items_misfit(at, m.params[0])) return false;
                 return true;
             }
+        return false;
+    }
+    // has_init_list_ctor, and (at the list) every item can become an element: each item is read once to learn its type,
+    // and everything the reading made (temporaries, hidden locals) is dropped again ([over.match.list] 1, [over.ics.rank];
+    // Round 33: `return {names.begin(), names.end()};` of a set into a vector<string> took the list constructor).
+    bool init_list_ctor_at(int sid, Type* list_type) {
+        if (!has_init_list_ctor(sid, list_type)) return false;
+        if (at >= tokens.size() || tokens[at].kind != TLBrace) return true;
+        const StructDef& ld = structs[static_cast<size_t>(list_type->struct_id)];
+        if (ld.targs.empty() || ld.targs[0].is_value) return true;
+        const Type e = ld.targs[0].type;
+        const size_t saved_at = at;
+        const std::string saved_error = error;
+        const size_t pre_size = stmt_pre.size();
+        const size_t temps_size = stmt_temps.size();
+        const size_t locals_size = cur_locals != nullptr ? cur_locals->size() : 0;
+        bool viable = true;
+        next();
+        while (!is(TRBrace) && !is(TEnd) && viable) {
+            if (is(TLBrace)) break;  // a nested list: taken as fitting
+            Node item;
+            if (!parse_expr(1, &item)) break;
+            Type it;
+            if (static_type(item, &it) && arg_score(item, e) < 0) viable = false;
+            if (!accept(TComma)) break;
+        }
+        at = saved_at;
+        error = saved_error;
+        stmt_pre.resize(pre_size);
+        stmt_temps.resize(temps_size);
+        if (cur_locals != nullptr && cur_locals->size() > locals_size) cur_locals->resize(locals_size);
+        return viable;
+    }
+    // Whether an item of the braced list at lbrace is written `C(...)`, `C{...}` or `T<...>(...)` for a class C or a class
+    // template T that the list's element type E has no constructor for (by its name; a constructor template of one
+    // parameter counts as one), so the item cannot be an E. Items of any other form are taken as fitting.
+    bool list_items_misfit(size_t lbrace, const Type& list) const {
+        const StructDef& ld = structs[static_cast<size_t>(list.struct_id)];
+        if (ld.targs.empty() || ld.targs[0].is_value) return false;
+        const Type& e = ld.targs[0].type;
+        size_t k = lbrace + 1;
+        while (k < tokens.size() && tokens[k].kind != TRBrace && tokens[k].kind != TEnd) {
+            // One item: from k to the next ',' or '}' at depth 0.
+            const size_t item = k;
+            int depth = 0;
+            for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                const Tok kk = tokens[k].kind;
+                if (kk == TLParen || kk == TLBrace || kk == TLBrack) ++depth;
+                else if ((kk == TRParen || kk == TRBrace || kk == TRBrack) && depth > 0) --depth;
+                else if (depth == 0 && (kk == TComma || kk == TRBrace)) break;
+            }
+            if (tokens[item].kind == TIdent && !local_visible(tokens[item].text)) {
+                const std::string& n = tokens[item].text;
+                size_t after = item + 1;
+                const bool tmpl = is_template_name_at(item) && after < tokens.size() && tokens[after].kind == TLt;
+                if (tmpl) {
+                    int angle = 0;
+                    for (; after < k; ++after) {
+                        if (tokens[after].kind == TLt) ++angle;
+                        else if (tokens[after].kind == TGt && --angle == 0) break;
+                    }
+                    ++after;
+                }
+                const bool is_class = tmpl || (typedefs.count(n) == 0 && find_struct(n) >= 0);
+                if (is_class && after < k && (tokens[after].kind == TLParen || tokens[after].kind == TLBrace)) {
+                    bool fits = false;
+                    if (e.base == 3 && e.pointers == 0 && e.struct_id >= 0) {
+                        const StructDef& ed = structs[static_cast<size_t>(e.struct_id)];
+                        if (ed.name == n || ed.tmpl == n) fits = true;
+                        if (has_ctor_template_taking(e.struct_id, 1)) fits = true;
+                        for (const Method& c : ed.methods) {
+                            if (c.name != "<ctor>" || c.params.size() != 1) continue;
+                            const Type& p = c.params[0];
+                            if (p.base == 3 && p.struct_id >= 0 &&
+                                (structs[static_cast<size_t>(p.struct_id)].name == n || structs[static_cast<size_t>(p.struct_id)].tmpl == n))
+                                fits = true;
+                        }
+                    }
+                    if (!fits) return true;
+                }
+            }
+            if (k < tokens.size() && tokens[k].kind == TComma) ++k;
+        }
         return false;
     }
     int lambda_count = 0;
@@ -4689,7 +4813,8 @@ struct Parser {
         if (pending_sym.empty() && def.parent < 0 && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0 &&
             !ns_mangled.empty())
             for (const StructDef& other : structs)
-                if (other.name == name && other.parent < 0 && !other.incomplete && other.ns != current_ns) {
+                if (other.name == name && other.parent < 0 && other.ns != current_ns) {
+                    // (A declared class counts too, Round 33: script's `struct ArrayObj;` then js's ArrayObj.)
                     // A second class of this name in another namespace: decorated with its namespace, as MSVC decorates
                     // every class (V Name@ns@@), so the two have separate members and symbols.
                     def.sym_name = name + "@" + ns_mangled;
@@ -4809,6 +4934,13 @@ struct Parser {
                 (structs[k].ns == def.ns || def.parent >= 0))
                 self = static_cast<int>(k);
         if (self >= 0) {
+            // The definition of a class declared before keeps the declaration's decorated name: types made from the
+            // declaration (shared_ptr<ArrayObj>, variant<...>) already carry it (Round 33: the definition took
+            // ArrayObj@script@okay after js::ArrayObj appeared, while variant<..., shared_ptr<ArrayObj>> had ArrayObj).
+            if (def.parent < 0 && def.tmpl.empty()) {
+                def.sym_name = structs[static_cast<size_t>(self)].sym_name;
+                def.ns_dup = structs[static_cast<size_t>(self)].ns_dup;
+            }
             structs[static_cast<size_t>(self)] = def;  // the definition of a class declared before
         } else {
             structs.push_back(def);
@@ -6236,6 +6368,24 @@ struct Parser {
 
     bool parse_function_body(FuncDecl* fn, int cls, int special = 0, bool implicit = false) {
         if (fn->ret.deduce != 0 && !deduce_return(fn, cls, special, implicit)) return false;
+        // The function's own parameter packs (`A... args` read as args#0, args#1, ...): a member body compiled later, as
+        // function__fn<R, A...>::operator()(A... args) is when first called, saw the pack of the instance read last
+        // ([temp.variadic] 5; Round 33: std::function<Value(Runtime&, const std::string&)> expanded three arguments,
+        // the count of another std::function's pack). Restored when the body is done.
+        struct PackScope {
+            std::map<std::string, std::vector<std::string>>& packs;
+            std::map<std::string, std::vector<std::string>> saved;
+            ~PackScope() { packs = saved; }
+        } pack_scope{param_packs, param_packs};
+        {
+            std::map<std::string, std::vector<std::string>> own;
+            for (const std::string& pn : fn->param_names) {
+                const size_t hash = pn.rfind('#');
+                if (hash == std::string::npos || hash == 0 || hash + 1 >= pn.size()) continue;
+                own[pn.substr(0, hash)].push_back(pn);
+            }
+            for (auto& entry : own) param_packs[entry.first] = entry.second;
+        }
         std::vector<Local>* saved_locals = cur_locals;
         const std::vector<std::vector<DObj>> saved_dscopes = dscopes;
         const size_t saved_dbase = fn_dbase;
@@ -9475,7 +9625,18 @@ struct Parser {
                       (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text) ||
                        find_struct(tokens[at + 2].text) >= 0)));  // `Vec3 f(PlainStruct& s)` is a function too
                 const bool template_type_start = after == TIdent && is_template_name_at(at + 2);  // `Foo(vector<int>& n)`
-                if (!type_start && !named_type_start && !template_type_start) {
+                // `std::string Text(js::Runtime&, js::HostObj* h)`: a type name followed by `&`, `&&` or `*` and then `,`
+                // or `)`, or by `,` or `)` itself, is an unnamed parameter ([dcl.ambig.res] 1: what can be a
+                // declaration is one; Round 33, JavaScriptVM.cpp).
+                const bool unnamed_param_start =
+                    after == TIdent && at + 3 < tokens.size() &&
+                    (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text) ||
+                     find_struct(tokens[at + 2].text) >= 0) &&
+                    !local_visible(tokens[at + 2].text) &&
+                    (((tokens[at + 3].kind == TAmp || tokens[at + 3].kind == TAndAnd || tokens[at + 3].kind == TStar) &&
+                      at + 4 < tokens.size() && (tokens[at + 4].kind == TComma || tokens[at + 4].kind == TRParen)) ||
+                     tokens[at + 3].kind == TComma || tokens[at + 3].kind == TRParen);
+                if (!type_start && !named_type_start && !template_type_start && !unnamed_param_start) {
                     // C g(args); a global object, the arguments go to a constructor.
                     decl.name = cur().text;
                     decl.type = type;

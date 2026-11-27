@@ -318,6 +318,128 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Declarations and decorated names: `struct Impl;` in a class declares that class's own Impl ([dcl.type.elab] 2; it
+// took another class's Impl, so unique_ptr<Impl> was the other class's instance: JsInternal.hpp's `rt.vm->moreIntrinsics`
+// was "unknown field"), a declared class keeps its decorated name when defined (JavaScriptVM.cpp: variant<...,
+// shared_ptr<ArrayObj>> named ArrayObj two ways), `new Outer::Inner()` ([expr.new]), an unnamed reference parameter in a
+// function returning a class (`std::string Text(js::Runtime&, js::HostObj* h)`, [dcl.ambig.res] 1: it was read as an
+// object with constructor arguments), and a member of a class template instance compiled later with its own parameter
+// pack ([temp.variadic] 5: std::function<Value(Runtime&, const std::string&)> expanded three arguments).
+static void r33_decls(Tally& tally) {
+    std::printf("r33_decls\n");
+    okayms_test::run_both(kRun, tally, "decls", std::string(kAlloc) + R"OKMS(
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+namespace okay {
+class VM { public: VM(); ~VM(); struct Impl; std::unique_ptr<Impl> p; };
+namespace js {
+struct Runtime { struct Impl; std::unique_ptr<Impl> vm; Runtime(); ~Runtime(); };
+struct Runtime::Impl { std::vector<int> more; int k = 4; };
+inline int f(Runtime& r) { return r.vm->k + (int)r.vm->more.size(); }
+Runtime::Runtime() : vm(new Impl()) {}
+Runtime::~Runtime() {}
+struct H { double v[3]; };
+}
+struct VM::Impl { js::Runtime rt; double d = 2; };
+namespace {
+using Impl = VM::Impl;
+int g(Impl& i) { return (int)i.d; }
+std::string Text(js::Runtime&, js::H* h) {
+  auto t = [](double d) { return std::to_string((int)d); };
+  return "(" + t(h->v[0]) + ", " + t(h->v[1]) + ")";
+}
+}
+VM::VM() : p(new VM::Impl()) {}
+VM::~VM() {}
+int text_size(js::Runtime& r, js::H* h) { return (int)Text(r, h).size(); }
+}
+struct Value { int t; double d; };
+struct Hooks {
+  int base = 4;
+  std::function<Value(Hooks&, const std::string& spec)> importHook;
+  struct Mods { std::function<void(Hooks& rt, const std::string& key, int* meta)> initMeta; } modules;
+};
+int run_hook(Hooks& h) { std::string s = "abc"; Value r = h.importHook(h, s); return r.t; }
+int entry(void) {
+  okay::VM vm;
+  okay::js::Runtime r;
+  CK(1, okay::js::f(r) == 4 && okay::g(*vm.p) == 2 && okay::js::f(vm.p->rt) == 4);
+  okay::js::H h;
+  h.v[0] = 2; h.v[1] = 3; h.v[2] = 0;
+  CK(2, okay::text_size(r, &h) == 6);
+  Hooks hooks;
+  hooks.importHook = [](Hooks& x, const std::string& spec) { Value v; v.t = x.base + (int)spec.size(); v.d = 0; return v; };
+  int m = 0;
+  hooks.modules.initMeta = [&m](Hooks& x, const std::string& key, int* meta) { m = x.base * 10 + (int)key.size() + *meta; };
+  CK(3, run_hook(hooks) == 7);
+  int one = 1;
+  hooks.modules.initMeta(hooks, "xy", &one);
+  CK(4, m == 43);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Braced lists and our headers, second part: a braced list is given to the initializer-list constructor only when its
+// items can become elements ([over.match.list] 1: `return {names.begin(), names.end()};` of a set into a
+// vector<string>, and `{istream_iterator<string>(in), {}}`, took the list constructor: "no conversion to string", or a
+// crash), std::initializer_list<T>{...} as an expression, istream_iterator ([istream.iterator]), u16string insert,
+// erase and compare(pos, n, s, pos2, n2), and the double <cmath> functions (before, std::sqrt(double) had float
+// precision and std::acosh did not exist; fmod is exact).
+static void r33_lists_math(Tally& tally) {
+    std::printf("r33_lists_math\n");
+    okayms_test::run_both(kRun, tally, "lists_math", std::string(kAlloc) + R"OKMS(
+#include <cmath>
+#include <initializer_list>
+#include <iterator>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+std::vector<std::string> All(const std::set<std::string>& names) { return {names.begin(), names.end()}; }
+std::vector<std::string> Words(const char* list) {
+  std::istringstream in(list);
+  return {std::istream_iterator<std::string>(in), std::istream_iterator<std::string>()};
+}
+int pick(int argc) {
+  int n = 0;
+  for (const char* c : argc > 5 ? std::initializer_list<const char*>{"few", "one", "two"} : std::initializer_list<const char*>{"one", "other"}) n += c[0];
+  return n;
+}
+int entry(void) {
+  std::set<std::string> s; s.insert("b"); s.insert("a"); s.insert("c");
+  std::vector<std::string> v = All(s);
+  CK(1, v.size() == 3 && v[0] == "a" && v[2] == "c");
+  std::vector<std::string> w = {"x", "y"};
+  std::vector<int> n{3, 4};
+  CK(2, w.size() == 2 && w[1] == "y" && n.size() == 2 && n[0] == 3);
+  std::vector<std::string> words = Words("  abs  floor max ");
+  CK(3, words.size() == 3 && words[0] == "abs" && words[2] == "max");
+  CK(4, pick(1) == 'o' + 'o' && pick(9) == 'f' + 'o' + 't');
+  std::u16string u = u"1234567";
+  for (size_t i = u.size(); i > 3; i -= 3) u.insert(i - 3, 1, u',');
+  CK(5, u == u"1,234,567");
+  u.erase(1, 1);
+  CK(6, u == u"1234,567" && u.compare(0, 2, std::u16string(u"x12"), 1, 2) == 0);
+  volatile double two = 2.0, x = 5.5, y = 2.0;  // (round(0.49999999999999994) is 0 here; MinGW's reference gives 1)
+  double r = std::sqrt(two);
+  CK(7, r * r - 2.0 < 1e-15 && r * r - 2.0 > -1e-15 && r != (double)(float)r);
+  CK(8, std::fmod(x, y) == 1.5 && std::fmod(-x, y) == -1.5 && std::fmod(1e300, 7.0) == 1.0);
+  CK(9, std::round(2.5) == 3.0 && std::round(-2.5) == -3.0 && std::round(-0.4) == 0.0);
+  CK(10, std::fabs(std::acosh(1.0)) < 1e-15 && std::fabs(std::asinh(1.0) - 0.881373587019543) < 1e-14);
+  CK(11, std::fabs(std::atanh(0.5) - 0.5493061443340549) < 1e-14 && std::fabs(std::cbrt(27.0) - 3.0) < 1e-14);
+  int e = 0;
+  double m = std::frexp(12.0, &e);
+  CK(12, m == 0.75 && e == 4);
+  CK(13, std::fabs(std::sin(1.0) - 0.8414709848078965) < 1e-15 && std::fabs(std::exp(1.0) - 2.718281828459045) < 1e-14);
+  CK(14, std::fabs(std::expm1(1e-10) - 1.00000000005e-10) < 1e-24 && std::fabs(std::log1p(1e-10) - 9.9999999995e-11) < 1e-24);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -330,5 +452,7 @@ int main(int argc, char** argv) {
     r33_init_list(tally);
     r33_library(tally);
     r33_calloc(tally);
-    return tally.finish(8);
+    r33_decls(tally);
+    r33_lists_math(tally);
+    return tally.finish(10);
 }

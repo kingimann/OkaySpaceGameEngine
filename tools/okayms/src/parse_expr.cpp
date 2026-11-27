@@ -164,12 +164,15 @@ bool Parser::braced_temp(int bsid, Node* out) {
         Type bt;
         bt.base = 3;
         bt.struct_id = bsid;
+        // std::initializer_list<T>{a, b} ([dcl.init.list] 3.10; Round 33, JsLibNumber.cpp): a list over an array of the
+        // elements, as for an argument (before: "no matching constructor").
+        if (is_init_list_class(bt)) return init_list_temp(bt, out);
         Local hidden;
         hidden.name = "__bt" + std::to_string(tmp_count++);
         hidden.type = bt;
         place_local(cur_locals, hidden);
         Type list_type;
-        if (obj_needs_ctor(bt) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(bsid, &list_type)) {
+        if (obj_needs_ctor(bt) && tokens[at + 1].kind != TRBrace && init_list_ctor_at(bsid, &list_type)) {
             // An initializer-list constructor is preferred when the list is not empty ([over.match.list]).
             Node list;
             if (!init_list_temp(list_type, &list)) return false;

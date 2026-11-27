@@ -583,6 +583,40 @@ public:
 typedef iostream ostream;
 typedef iostream istream;
 
+// istream_iterator ([istream.iterator]; Round 33, JavaScriptVM.cpp's vector<string>{istream_iterator<string>(in), {}}):
+// reads T with >> on each step; the end iterator is the one made with no stream, and an iterator whose read failed
+// becomes it. Here and not in <iterator>, because it needs the stream class (okay-ms has one, iostream).
+template <typename T>
+class istream_iterator {
+    iostream* in_;
+    T value_;
+    void read() {
+        if (in_ != 0 && !(*in_ >> value_)) in_ = 0;
+    }
+
+public:
+    typedef T value_type;
+    typedef long long difference_type;
+    typedef const T* pointer;
+    typedef const T& reference;
+    typedef input_iterator_tag iterator_category;
+    istream_iterator() : in_(0), value_() {}
+    istream_iterator(iostream& s) : in_(&s), value_() { read(); }
+    const T& operator*() const { return value_; }
+    const T* operator->() const { return &value_; }
+    istream_iterator& operator++() {
+        read();
+        return *this;
+    }
+    istream_iterator operator++(int) {
+        istream_iterator before = *this;
+        read();
+        return before;
+    }
+    bool operator==(const istream_iterator& o) const { return in_ == o.in_; }
+    bool operator!=(const istream_iterator& o) const { return in_ != o.in_; }
+};
+
 inline istream& getline(istream& is, string& s, char delim) {
     s.clear();
     bool any = false;

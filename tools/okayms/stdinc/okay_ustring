@@ -108,6 +108,24 @@ public:
         units_.push_back((C)0);
         return *this;
     }
+    // insert and erase ([string.insert], [string.erase]; Round 33, JsLibNumber.cpp's s.insert(i - 3, 1, u',')).
+    basic_ustring__& insert(size_t pos, const C* s, size_t n) {
+        if (pos > size()) pos = size();
+        units_.insert(units_.begin() + pos, s, s + n);
+        return *this;
+    }
+    basic_ustring__& insert(size_t pos, size_t n, C c) {
+        if (pos > size()) pos = size();
+        for (size_t i = 0; i < n; ++i) units_.insert(units_.begin() + pos, c);
+        return *this;
+    }
+    basic_ustring__& insert(size_t pos, const basic_ustring__& o) { return insert(pos, o.data(), o.size()); }
+    basic_ustring__& erase(size_t pos = 0, size_t n = npos) {
+        if (pos > size()) pos = size();
+        if (n > size() - pos) n = size() - pos;
+        units_.erase(units_.begin() + pos, units_.begin() + pos + n);
+        return *this;
+    }
     basic_ustring__& operator+=(C c) {
         push_back(c);
         return *this;
@@ -160,6 +178,9 @@ public:
     // compare(pos, n, str) ([string.compare] 3; Round 33, JsLibString.cpp): the units [pos, pos + n) against str.
     int compare(size_t pos, size_t n, const basic_ustring__& o) const { return substr(pos, n).compare(o); }
     int compare(size_t pos, size_t n, const C* s) const { return substr(pos, n).compare(basic_ustring__(s)); }
+    int compare(size_t pos, size_t n, const basic_ustring__& o, size_t pos2, size_t n2) const {
+        return substr(pos, n).compare(o.substr(pos2, n2));
+    }
     bool operator==(const basic_ustring__& o) const { return compare(o) == 0; }
     bool operator!=(const basic_ustring__& o) const { return compare(o) != 0; }
     bool operator<(const basic_ustring__& o) const { return compare(o) < 0; }

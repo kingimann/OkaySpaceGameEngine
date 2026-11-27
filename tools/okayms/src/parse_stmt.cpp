@@ -773,7 +773,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             hidden.type = cur_ret;
             place_local(locals, hidden);
             Type ret_list;
-            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(cur_ret.struct_id, &ret_list)) {
+            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && init_list_ctor_at(cur_ret.struct_id, &ret_list)) {
                 // return {a, b, c}; for a class with an initializer-list constructor (a vector): that constructor is
                 // preferred for a list that is not empty ([over.match.list]).
                 Node list;
@@ -1098,7 +1098,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         next();
         const bool braced_args = is(TLBrace);
         Type list_type;
-        if (braced_args && tokens[at + 1].kind != TRBrace && has_init_list_ctor(type.struct_id, &list_type)) {
+        if (braced_args && tokens[at + 1].kind != TRBrace && init_list_ctor_at(type.struct_id, &list_type)) {
             Node list;
             if (!init_list_temp(list_type, &list)) return false;
             ctor_args.push_back(std::move(list));
@@ -1199,7 +1199,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         } else if (have_paren_init) {
             init = std::move(paren_init);
         } else if (is(TLBrace) && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
-                   tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &list_type_local)) {
+                   tokens[at + 1].kind != TRBrace && init_list_ctor_at(decl.type.struct_id, &list_type_local)) {
             // C x = {a, b}; for a class with an initializer-list constructor.
             Node list;
             if (!init_list_temp(list_type_local, &list)) return false;

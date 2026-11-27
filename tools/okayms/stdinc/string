@@ -10,6 +10,9 @@
 #include <utility>
 #include <iterator>
 #include <cwchar>
+// <cctype> too: engine files call std::toupper with only <string> included (JsLibNumber.cpp; Round 33), as MSVC's
+// <string> makes it visible.
+#include <cctype>
 namespace std {
 // The character operations the string classes are described with ([char.traits]): length, compare, copy, move,
 // assign, find, eq, lt, and the int conversions with eof() = -1. Characters compare as unsigned values

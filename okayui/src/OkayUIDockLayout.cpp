@@ -246,6 +246,15 @@ bool DockLayout::Close(const std::string& w) {
     return true;
 }
 
+bool DockLayout::Rename(const std::string& from, const std::string& to) {
+    if (!GoodName(to) || from == to || Contains(to) || !Contains(from)) return false;
+    for (Node& n : nodes_) for (std::string& t : n.tabs) if (t == from) t = to;
+    for (Floating& f : floating_) if (f.name == from) f.name = to;
+    for (MinSize& m : mins_) if (m.name == from) m.name = to;
+    ++version_;
+    return true;
+}
+
 bool DockLayout::SetActive(const std::string& w) {
     const int id = NodeOf(w);
     if (!id) return false;

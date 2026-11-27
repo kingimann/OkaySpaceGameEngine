@@ -169,8 +169,15 @@ struct Context {
 /// The windows OkayUI has a slot for (everything Begin was called for and not yet forgotten), for OkayUIDockNodes.cpp: not for hosts.
 struct WindowSlotInfo { char title[64] = {0}; unsigned id = 0; Vec2 pos{0, 0}, size{0, 0}; unsigned long long lastFrame = 0, z = 0; bool focused = false; };
 int ListWindowSlots(WindowSlotInfo* out, int cap);
-struct PopupSlotInfo { unsigned id = 0; Vec2 pos{0, 0}, size{0, 0}; bool modal = false; };
+/// `name`: what it was opened or begun with (empty when opened by id only); `openedFrame` / `drawnFrame`: the frame (GetFrameCount numbering) it
+/// was last opened and the last frame its body was begun (0 = never drawn). A modal blocks the windows behind it only in frames it is drawn.
+struct PopupSlotInfo { unsigned id = 0; Vec2 pos{0, 0}, size{0, 0}; bool modal = false; char name[48] = {0}; unsigned long long openedFrame = 0, drawnFrame = 0; };
 int ListOpenPopups(PopupSlotInfo* out, int cap);
+/// Close the popup opened (or begun) as `name` / with id `id`, if it is open. True when it was open. Popups opened over it stay as they are.
+bool ClosePopup(const char* name);
+bool ClosePopupById(unsigned id);
+/// How many popup bodies are being built right now (0 outside any popup): Dear ImGui's popup level (`g.BeginPopupStack.Size`).
+int CurrentPopupDepth();
 unsigned WindowIdOfTitle(const char* title);          // the id a window of this title has (GetID with no PushID in force)
 /// Set the default width of the value column for the rest of the current window (PushItemWidth, undone when the window ends). Nothing outside a window.
 void SetWindowItemWidthDefault(float width);

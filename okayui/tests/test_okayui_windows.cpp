@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIDock.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // Window_MenuBar
 
 #include <cmath>
 #include <cstdio>
@@ -465,6 +466,159 @@ void TestWindowDragThrough() {
 
 } // namespace
 
+// Window_MenuBar: the window keeps a row under its title bar; the content starts below it; BeginMenuBar draws the bar in that row even
+// when the window calls it AFTER its other content (the editor's dock host draws its menus last); a menu there opens on a click and
+// a widget after SameLine sits on the bar's row; EndMenuBar gives the window its cursor back.
+void TestMenuBarRow() {
+    RUN_SUITE("windows: Window_MenuBar keeps a row for the menu bar");
+    Reset();
+    Sim sim(500, 320);
+    UI::Rect first, after, menuBtn, barBtn, quitRow; UI::Vec2 wpos{}; bool fileOpen = false, quitHov = false; int barClicks = 0; float titleH = 0.0f;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 240), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            wpos = UI::GetWindowPos();
+            UI::Button("content"); first = UI::GetItemRect();
+            if (UI::BeginMenuBar()) {
+                fileOpen = UI::BeginMenu("File");
+                if (fileOpen) { UI::MenuItem("Quit"); quitHov = UI::IsItemHovered(); quitRow = UI::GetItemRect(); UI::EndMenu(); }
+                menuBtn = UI::GetItemRect();
+                UI::SameLine(200.0f);
+                if (UI::Button("Play")) ++barClicks;
+                barBtn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::Button("after"); after = UI::GetItemRect();
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    titleH = first.y - wpos.y;                                   // title bar + bar row + padding
+    CHECK(barBtn.y >= wpos.y && barBtn.y < first.y);             // the bar's widgets sit above the content, in the kept row
+    CHECK(first.y > wpos.y + 2.0f * 16.0f);                      // the content starts below a title bar and the bar row
+    CHECK(after.y > first.y + first.h - 1.0f);                   // the cursor came back: "after" is under "content", not on the bar
+    CHECK(barBtn.x > wpos.x + 150.0f);                           // SameLine(200) moved along the bar
+    sim.Click(CenterX(barBtn), CenterY(barBtn), ui);
+    CHECK(barClicks == 1);
+    sim.Click(wpos.x + 20.0f, barBtn.y + barBtn.h * 0.5f, ui);  // "File" is the bar's first menu, at its left end
+    sim.Frame(ui);
+    CHECK(fileOpen);
+    CHECK(!quitHov);                                             // the pointer is on "File", not on the row: no stray tooltip
+    sim.Move(CenterX(quitRow), CenterY(quitRow)); sim.Frame(ui); sim.Frame(ui);
+    CHECK(fileOpen && quitHov);                                  // IsItemHovered after MenuItem asks about that row
+    (void)menuBtn; (void)titleH;
+    // without the flag nothing is kept: the content starts right under the title bar
+    Reset();
+    UI::Rect plain{}; UI::Vec2 ppos{};
+    auto ui2 = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 240), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, 0)) { ppos = UI::GetWindowPos(); UI::Button("content"); plain = UI::GetItemRect(); }
+        UI::End();
+    };
+    sim.Frames(2, ui2);
+    CHECK(plain.y - ppos.y < first.y - wpos.y - 8.0f);
+}
+
+// A scrolling child inside a popup body (the editor's template list in its "Open a project" modal): its rows are clipped to the child,
+// and the clip of the window the popup was opened over does not cut the popup. Popups draw in the overlay layer, which now has clips.
+void TestChildClipInPopup() {
+    RUN_SUITE("windows: a child region inside a modal clips its rows");
+    Reset();
+    Sim sim(640, 480);
+    UI::Rect child{}; bool shown = false;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(120, 80), UI::Cond_FirstUseEver);
+        if (UI::Begin("Small", nullptr, 0)) UI::Text("under the modal");
+        UI::End();
+        if (!UI::IsPopupOpen("Modal")) UI::OpenPopup("Modal");   // named outside every window, where it is begun (ids depend on where)
+        if (UI::BeginPopupModal("Modal")) {
+            shown = true;
+            UI::Text("above");
+            if (UI::BeginChild("list", UI::Vec2{200, 60}, UI::Child_Borders)) {
+                for (int i = 0; i < 30; ++i) { char b[16]; std::snprintf(b, sizeof b, "row %d", i); UI::Button(b); }
+            }
+            UI::EndChild();
+            child = UI::GetItemRect();
+            UI::Text("below");
+            UI::EndPopup();
+        }
+    };
+    sim.Frames(4, ui);
+    CHECK(shown);
+    const UI::DrawData dd = UI::GetDrawData();
+    bool childClip = false, anyUnclippedOverlayAfter = false;
+    for (int i = 0; i < dd.cmdCount; ++i) {
+        const UI::DrawCmd& c = dd.cmds[i];
+        if (c.clipOn && std::fabs(c.clipY - child.y) <= 2.0f && std::fabs(c.clipH - child.h) <= 3.0f && c.idxCount > 0) childClip = true;
+        if (childClip && !c.clipOn && c.idxCount > 0) anyUnclippedOverlayAfter = true;   // "below" and the frame: back to no clip
+    }
+    CHECK(childClip);
+    CHECK(anyUnclippedOverlayAfter);
+    // pixels: nothing of the rows is drawn under the child's bottom edge (between it and the "below" text there is only the popup's colour)
+    const Bitmap& b = sim.Draw(12, 14, 20);
+    const unsigned bg = PixelAt(b, (int)(child.x + child.w + 20), (int)(child.y + child.h + 2));
+    int stray = 0;
+    for (int x = (int)child.x + 4; x < (int)(child.x + 60); ++x) if (PixelAt(b, x, (int)(child.y + child.h + 2)) != bg) ++stray;
+    CHECK(stray == 0);
+}
+
+// SetNextWindowSize with an axis of 0: Dear ImGui fits that axis to the content (the editor's Project Settings asks for 460 x 0); OkayUI
+// used to make the window 0 pixels tall, a bare title bar with the content spilling out under it.
+void TestSizeAxisZeroFits() {
+    RUN_SUITE("windows: SetNextWindowSize with a 0 axis fits it to the content");
+    Reset();
+    Sim sim(640, 480);
+    UI::Vec2 sz{}; UI::Rect last{}; bool began = false;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver);
+        UI::SetNextWindowSize(V(300, 0), UI::Cond_FirstUseEver);
+        began = UI::Begin("Fit", nullptr, 0);
+        if (began) { for (int i = 0; i < 5; ++i) { char b[8]; std::snprintf(b, sizeof b, "b%d", i); UI::Button(b); } last = UI::GetItemRect(); sz = UI::GetWindowSize(); }
+        UI::End();
+    };
+    sim.Frames(3, ui);
+    CHECK(began);
+    CHECK(std::fabs(sz.x - 300.0f) < 0.5f);                       // the width asked for
+    CHECK(sz.y > 60.0f && sz.y < 400.0f);                         // a real height, not 0 and not the 240 default
+    CHECK(last.y + last.h <= 20.0f + sz.y + 0.5f);                // the last button is inside the window
+    // later frames keep it (FirstUseEver is spent) and it stays resizable
+    sim.Frames(2, ui);
+    CHECK(std::fabs(sz.x - 300.0f) < 0.5f && sz.y > 60.0f);
+}
+
+// A bare window begun inside an open window is a region of it (how the editor's OkayUI section bodies are drawn inside its windows when the
+// editor itself runs on OkayUI): the outer window stays open, the region's items sit at its rectangle and are clipped to it, and after
+// its End the outer window carries on where it was.
+void TestRegionInsideWindow() {
+    RUN_SUITE("windows: a bare window inside a window is a region of it");
+    Reset();
+    Sim sim(640, 480);
+    UI::Rect before{}, inner{}, after{}; UI::Vec2 hostSize{}, hostSizeAfter{}; int innerClicks = 0, afterClicks = 0;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, 0)) {
+            hostSize = UI::GetWindowSize();
+            UI::Button("before"); before = UI::GetItemRect();
+            const UI::Vec2 p = UI::GetCursorScreenPos();
+            UI::BareNextWindow();
+            if (UI::Begin("section##inner", p.x, p.y, 300.0f, 60.0f)) { if (UI::Button("inside")) ++innerClicks; inner = UI::GetItemRect(); }
+            UI::End();
+            UI::Dummy(300.0f, 60.0f);
+            if (UI::Button("after")) ++afterClicks;
+            after = UI::GetItemRect();
+            hostSizeAfter = UI::GetWindowSize();
+        }
+        UI::End();
+    };
+    sim.Frames(3, ui);
+    CHECK(inner.y >= before.y + before.h - 0.5f && inner.y < before.y + before.h + 20.0f);   // the region's item where the region is
+    CHECK(after.y >= inner.y + 59.0f);                                                       // the host carried on under the region
+    CHECK(std::fabs(hostSizeAfter.x - hostSize.x) < 0.5f && std::fabs(hostSizeAfter.y - hostSize.y) < 0.5f);   // still the host window
+    sim.Click(CenterX(inner), CenterY(inner), ui);
+    sim.Click(CenterX(after), CenterY(after), ui);
+    CHECK(innerClicks == 1 && afterClicks == 1);
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -475,5 +629,9 @@ int main() {
     TestFocusFlags();
     TestDockedBelowFloating();
     TestWindowDragThrough();
+    TestMenuBarRow();
+    TestChildClipInPopup();
+    TestSizeAxisZeroFits();
+    TestRegionInsideWindow();
     TEST_MAIN_RESULT();
 }

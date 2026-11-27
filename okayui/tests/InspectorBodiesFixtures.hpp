@@ -914,7 +914,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
     case BodyCurves: {
         L.Section("Over Lifetime");
         L.Check("Color Over Life##ps", &v.psColLife);
-        int cm = 1; L.Combo("Color Mode##ps", &cm, kCModes, 2);
+        static int cm; cm = 1; L.Combo("Color Mode##ps", &cm, kCModes, 2);   // static: the rows keep the address and are drawn after this function returns
         L.Gradient("psgrad", v.gStops, &v.gCount, 8, &v.gSel);
         if (v.gSel >= 0 && v.gSel < v.gCount) {
             for (int c = 0; c < 4; ++c) v.gCol[c] = v.gStops[v.gSel * 5 + 1 + c];
@@ -922,7 +922,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
             L.Color("Stop Color", v.gCol, 4); L.Slider("Stop Time", &v.gTime, 0.0f, 1.0f);
         }
         L.Note(v.gCount == 3 ? "3 / 8 stops" : "other / 8 stops");
-        bool on = true; int sm = 1;
+        static bool on; static int sm; on = true; sm = 1;   // (static for the same reason: a pointer to a local outlived it)
         L.Check("Size Over Life##ps", &on);
         L.Combo("Size Mode##ps", &sm, kSModes, 2);
         L.Note("Size x start size over life");

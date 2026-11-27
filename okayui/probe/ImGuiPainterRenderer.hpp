@@ -15,7 +15,7 @@
 
 namespace okay::imguirender {
 
-inline bool OwnRequested(const char*) { return true; }
+inline bool OwnRequested(const char*, bool = true) { return true; }
 inline const char* ActiveLine(bool) { return "UI drawing: OkayUI frame through okay::platform::Painter (the OkayUI build; Dear ImGui is not in this program)"; }
 inline void Init(ImGuiIO& io) { io.BackendRendererName = "okayui_painter"; OkayUI::UseLauncherLook(true); }   // the launcher look: the TTF atlas, rounded frames
 /// `dd` is unused: OkayUI's frame data is what ImGui::Render() (OkayUI::EndFrameData) just finished.

@@ -2,7 +2,7 @@
 // needed: drag and drop that a list can draw itself and that can come from another toolkit, and menus (with sub-menus) inside a popup
 // (docs/own_ui_toolkit.md section 12). Driven headless: every control is found by its rectangle in the result and used with synthetic
 // input; a small host (okayui/tests/HierarchyFixtures.hpp) carries out the intents the way the editor does; golden images (launcher
-// look) pin what is drawn. The Dear ImGui version is compared against this one in tests/test_okayui_hierarchy_imgui.cpp.
+// look) pin what is drawn.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "OkayUIEditorPanels.hpp"

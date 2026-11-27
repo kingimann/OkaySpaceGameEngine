@@ -267,7 +267,7 @@ command line, or players' settings. Changing one breaks old projects or tools. A
 | Component class names and their public fields | 256 classes | `engine/include/okay/Components/` (shown in Add Component, the property registry, scripts and the Inspector) | `Rigidbody3D`, `TrailRenderer::minVertexDistance` |
 | File extensions and project keys | 40 extensions | `.okay*` strings; `project.okayproj` keys | `.okayscene`, `.okayvs`, `modules=` |
 | Command-line flags | 45 | editor 25, launcher 8, player 12 (`"--..."` in each `main`) | `--selftest`, `--build-game`, `--join` |
-| Environment variables | about 302 | `getenv("...")` and `"OKAY_..."` strings | `OKAY_UI_DEFAULT_BACKEND` |
+| Environment variables | about 302 | `getenv("...")` and `"OKAY_..."` strings | `OKAY_UI_BACKEND` |
 | Saved settings keys | 63 literal keys (more built at run time) | `Prefs::Set*/Get*("...")` | survival settings |
 | Engine include paths and module names | 726 headers, 40 modules | `okay/<Folder>/<File>.hpp`; `engine/modules/*` (PR #1158) | `okay/Render/Mesh.hpp` |
 

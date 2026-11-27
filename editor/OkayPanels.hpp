@@ -1,9 +1,9 @@
 #pragma once
 // Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24, 25, 26 and 27; the Crash Log, the Audio Mixer, History, Problems, Stats,
 // the Profiler, Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, the Project panel's import settings and
-// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset, the Plugin Manager, Map Humanoid Bones, the Save Manager, Material, Frame time, Input, Timers and Input Actions are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
-// ImGui window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
-// and OkayUIEditorPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI); without it the functions draw nothing.
+// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset, the Plugin Manager, Map Humanoid Bones, the Save Manager, Material, Frame time, Input, Timers and Input Actions are drawn by OkayUI only, drawn by their OkayUI screens). Each keeps its
+// window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
+// and OkayUIEditorPanels.
 #include "EditorPanelModels.hpp"
 
 #include <cstdint>
@@ -19,7 +19,7 @@ struct CrashLogActions {
 };
 
 /// Draw the Crash Log window with OkayUI. The Crash Log, the Audio Mixer and History have no Dear ImGui version any more: their
-/// OkayUI body is drawn in Dear ImGui's order (okayuihost::HostPanelWindow), so ImGui popups and windows in front cover it. Returns
+/// OkayUI body is drawn straight into the window, so popups and windows in front cover it. Returns
 /// true when the body was drawn this frame (false: closed, collapsed, a tab behind another). `revision` goes up whenever `text` changed.
 bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions);
 
@@ -45,7 +45,7 @@ bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryM
 
 /// Project Settings' Tags and Layers, Physics, Player and Rendering sections, drawn by OkayUI only (no Dear ImGui version) inside the
 /// current ImGui window, under their collapsing headers: a placeholder as tall as the section was on the last frame, the body drawn
-/// into the window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so ImGui popups and windows in front cover it.
+/// at the cursor in the window, so popups and windows in front cover it.
 /// Only the part the window shows takes the mouse. Same return value as above (false: the window shows nothing of it).
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent);
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent);

@@ -7,7 +7,10 @@
 > replaced with no change to the dashboard; responsive on desktop and mobile; secure admin sign-in, role-based permissions,
 > audit logging; "Do not create placeholder functionality, simulated metrics or nonfunctional buttons."
 >
-> **Status:** Round A1 (audit and design) only. Nothing was built and nothing in the programs changed. Every "will" is a plan.
+> **Status:** Round A1 (audit and design) and round A2 (the SQL: roles, permissions, the extended audit log, the gate with
+> rate limits, TOTP storage, and the storage and row rules for the game controls of section 18) are written. A2 is tested on a
+> throw-away local Postgres (`admin_sql`, 152 checks) and has **not** been run on the live project: the owner runs the SQL
+> (section 15). No dashboard, function or console exists yet. Every "will" is a plan.
 > It is a part of OkayBackend (feature map 17.19.6), not a new system. The OkayBackend design is [okay_backend.md](okay_backend.md)
 > and its audit [okay_backend_audit.md](okay_backend_audit.md).
 >
@@ -35,6 +38,7 @@
 - [15. Implementation rounds](#15-implementation-rounds)
 - [16. Owner decisions](#16-owner-decisions)
 - [17. Sources, licences and IP flags](#17-sources-licences-and-ip-flags)
+- [18. Owner powers and game controls](#18-owner-powers-and-game-controls)
 
 ## 1. The short version
 
@@ -147,8 +151,10 @@ All rows *(docs, not re-checked)*.
    `ac_audit` already shows the append-only pattern.
 4. **Roles are a rank, not permissions.** Three badges map to ranks 1 to 3. There is no "owner" above admin and no read-only
    "support" role.
-5. **The staff policy on `profiles` is wide.** `forum_sections.sql:43` "staff verify players" lets staff update any column of
-   any profile, not only `verified`. Unconfirmed as a problem (no test run); passed to the bug lane, not changed here.
+5. **The staff policy on `profiles` was wide.** `forum_sections.sql` "staff verify players" let staff update any column of
+   any profile, not only `verified`. Confirmed in round A2 by a failing check in `admin_sql` (staff renamed a player and
+   changed their bio) and fixed there: `profiles_keep_verified` now refuses any client change to someone else's profile
+   other than `verified`.
 6. **The Admin client has no test** and writes its own copies of helpers that OkayBackend now has (`Url`, JSON field reads).
 7. **Demo data ships in the launcher's Admin page** (section 2.1). The dashboard has no demo mode at all: an empty answer is
    shown as empty, an error as an error.
@@ -286,14 +292,28 @@ function is missing on the provider), `not_supported` (this provider cannot do i
   - (b) **Supabase Auth's own multi-factor (TOTP factors)**: no code of ours for the factor, but admin sign-in then depends on
     Supabase and the Local backend needs (a) anyway.
   - (c) **Password re-check only.**
-  - **Default until the owner decides: (c)**, plus the 30-minute idle sign-out and owner-only dangerous actions. Recommended:
-    (a), because it is ours and survives a provider change.
+  - **Owner decision 2026-11-27: (a)**, our own TOTP, for dangerous actions. A2 built the storage: `admin_totp_secrets`
+    (secret as opaque bytes, 16 to 256; algorithm SHA1 or SHA256; 6 or 8 digits; period; when confirmed; the last time step
+    used) and `admin_totp_use_step(uid, step)`, which accepts a step only once (a code cannot be replayed, two requests with
+    one code cannot both pass). Only the service role has any privilege on the table; the check itself is in the function
+    (A5). The secret is **not** encrypted by SQL: the only database crypto we use is pgcrypto's `crypt` for a password
+    compare, and a key kept in the same database would protect nothing. A5 may seal it with Web Crypto AES-GCM under a key
+    held only in the function's secrets (rule 18: a vetted primitive, not our own cipher).
 
 ## 10. Roles and permissions
 
 - **Roles extend the existing badges** (rule 19d): `owner` (new, rank 4, granted only in the SQL editor), `admin` (3), `staff`
   (2), `moderator` (1), and `support` (new, rank 0: it gives no power over the existing row rules, only dashboard reads).
   `role_rank`, `is_admin` and "act only on people ranked below you" keep working; `is_admin` includes `owner`.
+- **Built in A2** (`docs/sql/admin.sql`): `admin_permissions` (permission, kind `read` / `write` / `danger`, description) and
+  `admin_role_permissions`; `admin_can(uid, permission)` and `admin_permissions_of(uid)`. The owner holds every known
+  permission whatever the table says, so the owner cannot be locked out. Re-running `admin.sql` seeds only permissions it has
+  not seen before, so the owner's edits to the table stay. Nobody writes the table through the API; `permissions.manage`
+  (owner) changes it through the function in A5, or the owner in the SQL editor.
+- **Changed in A2:** handing out `admin` is now owner-only (it was any admin); `owner` is never handed out through the API;
+  staff can hand out `support`. `can_manage_badge` also needs `roles.manage`; `site_bans`, `admin_log` reads and `admin_stats`
+  use `admin_can` instead of the fixed rank. The launcher still shows admins a "give admin" button that the server now refuses
+  (fixed when the launcher moves onto the Admin API, round A8).
 - **Permissions** are rows in a new `admin_role_permissions (role, permission)` table, read through one function
   `admin_can(uid, permission)`, so a role can change without code changes. Default mapping (decision 16.3):
 
@@ -303,7 +323,18 @@ function is missing on the provider), `not_supported` (this provider cannot do i
 | `audit.read`, `reports.review`, `market.review`, `forums.moderate`, `users.ban` (rank rule still applies) | x | x | x | x | |
 | `users.verify`, `roles.manage` (moderator and cosmetic badges) | x | x | x | | |
 | `users.read_private` (email, sign-in times), `auth.reset`, `auth.manage`, `ac.review`, `errors.read`, `db.read`, `storage.read`, `functions.read`, `providers.check`, `config.write`, `roles.manage` (staff, admin) | x | x | | | |
-| `auth.ban`, `auth.delete`, `storage.delete`, `roles.manage` (admin), `logs.read` (console), `audit.read_ip` | x | | | | |
+| `auth.ban`, `auth.delete`, `storage.delete`, `roles.manage` (admin), `logs.read` (console), `audit.read_ip`, `permissions.manage` | x | | | | |
+| Section 18, owner console: `sql.read`, `sql.write`, `schema.manage`, `backups.manage`, `functions.deploy`, `functions.secrets`, `auth.settings`, `auth.end_sessions`, `storage.manage`, `network.manage`, `releases.pull` | x | | | | |
+| Section 18, game: `game.maintenance`, `game.min_version`, `game.features`, `users.mass_action`, `servers.control` | x | x | | | |
+| Section 18: `game.announce`, `chat.filter` | x | x | x | | |
+| Section 18: `users.mute`, `chat.moderate`, `rooms.kick` | x | x | x | x | |
+| Section 18: `profiles.edit` (allowed fields only), `users.view_as` (read only) | x | x | x | | x |
+
+Kinds (they pick the rate limit, section 11.3): `danger` for `auth.ban`, `auth.delete`, `storage.delete`,
+`permissions.manage`, every owner console write, `game.maintenance`, `game.min_version`, `game.features`,
+`users.mass_action`, `servers.control`, `releases.pull`; `read` for the views; `write` for the rest. Every `danger`
+permission also needs the second factor (A5) and, where it destroys or switches something off, a preview or the name typed
+back (`admin_set_config` already refuses a `danger` key without it).
 
 ## 11. Audit log and rate limits
 
@@ -313,25 +344,47 @@ function is missing on the provider), `not_supported` (this provider cannot do i
 `launcher`, `console`, `sql`), `request_id uuid`, `permission text`, `outcome` (`ok`, `refused`, `failed`), `ip inet`,
 `user_agent text` (300 characters). `detail` stays for old rows and the launcher.
 
+**Built in A2:** the columns; `admin_log_record` (the one writer; service role only, for the function), `admin_log_write`
+(as the signed-in caller, used by the triggers, now with before / after and the permission), `admin_log_context()` (reads
+the request headers PostgREST passes: `x-okay-source`, `x-okay-request-id`, `x-okay-client-ip`, `x-okay-user-agent`, else
+`User-Agent` and the first `X-Forwarded-For` address; values that do not parse are dropped; a client can never claim
+`sql`). A note a moderator inserts gets the server's values for every field the server owns. These header values are what
+the request claims: a signed-in admin talking to the API directly could set them; the `actor` column cannot be forged. Which
+headers Supabase's gateway really passes is unverified until A3 runs against a project.
+
 - **Who writes it:** only the server. Rows from RLS-covered actions come from the existing triggers (the function passes
   `source`, `request_id` and the address as request settings the triggers read). Rows for service-role actions are written by
   the function through `admin_log_write` (extended). The page cannot write a row.
 - **Refused attempts are logged too** (`outcome = refused`), so probing shows up.
-- **Append-only:** the `ac_audit` immutable trigger is made one shared function used by both tables (no second copy); purge
-  only with the session flag, by a retention job.
+- **Append-only (built in A2):** `audit_append_only()` in `admin.sql` replaces `ac_audit_immutable` (deleted) and guards both
+  logs. Update, delete and truncate are refused from every role, the SQL editor included. The one change allowed is
+  emptying a link to a person (`actor`, `target`, their names, `ip`, `user_agent`, `before`, `after` set to null or
+  `[deleted]`), which `delete-account` does; emptying `actor` also empties the address and agent, emptying `target` also
+  empties before and after. A session setting (`okay.admin_log_maintenance`, `okay.ac_audit_purge`) lets one maintenance job
+  through for one transaction: `ac_purge_audit` and `public_names.sql`'s one-off name clean-up.
 - **Readers:** `audit.read` sees rows without `ip` and `user_agent`; `audit.read_ip` (owner) sees all.
 
 ### 11.2 "From where"
 
 The function records the address from the request headers the Edge runtime passes (`x-forwarded-for`; unverified) and the
 `User-Agent`. This is personal data: default retention 90 days for `ip` and `user_agent` (set to null by the retention job),
-the rest kept (decision 16.5).
+the rest kept (decision 16.5). Built in A2: `admin_log_purge_old()` (the SQL editor, pg_cron job
+`okay-admin-log-retention` when pg_cron is on, or the owner) empties them and leaves one `log_retention` row.
 
 ### 11.3 Rate limits
 
 Reuse `ac_rate_hit` (renamed only if the owner wants; no second limiter): sign-in 5 per 10 minutes per address and per
 email; re-check 5 per 10 minutes per admin; reads 120 per minute per admin; writes 30 per minute per admin; dangerous actions
 10 per hour per admin. A limit hit answers `rate_limited` and writes a `refused` log row.
+
+**Built in A2:** `ac_rate_hit` and its table moved from `anticheat.sql` to `admin.sql` (one limiter; `anticheat.sql` runs
+after `admin.sql` and uses it). `admin_gate(permission, action, target)` (the signed-in caller) and `admin_gate_as(actor, ...)`
+(service role, for actions the function has checked a second factor for) answer `ok`, `forbidden`, `rate_limited` or
+`signed_out`, use the permission's kind for the limit (read 120 a minute, write 30 a minute, danger 10 an hour), and log every
+refusal, at most 20 refusal rows per account per 10 minutes so probing cannot flood the log. Changes made straight through
+the API under a permission (the word filter, `app_config`'s free keys) go through `admin_row_log`, which counts them against
+the same write limit and logs before and after. Sign-in limits per address and email are the function's (A3), with
+`ac_rate_hit` (granted to the service role).
 
 ## 12. How the page is protected
 
@@ -362,29 +415,31 @@ email; re-check 5 per 10 minutes per admin; reads 120 per minute per admin; writ
   allow-listed set of tables with filters and paging (read only), with private columns hidden (emails, hardware hashes,
   crash text bodies unless `errors.read`); edit only through the named actions of the other areas, never a generic cell edit.
   Round A6.
-- **Left out:** running SQL from the page and changing tables or policies (the SQL files in `docs/sql/` are the record and
-  are run in the SQL editor; a web form that runs SQL with full rights is unsafe); backups and restore (management or dashboard
-  only, restore is not offered by API); database size, CPU and query statistics (no route we have checked; no made-up numbers).
+- **Moved to section 18 (owner console only, A10):** the SQL editor, table and policy changes, backups and restore.
+- **Left out:** running SQL from any page other than the console on the owner's computer; database size, CPU and query
+  statistics (no route we have checked; no made-up numbers).
 
 ### 13.2 Authentication
 - **Real:** per account: email confirmed or not, created, last sign-in; confirm an email; send the normal password-reset email;
   auth-level ban for a length (blocks sign-in) and lift it; delete an account with all its data (the `delete-account` step
   list). Round A5.
-- **Left out:** showing or setting a password, or a reset link (the admin never sees one); ending one session of another
-  person (no admin route; a ban or delete does it); Auth settings (providers, templates, SMTP, redirect list): read-only on the
-  console in round A7, changes stay in Supabase's dashboard until our Local backend owns them.
+- **Moved to section 18 (A10):** Auth settings changes and ending all sessions of an account (console only).
+- **Left out:** showing or setting a password, or a reset link (the admin never sees one); ending ONE chosen session of
+  another person (no route).
 
 ### 13.3 Users
 - **Real:** search players; profile, roles, site-ban state; site ban and unban with reason and length; verify; anti-cheat
   bans, linked accounts and appeals (admins). Round A3 (read, bans, roles, verify), A6 (anti-cheat).
-- **Left out:** editing a player's profile text, name or picture (no rule allows it for the right reason; finding 5);
-  impersonating a player (no such route, and it would be unsafe).
+- **Moved to section 18 (A11):** editing a player's profile fields from an allowed list (`profiles.edit`), and a read-only
+  "view as player".
+- **Left out:** any session as a player (impersonation): unsafe, and never built.
 
 ### 13.4 Storage
 - **Real:** list buckets with their public flag and limits; list objects in a folder with size and time; open a public file's
   link (our project address only); delete one file in `chat` or `workshop` (moderation, with reauth). Official game uploads
   stay where they are (Admin > Official game, admin's token). Round A6.
-- **Left out:** uploading arbitrary files from the dashboard (the publish scripts and the launcher's official-game flow are the
+- **Moved to section 18 (A10):** creating buckets, changing their limits and rules, uploading and replacing files (console only).
+- **Left out:** uploading from any page other than the console (the publish scripts and the launcher's official-game flow are the
   paths, with their checksums); changing bucket rules (SQL files); storage used per bucket as a total (no route checked;
   summing a full listing is slow and is not done).
 
@@ -404,7 +459,8 @@ email; re-check 5 per 10 minutes per admin; reads 120 per minute per admin; writ
 - **Real:** our functions with a live health call each (round A7 adds a `GET` health answer to `delete-account`,
   `session-ticket` and `okay-admin`, without the service key, saying only "configured" or which setting is missing by name);
   on the console, the deployed list, versions and status from the management API. Round A7.
-- **Left out:** deploying, editing code or setting function secrets from the page (deploy stays the owner's command; a page
+- **Moved to section 18 (A10):** deploy, roll back, secrets (console only).
+- **Left out:** editing function code in a page, and deploying or setting secrets from any page other than the console (a page
   that deploys code is unsafe); invocation counts outside the console.
 
 ### 13.8 Networking
@@ -417,7 +473,8 @@ email; re-check 5 per 10 minutes per admin; reads 120 per minute per admin; writ
 ### 13.9 Logs
 - **Real:** `admin_log` with filters (who, action, target, time, outcome) and `ac_audit`; on the console, Supabase's request,
   Auth, Storage, Postgres and function logs for a chosen time window, as returned. Round A3 (audit), A7 (console logs).
-- **Left out:** live log streaming (no public route); logs on any host other than the console.
+- **Moved to section 18 (A10):** "live" logs on the console, by asking the logs route for the newest window every few seconds.
+- **Left out:** true streaming (no public route); logs on any host other than the console.
 
 ### 13.10 Errors
 - **Real:** crash reports still in the table (they empty after 7 or 14 days), with their GitHub issue number as text only;
@@ -449,9 +506,14 @@ OkayBackend's numbered rounds.
    map 17.19.6, a pointer in `okay_backend.md`, the docs index. Tests: none (docs).
 2. **A2. SQL: roles, permissions, audit log, limits.** Exists: `admin.sql`, `ac_audit`'s append-only trigger, `ac_rate_hit`.
    Gap: no owner or support role, no permission table, `admin_log` without before/after, source or immutability. Files:
-   `docs/sql/admin.sql`, `docs/sql/anticheat.sql` (shared immutable trigger), `tests/sql/test_admin.sql`,
-   `tests/scripts/test_admin_sql.sh`. Tests: `admin_sql` (first test of `admin.sql`: ranks, rank rule, permissions, log rows
-   from each trigger, append-only refusal, retention).
+   `docs/sql/admin.sql`, `docs/sql/anticheat.sql` (shared immutable trigger, limiter moved), `docs/sql/app_config.sql`
+   (controlled keys), `docs/sql/public_names.sql` (its name clean-up under the maintenance setting),
+   `docs/sql/forum_sections.sql` (the staff profile bug, finding 5), `tests/sql/test_admin.sql`,
+   `tests/scripts/test_admin_sql.sh`. Tests: `admin_sql`, 152 checks on a local Postgres (ranks, rank rule, permissions, log
+   rows from each trigger, append-only refusal, account-deletion emptying, retention, the gate and its limits, TOTP privileges
+   and replay, the word filter, the controlled config keys). **Written, tested locally; not run on the live project.**
+   The CI job "SQL row-level-security tests (Postgres)" runs every `tests/scripts/test_*_sql.sh`, so it runs `admin_sql` too;
+   a ctest entry in `tests/CMakeLists.txt` (a shared file) was not added.
 3. **A3. The `okay-admin` function, first areas.** Exists: the `delete-account` handler shape. Gap: no Admin API. Files:
    `backend/admin/api.json` (the contract), `supabase/functions/okay-admin/{admin_api.ts,index.ts,admin_api_test.ts}`. Areas:
    session, reauth, me, capabilities, providers (registry), overview, users (read, site bans, roles, verify), audit read.
@@ -470,7 +532,13 @@ OkayBackend's numbered rounds.
    fake management API.
 8. **A8. The launcher on the Admin API.** `okay::Admin` gets its test first, then calls the Admin API; launcher tabs replaced
    per section 14. Tests: `admin_client` (golden requests), launcher build.
-9. **A9. Local provider.** After OkayBackend rounds 9 to 14: the Local backend answers `/admin/v1` with C++ handlers; the same
+9. **A10. Owner console powers** (section 18.1). Console only, management token from the owner's environment, TOTP and a
+   typed confirm for every write. Tests: console with a fake management API; the SQL editor's read-only transaction refuses
+   a write; preview then commit; every route writes a log row with before and after.
+10. **A11. Game and community controls** (section 18.2). The SQL storage and row rules were built in A2; A11 adds the
+   function routes, the server-side enforcement and the launcher's side. Tests: function tests, SQL tests for each
+   enforcement rule, launcher build.
+11. **A9. Local provider.** After OkayBackend rounds 9 to 14: the Local backend answers `/admin/v1` with C++ handlers; the same
    contract suite runs against both. Tests: `okay_admin_contract`.
 
 Nothing in rounds A2 to A9 runs against the live project in CI; the owner applies SQL and deploys the function (as today).
@@ -479,9 +547,9 @@ Nothing in rounds A2 to A9 runs against the live project in CI; the owner applie
 
 Each with the default used until the owner decides.
 
-1. **Where the page is served.** Default: **A, the owner's own computer, no cost, desktop only.** For phones: C (Supabase
+1. **Where the page is served.** **Decided 2026-11-27: A, the owner's own computer only.** For phones: C (Supabase
    custom domain, paid) or D (a free static host, a new outside provider).
-2. **Second factor.** Default: **(c) password re-check only**; recommended (a) our own TOTP.
+2. **Second factor.** **Decided 2026-11-27: (a) our own TOTP for dangerous actions.**
 3. **Roles.** Default: add `owner` (only you) and `support`; the permission table in section 10. Who gets admin, staff,
    moderator and support is yours to say.
 4. **Management token.** Default: **only on the console, from your environment; never stored in the cloud.**
@@ -502,4 +570,57 @@ Each with the default used until the owner decides.
   2. The Admin API is our own route shape; the provider routes it calls are public interfaces, used as documented.
   3. TOTP (RFC 6238) is an open IETF standard; no patent claim is known to us, but none was searched (unverified).
   4. The free static hosts named in 6.1 are only options, not used.
-  5. None found beyond these.
+  5. Round A2's SQL was written from the PostgreSQL 16 manual (row security, triggers, privileges, advisory locks) and our
+     own files in `docs/sql/`; no outside SQL was used.
+  6. Pulling a release from "latest" (section 18.2) touches our own release index; it must keep CLAUDE.md rule 13 (never a
+     "latest" without checksums). Not an IP matter, a safety one.
+  7. None found beyond these.
+
+## 18. Owner powers and game controls
+
+Owner request, 2026-11-27: "can you add more admin powers, more control". The dashboard runs on the owner's computer only
+(decision 16.1), so the console there may use the management token (section 6.3). Every power below has: a permission
+(section 10), the second factor for `danger` ones (A5), a preview or the name typed back for destructive ones, the rate limit
+of its kind (section 11.3), and an audit row with before and after. Nothing is unlimited and nothing is drawn without a real
+call behind it. What Supabase's Management API offers is *(docs, not re-checked)*; A10 checks each route before coding it,
+and a route that does not exist moves to "left out" with the reason.
+
+### 18.1 Owner only, through the console (round A10)
+
+| Power | Permission | Real call | Safety |
+|---|---|---|---|
+| SQL editor | `sql.read`; writes `sql.write` | Management API SQL route (beta) | Read-only by default: every query runs in `begin; set transaction read only; ... rollback`. A write runs first as a preview in a transaction that is rolled back (rows changed, shown), then again on the typed confirm and TOTP, then commits |
+| Table and row-rule changes | `schema.manage` | The same SQL route | As a write; the console reminds that `docs/sql/` is the record and the change must go into the file too |
+| Backups, restore | `backups.manage` | Backup list route; restore only where the plan offers it (point-in-time restore is a paid add-on) | Restore: preview of what is lost (the time span), typed project name, TOTP. Not drawn when the plan has no restore |
+| Functions | `functions.deploy`, `functions.secrets`, `logs.read` | Deploy route; "roll back" = deploy an earlier build the console kept on the owner's computer (there is no route that returns old code); secrets set and delete by name | Secret values are typed in and never shown back; names only in the log |
+| Auth settings | `auth.settings` | Auth config route: sign-up on/off, email templates, password rules, providers | Before / after in the log (template text and settings, never a secret such as an SMTP password: logged as "changed") |
+| End all sessions of an account | `auth.end_sessions` | Through the SQL route: delete the account's rows in Auth's sessions and refresh-token tables (from memory of GoTrue's schema; unverified) | Access tokens already issued stay valid until they expire (up to an hour by default); the page says so |
+| Buckets | `storage.manage` | Storage API (service role): create, update limits and public flag, upload, replace; bucket row rules through `schema.manage` | Replace shows the old size and time; uploads to `releases/` keep the checksum rules |
+| Network | `network.manage` | Network restrictions, SSL enforcement and custom domain routes; Auth rate limits through the Auth config route | Preview of the new allow-list with the owner's own address checked, so the owner cannot lock themselves out |
+| Live logs | `logs.read` | Logs query route, polled every few seconds for the newest window | Shown as returned; no stored copy |
+
+Left out: PostgREST request rate limits (no route we know of); billing; true log streaming.
+
+### 18.2 Game and community controls (storage and row rules built in A2; the rest round A11)
+
+| Control | Permission | Built in A2 | A11 adds |
+|---|---|---|---|
+| Maintenance mode and its message | `game.maintenance` | `app_config` keys `maintenance` (`on`/`off`), `maintenance.message` | The launcher shows it and keeps players out of online play; server rules refuse new posts and matchmaking while on |
+| Announcement banner | `game.announce` | Keys `announcement` (one line, 300 characters), `announcement.level` (`info`/`warning`/`critical`), `announcement.until` | The launcher draws the banner |
+| Minimum launcher and game version | `game.min_version` | Keys `min_version.launcher`, `min_version.game` (`x.y.z` or empty) | The launcher asks to update; the ticket service refuses an older game |
+| Pull a bad release from "latest" | `releases.pull` (owner) | the permission | Console: rewrite our release index in the `releases` bucket to point "latest" at the previous good version; refused unless that version has all three checksums (rule 13) |
+| Feature switches | `game.features` | Keys `feature.chat`, `feature.uploads`, `feature.matchmaking`, `feature.signups` (`on`/`off`) | Restrictive insert rules on the chat tables and storage while off (like "not site banned"); matchmaking functions check it; sign-ups: the Auth setting through `auth.settings` (the key alone only hides the button, so A11 sets both) |
+| Mass actions (mute, ban, unban a list) | `users.mass_action` | the permission (danger: 10 an hour) | Preview of every name and what changes, at most 50 players, typed confirm and TOTP; each player goes through the normal per-player rule and gets its own log row, plus one summary row |
+| Mute | `users.mute` | the permission | A `chat_mutes` table and a restrictive insert rule on the chat tables (no mute exists today) |
+| Chat word filter | `chat.filter` edits, `chat.moderate` reads | Table `chat_word_filter` (lower-case pattern, `mask` or `block`); rate limited and logged | A trigger on message inserts that masks or refuses |
+| Lock or clear a chat room or forum thread | `chat.moderate` | the permission | Thread lock exists (`forum_threads.locked`); a `locked` flag for group chats and server channels; "clear" shows the count and needs the room name typed back |
+| Edit a player's profile fields | `profiles.edit` (support and up) | the permission; finding 5's fix means a client cannot do it directly | A definer function with an allowed list (display name, bio, status, picture cleared) and before / after |
+| View as player | `users.view_as` | the permission | Read only: the function runs the player's queries inside a read-only transaction with the player's id as the row-rule caller. No token, no session, no write is ever possible |
+| Shut down or restart a listed game server; kick everyone from a room | `servers.control`, `rooms.kick` | the permissions | Needs our own server code: a command row the game server and the relay read on their heartbeat (no such channel today); until then not drawn |
+
+**Row rules built in A2:** anyone (signed out too) reads `app_config` and `app_config_keys`; the controlled keys are changed
+only by `admin_set_config(actor, key, value, confirm, ...)`, which only the service role can call (so the function checks the
+second factor first): it refuses an unknown key, a value outside the key's pattern or over 300 characters, a `danger` key
+without its name typed back, and anything `admin_gate_as` refuses; it logs before and after. Free keys (`voice_relay`,
+`game_relay`) stay as before for `config.write` holders, now rate limited and logged. The word filter is readable by
+`chat.moderate` / `chat.filter` holders only (players do not see the list).

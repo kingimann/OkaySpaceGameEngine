@@ -3,7 +3,7 @@
 // parts show, a selection, an undo stack, the project's tags and layer names, and the rules the editor applies to each intent
 // (editor/main.cpp DrawInspector and CompHeader): edits go to every selected object, Lock and the resets record an undo step, a drag
 // of the Transform records one step when it begins, uniform scale, the component menu. Used by the OkayUI test
-// (okayui/tests/test_okayui_inspector.cpp) and the comparison with Dear ImGui (tests/test_okayui_inspector_imgui.cpp). Std and the model
+// (okayui/tests/test_okayui_inspector.cpp). Std and the model
 // only.
 #include "EditorPanelModels.hpp"
 

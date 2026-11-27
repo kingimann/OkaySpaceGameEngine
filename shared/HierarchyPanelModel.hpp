@@ -1,7 +1,7 @@
 #pragma once
 // The editor's Hierarchy panel as data (no ImGui, no OkayUI, no engine types), part of shared/EditorPanelModels.hpp (which includes
-// it). Both versions of the panel draw from it: the Dear ImGui body (editor/EditorPanelViews.cpp DrawHierarchyBodyImGui) and the
-// OkayUI port (okayui/screens/OkayUIEditorPanels.cpp DrawHierarchy). docs/own_ui_toolkit.md section 12.
+// it). The panel draws from it: the
+// OkayUI body (okayui/screens/OkayUIEditorPanels.cpp DrawHierarchy). docs/own_ui_toolkit.md section 12.
 //
 //   * The rows. The editor keeps its scene tree as a flat list of rows (editor/HierarchyRowModel.hpp: rebuilt only when the scene's
 //     objects, parents, the open state or the sort change). The panel model does not copy that list: it says how many rows there

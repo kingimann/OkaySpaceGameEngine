@@ -382,14 +382,6 @@ inline NotesLayout LayoutNotes(const std::vector<float>& lineH, float width, flo
     return n;
 }
 
-/// Pages with an OkayUI port (12 What's New, 13 Tips): which ONE surface draws page `tab` this frame. Only the UI backend decides
-/// (`okayFrame`: this frame has an OkayUI frame open). Nothing Dear ImGui draws over the page (a tooltip, a popup, another window)
-/// switches it to its Dear ImGui copy: the OkayUI page is hosted in Dear ImGui's draw order (okayuihost::HostPanelArea), so those
-/// are drawn over it like over any ImGui page. Before, a covered page was drawn by its Dear ImGui copy instead, so hovering the
-/// sidebar's profile row (its tooltip reaches into the page) swapped the whole What's New page to the other version and back
-/// (owner's recording, 2026-11-26). Tested in tests/test_okayui_panels_imgui.cpp (LauncherPage*).
-inline bool OkayUIDrawsPage(int tab, bool okayFrame) { return okayFrame && (tab == 12 || tab == 13); }
-
 /// What the What's New page's "Test builds" section shows.
 enum class TestBuildsView { Off, Loading, Failed, Empty, List };
 /// `on`: "Get test builds" is switched on; `devState`: 0 not read yet, 1 read, 2 could not be read; `n`: test builds listed.

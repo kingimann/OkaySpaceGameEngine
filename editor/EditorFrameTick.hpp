@@ -1,6 +1,6 @@
 #pragma once
-// The part of the editor's per-frame work that steps the game and has nothing to do with Dear ImGui, moved out of editor/main.cpp so window mode
-// (editor/OkayUIHostMode.cpp) can run the same step. Header-only and templated on the editor-state type, so the logic is tested headless with a small fake
+// The part of the editor's per-frame work that steps the game and has nothing to do with Dear ImGui, moved out of editor/main.cpp (first so a second
+// editor window could run the same step; that window was deleted on 2026-11-27). Header-only and templated on the editor-state type, so the logic is tested headless with a small fake
 // (okayui/tests/test_okayui_frametick.cpp) while the editor uses the real okay::editor::EditorState. The code is the block that was in main.cpp, moved as is:
 // docs/ui/own_ui_toolkit.md 6.24 step 4. No <mutex>/<thread> (Windows build rule).
 #include <functional>

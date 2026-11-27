@@ -1,5 +1,7 @@
 #include "OkayUI_ContextState.hpp"
 #include <algorithm>
+#include <string>
+#include <cstring>
 #include <cmath>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
@@ -20,10 +22,30 @@ void unpack(Color32 c, unsigned char out[4]) {
 }
 
 // A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
+// On the dock host's list (bottomHost) the geometry is recorded as the host's own window geometry at the bottom of the stacking order
+// (z 0, as docked content), so reorderWindows puts it under every floating window; the window being built (if any) carries on after it.
+int g_hostListDepth = 0;
 struct ListScope {
-    bool prevRaw, prevOv;
-    explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay || prevOv; }   // the window list draws where the widgets around it do: in a popup, that is the overlay
-    ~ListScope() { g_rawDraw = prevRaw; g_toOverlay = prevOv; }
+    bool prevRaw, prevOv, counted = false, host = false, hadOpen = false; int prevId = 0; unsigned long long prevZ = 0;
+    explicit ListScope(bool overlay, bool bottomHost = false) : prevRaw(g_rawDraw), prevOv(g_toOverlay) {   // the window list draws where the widgets around it do: in a popup, that is the overlay
+        g_rawDraw = true; g_toOverlay = overlay || prevOv;
+        if (!bottomHost || g_toOverlay) return;
+        counted = true;
+        if (g_hostListDepth++ > 0) return;   // a call inside another call of the same list: already recorded
+        host = true;
+        hadOpen = g_wrecOpen >= 0;
+        if (hadOpen) { prevId = g_wrec[g_wrecOpen].id; prevZ = g_wrec[g_wrecOpen].z; }
+        // Consecutive calls on the host's list share one record: the window record reopened after the last call is dropped while still empty.
+        if (hadOpen && g_wrecOpen == g_nwrec - 1 && g_wrec[g_wrecOpen].i0 == g_ni && g_nwrec >= 2 && g_wrec[g_nwrec - 2].id == kDockHostRecId &&
+            g_wrec[g_nwrec - 2].i1 == g_ni) { --g_nwrec; g_wrecOpen = -1; }
+        if (g_wrecOpen < 0 && g_nwrec >= 1 && g_wrec[g_nwrec - 1].id == kDockHostRecId && g_wrec[g_nwrec - 1].i1 == g_ni) g_wrecOpen = g_nwrec - 1;
+        else wrecBegin(kDockHostRecId, 0);
+    }
+    ~ListScope() {
+        if (counted) --g_hostListDepth;
+        if (host) { wrecEnd(); if (hadOpen) wrecBegin(prevId, prevZ); }
+        g_rawDraw = prevRaw; g_toOverlay = prevOv;
+    }
 };
 
 // cos(pi / n) for n = 3..128, worked out once: the mitre of a regular n-gon's stroke.
@@ -147,19 +169,19 @@ void DrawChevron(const DrawList& dl, Vec2 c, float size, int dir, Color32 col, f
 
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     line(a.x, a.y, b.x, b.y, th, c);
 }
 
 void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
 }
 
 void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     const float w = mx.x - mn.x, h = mx.y - mn.y;
     if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }   // the stroke fills the box
     if (!finite1(rounding) || rounding <= 0.5f) {   // four bars, drawn inside the rectangle, no overlap
@@ -177,20 +199,20 @@ void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) 
 
 void DrawList::AddRectFilledMultiColor(Vec2 mn, Vec2 mx, Color32 tl, Color32 tr, Color32 br, Color32 bl) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(overlay); unsigned char a[4], b[4], c[4], d[4];
+    ListScope s(overlay, bottomHost); unsigned char a[4], b[4], c[4], d[4];
     unpack(tl, a); unpack(tr, b); unpack(br, c); unpack(bl, d);
     gradQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, a, b, c, d);
 }
 
 void DrawList::AddCircleFilled(Vec2 center, float radius, Color32 col, int segments) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     fillCircle(center.x, center.y, radius, c, circleSegments(radius, segments));
 }
 
 void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, float th) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     const int n = circleSegments(radius, segments);
     float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
     if (th >= radius) { fillCircle(center.x, center.y, radius, c, n); return; }
@@ -209,7 +231,7 @@ void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, f
 
 void DrawList::AddTriangleFilled(Vec2 a, Vec2 b, Vec2 c3, Color32 col) const {
     if (!finite2(a) || !finite2(b) || !finite2(c3)) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     tri(a.x, a.y, b.x, b.y, c3.x, c3.y, c);
 }
 
@@ -233,7 +255,7 @@ void DrawList::AddQuad(Vec2 a, Vec2 b, Vec2 c3, Vec2 d, Color32 col, float th) c
 void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed, float th) const {
     if (!pts || count < 2 || count > kMaxPath || !finite1(th) || th <= 0.0f) return;
     for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     strokePath(pts, count, closed, th, c);
 }
 
@@ -273,7 +295,7 @@ void DrawList::AddConcavePolyFilled(const Vec2* pts, int count, Color32 col) con
 void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {
     if (!pts || count < 3 || count > kMaxPath) return;
     for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
     fillConvex(pts, count, c);
 }
 
@@ -294,13 +316,18 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     if (!text || !*text || !finite2(pos)) return;
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
+    if (std::strchr(text, '\n')) {   // a line break starts the next line a text line lower (Dear ImGui's AddText), not a '?' glyph
+        float y = pos.y;
+        imguiWrap(text, 1.0e9f, scale, [&](const char* l) { if (l[0]) drawText(pos.x, y, l, scale, c); y += fH() * scale; return 1.0e9f; });
+        return;
+    }
     drawText(pos.x, pos.y, text, scale, c);
 }
 
 void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
     if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
+    ListScope s(false, bottomHost); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
     texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
 }
 
@@ -322,6 +349,16 @@ static void texPoly(SDL_Texture* tex, const Vec2* p, const Vec2* uv, int n, cons
 Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char** remaining) const {
     if (remaining) *remaining = text ? text + std::strlen(text) : nullptr;
     if (!text || !*text || !(size > 0.0f) || !std::isfinite(size)) return Vec2{0, 0};
+    if (g_ttf || ttf) {   // the real glyph advances of the text font, scaled to `size` (the fixed cell width below is the bitmap font's)
+        const float k = size / fH();
+        float best = 0.0f; int lines = 1;
+        std::string ln;
+        for (const char* p = text;; ++p) {
+            if (*p == '\n' || !*p) { best = std::max(best, ln.empty() ? 0.0f : fMeasure(ln.c_str()) * k); ln.clear(); if (!*p) break; ++lines; }
+            else ln += *p;
+        }
+        return Vec2{best, (float)lines * size};
+    }
     const float scale = size / (height > 0 ? (float)height : 8.0f), cw = (float)width * scale;
     float best = 0.0f; int lines = 1, cur = 0;
     for (const char* p = text; *p; ++p) {
@@ -397,7 +434,7 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, const char* text
 
 void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
     if (!tex || !finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4) || !finite2(uv1) || !finite2(uv2) || !finite2(uv3) || !finite2(uv4)) return;
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);
+    ListScope s(false, bottomHost); unsigned char c[4]; unpack(tint, c);
     const Vec2 p[4] = {p1, p2, p3, p4}, uv[4] = {uv1, uv2, uv3, uv4};
     texPoly(tex, p, uv, 4, c);
 }
@@ -434,7 +471,7 @@ void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec
         uv[i].x = uv0.x + (uv1.x - uv0.x) * (pts[i].x - mn.x) / w;
         uv[i].y = uv0.y + (uv1.y - uv0.y) * (pts[i].y - mn.y) / h;
     }
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);
+    ListScope s(false, bottomHost); unsigned char c[4]; unpack(tint, c);
     // A fan from the first point is convex-safe for a rounded rectangle, but the first point is on a corner arc: use the centre instead.
     Vec2 fan[4 * 17 + 2]; Vec2 fuv[4 * 17 + 2]; int m = 0;
     fan[m] = Vec2{ (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f };
@@ -519,7 +556,9 @@ void DrawList::PathFillConvex(Color32 col) const {
 
 const DrawListHandle ui_core::g_windowList(false);
 const DrawListHandle ui_core::g_foregroundList(true);
-DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : &g_windowList); }
+const DrawListHandle ui_core::g_dockHostList(false, true);
+const DrawListHandle& GetDockHostDrawList() { return g_dockHostList; }
+DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : (bottomHost ? &g_dockHostList : &g_windowList)); }
 // ---- raw geometry ----
 Vec2 GetFontTexUvWhitePixel() { return Vec2{g_whiteU, g_whiteV}; }
 namespace { SDL_Texture* g_texStack[8]; int g_texTop = 0; }
@@ -528,7 +567,7 @@ void DrawList::PrimReserve(int idxCount, int vtxCount) const {
     _VtxCurrentIdx = (unsigned)(overlay ? g_onv : g_nv);
 }
 void DrawList::PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const {
-    ListScope s(overlay);
+    ListScope s(overlay, bottomHost);
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int& nv = g_toOverlay ? g_onv : g_nv;
     if ((g_cullRow && !g_toOverlay)) return;
@@ -540,7 +579,7 @@ void DrawList::PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const {
     V[nv++] = v;
 }
 void DrawList::PrimWriteIdx(ImDrawIdx idx) const {
-    ListScope s(overlay);
+    ListScope s(overlay, bottomHost);
     int* I = g_toOverlay ? g_ovIdx : g_idx;
     int& ni = g_toOverlay ? g_oni : g_ni;
     const int nv = g_toOverlay ? g_onv : g_nv;
@@ -553,12 +592,12 @@ void DrawList::PrimVtx(Vec2 pos, Vec2 uv, Color32 col) const {
     PrimWriteVtx(pos, uv, col);
 }
 void DrawList::PushTexture(const ImTextureRef& tex) const {
-    ListScope s(overlay);
+    ListScope s(overlay, bottomHost);
     if (g_texTop < 8) g_texStack[g_texTop++] = tex._TexID;
     bindTexture(tex._TexID);
 }
 void DrawList::PopTexture() const {
-    ListScope s(overlay);
+    ListScope s(overlay, bottomHost);
     if (g_texTop <= 0) return;
     --g_texTop;
     bindTexture(g_texTop > 0 ? g_texStack[g_texTop - 1] : g_defTex);

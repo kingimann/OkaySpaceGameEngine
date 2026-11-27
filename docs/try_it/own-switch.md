@@ -39,8 +39,8 @@ Good to know:
 * The model readers (FBX, COLLADA, 3DS ... and since 2026-11-23 also glTF 1.0, OpenGEX, MDL and Quake III maps) are our own code
   by default and do not need a switch. `OKAY_THIRD_PARTY=1` sends them back to Assimp and ufbx.
 * Options chosen only when the program is built are not in this list. Still off on purpose: our own cryptography (owner rule 18),
-  `-DOKAY_OWN_STACK` (a developer switch releases refuse), the Nendo seam, and the extra OkayUI programs (`OKAY_LAUNCHER_ON_OKAYUI` /
-  `OKAY_EDITOR_ON_OKAYUI`, not built by CI yet). `OKAY_UI_DEFAULT_BACKEND` stays `imgui` so that unticking **OkayUI screens** really goes back.
+  `-DOKAY_OWN_STACK` (a developer switch releases refuse), and the Nendo seam. (The launcher and the editor are OkayUI only since
+  2026-11-27: there is no Dear ImGui to go back to.)
 * To add a switch later: add one line to `Items()` in `shared/OwnSwitches.hpp`. A new item starts on for everyone, because
   only the items in `off=` are off.
 

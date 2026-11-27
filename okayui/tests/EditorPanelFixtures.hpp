@@ -1,6 +1,6 @@
 #pragma once
-// Sample data for the Problems, Stats, History, Tags and Layers, Physics and Profiler panels, shared by the OkayUI tests (test_okayui_editor_panels.cpp) and the
-// side-by-side comparison with the Dear ImGui versions (tests/test_okayui_editor_panels_imgui.cpp). Made up for the tests; it
+// Sample data for the Problems, Stats, History, Tags and Layers, Physics and Profiler panels, used by the OkayUI tests (test_okayui_editor_panels.cpp).
+// Made up for the tests; it
 // looks like what the editor shows for a small scene with a few mistakes in it.
 #include "EditorPanelModels.hpp"
 

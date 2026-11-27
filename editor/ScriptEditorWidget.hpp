@@ -15,12 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-#ifdef OKAY_HAVE_OKAYUI
-#include "OkayUIHost.hpp"
-#include "OkayUIImGuiEmbed.hpp"   // the code's shapes go into the ImGui window's draw list (ImGui's popups then cover them)
-#else
-#include "okay/UI/OkayUI.hpp"     // the editor built on OkayUI itself (OKAY_ON_OKAYUI): the code is drawn straight into the window
-#endif
+#include "okay/UI/OkayUI.hpp"     // the editor is built on OkayUI: the code is drawn straight into the window
 
 /// True while an OkayUI script editor has the keyboard (set by ScriptEditorWidget::Render). editor/main.cpp turns Dear ImGui's
 /// keyboard navigation off for the next frame while it is true: otherwise Space and Enter typed into the code also press
@@ -86,71 +81,7 @@ public:
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this". `border`: a framed child with padding.
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {
-#ifdef OKAY_HAVE_OKAYUI
-        // A framed Dear ImGui child window in the code's background colour, with its border and rounding,
-        // its padding around the text (CodeEdit's content padding) and the scroll bars at its inside edge in ImGui's style.
-        const ImGuiStyle& st = ImGui::GetStyle();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(okay_.Edit().Palette().background));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
-        ImGui::BeginChild(id, size, border ? ImGuiChildFlags_Borders : ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
-        ImGuiWindow* win = ImGui::GetCurrentWindow();
-        const ImRect inner = win->InnerRect;                    // inside the border
-        const ImVec2 a(std::max(inner.GetWidth(), 8.0f), std::max(inner.GetHeight(), 8.0f));
-        // OkayUI draws and reads the mouse in the editor window's own pixels; Dear ImGui's screen positions are desktop positions
-        // with the multi-window viewports on, so take the window's place on the desktop off (as the Console does).
-        const ImVec2 vp = ImGui::GetWindowViewport()->Pos;
-        const ImVec2 sp = inner.Min;
-        const ImVec2 p(sp.x - vp.x, sp.y - vp.y);
-        okay_.SetScreenOffset(vp.x, vp.y);                      // the geometry calls answer in ImGui's coordinates again
-        ImGui::SetCursorScreenPos(sp);
-        ImGui::InvisibleButton("##okaycode", a);                // the rectangle: an ImGui item, so ImGui does not scroll under it
-        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-        oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        // The code font: the embedded JetBrains Mono at the size the script editor pushed (its zoom and the UI scale).
-        okay_.UseCodeFont(ImGui::GetFontSize());
-        OkayUI::CodeEdit& ce = okay_.Edit();
-        if (!clipHooked_) {   // copy and paste through Dear ImGui's clipboard (the system clipboard, no size limit), as before
-            clipHooked_ = true;
-            ce.SetClipboardFunctions([](const std::string& t) { ImGui::SetClipboardText(t.c_str()); },
-                                     []() { const char* c = ImGui::GetClipboardText(); return std::string(c ? c : ""); });
-        }
-        ce.SetContentPadding(border ? st.WindowPadding.x : 0.0f, border ? st.WindowPadding.y : 0.0f);
-        ce.SetScrollbarStyle(st.ScrollbarSize, st.ScrollbarRounding);
-        ce.SetAlwaysShowHScrollbar(true);                       // the horizontal bar is always there, as it always was
-        {
-            OkayUI::CodePalette pal = ce.Palette();
-            pal.scrollTrack = ImGui::GetColorU32(ImGuiCol_ScrollbarBg);
-            pal.scrollThumb = ImGui::GetColorU32(ImGuiCol_ScrollbarGrab);
-            pal.scrollThumbHot = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabHovered);
-            ce.SetPalette(pal);
-        }
-        // Draw the code into OkayUI, then take its shapes out of the OkayUI frame and put them into this window's draw list: they
-        // are then drawn where this window is in Dear ImGui's order, under the autocomplete list, its help tooltip, the hover
-        // tooltips and modal dialogs ImGui draws later (OkayUI's frame is drawn after ImGui, which used to cover all of them).
-        OkayUI::BeginCapture();
-        OkayUI::PushTextScale(oked::g_uiScale);
-        OkayUI::BareNextWindow();
-        if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) ce.Draw("##codeedit", a.x, a.y);
-        OkayUI::End();
-        OkayUI::PopTextScale();
-        OkayUI::EndCapture(cap_);
-        okayuihost::SharedImGuiEmbed().Append(ImGui::GetWindowDrawList(), cap_, vp, inner.Min, inner.Max);
-        okayFocused_ = ce.Focused();
-        // A mouse press: inside the code, the code's ImGui child (and so the Script Editor window) takes the focus too (its
-        // shortcuts, not the scene's: Ctrl+D duplicated the selected object while typing); anywhere else, the code gives up the keyboard.
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            const ImVec2 m = ImGui::GetIO().MousePos;
-            const bool inside = m.x >= sp.x && m.x < sp.x + a.x && m.y >= sp.y && m.y < sp.y + a.y && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-            if (inside) { if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ImGui::SetWindowFocus(); }
-            else if (okayFocused_) { OkayUI::SetKeyboardFocusId(0); okayFocused_ = false; }
-        }
-        g_scriptCodeOwnsKeys = okayFocused_;
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
-#else
-        // The editor on OkayUI (OKAY_ON_OKAYUI): Dear ImGui's names are OkayUI's, so the code is drawn straight into a child window.
+        // Dear ImGui's names are OkayUI's in the editor, so the code is drawn straight into a child window.
         okay_.UseCodeFont(ImGui::GetFontSize());
         if (ImGui::BeginChild(id, size.x, size.y, border)) {
             const OkayUI::Vec2 a = OkayUI::GetContentRegionAvail();
@@ -159,14 +90,10 @@ public:
         ImGui::EndChild();
         okayFocused_ = okay_.Edit().Focused();
         g_scriptCodeOwnsKeys = okayFocused_;
-#endif
     }
 
 private:
     scripteditor::ScriptEditorCodeEdit okay_;
     bool okayFocused_ = false;
     bool clipHooked_ = false;
-#ifdef OKAY_HAVE_OKAYUI
-    OkayUI::CapturedGeometry cap_;   // this frame's code shapes, on their way into the ImGui draw list
-#endif
 };

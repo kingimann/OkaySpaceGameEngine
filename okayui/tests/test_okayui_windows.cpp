@@ -5,6 +5,7 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // Window_MenuBar
+#include "okay/UI/OkayUIInternals.hpp"   // GetDockHostDrawList
 
 #include <cmath>
 #include <cstdio>
@@ -619,6 +620,372 @@ void TestRegionInsideWindow() {
     CHECK(innerClicks == 1 && afterClicks == 1);
 }
 
+// A menu is a popup window of any widgets (Dear ImGui's BeginMenu): the editor's Edit > Appearance sub-menu holds a design picker made of
+// text, buttons, sliders and a separator. They used to be laid out in the window under the menu (drawn at its edge, under the list); now
+// they go into the list, below the rows before them, take clicks, keep the menu open, and the list grows to fit them.
+void TestMenuOfWidgets() {
+    RUN_SUITE("windows: a menu's list lays out any widgets (a popup window of widgets)");
+    Reset();
+    Sim sim(900, 600);
+    UI::Rect undo{}, sub{}, label{}, wide{}, slider{}, after{}, outer{}, editBtn{}; UI::Vec2 wpos{};
+    bool editOpen = false, subOpen = false; int wideClicks = 0, afterClicks = 0; float v = 0.25f;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 400), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            wpos = UI::GetWindowPos();
+            if (UI::BeginMenuBar()) {
+                editOpen = UI::BeginMenu("Edit");
+                if (editOpen) {
+                    UI::MenuItem("Undo"); undo = UI::GetItemRect();
+                    subOpen = UI::BeginMenu("Appearance");
+                    sub = UI::GetItemRect();
+                    if (subOpen) {
+                        UI::TextDisabled("Design"); label = UI::GetItemRect();
+                        if (UI::Button("a wide design card", V(420, 40))) ++wideClicks;
+                        wide = UI::GetItemRect();
+                        UI::Separator();
+                        UI::SliderFloat("Corner roundness", &v, 0.0f, 1.0f); slider = UI::GetItemRect();
+                        if (UI::MenuItem("After the widgets")) ++afterClicks;
+                        after = UI::GetItemRect();
+                        UI::EndMenu();
+                    }
+                    UI::EndMenu();
+                }
+                editBtn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::Button("content"); outer = UI::GetItemRect();
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(editBtn), CenterY(editBtn), ui);   // the bar's menu
+    sim.Frames(2, ui);
+    CHECK(editOpen);
+    if (!editOpen) return;
+    sim.Move(CenterX(sub), CenterY(sub)); sim.Frames(3, ui);
+    CHECK(subOpen);
+    if (!subOpen) return;
+    // laid out in the sub-menu's list, to the right of the Edit list, from its row down
+    CHECK(label.x >= sub.x + sub.w - 1.0f);
+    CHECK(wide.x >= sub.x + sub.w - 1.0f && wide.y >= label.y + label.h - 0.5f);
+    CHECK(slider.y >= wide.y + wide.h - 0.5f);
+    CHECK(after.y >= slider.y + slider.h - 0.5f);           // a row after the widgets goes under them
+    CHECK(after.w >= 420.0f);                               // the list grew to fit the wide widget
+    // the widget takes the click and the menu stays open (only picking an item closes it)
+    sim.Move(CenterX(sub) + 2.0f, CenterY(sub)); sim.Frame(ui);
+    sim.Move(CenterX(wide), CenterY(wide)); sim.Frame(ui);
+    sim.Down(); sim.Frame(ui); sim.Up(); sim.Frames(2, ui);
+    CHECK(wideClicks == 1);
+    CHECK(editOpen && subOpen);
+    // drawn on top: the button's centre is not the window's background colour under the list
+    const Bitmap& b = sim.Draw(12, 14, 20);
+    CHECK(PixelAt(b, (int)CenterX(wide), (int)CenterY(wide)) != PixelAt(b, (int)(wpos.x + 300), (int)(wpos.y + 380)));
+    // picking the row after the widgets closes the whole chain
+    sim.Move(CenterX(after), CenterY(after)); sim.Frame(ui);
+    sim.Down(); sim.Frame(ui); sim.Up(); sim.Frames(2, ui);
+    CHECK(afterClicks == 1);
+    CHECK(!editOpen);
+    (void)undo;
+}
+
+// Dear ImGui's SameLine(offset_from_start_x): the next item goes at that x from the window's left edge, also left of the item before it (the
+// editor's menu bar centres Play and right-aligns the layout list and the version that way; the one-argument Dear ImGui call is that, see
+// okayui/probe/imgui.h). OkayUI used to treat it as a gap after the last item: Play sat 624 pixels right of the centre, the rest off screen.
+void TestSameLineOffset() {
+    RUN_SUITE("windows: SameLine(offset) is an x from the window's left edge");
+    Reset();
+    Sim sim(800, 400);
+    UI::Rect a{}, b{}, c{}; UI::Vec2 wpos{};
+    auto ui = [&] {
+        UI::UseImGuiCoordinates(true);
+        UI::SetNextWindowPos(V(30, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, 0)) {
+            wpos = UI::GetWindowPos();
+            UI::Button("a long first button", V(300, 0)); a = UI::GetItemRect();
+            UI::SameLine(100.0f, 0.0f); UI::Button("b"); b = UI::GetItemRect();      // left of a's end
+            UI::SameLine(450.0f, 0.0f); UI::Button("c"); c = UI::GetItemRect();
+        }
+        UI::End();
+        UI::UseImGuiCoordinates(false);
+    };
+    sim.Frames(3, ui);
+    CHECK(std::fabs(b.x - (wpos.x + 100.0f)) < 0.5f);
+    CHECK(std::fabs(b.y - a.y) < 0.5f);
+    CHECK(std::fabs(c.x - (wpos.x + 450.0f)) < 0.5f);
+}
+
+// MenuItem(label, shortcut, bool* p_selected): Dear ImGui's toggle row. Before the overload the pointer became `selected = true`, so the
+// editor's menu toggles (Show Gizmos, Snap to grid, Auto-scroll, ...) always showed a tick and a click changed nothing.
+void TestMenuItemToggle() {
+    RUN_SUITE("windows: MenuItem with a bool pointer toggles it");
+    Reset();
+    Sim sim(500, 320);
+    UI::Rect btn{}, row{}; bool open = false, on = false; int clicks = 0;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 240), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            if (UI::BeginMenuBar()) {
+                open = UI::BeginMenu("View");
+                if (open) { if (UI::MenuItem("Grid", nullptr, &on)) ++clicks; row = UI::GetItemRect(); UI::EndMenu(); }
+                btn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    CHECK(open && !on);
+    sim.Click(CenterX(row), CenterY(row), ui); sim.Frame(ui);
+    CHECK(on && clicks == 1);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    sim.Click(CenterX(row), CenterY(row), ui); sim.Frame(ui);
+    CHECK(!on && clicks == 2);
+}
+
+// The dock host's draw list (a dock node's HostWindow->DrawList): what is drawn on it lies under the floating windows even when it is drawn
+// after they ended. The editor draws its panel icons on the docked tabs that way, at the end of the frame; they showed through a floating
+// window (the Animator, the Modeling window) as stray squares and arrows.
+void TestDockHostListUnderFloating() {
+    RUN_SUITE("windows: the dock host's list is drawn under floating windows");
+    Reset();
+    Sim sim(400, 300);
+    UI::Vec2 fpos{}, fsize{};
+    auto ui = [&] {
+        // a busy window first: many clip changes (draw spans), as the editor's frame has; the stacking order must still be applied
+        UI::SetNextWindowPos(V(0, 250), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(60, 40), UI::Cond_FirstUseEver);
+        if (UI::Begin("Busy", nullptr, 0))
+            for (int i = 0; i < 200; ++i) { UI::PushClipRect(V(1.0f + (float)(i % 50), 251), V(52.0f + (float)(i % 50), 289), true); UI::GetWindowDrawList().AddRectFilled(V(2, 260), V(4, 262), UI::RGBA(9, 9, 9, 255)); UI::PopClipRect(); }
+        UI::End();
+        UI::SetNextWindowPos(V(100, 80), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 150), UI::Cond_FirstUseEver);
+        if (UI::Begin("Floating", nullptr, 0)) { fpos = UI::GetWindowPos(); fsize = UI::GetWindowSize(); UI::Text("over the dock"); }
+        UI::End();
+        UI::GetDockHostDrawList().AddRectFilled(V(20, 20), V(380, 280), UI::RGBA(201, 31, 77, 255));   // after every window: as the editor's tab icons
+    };
+    sim.Frames(3, ui);
+    const Bitmap& b = sim.Draw(12, 14, 20);
+    const unsigned red = Rgba(201, 31, 77);
+    CHECK(PixelAt(b, 40, 40) == red);                                                        // outside the window: drawn
+    CHECK(PixelAt(b, (int)(fpos.x + fsize.x * 0.5f), (int)(fpos.y + fsize.y - 10)) != red);   // inside it: under the window
+}
+
+// IsWindowHovered under an open menu list: the list is hovered, not the window under it (Dear ImGui's rule). The editor's Scene view
+// asks IsWindowHovered as a fallback for its clicks, and picked the object under a View > Panels row while that row was clicked.
+void TestWindowHoveredUnderMenu() {
+    RUN_SUITE("windows: a window under an open menu list is not hovered there");
+    Reset();
+    Sim sim(600, 400);
+    UI::Rect btn{}, row{}; bool open = false, belowHovered = false;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(0, 0), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 400), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            if (UI::BeginMenuBar()) {
+                open = UI::BeginMenu("View");
+                if (open) { UI::MenuItem("Panels"); row = UI::GetItemRect(); UI::MenuItem("Layout"); UI::EndMenu(); }
+                btn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::BeginChild("scene", V(0, 0));
+            belowHovered = UI::IsWindowHovered();
+            UI::EndChild();
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    CHECK(open);
+    sim.Move(CenterX(row), CenterY(row)); sim.Frames(2, ui);
+    CHECK(open && !belowHovered);
+    sim.Move(500, 300); sim.Frames(2, ui);                    // away from the list
+    CHECK(belowHovered);
+}
+
+// A modal opened and begun outside every window keeps its id when the window drawn last changes (the editor's built-in file browser,
+// begun after all windows: it closed itself one frame after it opened, because the key took in the last window's id).
+void TestTopLevelPopupId() {
+    RUN_SUITE("windows: a popup begun outside every window keeps its id");
+    Reset();
+    Sim sim(640, 480);
+    int frame = 0; bool shown = false;
+    auto ui = [&] {
+        const char* order[2] = {frame < 2 ? "A" : "B", frame < 2 ? "B" : "A"};   // the window drawn last changes on frame 2
+        for (const char* n : order) { UI::SetNextWindowPos(V(n[0] == 'A' ? 10.0f : 300.0f, 10), UI::Cond_FirstUseEver); if (UI::Begin(n, nullptr, 0)) UI::Text(n); UI::End(); }
+        if (frame == 1) UI::OpenPopup("###browser");
+        shown = UI::BeginPopupModal("Open a folder###browser");
+        if (shown) { UI::Text("files"); UI::EndPopup(); }
+        ++frame;
+    };
+    sim.Frames(2, ui);
+    CHECK(shown);
+    sim.Frames(3, ui);
+    CHECK(shown);   // still open after the last window changed
+}
+
+// A modal given a size (SetNextWindowSize before BeginPopupModal) is that tall, and GetContentRegionAvail ends at its inner bottom: the
+// editor's file browser sizes its list from it and puts Cancel / Choose under the list, which drew below the box before.
+void TestModalFixedHeight() {
+    RUN_SUITE("windows: a modal given a height keeps it; the content region ends there");
+    Reset();
+    Sim sim(800, 600);
+    UI::Rect footer{}; float availY = 0.0f; bool shown = false;
+    auto ui = [&] {
+        if (!UI::IsPopupOpen("Browse")) UI::OpenPopup("Browse");
+        UI::SetNextWindowSize(V(500, 360), UI::Cond_Appearing);
+        shown = UI::BeginPopupModal("Browse");
+        if (shown) {
+            availY = UI::GetContentRegionAvail().y;
+            const float footerH = UI::GetFrameHeightWithSpacing() + 8.0f;
+            if (UI::BeginChild("list", V(0, availY - footerH), UI::Child_Borders)) { for (int i = 0; i < 40; ++i) UI::Text("file"); }
+            UI::EndChild();
+            UI::Button("Choose"); footer = UI::GetItemRect();
+            UI::EndPopup();
+        }
+    };
+    sim.Frames(4, ui);
+    CHECK(shown);
+    CHECK(availY > 200.0f && availY < 360.0f);
+    const float boxBottom = (600.0f + 360.0f) * 0.5f;          // centred, 360 tall
+    CHECK(footer.y + footer.h <= boxBottom + 1.0f);            // the footer is inside the box
+}
+
+// Drags between windows, the editor's way (round 3 of the editor on OkayUI): a file dragged from the Project panel (a tile with a
+// drag source) dropped on the Scene view (an InvisibleButton with mouse-button flags, then BeginDragDropTarget), on an Inspector slot
+// (a button whose target accepts before delivery and acts only on IsDelivery()) and anywhere else in the Inspector (a target over the
+// whole window: BeginDragDropTargetCustom of GetCurrentWindow()->InnerClipRect). The slot takes the drop over the window-wide target
+// drawn after it. Dear ImGui's documented outline rule: the target outline is drawn only when a payload of the accepted type is over
+// it (AcceptDragDropPayload), and never with AcceptNoDrawDefaultRect; a payload of another type draws nothing.
+void TestDragAcrossWindows() {
+    RUN_SUITE("windows: drags from one window to targets in others (Project -> Scene view, Inspector slot, Inspector window)");
+    Reset();
+    Sim sim(640, 480);
+    std::string scene, slot, window; bool slotHover = false, slotPending = false;
+    const char* type = "ASSET_PATH";
+    UI::Rect src{}, view{}, slotR{}, inspR{};
+    auto ui = [&] {
+        slotHover = slotPending = false;
+        UI::PushStyleColor(UI::Col_DragDropTarget, 255, 0, 255);   // the outline in a colour nothing else uses
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Project", nullptr, 0)) {
+            UI::Button("Wood.png", V(80, 60)); src = UI::GetItemRect();
+            if (UI::BeginDragDropSource()) { UI::SetDragDropPayload(type, "Assets/Wood.png", 16); UI::Text("Wood.png"); UI::EndDragDropSource(); }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(230, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Scene", nullptr, 0)) {
+            UI::InvisibleButton("##view", V(360, 140), UI::Button_MouseButtonLeft | UI::Button_MouseButtonRight); view = UI::GetItemRect();
+            if (UI::BeginDragDropTarget()) {
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) scene = (const char*)p->Data;
+                UI::EndDragDropTarget();
+            }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(10, 230), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 230), UI::Cond_FirstUseEver);
+        if (UI::Begin("Inspector", nullptr, 0)) {
+            UI::Text("Mesh Renderer");
+            UI::Button("None###asset", V(200, 0)); slotR = UI::GetItemRect();
+            const UI::DragPayload* pl = UI::GetDragDropPayload();
+            if (pl && pl->IsDataType("ASSET_PATH") && UI::IsItemHovered(UI::Hovered_AllowWhenBlockedByActiveItem)) slotHover = true;
+            if (UI::BeginDragDropTarget()) {
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH", UI::DragDrop_AcceptBeforeDelivery | UI::DragDrop_AcceptNoDrawDefaultRect)) {
+                    if (p->IsDelivery()) slot = (const char*)p->Data; else slotPending = true;
+                }
+                UI::EndDragDropTarget();
+            }
+            UI::Dummy(10, 120);
+            const UI::CurrentWindow cw = UI::GetCurrentWindow();
+            const UI::WindowRef* w = cw;
+            if (w) { inspR = UI::Rect{w->InnerClipRect.Min.x, w->InnerClipRect.Min.y, w->InnerClipRect.Max.x - w->InnerClipRect.Min.x, w->InnerClipRect.Max.y - w->InnerClipRect.Min.y};
+                if (UI::BeginDragDropTargetCustom(w->InnerClipRect, w->ID)) {
+                    if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) window = (const char*)p->Data;
+                    UI::EndDragDropTarget();
+                } }
+        }
+        UI::End();
+        UI::PopStyleColor();
+    };
+    auto drag = [&](float tx, float ty, bool drop = true) {
+        sim.Move(CenterX(src), CenterY(src)); sim.Frame(ui); sim.Down(); sim.Frame(ui);
+        sim.Move(CenterX(src) + 12.0f, CenterY(src) + 4.0f); sim.Frame(ui);
+        sim.Move((CenterX(src) + tx) * 0.5f, (CenterY(src) + ty) * 0.5f); sim.Frame(ui);
+        sim.Move(tx, ty); sim.Frame(ui); sim.Frame(ui);
+        if (drop) { sim.Up(); sim.Frame(ui); sim.Frames(2, ui); }
+    };
+    const unsigned magenta = Rgba(255, 0, 255);
+    sim.Frames(3, ui);   // the windows lay out (and the Inspector's window table entry exists)
+    CHECK(view.w > 300 && slotR.w > 100 && inspR.w > 300);
+    // 1. onto the Scene view: the view takes it (the drag source is in another window, its button is the active item)
+    drag(CenterX(view), CenterY(view), false);
+    CHECK(CountNot(sim.Draw(1, 2, 3), (int)view.x, (int)view.y, (int)(view.x + view.w), (int)(view.y + view.h), Rgba(1, 2, 3)) > 0);
+    int outline = 0; { const Bitmap& b = sim.Draw(1, 2, 3); for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) if (PixelAt(b, x, y) == magenta) ++outline; }
+    CHECK(outline > 100);                                         // an accepted payload over the view: its outline shows
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(scene == "Assets/Wood.png" && slot.empty() && window.empty());
+    CHECK(UI::GetDragDropPayload() == nullptr);                   // the drag is over
+    // 2. onto the Inspector's slot: hovered before the release it is marked and accepted early (no delivery), then delivered;
+    //    the window-wide target behind it gets nothing
+    scene.clear();
+    drag(CenterX(slotR), CenterY(slotR), false);
+    CHECK(slotHover && slotPending && slot.empty());
+    { const Bitmap& b = sim.Draw(1, 2, 3); int n = 0;
+      for (int x = (int)slotR.x; x < (int)(slotR.x + slotR.w); ++x) if (PixelAt(b, x, (int)slotR.y) == magenta || PixelAt(b, x, (int)slotR.y + 1) == magenta) ++n;
+      CHECK(n == 0); }                                            // AcceptNoDrawDefaultRect: no outline on the slot
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(slot == "Assets/Wood.png" && window.empty() && scene.empty());
+    // 3. anywhere else in the Inspector: the window-wide target takes it
+    slot.clear();
+    drag(inspR.x + 300.0f, inspR.y + inspR.h - 30.0f);
+    CHECK(window == "Assets/Wood.png" && slot.empty() && scene.empty());
+    // 4. released over no target: nobody gets it and the drag ends
+    window.clear();
+    drag(620, 470);
+    CHECK(window.empty() && slot.empty() && scene.empty() && UI::GetDragDropPayload() == nullptr);
+    // 5. a payload of another type over the Scene view: no outline (Dear ImGui draws it only for an accepted type), no drop
+    type = "GO_PTR";
+    drag(CenterX(view), CenterY(view), false);
+    outline = 0; { const Bitmap& b = sim.Draw(1, 2, 3); for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) if (PixelAt(b, x, y) == magenta) ++outline; }
+    CHECK(outline == 0);
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(scene.empty());
+}
+
+// A drag source is the item before it, known by its id (Dear ImGui's documented rule: BeginDragDropSource uses the last item's id), so
+// a source that moves while it is held still drags. The editor's Project panel: pressing a tile selects it, the details strip appears
+// under the grid, the tiles get smaller and the second tile moves left; the drag of that tile never started (round 3).
+void TestDragSourceThatMoves() {
+    RUN_SUITE("windows: a drag source that moves while held still starts its drag");
+    Reset();
+    Sim sim(640, 480);
+    bool selected = false; std::string got; UI::Rect t2{}, target{};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Project", nullptr, 0)) {
+            const float cell = selected ? 70.0f : 100.0f;   // the grid shrinks once a tile is selected
+            UI::PushID(1); UI::Button("##cell", V(cell, cell)); UI::PopID();
+            UI::SameLine();
+            UI::PushID(2); UI::Button("##cell", V(cell, cell)); UI::PopID(); t2 = UI::GetItemRect();
+            if (UI::IsItemClicked()) selected = true;
+            if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("ASSET_PATH", "Wood.png", 9); UI::EndDragDropSource(); }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(420, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Target", nullptr, 0)) {
+            UI::Button("drop here", V(150, 100)); target = UI::GetItemRect();
+            if (UI::BeginDragDropTarget()) { if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) got = (const char*)p->Data; UI::EndDragDropTarget(); }
+        }
+        UI::End();
+    };
+    sim.Frames(3, ui);
+    const float px = t2.x + 20.0f, py = t2.y + 20.0f;   // inside the tile both before and after it moves
+    sim.Move(px, py); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Frame(ui);
+    CHECK(selected);
+    sim.Move(px + 30.0f, py + 10.0f); sim.Frame(ui);
+    sim.Move(CenterX(target), CenterY(target)); sim.Frame(ui); sim.Frame(ui);
+    CHECK(UI::GetDragDropPayload() != nullptr);              // the drag started though the tile moved
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(got == "Wood.png");
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -633,5 +1000,14 @@ int main() {
     TestChildClipInPopup();
     TestSizeAxisZeroFits();
     TestRegionInsideWindow();
+    TestMenuOfWidgets();
+    TestSameLineOffset();
+    TestMenuItemToggle();
+    TestDockHostListUnderFloating();
+    TestWindowHoveredUnderMenu();
+    TestTopLevelPopupId();
+    TestModalFixedHeight();
+    TestDragAcrossWindows();
+    TestDragSourceThatMoves();
     TEST_MAIN_RESULT();
 }

@@ -1,8 +1,7 @@
 // The editor's Inspector, stage 1, drawn with OkayUI (okayui/screens/OkayUIEditorPanels.cpp: DrawInspectorHeader, DrawComponentHeader,
 // DrawTransform, DrawMeshRenderer, DrawAddComponentButton; docs/own_ui_toolkit.md section 14). Driven headless: every control is found
 // by its rectangle in the result and used with synthetic input; a small host (okayui/tests/InspectorFixtures.hpp) carries out the
-// intents the way the editor does (undo, the other selected objects); golden images (launcher look) pin what is drawn. The Dear ImGui
-// version is compared against this one in tests/test_okayui_inspector_imgui.cpp.
+// intents the way the editor does (undo, the other selected objects); golden images (launcher look) pin what is drawn.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "InspectorStackOkayUI.hpp"
@@ -1022,7 +1021,7 @@ int main() {
         const UI::Rect w = r.R("Water##terr"), s = r.R("Sand##terr");
         CHECK(w.w > 0.0f && std::fabs(w.y - s.y) < 1.0f && s.x > w.x + w.w);                       // the swatches share a line
     }
-    {   // the other UI bodies are drawn (their pictures are compared with Dear ImGui's in okayui_inspector_imgui)
+    {   // the other UI bodies are drawn
         for (inspbody::Body b : {inspbody::BodyCanvas, inspbody::BodyImage, inspbody::BodySlider, inspbody::BodyToggle, inspbody::BodyInput, inspbody::BodyLayout}) {
             BRig r(b, 460.0f, 1400.0f);
             r.Frames(3);

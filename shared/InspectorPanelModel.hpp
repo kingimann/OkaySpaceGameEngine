@@ -1,8 +1,8 @@
 #pragma once
 // The editor's Inspector as data, stage 1 (docs/own_ui_toolkit.md section 14): the object header card, the component header bar
 // that every component shares, the Transform, the shading part of the Mesh Renderer and the Add Component button. Part of
-// shared/EditorPanelModels.hpp (which includes it). No ImGui, no OkayUI, no engine types: both versions draw from it, the Dear ImGui
-// body (editor/EditorPanelViews.cpp) and the OkayUI port (okayui/screens/OkayUIEditorPanels.cpp), and the editor fills it from the
+// shared/EditorPanelModels.hpp (which includes it). No ImGui, no OkayUI, no engine types: the OkayUI body draws from it
+// (okayui/screens/OkayUIEditorPanels.cpp), and the editor fills it from the
 // selected object (editor/main.cpp DrawInspector) and carries out the intent that comes back (undo, the other selected objects,
 // saving the project's tags).
 //

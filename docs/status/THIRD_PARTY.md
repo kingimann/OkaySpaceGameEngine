@@ -20,7 +20,7 @@ removed it is allowed only because the replacement is not ready, and a new libra
 own is possible; add one only with the same removal plan.
 
 Order: the small, easy libraries first (done), then model import (ufbx deleted 2026-11-23; Assimp left), then the platform layer (SDL2),
-then the editor toolkit (Dear ImGui), and encryption (libsodium) last. For encryption, writing our own is a security
+then the editor toolkit (Dear ImGui, removed 2026-11-27), and encryption (libsodium) last. For encryption, writing our own is a security
 risk, so it needs an outside review before it can be the default; see [crypto_review_package.md](../platform/crypto_review_package.md).
 Services run by other companies (Steamworks, Photon, our hosting) are not libraries and stay.
 
@@ -48,7 +48,7 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 | Library | Used for | Licence | How we get it | Replacement and state |
 |---|---|---|---|---|
 | [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | System package; `SDL2.dll` is bundled in Windows builds; Emscripten port on the web | `okay::platform` (`docs/platform/platform_layer.md`): the Linux/X11 backend is done and tested under Xvfb; the player's window, events, input and GL context go through the seam; the editor's and launcher's event loops and 2D drawing go through it too, with SDL2 still underneath on Windows (#1198, 2026-11-23, moved five more SDL calls behind the seam and gave the editor's Play keys and the player one shared key mapping); the launcher runs with no SDL on the own backend on Linux only; the Win32 backend compiles but has not run on real Windows (`okay-platform-selftest --ci` is wired into the Windows test workflow); macOS not written |
-| [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit | `okayui` (`docs/ui/own_ui_toolkit.md`): the editor's Crash Log, Audio Mixer and History are OkayUI only (#1192) and the script editor's code view is our own `OkayUI::CodeEdit` (#1200); other screens (What's New, Tips, Console, the Inspector preview) have OkayUI versions behind the Settings > Experimental switches, which start ticked; everything else is still Dear ImGui; nothing of this has run in a real window on Windows |
+| ~~[Dear ImGui](https://github.com/ocornut/imgui)~~ | Was: the editor and launcher UI | MIT | **Removed** (2026-11-27: the launcher, `docs/ui/own_ui_toolkit.md` section 31; the editor, branch `claude/editor-okayui-2`, section 33). Nothing is downloaded at configure time any more | `okayui`, our own toolkit: both programs are compiled against OkayUI only; not run on Windows |
 | ~~[Assimp](https://github.com/assimp/assimp) v5.4.3~~ | Was: importing 3D model formats beyond the built-in ones | BSD 3-clause | **Deleted 2026-11-24** (`claude/no-assimp-1`): `engine/src/Render/ModelImportAssimp.cpp`, the `OKAY_USE_ASSIMP` and `OKAY_PREFER_OWN_READERS` options, the FetchContent block (and the zlib it built), `-DOKAY_USE_ASSIMP=ON` in `scripts/build-windows-dist.sh`, `AssimpAvailable()` and `ImportBackend::Assimp` | Our own readers are the only model readers, for every extension Assimp read except Nendo `.ndo` (dropped: no public description of the format and no usable sample file; `docs/content/model_readers.md`, section Nendo). A file our reader refuses fails the import with the reason. CI still fetches the Assimp v5.4.3 source tree, as **data only**, for the real-file corpus in its `test/` folder (job `model-corpus`, `docs/content/model_corpus.md`); nothing from it is compiled or shipped |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | **Deleted 2026-11-23** (`claude/third-party-2`): `engine/third_party/ufbx` and every use are gone | Our own FBX reader `okay::fbx` is the only FBX reader (the `OKAY_OWN_FBX` switch is gone too). Before the deletion it agreed with ufbx on 42 of 43 real files (the 43rd is damaged) and all fixtures; those values are now fixed expected numbers in `fbx_reader`. Not run on real Windows after the deletion |
 | [libsodium](https://libsodium.org) | Authenticated packet encryption, session tickets, host identity | ISC | System package (optional, `OKAY_USE_SODIUM`); MinGW prebuilt in CI | `okay::crypto`, off, unreviewed; needs an outside review first |
@@ -60,9 +60,9 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 
 Found by the 2026-11-26 audit. The "what" and "where" columns were checked in the files named; the licence column is
 from memory and is **unverified** (the licence pages could not be reached). **Notice file (2026-11-26):**
-`dist/THIRD_PARTY_NOTICES.txt` names every part below plus Dear ImGui, SDL2 and the fonts, with the licence texts
-(taken from the Debian copyright files of the build machine's MinGW-w64, GCC, libsodium and SDL2 packages, Dear
-ImGui's own LICENSE.txt and the font licence files; the Emscripten and Steamworks lines are still from memory and
+`dist/THIRD_PARTY_NOTICES.txt` names every part below plus SDL2 and the fonts, with the licence texts
+(taken from the Debian copyright files of the build machine's MinGW-w64, GCC, libsodium and SDL2 packages and the
+font licence files; Dear ImGui's item is empty since it left the programs on 2026-11-27; the Emscripten and Steamworks lines are still from memory and
 marked UNVERIFIED in the file). It ships beside `OkaySpace.exe` and in `Tools\` (`scripts/build-windows-dist.sh`, so
 also in the installer), in every exported desktop game (`editor/BuildGame.cpp`) and in every web build
 (`scripts/web_package.py`, checked by `tests/scripts/test_web_package.py`).

@@ -18,8 +18,6 @@
 #
 # Env:
 #   SDL2_MINGW_PREFIX  (required) SDL2 MinGW prefix, see above.
-#   OKAY_IMGUI_SRC     (optional) local Dear ImGui checkout to use instead of
-#                      fetching it (handy offline / behind a restricted network).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -43,7 +41,6 @@ EXTRA=()
 if command -v ccache >/dev/null 2>&1; then
     EXTRA+=("-DCMAKE_C_COMPILER_LAUNCHER=ccache" "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
 fi
-[ -n "${OKAY_IMGUI_SRC:-}" ] && EXTRA+=("-DFETCHCONTENT_SOURCE_DIR_IMGUI=$OKAY_IMGUI_SRC")
 # Bake a default account server into the binaries when provided (e.g. from a CI
 # secret), so the release build is online with no key file on disk.
 # The account server comes from config/public-account.json (CMake reads it itself); OKAY_DEFAULT_ACCOUNT_URL / _KEY in the
@@ -140,9 +137,6 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
-# The editor built on our own UI (CMake OKAY_EDITOR_ON_OKAYUI, off by default): copied beside OkayEngine.exe only when it was built.
-# (The launcher, OkaySpace.exe, is drawn by our own UI itself since 2026-11-27.)
-[ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # The Script Editor program (scripteditor/, the editor shows the same one in View > Editors & Tools > Script Editor (Files)).
 [ -f "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" "$OUT_DIR/Tools/"

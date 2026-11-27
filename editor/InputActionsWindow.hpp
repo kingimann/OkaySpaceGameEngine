@@ -3,7 +3,7 @@
 // actions with their value type, bindings (single, 2D vector, 3D vector, 1D axis, chord) with scheme group and processors, and
 // interactions - with a validation list, plus a live view of the player's actions (value, phase, which binding drives it).
 // All logic is okay::ActionEditor (engine). OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 30):
-// FillInputActions builds the model the window shows (tools/input_shots.cpp uses it too, for its pictures), ApplyInputActionsIntent
+// FillInputActions builds the model the window shows, ApplyInputActionsIntent
 // does what the person asked. Written for this project from the ActionEditor / InputRuntime interfaces; no outside code.
 #include "okay/Input/ActionEditor.hpp"
 #include "okay/Input/InputRuntime.hpp"

@@ -275,7 +275,7 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-PopupCtx g_popupStack[4];
+PopupCtx g_popupStack[kPopupStackMax];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
 extern int g_ncards;         // defined with the card stack below (reset here in BeginFrame)
@@ -354,7 +354,9 @@ int hashLabel(const char* s) {
     // Dear ImGui's documented "###" rule: "Text###id" is identified by the "###id" part alone, so the text may change (a count in a title)
     // and the window or item stays the same one.
     if (s) { const char* k = std::strstr(s, "###"); if (k) s = k; }
-    unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
+    // Outside every window (after End) the last window's id is not part of the key: a modal opened and begun at the top level (the editor's
+    // built-in file browser) got a different id each frame the last window changed, and closed itself after one frame.
+    unsigned h = (2166136261u ^ (g_lay.active ? (unsigned)g_lay.seed : 0u) ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;
@@ -452,11 +454,12 @@ void place(float w, float h, float& x, float& y) {
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
     if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
         g_posOverride = false;
-        x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f;
+        x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f; g_lay.sameLineAbs = false;
         sameLine = g_posSameLine; g_posSameLine = false;
     } else if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
-        x = g_lay.prevX + g_lay.prevW + sp;
+        x = g_lay.sameLineAbs ? g_lay.sameLineX : g_lay.prevX + g_lay.prevW + sp;
+        g_lay.sameLineAbs = false;
         y = g_lay.hasLineTop && !g_centerNext ? g_lay.lineTopY : g_lay.prevY;   // one centred on the item before it: on that item
         g_lay.pendingSameLine = false;
         g_lay.sameLineSpacing = -1.0f;
@@ -958,13 +961,13 @@ unsigned long long g_zCounter = 0;
 bool g_wheelUsed = false;   // a scrolling child took this frame's wheel (the window does not scroll as well)
 bool g_escapeUsed = false;  // a popup closed on this frame's Escape (the popups it was opened from stay open)
 bool g_hitWinOn = false; int g_hitWinId = 0; unsigned long long g_hitWinZ = 0;   // the window being built, for hit()
-WinRec g_wrec[64]; int g_nwrec = 0; int g_wrecOpen = -1;
+WinRec g_wrec[kMaxWinRecs]; int g_nwrec = 0; int g_wrecOpen = -1;
 // trade places, so a frame whose stamps agree with the call order is left exactly as it was.
 void reorderWindows() {
     wrecEnd();
     const int n = g_nwrec;
     if (n < 2) return;
-    int ord[64];
+    int ord[kMaxWinRecs];
     for (int i = 0; i < n; ++i) ord[i] = i;
     for (int i = 1; i < n; ++i) { const int v = ord[i]; int j = i - 1; while (j >= 0 && g_wrec[ord[j]].z > g_wrec[v].z) { ord[j + 1] = ord[j]; --j; } ord[j + 1] = v; }
     bool same = true;
@@ -977,7 +980,9 @@ void reorderWindows() {
     auto stateAt = [&](int idx) { DrawSpan st{0, false, SDL_Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
     auto emit = [&](int a, int b) {
         if (b <= a || fail) return;
-        if (nns + 1 + g_nspans > kMaxSpans) { fail = true; return; }
+        int inner = 0;   // the spans that start inside [a, b): exactly what this run adds besides its first
+        for (int k = 0; k < g_nspans; ++k) if (g_spans[k].startIdx > a && g_spans[k].startIdx < b) ++inner;
+        if (nns + 1 + inner > kMaxSpans) { fail = true; return; }
         DrawSpan st = stateAt(a); st.startIdx = nn;
         if (nns > 0 && nsp[nns - 1].startIdx == nn) nsp[nns - 1] = st; else nsp[nns++] = st;
         for (int k = 0; k < g_nspans; ++k) {
@@ -1073,7 +1078,10 @@ void BeginFrame(const Input& in) {
     treeGuidesReset();
     g_io.mousePos = Vec2{in.mouseX, in.mouseY}; g_io.mouseDelta = Vec2{0, 0}; g_io.mouseWheel = in.wheel;
     g_io.displaySize = Vec2{in.displayW, in.displayH};
-    g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
+    g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift];
+    // Alt and Super from either hand or the modifier flag key a platform feed sends (Dear ImGui's io.KeyAlt / io.KeySuper: ImGuiMod_Alt / ImGuiMod_Super)
+    g_io.keyAlt = in.keyDown[KeyId_Alt] || in.keyDown[KeyId_RightAlt] || in.keyDown[KeyId_ModAlt];
+    g_io.KeySuper = in.keyDown[KeyId_LeftSuper] || in.keyDown[KeyId_RightSuper] || in.keyDown[KeyId_ModSuper];
     g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown; g_io.mouseDown[2] = in.middleDown;
     g_io.wantCaptureKeyboard = g_focus != 0; g_io.wantTextInput = g_focus != 0;
     if (g_nextFrameKbd >= 0) { g_io.wantCaptureKeyboard = g_nextFrameKbd != 0; g_nextFrameKbd = -1; }   // SetNextFrameWantCaptureKeyboard
@@ -1110,7 +1118,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; menuBarReset(); regionReset(); g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
+    g_inMenuBar = false; menuBarReset(); regionReset(); g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; tabBarsReset();
     g_idSeed = 0; g_idTop = 0; g_idSkipped = 0;   // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -1720,7 +1728,7 @@ Font* GetFont()             { return const_cast<Font*>(g_font); }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
 
-void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
+void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= (int)MouseCursor_None && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }   // None (-1): no cursor drawn (Dear ImGui's ImGuiMouseCursor_None)
 MouseCursor GetMouseCursor() { return g_cursor; }
 namespace {
 long long g_ioQueueFrame = -1; int g_ioQueueFilled = 0;
@@ -1826,7 +1834,6 @@ IO& GetIO() {
     }
     g_io.Fonts = GetFontAtlasRef();
     g_io.MouseClickedCount[0] = IsMouseDoubleClicked(0) ? 2 : (g_pressed ? 1 : 0);
-    g_io.KeySuper = g_io.KeySuper;
     // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
     g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
     g_io.wantCaptureMouse = !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev || g_active != 0);
@@ -1865,6 +1872,7 @@ Context* RefreshContext() {
 }
 void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
 float GetTreeNodeToLabelSpacing() {
+    if (g_framedWidgets) return textH() + framePadXNow() * 2.0f;   // Dear ImGui's: the font size and twice FramePadding.x (its tree nodes in that look)
     if (g_look) return 24.0f;
     return 4.0f + fCharW() * g_theme.textScale * 1.5f;
 }
@@ -1872,16 +1880,20 @@ float GetTreeNodeToLabelSpacing() {
 
 void SameLine(float spacing) {
     if (!g_lay.active) return;
-    g_lay.pendingSameLine = true;
+    g_lay.pendingSameLine = true; g_lay.sameLineAbs = false;
     g_lay.sameLineSpacing = spacing;
 }
 
+// Dear ImGui's SameLine(offset_from_start_x, spacing): a non-zero offset puts the next item at that x from the window's left edge (the point
+// GetCursorPos counts from, with UseImGuiCoordinates; else the content's left edge), even left of the item before it; 0 follows the item.
 void SameLine(float offsetFromStartX, float spacing) {
     if (!g_lay.active) return;
-    g_lay.pendingSameLine = true;
-    if (std::isfinite(offsetFromStartX) && offsetFromStartX > 0.0f) {
-        const float target = g_lay.ox + offsetFromStartX, end = g_lay.prevX + g_lay.prevW;
-        g_lay.sameLineSpacing = target > end ? target - end : 0.0f;
+    g_lay.pendingSameLine = true; g_lay.sameLineAbs = false;
+    if (std::isfinite(offsetFromStartX) && offsetFromStartX != 0.0f) {
+        const float base = g_imguiCoords && g_lay.winW > 0.0f ? g_lay.baseX : g_lay.ox;
+        g_lay.sameLineAbs = true;
+        g_lay.sameLineX = base + offsetFromStartX + (std::isfinite(spacing) && spacing > 0.0f ? spacing : 0.0f);
+        g_lay.sameLineSpacing = -1.0f;
     } else g_lay.sameLineSpacing = std::isfinite(spacing) ? spacing : -1.0f;
 }
 
@@ -2105,19 +2117,45 @@ void textBlock(const char* s, const unsigned char* col) {
             p = e + 1;
         }
         para.Done();
+    } else if (s && g_textRowH != 0.0f && std::strchr(s, '\n')) {   // Dear ImGui's text rows: a line break starts a new line under the first (no '?' glyph)
+        wrapLines(s, 1.0e9f, col, 1.0e9f);
     } else textLine(s, col);
 }
 } // namespace
 
 void BeginGroup() {
     if (!g_lay.active || g_grpTop >= 8) return;
-    g_grp[g_grpTop++] = GroupBox();
+    GroupBox g;
+    if (!g_posOverride) {   // (a group started at SetCursorScreenPos keeps the old rule: its start is only known when its first item is placed)
+        // Where the group's first item goes (the same rule as place()): beside the item before it after SameLine, else at the left edge.
+        float x = leftEdge(), y = g_lay.cy;
+        if (g_lay.pendingSameLine) {
+            const float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
+            x = g_lay.sameLineAbs ? g_lay.sameLineX : g_lay.prevX + g_lay.prevW + sp;
+            y = g_lay.hasLineTop ? g_lay.lineTopY : g_lay.prevY;
+        }
+        if (std::isfinite(x) && std::isfinite(y)) {
+            g.locked = true; g.savedIndent = g_lay.indent; g.savedCy = g_lay.cy;
+            g_lay.indent = x - g_lay.ox;   // lines inside the group start at its left edge
+            g_lay.cy = y;                   // and below its own items, not below what came before it on the line
+            // its first line starts at the group's top: a text is not centred on a taller item before the group
+            g_lay.prevY = y; g_lay.prevH = 0.0f; g_lay.hasLineTop = false;
+        }
+    }
+    g_grp[g_grpTop++] = g;
 }
 
 void EndGroup() {
     if (!g_lay.active || g_grpTop <= 0) return;
     const GroupBox g = g_grp[--g_grpTop];
     g_lay.hasLineTop = false;
+    if (g.locked) {   // the indent comes back; the next line starts below the group and below everything before it on its line
+        g_lay.indent = g.savedIndent;
+        // (the cursor inside the group counts too: a table or a child moves it past the items it reported)
+        const float below = g.any ? std::max(g_lay.cy, g.y1 + g_lay.spacingY) : g_lay.cy;
+        g_lay.cy = std::max(g.savedCy, below);
+        g_lay.cx = leftEdge();
+    }
     if (g.any) {
         g_lay.prevX = g.x0; g_lay.prevY = g.y0; g_lay.prevW = g.x1 - g.x0; g_lay.prevH = g.y1 - g.y0;
     } else {   // an empty group is a zero-size item at the cursor
@@ -2653,6 +2691,7 @@ bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
     const float pad = 4.0f;
     float x, y; place(w + pad * 2.0f, h + pad * 2.0f, x, y);
     const bool inside = hit(x, y, w + pad * 2, h + pad * 2);
+    g_lastId = hid;   // an item with an id (IsItemActive, GetItemID, a drag source after it), as Dear ImGui's ImageButton
     if (inside) g_hot = hid;
     bool clicked = false;
     if (g_active == hid) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
@@ -2739,6 +2778,11 @@ static bool InputInt_raw(const char* label, int* value, int step) {
 // applied (the colours as set colours, see SetStyleColor; the window and frame rounding, the window padding, the border width and the
 // font scale to the theme). The other fields are filled in for reading; a write to them is not used. Written by us from Dear ImGui's
 // documented behaviour (ImGuiStyle is read by every widget, so a write changes how the UI draws); no code from any other project.
+namespace ui_core {
+float g_styleIndent = 21.0f;   // the style's IndentSpacing (a GetStyle() write; Dear ImGui's default 21): how far a tree node indents in Dear ImGui's look
+float styleIndentSpacing() { return g_styleIndent; }
+float framePadXNow() { return g_framePadX >= 0.0f ? g_framePadX : 8.0f; }
+}
 namespace {
 StyleInfo g_styleOut;           // what GetStyle() returned
 StyleInfo g_styleSeen;          // what it held when it was returned (to see what a caller changed)
@@ -2759,6 +2803,7 @@ void ApplyStyleWrites() {
     if (o.FrameBorderSize != w.FrameBorderSize) g_theme.borderPx = Sane(o.FrameBorderSize, 0.0f, 16.0f, g_theme.borderPx);
     else if (o.WindowBorderSize != w.WindowBorderSize) g_theme.borderPx = Sane(o.WindowBorderSize, 0.0f, 16.0f, g_theme.borderPx);
     if (o.FontScale != w.FontScale) g_theme.textScale = Sane(o.FontScale, 0.25f, 16.0f, g_theme.textScale);
+    if (o.IndentSpacing != w.IndentSpacing) g_styleIndent = Sane(o.IndentSpacing, 0.0f, 200.0f, g_styleIndent);   // the tree nodes of Dear ImGui's look
     g_styleSeen = g_styleOut;
 }
 // IO::FontGlobalScale (Dear ImGui: every font drawn this much larger): the theme's text scale follows it, applied at frame start.
@@ -2775,11 +2820,12 @@ StyleInfo& GetStyle() {
     const float rh = rowH(), th = textH();
     s.Alpha = 1.0f;
     s.WindowPadding = Vec2{g_theme.windowPadding, g_theme.windowPadding};
-    s.FramePadding = Vec2{8.0f, (rh - th) * 0.5f};
+    s.FramePadding = Vec2{framePadXNow(), (rh - th) * 0.5f};
     s.ItemSpacing = Vec2{g_lay.spacingX, g_lay.spacingY};
     s.ItemInnerSpacing = Vec2{g_lay.spacingX * 0.5f, g_lay.spacingY};
     s.CellPadding = Vec2{6.0f, 3.0f};
     s.ScrollbarSize = kScrollbarW;
+    s.IndentSpacing = styleIndentSpacing();
     s.WindowRounding = g_theme.windowRounding; s.ChildRounding = childRnd(); s.FrameRounding = g_theme.rounding;
     s.WindowBorderSize = g_theme.borderPx; s.ChildBorderSize = g_theme.borderPx; s.FrameBorderSize = g_theme.borderPx;
     s.FontScale = g_theme.textScale;
@@ -3297,9 +3343,58 @@ bool ColorButton(const char* id, const float rgba[4], float size) { return Color
 // ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags);
 static bool colorEditRow(const char* label, float* c, int n, int flags) { return noteEdit(colorEditRow_ed(label, c, n, flags)); }
+namespace { bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format, bool logScale); }
+// The colour picker under a ColorEdit's swatch at (sx, sy, swatch h): opened by its click, closed like any popup.
+static bool colorEditPicker(int id, bool swatchClicked, float sx, float sy, float h, float w, float* c, int n, int flags) {
+    if (flags & ColorEdit_NoPicker) return false;
+    bool changed = false;
+    const int pkey = id ^ 0x7c1c;
+    if (swatchClicked) {
+        PopupSlot* p = popupSlot(pkey, true);
+        if (p) { p->open = true; p->x = sx; p->y = sy + h + 2.0f; p->w = std::max(240.0f, std::min(300.0f, w)); p->modal = false; g_openPopupThisFrame = pkey; }
+    }
+    if (beginPopupBody(pkey)) {
+        float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+        if (ColorPicker4("##picker", tmp, flags | ColorEdit_NoLabel)) { for (int i = 0; i < n; ++i) c[i] = tmp[i]; changed = true; }
+        EndPopup();
+    }
+    return changed;
+}
+// Dear ImGui's ColorEdit3/4 as it documents and shows it (StyleVar_FramedWidgets): a drag cell per channel, 0..255 (0..1 numbers with
+// ColorEdit_Float or ColorEdit_HDR, HDR not held to 1), each with a colour marker on its left edge (R, G, B, A), then the swatch (a click
+// opens the picker), then the label. The row is as wide as the item width.
+static bool colorEditFramed(const char* label, float* c, int n, int flags) {
+    const int id = hashLabel(label);
+    const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f;
+    const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
+    const float lw = showLabel ? visW(label) + gap : 0.0f;
+    const float w = availW(), swatch = h;
+    float cellsW = w - lw - swatch - gap; if (cellsW < 24.0f * (float)n) cellsW = 24.0f * (float)n;
+    const bool asFloat = (flags & (ColorEdit_Float | ColorEdit_HDR)) != 0;
+    float v[4] = {0, 0, 0, 1};
+    for (int i = 0; i < n; ++i) v[i] = asFloat ? c[i] : std::floor(clamp01(c[i]) * 255.0f + 0.5f);
+    char cellsId[192]; std::snprintf(cellsId, sizeof cellsId, "##%s#channels", label ? label : "");
+    SetNextItemWidth(cellsW);
+    bool changed = fmtDragCells(cellsId, v, n, asFloat ? 0.01f : 1.0f, 0.0f, (flags & ColorEdit_HDR) ? 0.0f : (asFloat ? 1.0f : 255.0f), asFloat ? "%.3f" : "%.0f", false);
+    if (changed) for (int i = 0; i < n; ++i) c[i] = asFloat ? v[i] : clamp01(std::floor(v[i] + 0.5f) / 255.0f);
+    const float x = g_lay.prevX, y = g_lay.prevY;
+    const float cw = (cellsW - gap * (float)(n - 1)) / (float)n;
+    static const unsigned char kMarker[4][4] = {{230, 70, 70, 255}, {90, 200, 90, 255}, {80, 130, 240, 255}, {200, 200, 200, 255}};
+    for (int i = 0; i < n; ++i) quad(x + (float)i * (cw + gap), y, 3.0f, h, kMarker[i]);
+    const float sx = x + cellsW + gap;
+    float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+    const bool swatchClicked = Button(id ^ 0x5a5a, sx, y, swatch, h, "");
+    drawSwatch(sx, y, swatch, h, rgba, flags);
+    if (showLabel) drawText(sx + swatch + gap, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h; g_lastId = id;   // GetItemRect: the whole row
+    if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
+    changed = colorEditPicker(id, swatchClicked, sx, y, h, w, c, n, flags) || changed;
+    return changed;
+}
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
     if (!g_lay.active || !c) return false;
     if (n == 3 || (flags & ColorEdit_NoAlpha)) { n = 3; flags |= ColorEdit_NoAlpha; }
+    if (g_framedWidgets && !(flags & (ColorEdit_Hex | ColorEdit_NoInputs))) return colorEditFramed(label, c, n, flags);
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
     const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
@@ -3347,19 +3442,7 @@ static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
         }
     }
     if (showLabel) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
-    // the picker popup, anchored under the swatch
-    if (!(flags & ColorEdit_NoPicker)) {
-        const int pkey = id ^ 0x7c1c;
-        if (swatchClicked) {
-            PopupSlot* p = popupSlot(pkey, true);
-            if (p) { p->open = true; p->x = x; p->y = y + h + 2.0f; p->w = std::max(240.0f, std::min(300.0f, w)); p->modal = false; g_openPopupThisFrame = pkey; }
-        }
-        if (beginPopupBody(pkey)) {
-            float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
-            if (ColorPicker4("##picker", tmp, flags | ColorEdit_NoLabel)) { for (int i = 0; i < n; ++i) c[i] = tmp[i]; changed = true; }
-            EndPopup();
-        }
-    }
+    changed = colorEditPicker(id, swatchClicked, x, y, h, w, c, n, flags) || changed;   // the picker popup, anchored under the swatch
     return changed;
 }
 static bool ColorEdit4_raw(const char* label, float rgba[4], int flags) { return colorEditRow(label, rgba, 4, flags); }
@@ -3431,7 +3514,7 @@ void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = tr
 // The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
 static char g_clip[kClipboardMax] = {0};
 bool PlatformClipboardSet(const char* text);    // OkayUICompat.cpp: the clipboard a platform feed installed in PlatformIO (false: none)
-const char* PlatformClipboardGet();              // null: none installed
+const char* PlatformClipboardGet(bool* installed = nullptr);   // null: none installed, or it has no text (`installed` tells which)
 void SetClipboardText(const char* text) {
     if (!text) text = "";
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
@@ -3441,7 +3524,9 @@ void SetClipboardText(const char* text) {
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
 }
 const char* GetClipboardText() {
-    if (const char* pc = PlatformClipboardGet()) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
+    bool installed = false;
+    if (const char* pc = PlatformClipboardGet(&installed)) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
+    if (installed) { g_clip[0] = 0; return g_clip; }   // a platform feed owns the clipboard and it is empty (another program emptied it): paste nothing, as Dear ImGui does
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
@@ -3622,7 +3707,7 @@ bool BeginPopupContextWindow(const char* id) {
     // A right click on the window's own background (over the window, not over any item or a window above) opens it at the pointer.
     if (g_lay.active && g_curWin.valid && g_rPressed && g_hot == 0 && g_active == 0 && IsWindowHovered()) {
         PopupSlot* p = popupSlot(pid, true);
-        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; std::snprintf(p->name, sizeof p->name, "%s", id ? id : ""); }
     }
     return beginPopupBody(pid);
 }
@@ -3703,28 +3788,60 @@ void ResetState() {
 bool Checkbox(const char* label, bool* value) { return noteEdit(Checkbox_raw(label, value)); }
 bool RadioButton(const char* label, int* value, int option) { return noteEdit(RadioButton_raw(label, value, option)); }
 bool ToggleSwitch(const char* label, bool* value) { return noteEdit(ToggleSwitch_raw(label, value)); }
-bool SliderFloat(const char* label, float* value, float minV, float maxV) { return noteEdit(SliderFloat_raw(label, value, minV, maxV)); }
-bool SliderInt(const char* label, int* value, int minV, int maxV) { return noteEdit(SliderInt_raw(label, value, minV, maxV)); }
+// With StyleVar_FramedWidgets (Dear ImGui's look, the editor and launcher on OkayUI) the plain calls draw Dear ImGui's framed widgets: Dear ImGui's
+// SliderFloat / DragFloat with no format show "%.3f", SliderInt "%d" (its documented defaults); a pending SetNextNumberFormat is used instead.
+namespace {
+struct FramedFmt { NextNumber n; const char* fmt; bool log; explicit FramedFmt(const char* dflt) : n(takeNextNumber()), fmt(n.has ? n.fmt : dflt), log(n.logarithmic) {} };
+}
+bool SliderFloat(const char* label, float* value, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloat(label, value, minV, maxV, f.fmt, f.log); }
+    return noteEdit(SliderFloat_raw(label, value, minV, maxV));
+}
+bool SliderInt(const char* label, int* value, int minV, int maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%d"); return FramedSliderInt(label, value, minV, maxV, f.fmt); }
+    return noteEdit(SliderInt_raw(label, value, minV, maxV));
+}
 bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) { return noteEdit(VSliderFloat_raw(label, w, h, value, minV, maxV)); }
 bool Knob(const char* label, float* value, float minV, float maxV, float size) { return noteEdit(Knob_raw(label, value, minV, maxV, size)); }
 // With InputText_EnterReturnsTrue the return value is the Enter, not an edit: TextField marks the edits itself.
 bool InputText(const char* label, char* buf, int cap, unsigned flags) { const bool r = InputText_raw(label, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
 bool InputInt(const char* label, int* value, int step) { return noteEdit(InputInt_raw(label, value, step)); }
 bool Combo(const char* label, const char* const* items, int count, int* current) { return noteEdit(Combo_raw(label, items, count, current)); }
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) { return noteEdit(DragFloat_raw(label, v, speed, minV, maxV)); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 1, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat_raw(label, v, speed, minV, maxV));
+}
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV) { return noteEdit(DragInt_raw(label, v, speed, minV, maxV)); }
-bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) { return noteEdit(DragFloat2_raw(label, v, speed, minV, maxV)); }
-bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) { return noteEdit(DragFloat3_raw(label, v, speed, minV, maxV)); }
-bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) { return noteEdit(DragFloat4_raw(label, v, speed, minV, maxV)); }
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 2, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat2_raw(label, v, speed, minV, maxV));
+}
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 3, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat3_raw(label, v, speed, minV, maxV));
+}
+bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 4, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat4_raw(label, v, speed, minV, maxV));
+}
 bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return noteEdit(DragInt2_raw(label, v, speed, minV, maxV)); }
 bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return noteEdit(DragInt3_raw(label, v, speed, minV, maxV)); }
 bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return noteEdit(DragInt4_raw(label, v, speed, minV, maxV)); }
 bool DragIntRange2(const char* label, int* lo, int* hi, float speed, int minV, int maxV) { return noteEdit(DragIntRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) { return noteEdit(DragFloatRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) { const bool r = InputTextWithHint_raw(label, hint, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
-bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return noteEdit(SliderFloat2_raw(label, v, minV, maxV)); }
-bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return noteEdit(SliderFloat3_raw(label, v, minV, maxV)); }
-bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return noteEdit(SliderFloat4_raw(label, v, minV, maxV)); }
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 2, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat2_raw(label, v, minV, maxV));
+}
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 3, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat3_raw(label, v, minV, maxV));
+}
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 4, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat4_raw(label, v, minV, maxV));
+}
 bool InputFloat(const char* label, float* value, float step) { return noteEdit(InputFloat_raw(label, value, step)); }
 bool ColorEdit4(const char* label, float rgba[4], int flags) { return noteEdit(ColorEdit4_raw(label, rgba, flags)); }
 bool ColorEdit3(const char* label, float rgb[3], int flags) { return noteEdit(ColorEdit3_raw(label, rgb, flags)); }
@@ -4093,6 +4210,7 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_childRounding),
     OKAYUI_CTX_VAR(ui_core::g_framedWidgets),
     OKAYUI_CTX_VAR(ui_core::g_framePadX),
+    OKAYUI_CTX_VAR(ui_core::g_styleIndent),
     OKAYUI_CTX_VAR(ui_core::g_framePadY),
     OKAYUI_CTX_VAR(ui_core::g_grp),
     OKAYUI_CTX_VAR(ui_core::g_grpTop),

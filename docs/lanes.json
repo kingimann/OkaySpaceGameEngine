@@ -9,12 +9,12 @@
     "claude2": {
       "prefix": "claude2/",
       "name": "Claude 2",
-      "description": "Claude 2 (branches claude2/*): bug fixes (any file, with a failing test and a claim marked Kind: bug); physics (engine Physics folders, Ragdoll, ActiveRagdoll, Joint3D); removing duplicate code and the duplicate guard (scripts/dup_lint.py, docs/engine/shared_code.md); the editor main.cpp split."
+      "description": "Closed 2026-11-27 (owner: \"They are out, finish there job\"): its paths and work are the coordinator's. Kept so old claude2/* branches still check. Was: Claude 2 (branches claude2/*): bug fixes (any file, with a failing test and a claim marked Kind: bug); physics (engine Physics folders, Ragdoll, ActiveRagdoll, Joint3D); removing duplicate code and the duplicate guard (scripts/dup_lint.py, docs/engine/shared_code.md); the editor main.cpp split."
     },
     "claude3": {
       "prefix": "claude3/",
       "name": "Claude 3",
-      "description": "Claude 3 (branches claude3/*): the Build window and game export (BuildPipeline, Build Settings); world, level and chunk streaming, World Partition, LOD and asset streaming (WorldStreamer, Optimize/StreamingGrid); the Steam/Epic Store Kit (Platform/Steam, Platform/Epic, PlatformServices, StoreExport); C# and Lua scripting in the script editor."
+      "description": "Closed 2026-11-27 (owner: \"They are out, finish there job\"): its paths and work are the coordinator's. Kept so old claude3/* branches still check. Was: Claude 3 (branches claude3/*): the Build window and game export (BuildPipeline, Build Settings); world, level and chunk streaming, World Partition, LOD and asset streaming (WorldStreamer, Optimize/StreamingGrid); the Steam/Epic Store Kit (Platform/Steam, Platform/Epic, PlatformServices, StoreExport); C# and Lua scripting in the script editor."
     },
     "grok": {
       "prefix": "grok/",
@@ -55,8 +55,8 @@
       ]
     },
     {
-      "owner": "claude3",
-      "why": "Build window and export, streaming and LOD, Store Kit, C# and Lua (owner default 2026-11-22)",
+      "owner": "coordinator",
+      "why": "Build window and export, streaming and LOD, Store Kit, C# and Lua (Claude 3 lane until 2026-11-27; owner: \"They are out, finish there job\")",
       "globs": [
         "engine/include/okay/Core/BuildPipeline.hpp",
         "engine/src/Core/BuildPipeline.cpp",
@@ -128,8 +128,8 @@
       ]
     },
     {
-      "owner": "claude2",
-      "why": "physics, removing duplicate code, the editor main.cpp split (owner default 2026-11-22); bug fixes may touch any file",
+      "owner": "coordinator",
+      "why": "physics, removing duplicate code, the editor main.cpp split, bug fixes (Claude 2 lane until 2026-11-27; owner: \"They are out, finish there job\")",
       "globs": [
         "engine/include/okay/Physics/**",
         "engine/src/Physics/**",

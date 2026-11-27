@@ -82,7 +82,7 @@ run-time switch still wins, and every third-party fallback is still compiled in.
 | Our readers for COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x | `OKAY_OWN_COLLADA`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`, `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`, `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X` all `ON` | each format reads with ours first (run time: `OKAY_OWN_<FMT>=0`) |
 | Our HTTP client (Linux) | Nothing since `claude/no-curl-1` (2026-11-25): it is THE client in every Linux build (`OKAY_OWN_HTTP=ON` is the default), with no run-time switch and no curl to go back to | Windows keeps WinHTTP; macOS has no client |
 | Our platform backend (Linux) | the engine's `okay_platform` gets `OKAY_PLATFORM_DEFAULT_OWN` | `okay::platform::Default()` is the own backend (run time: `OKAY_PLATFORM_BACKEND=sdl2`). **Not set on Windows**: the Win32 backend has never run on real Windows |
-| OkayUI as the launcher and editor UI | the launcher and editor get `OKAY_UI_DEFAULT_BACKEND_OKAYUI` (same as `OKAY_UI_DEFAULT_BACKEND=okayui`) | starts on OkayUI where it is compiled in (run time: `OKAY_UI_BACKEND=imgui`). Only the ported screens change; the rest stays Dear ImGui |
+| OkayUI as the launcher and editor UI | nothing any more: both are OkayUI only since 2026-11-27 (Dear ImGui deleted) | always OkayUI |
 | Marker | the engine gets `OKAY_OWN_STACK_BUILD` | tests can tell it is a dogfood build |
 
 Not set by it, ever: `OKAY_OWN_CRYPTO`, `OKAY_USE_SODIUM`, `OKAY_USE_ASSIMP`, `OKAY_PREFER_OWN_READERS`. Assimp, when

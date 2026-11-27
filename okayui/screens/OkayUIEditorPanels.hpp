@@ -1,8 +1,8 @@
 #pragma once
 // Editor panels drawn with OkayUI (the opt-in "OkayUI (preview)" backend, docs/own_ui_toolkit.md sections 9 to 11): Problems,
 // Stats, History, Project Settings' Tags and Layers, Physics, Player, Rendering and Loading screen sections, the Profiler, the Project panel's import
-// settings and the Lighting window's Post-processing section. Same shape as OkayUIPanels.hpp: a plain function takes the panel's model (shared/EditorPanelModels.hpp, the
-// same one the Dear ImGui version in editor/EditorPanelViews.cpp draws) and a rectangle, draws into a bare OkayUI window that fills
+// settings and the Lighting window's Post-processing section. Same shape as OkayUIPanels.hpp: a plain function takes the panel's model (shared/EditorPanelModels.hpp) and a
+// rectangle, draws into a bare OkayUI window that fills
 // it, and answers with the model's intent plus the rectangles of what it drew (for the tests). No SDL, no Dear ImGui.
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"     // BeginChild(id, size, childFlags) and its ChildFlags

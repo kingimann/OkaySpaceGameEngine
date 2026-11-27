@@ -140,43 +140,21 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     okayui_port_test(okayui_port_console ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     # editor/ModalGuard.hpp's OkayUI part (the editor built on OkayUI): one question at a time, undrawn modals closed, the trail.
     okayui_port_test(okayui_port_modalguard)
-    target_compile_definitions(test_okayui_port_modalguard PRIVATE OKAY_ON_OKAYUI=1)
     okayui_port_test(okayui_port_versions ../launcher/VersionsUI.cpp ../launcher/VersionsManager.cpp ../launcher/VersionsNet.cpp)
     okayui_port_test(okayui_port_project ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
     okayui_port_test(okayui_port_project2 ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
     # The Scene Manager panel over a small stand-in EditorState (tests/shadow/EditorState.hpp, switched on by the macro; the real class owns the engine's scene and play loop).
-    # OkayUIHostMode.cpp is the window-mode screen: it needs OKAY_HAVE_OKAYUI in every test that links it (else it compiles to the not-built stub).
-    set_source_files_properties(../editor/OkayUIHostMode.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_HAVE_OKAYUI=1)
-    # Window mode (OKAY_UI_HOST=okayui): the three-switch gate and the window-mode screen through the frame loop, fake backend, software painter.
-    okayui_port_test(okayui_hostmode ../editor/OkayUIHostMode.cpp)
-    target_compile_definitions(test_okayui_hostmode PRIVATE OKAY_HAVE_OKAYUI=1)
-    okayui_port_test(okayui_hoststate ../editor/OkayUIHostMode.cpp)   # window-mode persistence: state file, sanitiser, saver, two simulated runs
-    target_compile_definitions(test_okayui_hoststate PRIVATE OKAY_HAVE_OKAYUI=1)
-    # Window mode with the editor's real panels (Console, Scene Manager, Project window) over the stand-in editor state.
-    okayui_port_test(okayui_hostpanels ../editor/OkayUIHostPanels.cpp ../editor/OkayUIHostMode.cpp ../editor/ProjectBrowser.cpp)
-    target_compile_definitions(test_okayui_hostpanels PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
-    # Hierarchy and Inspector (6.24 step 9): the REAL EditorState and a real scene; the editor's InspectorPanel.cpp field code compiled against OkayUI.
-    okayui_port_test(okayui_hostobjects ../editor/OkayUIHostObjects.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
-    target_include_directories(test_okayui_hostobjects PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
-    target_link_libraries(test_okayui_hostobjects PRIVATE okay_engine)
-    # The menu bar and shortcuts (real MenuBarModel, real EditorState), 6.24 round 12.
-    okayui_port_test(okayui_hostmenu ../editor/OkayUIHostMenu.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
-    target_include_directories(test_okayui_hostmenu PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
-    target_link_libraries(test_okayui_hostmenu PRIVATE okay_engine)
-    okayui_port_test(okayui_hostdialogs ../editor/OkayUIHostDialogs.cpp)   # the error modal and the save question as OkayUI popups (DialogService, 6.24 step 7)
+    # (Window mode, OKAY_UI_HOST=okayui, and its tests okayui_hostmode, hoststate, hostpanels, hostobjects, hostmenu, hostdialogs and hostviews were
+    # deleted on 2026-11-27: the whole editor is drawn by OkayUI now, so the second, OkayUI-owned editor window was a copy. docs/ui/own_ui_toolkit.md 33.)
     okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
 
-    # Scene and Game views (window mode, 6.24 step 6): a real okay::Scene rendered by the engine's software renderer through editor/SceneViewCore.hpp.
+    # A real okay::Scene rendered by the engine's software renderer through editor/SceneViewCore.hpp (headless pictures of a scene).
     add_executable(test_okayui_sceneview tests/test_okayui_sceneview.cpp)
     target_include_directories(test_okayui_sceneview PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
     target_link_libraries(test_okayui_sceneview PRIVATE okay_engine)
     add_test(NAME okayui_sceneview COMMAND test_okayui_sceneview)
-    okayui_port_test(okayui_hostviews ../editor/OkayUIHostViews.cpp ../editor/OkayUIHostMode.cpp)
-    target_compile_definitions(test_okayui_hostviews PRIVATE OKAY_HAVE_OKAYUI=1)
-    target_include_directories(test_okayui_hostviews PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
-    target_link_libraries(test_okayui_hostviews PRIVATE okay_engine)
 
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)

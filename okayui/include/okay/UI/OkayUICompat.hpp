@@ -501,6 +501,9 @@ void SetNextItemOpen(bool open, Cond cond);
 bool IsPopupOpen(const char* name, int flags);
 /// BeginPopup with window flags (accepted: a popup here has no title bar and fits its content); SetKeyboardFocusHere(offset) (only 0, the next item, is supported).
 bool BeginPopup(const char* id, int windowFlags);
+/// Dear ImGui's toggle row: shows a tick while *p_selected; a click flips it and returns true. (Without this overload the pointer turned into
+/// `selected = true`: every such menu toggle showed a tick and never changed.)
+bool MenuItem(const char* label, const char* shortcut, bool* p_selected, bool enabled = true);
 void SetKeyboardFocusHere(int offset);
 /// Dear ImGui's RadioButton(label, active): a radio that is shown filled when `active`; true on the click.
 bool RadioButton(const char* label, bool active);
@@ -558,8 +561,10 @@ enum TableFlagNames : int {
     Table_PadOuterX = 1 << 14, Table_NoSavedSettings = 1 << 15, Table_Reorderable = 1 << 16
 };
 enum TableColumnExtraFlags : int { TableColumn_NoResize = 64, TableColumn_NoHide = 128 };   // accepted, no effect
-/// Selectable flags: Selectable_DontClosePopups is the default here (0); AllowDoubleClick and AllowOverlap are accepted and change nothing.
-enum SelectableFlagNames : int { Selectable_DontClosePopups = 0, Selectable_AllowDoubleClick = 16, Selectable_AllowOverlap = 32 };
+/// Selectable flags: AllowDoubleClick and AllowOverlap are accepted and change nothing (AllowDoubleClick was 16, the value of OkayUI's
+/// Selectable_Header: a Dear ImGui row asking for double clicks drew as a frame-tall header row). In Dear ImGui's look (StyleVar_FramedWidgets)
+/// a Selectable clicked directly in a popup closes it, as Dear ImGui's does, unless Selectable_DontClosePopups; otherwise it is ignored.
+enum SelectableFlagNames : int { Selectable_DontClosePopups = 1 << 9, Selectable_AllowDoubleClick = 1 << 8, Selectable_AllowOverlap = 32 };
 /// Tree node, colour edit, drag and drop, button and tab bar flags: accepted, no effect, except ColorEdit_DisplayHex (= ColorEdit_Hex), ColorEdit_AlphaPreview
 /// (0, the default) and ColorEdit_Float (accepted; the sliders show 0..1 anyway).
 enum TreeNodeFlagNames : int { TreeNode_AllowOverlap = 1 << 12 };

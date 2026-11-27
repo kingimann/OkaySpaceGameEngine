@@ -3,6 +3,7 @@
 #include "OkayUI_ContextState.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
+#include "OkayUIInternal.hpp"   // g_framePadX: a pushed StyleVar_FramePadding (x) is the tabs' text inset
 
 #include <algorithm>
 #include <cstring>
@@ -61,10 +62,12 @@ struct Ctx {
     }
 };
 Ctx& C() { static Ctx c; return c; }
+float TabTextInset() { return ui_core::g_framePadX >= 0.0f && std::isfinite(ui_core::g_framePadX) ? std::min(ui_core::g_framePadX, 64.0f) : 10.0f; }
 
 void BuildTabs(Ctx& c) {
     c.tabs.clear();
-    const float pad = 10.0f, closeW = c.tabH * 0.7f;
+    // a pushed StyleVar_FramePadding (x) is the text's inset on each side of a tab (Dear ImGui's tabs: room for an icon the host draws there)
+    const float pad = TabTextInset(), closeW = c.tabH * 0.7f;
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit() || n.tabs.empty() || n.noTabBar) continue;
         bool anySubmitted = false;
@@ -325,7 +328,7 @@ void DockSpace(Rect area) {
         {   // the label, clipped to the tab minus its close box
             const Vec2 ts = CalcTextSize(label.c_str());
             PushClipRect(t.r.x, t.r.y, std::max(1.0f, t.r.w - t.close.w), t.r.h);
-            dl.AddText(V(t.r.x + 10.0f, t.r.y + (t.r.h - ts.y) * 0.5f), txt, label.c_str());
+            dl.AddText(V(t.r.x + TabTextInset(), t.r.y + (t.r.h - ts.y) * 0.5f), txt, label.c_str());
             PopClipRect();
         }
         if (n && cur != n->active && c.kind != Ctx::WinDrag) c.layout.SetActive(n->tabs[(size_t)cur]);

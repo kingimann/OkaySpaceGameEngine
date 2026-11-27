@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 13 headers, 690 names.
+Back to the [code index](../code_index.md). 13 headers, 692 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -210,139 +210,139 @@ Back to the [code index](../code_index.md). 13 headers, 690 names.
 - `DragSource` function, line 953: ---- Drag and drop -------------------------------------------------------------
 - `DropTarget` function, line 956: Mark the last-issued widget as a drop target. On the frame a drag is released over
 - `IsDragging` function, line 958: True while any drag is in progress (e.g. to change hover styling).
-- `DragPayload` struct, line 970
-- `DragDropFlags` enum, line 980: DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
-- `BeginDragDropSource` function, line 981
-- `SetDragDropPayload` function, line 982
-- `SetDragDropPreview` function, line 983
-- `EndDragDropSource` function, line 984
-- `BeginDragDropTarget` function, line 985
-- `AcceptDragDropPayload` function, line 987
-- `EndDragDropTarget` function, line 988
-- `GetDragDropPayload` function, line 991: The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
-- `SetExternalDragDrop` function, line 997: A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
-- `IsDragDropExternal` function, line 999: True while the drag in flight came from SetExternalDragDrop.
-- `CancelDragDrop` function, line 1001: End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
-- `PushID` function, line 1007: ---- ID stack ------------------------------------------------------------------
-- `PopID` function, line 1009
-- `Font` struct, line 1015: ---- Fonts ---------------------------------------------------------------------
-- `ImFontConfig` struct, line 1028: What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
-- `SetFont` function, line 1030: Set the active font (null restores the built-in 8x8).
-- `GetFont` function, line 1031
-- `FontDefault` function, line 1033: Built-in fonts: the default 8x8, and a synthesized bold variant.
-- `FontBold` function, line 1034
-- `Rect` struct, line 1038: ---- Item queries and state reset ------------------------------------------------
-- `GetItemRect` function, line 1041: The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
-- `GetOverlayCount` function, line 1045: The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
-- `GetOverlayRect` function, line 1046
-- `IsItemHovered` function, line 1049: True when the mouse is over the last auto-layout item and nothing covers it (a blocked
-- `WantsTextInput` function, line 1052: True while a text field has keyboard focus: the host should send typed text and key edges
-- `SetClipboardText` function, line 1056: Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
-- `GetClipboardText` function, line 1057
-- `GetFrameInput` function, line 1061: Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
-- `GetKeyboardFocusId` function, line 1062
-- `SetKeyboardFocusId` function, line 1063
-- `ResetState` function, line 1067: Forget all remembered state: window positions and collapsed flags, tree / header / combo
-- `Col` enum, line 1078
-- `GetColorU32` function, line 1080: A theme colour packed, with its alpha scaled by 'alphaMul' (0..1).
-- `ColorMulAlpha` function, line 1082: 'c' with its alpha scaled by 'alphaMul' (0..1).
-- `DrawFlags` enum, line 1091: Drawing into the current window's batch (GetWindowDrawList) or on top of everything (GetForegroundDrawList). Both
-- `ImVector` struct, line 1100: A growable array of plain values with the field names and calls ported code uses ('Size', 'Data', 'begin()', 'push_front', 'find_index',
-- `ImDrawVert` struct, line 1167
-- `ImTextureRect` struct, line 1168
-- `ImTextureStatus` enum, line 1169
-- `ImTextureData` struct, line 1170
-- `ImTextureRef` struct, line 1188
-- `ImDrawCmd` struct, line 1193
-- `DrawList` struct, line 1200
-- `GetFontTexUvWhitePixel` function, line 1297: The uv a flat-coloured vertex should carry (a white texel of the glyph atlas in the launcher look; (0, 0) in the classic look, which ignores uv).
-- `DrawListHandle` struct, line 1301: What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so 'GetWindowDrawList().AddLine(...)' and 'const DrawList& dl = ...' work
-- `ImDrawData` struct, line 1311: What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. 'Textures' points at a list holding
-- `GetWindowDrawList` function, line 1318
-- `GetForegroundDrawList` function, line 1319
-- `CalcTextSize` function, line 1324: Width and height of one line of text in the current font and text scale (height is the line height).
-- `GetTextLineHeight` function, line 1325
-- `GetFontSize` function, line 1326
-- `GetFrameHeight` function, line 1327
-- `GetTextLineHeightWithSpacing` function, line 1328
-- `GetFrameHeightWithSpacing` function, line 1329
-- `GetCursorScreenPos` function, line 1331: Where the next item will be placed (screen pixels), honouring a pending SameLine. Zero outside a window.
-- `SetCursorScreenPos` function, line 1333: Place the NEXT item at this screen position (a one-shot; the layout continues below it afterwards).
-- `GetCursorPos` function, line 1335: The same relative to the window's (or child's) content origin.
-- `SetCursorPos` function, line 1336
-- `GetCursorPosX` function, line 1337
-- `GetCursorPosY` function, line 1338
-- `SetCursorPosX` function, line 1339
-- `SetCursorPosY` function, line 1340
-- `GetContentRegionAvail` function, line 1342: Width from the cursor to the right edge of the content, and height down to the bottom of the visible content area.
-- `InvisibleButton` function, line 1346: An item with no drawing, 'w'*'h' pixels (0 = full width / one row), that behaves like a button: use it as a hit area
-- `IsItemFocused` function, line 1351: Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
-- `GetID` function, line 1353: The id a widget of this label would get in the current ID scope (what PushID changes).
-- `GetItemID` function, line 1355: An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
-- `IsAnyItemActive` function, line 1357: True while any widget is held (pressed or being dragged).
-- `IsItemVisible` function, line 1359: True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
-- `IsRectVisible` function, line 1360
-- `IsAnyMouseDown` function, line 1362
-- `IsItemActive` function, line 1363
-- `IsItemActivated` function, line 1364
-- `IsItemDeactivated` function, line 1365
-- `IsItemEdited` function, line 1368: True when the last value widget (checkbox, radio, switch, slider, drag, input, combo, list box, colour edit) changed its value
-- `IsItemDeactivatedAfterEdit` function, line 1372: True on the frame the last item stops being held (or, for a text field, loses the keyboard) if its value changed at any point
-- `CalcItemWidth` function, line 1375: The width the next full-width item would get (the room left on the line, or the SetNextItemWidth / PushItemWidth width when
-- `IsItemClicked` function, line 1376
-- `IsMouseDown` function, line 1377
-- `IsMouseClicked` function, line 1378
-- `IsMouseReleased` function, line 1379
-- `GetMousePos` function, line 1380
-- `GetMouseDelta` function, line 1381
-- `GetItemRectMin` function, line 1383: The last item's rectangle as corners / size (the same rectangle as GetItemRect()).
-- `GetItemRectMax` function, line 1384
-- `GetItemRectSize` function, line 1385
-- `GetTime` function, line 1387: Seconds since the start (Input::time when the host sets it, otherwise frames / 60) and the number of frames begun.
-- `GetFrameCount` function, line 1388
-- `IsMouseDoubleClicked` function, line 1390: The left button went down for the second time within 0.3 s and 6 px of the first press (this frame only).
-- `IsMouseDragging` function, line 1392: The left button is held and has moved more than 'threshold' pixels (default 4) since it went down.
-- `IsKeyDown` function, line 1396: Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with 'repeat', again every 0.05 s
-- `IsKeyPressed` function, line 1397
-- `IsKeyReleased` function, line 1398
-- `StyleVar` enum, line 1423: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
-- `PushStyleVar` function, line 1431
-- `PopStyleVar` function, line 1433
-- `IsMouseHoveringRect` function, line 1434
-- `GetWindowPos` function, line 1438: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
-- `GetWindowSize` function, line 1439
-- `GetWindowWidth` function, line 1440
-- `GetWindowHeight` function, line 1441
-- `IsWindowHovered` function, line 1442
-- `IsWindowFocused` function, line 1443
-- `IsWindowAppearing` function, line 1444
-- `SetWindowFocus` function, line 1445
-- `SetWindowFontScale` function, line 1447: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
-- `MouseCursor` enum, line 1450: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
-- `SetMouseCursor` function, line 1452
-- `GetMouseCursor` function, line 1453
-- `IO` struct, line 1457: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
-- `Composition` struct, line 1502: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
-- `GetComposition` function, line 1503
-- `ImeRect` struct, line 1507: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
-- `GetImeRect` function, line 1508
-- `SetImeRect` function, line 1509
-- `SetNextWindowPos` function, line 1511: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
-- `SetNextWindowSize` function, line 1512
-- `BeginDisabled` function, line 1521: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
-- `EndDisabled` function, line 1522
-- `IsDisabled` function, line 1523
-- `Style` function, line 1526: The active theme (mutable — tweak colors/sizes in place).
-- `PushStyleColor` function, line 1557: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
-- `PopStyleColor` function, line 1561
-- `SetStyleColor` function, line 1563: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
-- `ResetStyleColor` function, line 1564
-- `GetStyleColorVec4` function, line 1567: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
-- `GetStyleColorName` function, line 1568
-- `ColorConvertU32ToFloat4` function, line 1570: Dear ImGui style colour conversions (all components 0..1; hue wraps).
-- `ColorConvertFloat4ToU32` function, line 1571
-- `ColorConvertRGBtoHSV` function, line 1572
-- `ColorConvertHSVtoRGB` function, line 1573
+- `DragPayload` struct, line 971
+- `DragDropFlags` enum, line 981: DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
+- `BeginDragDropSource` function, line 982
+- `SetDragDropPayload` function, line 983
+- `SetDragDropPreview` function, line 984
+- `EndDragDropSource` function, line 985
+- `BeginDragDropTarget` function, line 986
+- `AcceptDragDropPayload` function, line 988
+- `EndDragDropTarget` function, line 989
+- `GetDragDropPayload` function, line 992: The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
+- `SetExternalDragDrop` function, line 998: A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
+- `IsDragDropExternal` function, line 1000: True while the drag in flight came from SetExternalDragDrop.
+- `CancelDragDrop` function, line 1002: End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
+- `PushID` function, line 1008: ---- ID stack ------------------------------------------------------------------
+- `PopID` function, line 1010
+- `Font` struct, line 1016: ---- Fonts ---------------------------------------------------------------------
+- `ImFontConfig` struct, line 1029: What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
+- `SetFont` function, line 1031: Set the active font (null restores the built-in 8x8).
+- `GetFont` function, line 1032
+- `FontDefault` function, line 1034: Built-in fonts: the default 8x8, and a synthesized bold variant.
+- `FontBold` function, line 1035
+- `Rect` struct, line 1039: ---- Item queries and state reset ------------------------------------------------
+- `GetItemRect` function, line 1042: The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
+- `GetOverlayCount` function, line 1046: The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
+- `GetOverlayRect` function, line 1047
+- `IsItemHovered` function, line 1050: True when the mouse is over the last auto-layout item and nothing covers it (a blocked
+- `WantsTextInput` function, line 1053: True while a text field has keyboard focus: the host should send typed text and key edges
+- `SetClipboardText` function, line 1057: Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
+- `GetClipboardText` function, line 1058
+- `GetFrameInput` function, line 1062: Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
+- `GetKeyboardFocusId` function, line 1063
+- `SetKeyboardFocusId` function, line 1064
+- `ResetState` function, line 1068: Forget all remembered state: window positions and collapsed flags, tree / header / combo
+- `Col` enum, line 1079
+- `GetColorU32` function, line 1081: A theme colour packed, with its alpha scaled by 'alphaMul' (0..1).
+- `ColorMulAlpha` function, line 1083: 'c' with its alpha scaled by 'alphaMul' (0..1).
+- `DrawFlags` enum, line 1092: Drawing into the current window's batch (GetWindowDrawList) or on top of everything (GetForegroundDrawList). Both
+- `ImVector` struct, line 1101: A growable array of plain values with the field names and calls ported code uses ('Size', 'Data', 'begin()', 'push_front', 'find_index',
+- `ImDrawVert` struct, line 1168
+- `ImTextureRect` struct, line 1169
+- `ImTextureStatus` enum, line 1170
+- `ImTextureData` struct, line 1171
+- `ImTextureRef` struct, line 1189
+- `ImDrawCmd` struct, line 1194
+- `DrawList` struct, line 1201
+- `GetFontTexUvWhitePixel` function, line 1301: The uv a flat-coloured vertex should carry (a white texel of the glyph atlas in the launcher look; (0, 0) in the classic look, which ignores uv).
+- `DrawListHandle` struct, line 1305: What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so 'GetWindowDrawList().AddLine(...)' and 'const DrawList& dl = ...' work
+- `ImDrawData` struct, line 1315: What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. 'Textures' points at a list holding
+- `GetWindowDrawList` function, line 1322
+- `GetForegroundDrawList` function, line 1323
+- `CalcTextSize` function, line 1328: Width and height of one line of text in the current font and text scale (height is the line height).
+- `GetTextLineHeight` function, line 1329
+- `GetFontSize` function, line 1330
+- `GetFrameHeight` function, line 1331
+- `GetTextLineHeightWithSpacing` function, line 1332
+- `GetFrameHeightWithSpacing` function, line 1333
+- `GetCursorScreenPos` function, line 1335: Where the next item will be placed (screen pixels), honouring a pending SameLine. Zero outside a window.
+- `SetCursorScreenPos` function, line 1337: Place the NEXT item at this screen position (a one-shot; the layout continues below it afterwards).
+- `GetCursorPos` function, line 1339: The same relative to the window's (or child's) content origin.
+- `SetCursorPos` function, line 1340
+- `GetCursorPosX` function, line 1341
+- `GetCursorPosY` function, line 1342
+- `SetCursorPosX` function, line 1343
+- `SetCursorPosY` function, line 1344
+- `GetContentRegionAvail` function, line 1346: Width from the cursor to the right edge of the content, and height down to the bottom of the visible content area.
+- `InvisibleButton` function, line 1350: An item with no drawing, 'w'*'h' pixels (0 = full width / one row), that behaves like a button: use it as a hit area
+- `IsItemFocused` function, line 1355: Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
+- `GetID` function, line 1357: The id a widget of this label would get in the current ID scope (what PushID changes).
+- `GetItemID` function, line 1359: An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
+- `IsAnyItemActive` function, line 1361: True while any widget is held (pressed or being dragged).
+- `IsItemVisible` function, line 1363: True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
+- `IsRectVisible` function, line 1364
+- `IsAnyMouseDown` function, line 1366
+- `IsItemActive` function, line 1367
+- `IsItemActivated` function, line 1368
+- `IsItemDeactivated` function, line 1369
+- `IsItemEdited` function, line 1372: True when the last value widget (checkbox, radio, switch, slider, drag, input, combo, list box, colour edit) changed its value
+- `IsItemDeactivatedAfterEdit` function, line 1376: True on the frame the last item stops being held (or, for a text field, loses the keyboard) if its value changed at any point
+- `CalcItemWidth` function, line 1379: The width the next full-width item would get (the room left on the line, or the SetNextItemWidth / PushItemWidth width when
+- `IsItemClicked` function, line 1380
+- `IsMouseDown` function, line 1381
+- `IsMouseClicked` function, line 1382
+- `IsMouseReleased` function, line 1383
+- `GetMousePos` function, line 1384
+- `GetMouseDelta` function, line 1385
+- `GetItemRectMin` function, line 1387: The last item's rectangle as corners / size (the same rectangle as GetItemRect()).
+- `GetItemRectMax` function, line 1388
+- `GetItemRectSize` function, line 1389
+- `GetTime` function, line 1391: Seconds since the start (Input::time when the host sets it, otherwise frames / 60) and the number of frames begun.
+- `GetFrameCount` function, line 1392
+- `IsMouseDoubleClicked` function, line 1394: The left button went down for the second time within 0.3 s and 6 px of the first press (this frame only).
+- `IsMouseDragging` function, line 1396: The left button is held and has moved more than 'threshold' pixels (default 4) since it went down.
+- `IsKeyDown` function, line 1400: Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with 'repeat', again every 0.05 s
+- `IsKeyPressed` function, line 1401
+- `IsKeyReleased` function, line 1402
+- `StyleVar` enum, line 1427: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
+- `PushStyleVar` function, line 1435
+- `PopStyleVar` function, line 1437
+- `IsMouseHoveringRect` function, line 1438
+- `GetWindowPos` function, line 1442: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
+- `GetWindowSize` function, line 1443
+- `GetWindowWidth` function, line 1444
+- `GetWindowHeight` function, line 1445
+- `IsWindowHovered` function, line 1446
+- `IsWindowFocused` function, line 1447
+- `IsWindowAppearing` function, line 1448
+- `SetWindowFocus` function, line 1449
+- `SetWindowFontScale` function, line 1451: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
+- `MouseCursor` enum, line 1454: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
+- `SetMouseCursor` function, line 1456
+- `GetMouseCursor` function, line 1457
+- `IO` struct, line 1461: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
+- `Composition` struct, line 1506: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
+- `GetComposition` function, line 1507
+- `ImeRect` struct, line 1511: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
+- `GetImeRect` function, line 1512
+- `SetImeRect` function, line 1513
+- `SetNextWindowPos` function, line 1515: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
+- `SetNextWindowSize` function, line 1516
+- `BeginDisabled` function, line 1525: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
+- `EndDisabled` function, line 1526
+- `IsDisabled` function, line 1527
+- `Style` function, line 1530: The active theme (mutable — tweak colors/sizes in place).
+- `PushStyleColor` function, line 1561: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
+- `PopStyleColor` function, line 1565
+- `SetStyleColor` function, line 1567: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
+- `ResetStyleColor` function, line 1568
+- `GetStyleColorVec4` function, line 1571: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
+- `GetStyleColorName` function, line 1572
+- `ColorConvertU32ToFloat4` function, line 1574: Dear ImGui style colour conversions (all components 0..1; hue wraps).
+- `ColorConvertFloat4ToU32` function, line 1575
+- `ColorConvertRGBtoHSV` function, line 1576
+- `ColorConvertHSVtoRGB` function, line 1577
 
 ## `okayui/include/okay/UI/OkayUICapture.hpp`
 
@@ -516,37 +516,38 @@ Back to the [code index](../code_index.md). 13 headers, 690 names.
 - `SetNextItemOpen` function, line 499: SetNextItemOpen with a condition (Always, Once, FirstUseEver; Appearing counts as Always here).
 - `IsPopupOpen` function, line 501: IsPopupOpen with popup flags: with Popup_AnyPopupId (and an empty name) it answers "is any popup open"; with a name it is the plain form.
 - `BeginPopup` function, line 503: BeginPopup with window flags (accepted: a popup here has no title bar and fits its content); SetKeyboardFocusHere(offset) (only 0, the next item, is supported).
-- `SetKeyboardFocusHere` function, line 504
-- `RadioButton` function, line 506: Dear ImGui's RadioButton(label, active): a radio that is shown filled when 'active'; true on the click.
-- `ColorButton` function, line 508: ColorButton with a vector colour (and, in the long form, flags and a size as a vector).
-- `PlotLines` function, line 510: PlotLines / PlotHistogram with Dear ImGui's argument list (values, count, offset, overlay, scaleMin, scaleMax, size; stride is not offered).
-- `PlotHistogram` function, line 511
-- `TreeNodeEx` function, line 513: TreeNodeEx / TreeNode keyed by a pointer: 'TreeNodeEx(obj, flags, "%s", name)' (the pointer is the id, the formatted text the label).
-- `PushFont` function, line 520: PushFont / PopFont: the font used for text until the matching PopFont (nests up to 8 deep; a null font means the current one). Text size is the
-- `PopFont` function, line 522
-- `InputTextCallbackData` struct, line 525: What a text callback is handed. The InputText overloads below call it for InputText_CallbackHistory (Up / Down) and
-- `InputTextWithHint` function, line 533
-- `InputText` function, line 534
-- `WindowFlagNames` enum, line 545: Window flags beyond OkayUI's own. Window_NoDecoration is real (no title bar, no resize, no scrollbar, no collapse); NoBringToFrontOnFocus is
-- `TableFlagNames` enum, line 555: Table flags beyond OkayUI's own, accepted and without effect except that Table_Resizable is the default (0), Table_Borders is Table_BordersInnerH and
-- `TableColumnExtraFlags` enum, line 560
-- `SelectableFlagNames` enum, line 562: Selectable flags: Selectable_DontClosePopups is the default here (0); AllowDoubleClick and AllowOverlap are accepted and change nothing.
-- `TreeNodeFlagNames` enum, line 565: Tree node, colour edit, drag and drop, button and tab bar flags: accepted, no effect, except ColorEdit_DisplayHex (= ColorEdit_Hex), ColorEdit_AlphaPreview
-- `ColorEditFlagNames` enum, line 566
-- `DragDropFlagNames` enum, line 567
-- `ButtonFlags` enum, line 569: Button flags for InvisibleButton(id, size, flags): the mouse buttons are accepted; the button reports left clicks (use IsItemClicked(1) for right).
-- `InvisibleButton` function, line 570
-- `TabBarFlags` enum, line 571
-- `BeginTabBar` function, line 573
-- `TabDragTarget` function, line 576: Where a dragged tab lands in a reorderable bar (TabBar_Reorderable): the tabs' widths in their order, the dragged one's index, the bar's left edge,
-- `TabItemExtraFlags` enum, line 577
-- `InputFlags` enum, line 579: Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
-- `BackendFlags` enum, line 581: Backend flags a host reports on the IO: accepted, nothing reads them.
-- `ItemFlagNames` enum, line 583: Item flag names under Dear ImGui's spelling (the ItemFlag_* values are the same).
-- `ColNames` enum, line 586: Colour slot names of newer Dear ImGui versions, mapped onto the closest OkayUI slot.
-- `DirNone` enum, line 588
-- `CalcTextSize` function, line 591: CalcTextSize with Dear ImGui's extra arguments: 'textEnd' (null = to the zero), 'hideTextAfterDoubleHash' (measure only the text before "##"), 'wrapWidth' (not 
-- `ImColor` struct, line 595: A colour as ported code spells it: floats inside, converts to the vector and to the packed form.
+- `MenuItem` function, line 506: Dear ImGui's toggle row: shows a tick while *p_selected; a click flips it and returns true. (Without this overload the pointer turned into
+- `SetKeyboardFocusHere` function, line 507
+- `RadioButton` function, line 509: Dear ImGui's RadioButton(label, active): a radio that is shown filled when 'active'; true on the click.
+- `ColorButton` function, line 511: ColorButton with a vector colour (and, in the long form, flags and a size as a vector).
+- `PlotLines` function, line 513: PlotLines / PlotHistogram with Dear ImGui's argument list (values, count, offset, overlay, scaleMin, scaleMax, size; stride is not offered).
+- `PlotHistogram` function, line 514
+- `TreeNodeEx` function, line 516: TreeNodeEx / TreeNode keyed by a pointer: 'TreeNodeEx(obj, flags, "%s", name)' (the pointer is the id, the formatted text the label).
+- `PushFont` function, line 523: PushFont / PopFont: the font used for text until the matching PopFont (nests up to 8 deep; a null font means the current one). Text size is the
+- `PopFont` function, line 525
+- `InputTextCallbackData` struct, line 528: What a text callback is handed. The InputText overloads below call it for InputText_CallbackHistory (Up / Down) and
+- `InputTextWithHint` function, line 536
+- `InputText` function, line 537
+- `WindowFlagNames` enum, line 548: Window flags beyond OkayUI's own. Window_NoDecoration is real (no title bar, no resize, no scrollbar, no collapse); NoBringToFrontOnFocus is
+- `TableFlagNames` enum, line 558: Table flags beyond OkayUI's own, accepted and without effect except that Table_Resizable is the default (0), Table_Borders is Table_BordersInnerH and
+- `TableColumnExtraFlags` enum, line 563
+- `SelectableFlagNames` enum, line 567: Selectable flags: AllowDoubleClick and AllowOverlap are accepted and change nothing (AllowDoubleClick was 16, the value of OkayUI's
+- `TreeNodeFlagNames` enum, line 570: Tree node, colour edit, drag and drop, button and tab bar flags: accepted, no effect, except ColorEdit_DisplayHex (= ColorEdit_Hex), ColorEdit_AlphaPreview
+- `ColorEditFlagNames` enum, line 571
+- `DragDropFlagNames` enum, line 572
+- `ButtonFlags` enum, line 574: Button flags for InvisibleButton(id, size, flags): the mouse buttons are accepted; the button reports left clicks (use IsItemClicked(1) for right).
+- `InvisibleButton` function, line 575
+- `TabBarFlags` enum, line 576
+- `BeginTabBar` function, line 578
+- `TabDragTarget` function, line 581: Where a dragged tab lands in a reorderable bar (TabBar_Reorderable): the tabs' widths in their order, the dragged one's index, the bar's left edge,
+- `TabItemExtraFlags` enum, line 582
+- `InputFlags` enum, line 584: Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
+- `BackendFlags` enum, line 586: Backend flags a host reports on the IO: accepted, nothing reads them.
+- `ItemFlagNames` enum, line 588: Item flag names under Dear ImGui's spelling (the ItemFlag_* values are the same).
+- `ColNames` enum, line 591: Colour slot names of newer Dear ImGui versions, mapped onto the closest OkayUI slot.
+- `DirNone` enum, line 593
+- `CalcTextSize` function, line 596: CalcTextSize with Dear ImGui's extra arguments: 'textEnd' (null = to the zero), 'hideTextAfterDoubleHash' (measure only the text before "##"), 'wrapWidth' (not 
+- `ImColor` struct, line 600: A colour as ported code spells it: floats inside, converts to the vector and to the packed form.
 
 ## `okayui/include/okay/UI/OkayUIDesign.hpp`
 
@@ -654,32 +655,33 @@ Back to the [code index](../code_index.md). 13 headers, 690 names.
 - `ListOpenPopups` function, line 175
 - `ClosePopup` function, line 177: Close the popup opened (or begun) as 'name' / with id 'id', if it is open. True when it was open. Popups opened over it stay as they are.
 - `ClosePopupById` function, line 178
-- `CurrentPopupDepth` function, line 180: How many popup bodies are being built right now (0 outside any popup): Dear ImGui's popup level ('g.BeginPopupStack.Size').
-- `WindowIdOfTitle` function, line 181
-- `SetWindowItemWidthDefault` function, line 183: Set the default width of the value column for the rest of the current window (PushItemWidth, undone when the window ends). Nothing outside a window.
-- `SetTabAmend` function, line 185: The strip a TabItemButton outside a tab bar is placed on (DockNodeBeginAmendTabBar sets it, DockNodeEndAmendTabBar clears it); buttons go right to left from its
-- `TabAmendUsed` function, line 186
-- `FillContextFromWindowTable` function, line 188: Called by RefreshContext after it knows which slots are hovered, active, current and focused (0 = none); fills the pointers and lists.
-- `ApplyDockNodeEdits` function, line 190: Writes ported code made to snapshots (SizeRef, Windows order, WindowClass flags) turned into layout edits; DockSpace calls this first. Not for hosts.
-- `RefreshContext` function, line 193: Fill the one global context and its window snapshots from OkayUI's state and return it. 'GImGui' (OkayUIImGuiNames.hpp) calls this.
-- `FindWindowRefByName` function, line 196: The table entry for a window by title or by id (GetID of the title); null when the window is neither drawn nor in the dock layout.
-- `FindWindowRefByID` function, line 197
-- `GetWindowDockNode` function, line 199: The dock node of the current window (null outside a window, or when it floats), and the root above any node (the node itself for a root, null for null).
-- `DockNodeGetRootNode` function, line 200
-- `DockBuilderGetNode` function, line 203: The node with this id in the live layout (a builder id, the DockSpace id, or the derived id a node of a user-made split has), else the plan
-- `DockNodeBeginAmendTabBar` function, line 206: Tab-strip amendments: after DockNodeBeginAmendTabBar(node) returns true, a TabItemButton / SetNextItemWidth pair puts a button at the right end of
-- `DockNodeEndAmendTabBar` function, line 207
-- `TabBarFindTabByID` function, line 209: The tab with this id on the strip, or null.
-- `ImHashStr` function, line 211: A hash of a string for use as an id (not the value GetID gives; use it with the id-taking calls: OpenPopup(id), BeginPopupEx(id, ...)). 'size' 0 = to the zero b
-- `DockSpace` function, line 215: Lay a dock space out for 'id' at the cursor: 'size' 0 or less means "what is left minus that much" (0 = all of it). Calls DockSpace(Rect), reserves the
-- `GetActiveID` function, line 219: The id of the item being pressed or dragged now (the same ids GetID / GetItemID give), 0 when none. Text fields count while they
-- `ClearActiveID` function, line 222: Let go of whatever is pressed and take the keyboard away from the focused text field (what the editor's search box uses to
-- `SetItemKeyOwner` function, line 228: Make the LAST item the owner of 'key' for this frame and the next: Shortcut() will not fire for a chord with that key while an item
-- `SetKeyOwner` function, line 230: Give 'key' to the item with this id (e.g. a GetID value) for this frame and the next, without needing the item to be the last one. 'ownerId' 0 clears it.
-- `GetKeyOwner` function, line 232: The id of the item that owns 'key' now (0 for none or a bad key id).
-- `StateStorage` class, line 238: A small store of values by id for the current window, kept between frames (a tree-open flag, a remembered tab, a scroll value that
-- `GetStateStorage` function, line 260
-- `StateStorageReset` function, line 262: Empty every store (ResetState calls it).
+- `GetDockHostDrawList` function, line 181: How many popup bodies are being built right now (0 outside any popup): Dear ImGui's popup level ('g.BeginPopupStack.Size').
+- `CurrentPopupDepth` function, line 182
+- `WindowIdOfTitle` function, line 183
+- `SetWindowItemWidthDefault` function, line 185: Set the default width of the value column for the rest of the current window (PushItemWidth, undone when the window ends). Nothing outside a window.
+- `SetTabAmend` function, line 187: The strip a TabItemButton outside a tab bar is placed on (DockNodeBeginAmendTabBar sets it, DockNodeEndAmendTabBar clears it); buttons go right to left from its
+- `TabAmendUsed` function, line 188
+- `FillContextFromWindowTable` function, line 190: Called by RefreshContext after it knows which slots are hovered, active, current and focused (0 = none); fills the pointers and lists.
+- `ApplyDockNodeEdits` function, line 192: Writes ported code made to snapshots (SizeRef, Windows order, WindowClass flags) turned into layout edits; DockSpace calls this first. Not for hosts.
+- `RefreshContext` function, line 195: Fill the one global context and its window snapshots from OkayUI's state and return it. 'GImGui' (OkayUIImGuiNames.hpp) calls this.
+- `FindWindowRefByName` function, line 198: The table entry for a window by title or by id (GetID of the title); null when the window is neither drawn nor in the dock layout.
+- `FindWindowRefByID` function, line 199
+- `GetWindowDockNode` function, line 201: The dock node of the current window (null outside a window, or when it floats), and the root above any node (the node itself for a root, null for null).
+- `DockNodeGetRootNode` function, line 202
+- `DockBuilderGetNode` function, line 205: The node with this id in the live layout (a builder id, the DockSpace id, or the derived id a node of a user-made split has), else the plan
+- `DockNodeBeginAmendTabBar` function, line 208: Tab-strip amendments: after DockNodeBeginAmendTabBar(node) returns true, a TabItemButton / SetNextItemWidth pair puts a button at the right end of
+- `DockNodeEndAmendTabBar` function, line 209
+- `TabBarFindTabByID` function, line 211: The tab with this id on the strip, or null.
+- `ImHashStr` function, line 213: A hash of a string for use as an id (not the value GetID gives; use it with the id-taking calls: OpenPopup(id), BeginPopupEx(id, ...)). 'size' 0 = to the zero b
+- `DockSpace` function, line 217: Lay a dock space out for 'id' at the cursor: 'size' 0 or less means "what is left minus that much" (0 = all of it). Calls DockSpace(Rect), reserves the
+- `GetActiveID` function, line 221: The id of the item being pressed or dragged now (the same ids GetID / GetItemID give), 0 when none. Text fields count while they
+- `ClearActiveID` function, line 224: Let go of whatever is pressed and take the keyboard away from the focused text field (what the editor's search box uses to
+- `SetItemKeyOwner` function, line 230: Make the LAST item the owner of 'key' for this frame and the next: Shortcut() will not fire for a chord with that key while an item
+- `SetKeyOwner` function, line 232: Give 'key' to the item with this id (e.g. a GetID value) for this frame and the next, without needing the item to be the last one. 'ownerId' 0 clears it.
+- `GetKeyOwner` function, line 234: The id of the item that owns 'key' now (0 for none or a bad key id).
+- `StateStorage` class, line 240: A small store of values by id for the current window, kept between frames (a tree-open flag, a remembered tab, a scroll value that
+- `GetStateStorage` function, line 262
+- `StateStorageReset` function, line 264: Empty every store (ResetState calls it).
 
 ## `okayui/include/okay/UI/OkayUIMap.hpp`
 

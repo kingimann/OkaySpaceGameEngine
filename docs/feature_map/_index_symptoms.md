@@ -28,6 +28,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a big message takes seconds on a bad connection | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | a black or empty canvas | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | a black window on start | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
+| a block cannot be wired in the app | [14.9](14-visual-scripting.md#149-visual-script-app-and-program) Visual Script app and program |
 | a body spins when it should stay upright | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a bone stretches or turns NaN | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a boolean cut does not follow a moved cutter | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
@@ -291,6 +292,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a skinned character is slow | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | a slid loop stretches the texture | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a slider will not drag or jumps | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
+| a slot does not take a dropped object | [14.9](14-visual-scripting.md#149-visual-script-app-and-program) Visual Script app and program |
 | a slow change merged unnoticed | [58.3](43-proposals.md#583-performance-regression-guard-in-ci) Performance regression guard in CI |
 | a sound does not get quieter with distance | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a sound file will not play or is listed in the Console as unreadable | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
@@ -991,6 +993,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the About popup lists the stack | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
 | the Animation tab loses a key | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
 | the API page diverges from the engine | [19.1](19-docs-tests-health.md#191-readme-and-docs) README and docs |
+| the app and the editor's window disagree about a graph | [14.9](14-visual-scripting.md#149-visual-script-app-and-program) Visual Script app and program |
 | the bag empties when the scene changes | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | the bag is not saved per user on the server | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the bag will not open or opens with the wrong key | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
@@ -1158,6 +1161,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the preview differs from the game | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
 | the preview does not restore the pose | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
 | the profiler shows nothing | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
+| the program does not open a graph | [14.9](14-visual-scripting.md#149-visual-script-app-and-program) Visual Script app and program |
 | the quality setting changes nothing on a GPU machine | [1.15](01-core-scene.md#115-display-settings) Display settings |
 | the recovery prompt does not appear | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the relay container exits at once | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |

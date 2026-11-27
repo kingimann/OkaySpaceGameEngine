@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 76 headers, 1143 names.
+Back to the [code index](../code_index.md). 79 headers, 1151 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -863,6 +863,15 @@ Back to the [code index](../code_index.md). 76 headers, 1143 names.
 - `WaitThread` function, line 136: Wait for the thread to end, store its return value in '*status' (when given) and free the record.
 - `DetachThread` function, line 148: Let the thread run on its own; its record is freed when it ends. Do not use the pointer afterwards.
 
+## `shared/OkayUIAppKit.hpp`
+
+- `Rgb` function, line 19
+- `FollowDesignColours` function, line 26
+- `BeginFilled` function, line 37: A bare OkayUI window over (X, Y, W, H) filled with 'fill', with a line along its top edge when 'topLine'. Call UI::End() after,
+- `BeginDialog` function, line 48: A dialog box of about bw x bh over the app's rectangle (X, Y, W, H), which is dimmed; (bx, by) is where its content starts.
+- `TabStripResult` struct, line 62: What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), the tab
+- `ParseProgramArgs` function, line 97: A window program's command line: words that do not start with '-' are paths, "--frames N" ends the program after N frames
+
 ## `shared/OkayUIBackend.hpp`
 
 - `Backend` enum, line 26
@@ -1199,15 +1208,13 @@ Back to the [code index](../code_index.md). 76 headers, 1143 names.
 
 ## `shared/ScriptIdeAppImpl.hpp`
 
-- `EngineLanguageOf` function, line 31
-- `Rgb` function, line 34
-- `FollowDesignColours` function, line 40
-- `FileText` function, line 49
-- `WriteText` function, line 64
-- `Fit` function, line 78
-- `TimeText` function, line 85
-- `Normal` function, line 92
-- `ScriptIdeApp` struct, line 103
+- `EngineLanguageOf` function, line 32
+- `FileText` function, line 42
+- `WriteText` function, line 57
+- `Fit` function, line 71
+- `TimeText` function, line 78
+- `Normal` function, line 85
+- `ScriptIdeApp` struct, line 96
 
 ## `shared/SelfUpdate.hpp`
 
@@ -1366,6 +1373,16 @@ Back to the [code index](../code_index.md). 76 headers, 1143 names.
 - `SetStatus` function, line 158
 - `ParseRows` function, line 171
 - `ReasonLabel` function, line 191: The reason key as words ("harassment" -> "Harassment or bullying").
+
+## `shared/VisualScriptApp.hpp`
+
+- `AppSettings` struct, line 39: What the Visual Script app keeps between runs (one small JSON file, read with the engine's okay::json).
+- `AppCommand` struct, line 60: A command for the host's menus: its title, its keys as text ("" = none), what it does.
+- `VisualScriptApp` class, line 62
+
+## `shared/VisualScriptAppImpl.hpp`
+
+- `VisualScriptApp` struct, line 54
 
 ## `shared/WindowHandles.hpp`
 

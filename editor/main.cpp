@@ -809,8 +809,7 @@ int main(int argc, char** argv) {
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
-#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
-#include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
+#include "EmbeddedFonts.hpp" // embedded Roboto Medium (Apache 2.0, the UI font) and JetBrains Mono (OFL, the code font)
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
 #include "ScriptIdeApp.hpp"       // scriptide::TestRunScript: Run (a sandbox scene), shared with the Script Editor program
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
@@ -50612,13 +50611,11 @@ int main(int argc, char** argv) {
         // (Dear ImGui 1.92 loads glyphs on demand from the TTF, so punctuation like
         // "—", "•", "…" renders without an explicit range. Geometric shapes ●▶★ are
         // simply absent from Roboto, so those are drawn or swapped in the code.)
-        if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 18.0f, &fc))
+        if (!okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 18.0f, fc))
             io.Fonts->AddFontDefault();
         MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
-        g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 22.0f, &fc);
+        g_headingFont = okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 22.0f, fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
         // syntax overlay, caret and columns line up. JetBrains Mono (the JetBrains IDE
         // font) is a scalable TTF, so it can't fall out of alignment like a proportional
@@ -50626,8 +50623,7 @@ int main(int argc, char** argv) {
         // ~15px code size. Downscaling a high-res glyph stays sharp at every zoom level,
         // where a small bitmap font (the old ProggyClean) blurred as soon as you zoomed.
         ImFontConfig mc; mc.OversampleH = 2; mc.OversampleV = 2; mc.PixelSnapH = true;
-        g_codeFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                JetBrainsMono_compressed_data_base85, kCodeFontBakePx, &mc);
+        g_codeFont = okf::AddToAtlas(io.Fonts, okf::JetBrainsMonoTtf(), kCodeFontBakePx, mc);
         if (!g_codeFont) { ImFontConfig fb; fb.SizePixels = 13.0f; g_codeFont = io.Fonts->AddFontDefault(&fb); }
     }
     // Re-present the (animated) splash between heavy init steps so the loading

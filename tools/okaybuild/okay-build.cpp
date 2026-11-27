@@ -4132,7 +4132,7 @@ static int writeNative(const string& root, const string& outFile) {
         for (auto& s : srcs) out << " " << qtok(s);
         out << "\n" << extra << "end\n";
     };
-    // shared/ holds headers the network and font files include (AntiCheatChecks.hpp, RobotoFontOwn.h); the CMake build adds it per file
+    // shared/ holds headers the network and font files include (AntiCheatChecks.hpp, RobotoFont.h); the CMake build adds it per file
     string sharedDir = fs::is_directory(fs::path(root) / "shared") ? " shared" : "";
     // CMake gives BuildInfo.cpp -DOKAY_ENGINE_VERSION="<project version>" (read here from the top CMakeLists.txt) and
     // ImageDecodeJpeg.cpp -Wno-narrowing. A manifest has no per-file flags, so both go to the whole engine: an unused macro changes no

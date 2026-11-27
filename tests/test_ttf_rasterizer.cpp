@@ -1,9 +1,10 @@
 // Tests for our own TrueType / OpenType reader and rasterizer (Graphics/TtfRaster):
 // synthetic fonts with analytically known coverage (glyf simple + composite, CFF
-// charstrings, CID-keyed CFF, every cmap format, .ttc, loca / hmtx variants), small
-// committed reference bitmaps of DejaVu Sans, and corrupt / truncated / mutated files
-// that must neither crash nor hang. (Reference bitmaps: FreeType, unhinted, rendered
-// at 16x and box-filtered down, so they are exact area coverage to about 1/255.)
+// charstrings, CID-keyed CFF, every cmap format, .ttc, loca / hmtx variants), real
+// DejaVu Sans glyphs, and corrupt / truncated / mutated files
+// that must neither crash nor hang. Real DejaVu Sans glyphs are checked against a reference
+// this file works out itself (its own glyf reader, exact-in-x coverage, exact area by Green's
+// theorem); no other program's rendering is used.
 #include "okay/Graphics/TtfRaster.hpp"
 #ifndef OKAY_TTF_STANDALONE   // (a sanitizer build of just the rasterizer sets this)
 #include "okay/Graphics/TtfFont.hpp"
@@ -390,25 +391,218 @@ bool SameBmp(const Bmp& a, const Bmp& b, int tol = 0) {
 
 Glyph Notdef() { Glyph g; g.data = SimpleGlyph({Rect(100, 0, 400, 700)}); return g; }
 
-std::vector<std::uint8_t> FromHex(const char* s) {
-    std::vector<std::uint8_t> v;
-    for (; s[0] && s[1]; s += 2) {
-        auto h = [](char c) { return c <= '9' ? c - '0' : c - 'A' + 10; };
-        v.push_back((std::uint8_t)(h(s[0]) * 16 + h(s[1])));
-    }
-    return v;
-}
-
 Bytes ReadFile(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     return Bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-// ---- DejaVu Sans reference glyphs (FreeType, unhinted, 16x box-filtered) ---------------------
-struct Ref { unsigned cp; float px; int x0, y0, w, h; const char* hex; };
-const Ref kRefs[] = {
-#include "ttf_refs.inc"
+// ---- An independent reference for real glyphs (DejaVu Sans), written in this test from the TrueType spec -----
+// The rasterizer is checked against numbers this file works out itself, not against another program's output:
+//   * the outline is read here with a separate, minimal glyf reader (simple glyphs; composites with x/y offsets and
+//     scales), from the OpenType spec's 'glyf', 'loca', 'head' and 'maxp' chapters;
+//   * per pixel, the coverage is integrated exactly in x and with 256 sample rows in y: for each row the crossings
+//     of every line and quadratic piece are solved in closed form, sorted, and the non-zero-winding spans are added
+//     to the pixels they overlap (so the only error is the row sampling, far under 1/255);
+//   * the glyph's whole area is computed exactly with Green's theorem (a line adds (P0 x P1)/2, a quadratic adds the
+//     same for its chord plus 2/3 of the triangle P0 C P2), which checks the per-pixel reference itself;
+//   * the box is floor/ceil of the scaled control points (the curve lies in their convex hull).
+struct RPt { double x, y; bool on; };
+using RContour = std::vector<RPt>;
+
+struct RefFont {
+    const Bytes& d;
+    std::size_t glyf = 0, loca = 0; int locFormat = 0, numGlyphs = 0;
+    explicit RefFont(const Bytes& data) : d(data) {
+        const unsigned n = U16(4);
+        std::size_t head = 0, maxp = 0;
+        for (unsigned i = 0; i < n; ++i) {
+            const std::size_t r = 12 + 16 * (std::size_t)i;
+            const std::string tag(d.begin() + (long)r, d.begin() + (long)r + 4);
+            const std::size_t off = U32(r + 8);
+            if (tag == "glyf") glyf = off; else if (tag == "loca") loca = off; else if (tag == "head") head = off; else if (tag == "maxp") maxp = off;
+        }
+        locFormat = (int)(std::int16_t)U16(head + 50);
+        numGlyphs = (int)U16(maxp + 4);
+    }
+    unsigned U16(std::size_t o) const { return o + 2 <= d.size() ? (unsigned)d[o] << 8 | d[o + 1] : 0u; }
+    std::uint32_t U32(std::size_t o) const { return (std::uint32_t)U16(o) << 16 | U16(o + 2); }
+    int S16(std::size_t o) const { return (int)(std::int16_t)U16(o); }
+    bool Range(int g, std::size_t& a, std::size_t& b) const {
+        if (g < 0 || g >= numGlyphs) return false;
+        if (locFormat == 0) { a = 2 * (std::size_t)U16(loca + 2 * (std::size_t)g); b = 2 * (std::size_t)U16(loca + 2 * (std::size_t)g + 2); }
+        else { a = U32(loca + 4 * (std::size_t)g); b = U32(loca + 4 * (std::size_t)g + 4); }
+        return b >= a;
+    }
+    // Contours in font units, transformed by (a b; c d) + (dx, dy): x' = a x + c y + dx, y' = b x + d y + dy.
+    bool Contours(int g, std::vector<RContour>& out, int depth = 0, double a = 1, double b = 0, double c = 0, double dd = 1,
+                  double dx = 0, double dy = 0) const {
+        std::size_t s, e;
+        if (depth > 4 || !Range(g, s, e)) return false;
+        if (s == e) return true;                                  // no outline
+        const std::size_t p0 = glyf + s;
+        const int nc = S16(p0);
+        if (nc >= 0) {                                            // simple glyph
+            std::vector<int> ends;
+            for (int i = 0; i < nc; ++i) ends.push_back((int)U16(p0 + 10 + 2 * (std::size_t)i));
+            const int np = nc ? ends.back() + 1 : 0;
+            std::size_t p = p0 + 10 + 2 * (std::size_t)nc;
+            p += 2 + U16(p);                                      // instructions
+            std::vector<std::uint8_t> fl;
+            while ((int)fl.size() < np) {
+                const std::uint8_t f = d[p++];
+                fl.push_back(f);
+                if (f & 8) { int r = d[p++]; while (r-- > 0) fl.push_back(f); }
+            }
+            std::vector<int> xs(np), ys(np);
+            int v = 0;
+            for (int i = 0; i < np; ++i) {
+                if (fl[i] & 2) { const int dlt = d[p++]; v += (fl[i] & 16) ? dlt : -dlt; }
+                else if (!(fl[i] & 16)) { v += S16(p); p += 2; }
+                xs[i] = v;
+            }
+            v = 0;
+            for (int i = 0; i < np; ++i) {
+                if (fl[i] & 4) { const int dlt = d[p++]; v += (fl[i] & 32) ? dlt : -dlt; }
+                else if (!(fl[i] & 32)) { v += S16(p); p += 2; }
+                ys[i] = v;
+            }
+            int first = 0;
+            for (int ci = 0; ci < nc; ++ci) {
+                RContour k;
+                for (int i = first; i <= ends[ci]; ++i)
+                    k.push_back({a * xs[i] + c * ys[i] + dx, b * xs[i] + dd * ys[i] + dy, (fl[i] & 1) != 0});
+                first = ends[ci] + 1;
+                if (!k.empty()) out.push_back(k);
+            }
+            return true;
+        }
+        std::size_t p = p0 + 10;                                  // composite glyph
+        for (;;) {
+            const unsigned flags = U16(p), sub = U16(p + 2);
+            p += 4;
+            int ax, ay;
+            if (flags & 1) { ax = S16(p); ay = S16(p + 2); p += 4; } else { ax = (std::int8_t)d[p]; ay = (std::int8_t)d[p + 1]; p += 2; }
+            if (!(flags & 2)) return false;                       // point matching: not needed for these glyphs
+            double ma = 1, mb = 0, mc = 0, md = 1;
+            if (flags & 8) { ma = md = S16(p) / 16384.0; p += 2; }
+            else if (flags & 0x40) { ma = S16(p) / 16384.0; md = S16(p + 2) / 16384.0; p += 4; }
+            else if (flags & 0x80) { ma = S16(p) / 16384.0; mb = S16(p + 2) / 16384.0; mc = S16(p + 4) / 16384.0; md = S16(p + 6) / 16384.0; p += 8; }
+            // child -> this glyph: (ma mb; mc md) then + (ax, ay); then this glyph's own transform
+            const double na = ma * a + mb * c, nb = ma * b + mb * dd, ncc = mc * a + md * c, nd = mc * b + md * dd;
+            const double ndx = a * ax + c * ay + dx, ndy = b * ax + dd * ay + dy;
+            if (!Contours((int)sub, out, depth + 1, na, nb, ncc, nd, ndx, ndy)) return false;
+            if (!(flags & 0x20)) break;
+        }
+        return true;
+    }
 };
+
+// A contour as segments: lines (ctrl unused) and quadratics, with the implied on-curve midpoints of TrueType.
+struct RSeg { double x0, y0, cx, cy, x1, y1; bool quad; };
+std::vector<RSeg> Segments(const std::vector<RContour>& cs) {
+    std::vector<RSeg> out;
+    for (const RContour& k : cs) {
+        const std::size_t n = k.size();
+        if (n < 2) continue;
+        std::size_t s = 0;
+        while (s < n && !k[s].on) ++s;
+        const bool allOff = (s == n);
+        const RPt start = allOff ? RPt{(k[n - 1].x + k[0].x) / 2, (k[n - 1].y + k[0].y) / 2, true} : k[s];
+        // The points after `start`, in order, ending with `start` again (which closes the contour).
+        std::vector<RPt> seq;
+        for (std::size_t i = 0; i < n; ++i) { const std::size_t j = allOff ? i : (s + 1 + i) % n; if (!allOff && i == n - 1) break; seq.push_back(k[j]); }
+        seq.push_back(start);
+        RPt cur = start, ctrl{0, 0, false};
+        bool haveCtrl = false;
+        for (const RPt& p : seq) {
+            if (p.on) {
+                if (haveCtrl) out.push_back({cur.x, cur.y, ctrl.x, ctrl.y, p.x, p.y, true});
+                else out.push_back({cur.x, cur.y, 0, 0, p.x, p.y, false});
+                cur = p; haveCtrl = false;
+            } else {
+                if (haveCtrl) {
+                    const RPt mid{(ctrl.x + p.x) / 2, (ctrl.y + p.y) / 2, true};
+                    out.push_back({cur.x, cur.y, ctrl.x, ctrl.y, mid.x, mid.y, true});
+                    cur = mid;
+                }
+                ctrl = p; haveCtrl = true;
+            }
+        }
+    }
+    return out;
+}
+
+// Exact signed area (font units^2) by Green's theorem.
+double ExactArea(const std::vector<RSeg>& segs) {
+    double a = 0;
+    for (const RSeg& s : segs) {
+        a += 0.5 * (s.x0 * s.y1 - s.x1 * s.y0);
+        if (s.quad) a += ((s.cx - s.x0) * (s.y1 - s.y0) - (s.cy - s.y0) * (s.x1 - s.x0)) / 3.0;
+    }
+    return a;
+}
+
+// Reference bitmap in the rasterizer's frame: pixel x = fx * scale - x0, pixel y = -fy * scale - y0.
+Bmp RefDraw(const std::vector<RSeg>& segsFont, double scale, int x0, int y0, int w, int h) {
+    constexpr int kRows = 256;
+    Bmp b; b.ok = true; b.x0 = x0; b.y0 = y0; b.w = w; b.h = h;
+    std::vector<double> acc((std::size_t)w * h, 0.0);
+    // Pieces monotonic in y, in pixel units: a line, or a quadratic between t0 and t1.
+    struct Piece { double x0, y0, cx, cy, x1, y1; bool quad; double t0, t1, ya, yb; };
+    std::vector<Piece> ps;
+    auto px = [&](double fx) { return fx * scale - x0; };
+    auto py = [&](double fy) { return -fy * scale - y0; };
+    for (const RSeg& s : segsFont) {
+        Piece p{px(s.x0), py(s.y0), px(s.cx), py(s.cy), px(s.x1), py(s.y1), s.quad, 0, 1, 0, 0};
+        if (!s.quad) { p.ya = p.y0; p.yb = p.y1; ps.push_back(p); continue; }
+        const double den = p.y0 - 2 * p.cy + p.y1;
+        std::vector<double> ts = {0.0};
+        if (den != 0) { const double t = (p.y0 - p.cy) / den; if (t > 0 && t < 1) ts.push_back(t); }
+        ts.push_back(1.0);
+        for (std::size_t i = 0; i + 1 < ts.size(); ++i) {
+            Piece q = p; q.t0 = ts[i]; q.t1 = ts[i + 1];
+            auto Y = [&](double t) { const double u = 1 - t; return u * u * p.y0 + 2 * u * t * p.cy + t * t * p.y1; };
+            q.ya = Y(q.t0); q.yb = Y(q.t1);
+            ps.push_back(q);
+        }
+    }
+    std::vector<std::pair<double, int>> xs;
+    for (int row = 0; row < h * kRows; ++row) {
+        const double y = (row + 0.5) / kRows;
+        xs.clear();
+        for (const Piece& p : ps) {
+            const double lo = std::min(p.ya, p.yb), hi = std::max(p.ya, p.yb);
+            if (!(y >= lo && y < hi)) continue;                   // half-open: a shared end point counts once
+            const int dir = p.yb > p.ya ? 1 : -1;
+            double x;
+            if (!p.quad) x = p.x0 + (y - p.y0) * (p.x1 - p.x0) / (p.y1 - p.y0);
+            else {                                                // solve y(t) = y on [t0, t1] (monotonic there): bisection
+                double t0 = p.t0, t1 = p.t1;
+                auto Y = [&](double t) { const double u = 1 - t; return u * u * p.y0 + 2 * u * t * p.cy + t * t * p.y1; };
+                const bool up = p.yb > p.ya;
+                for (int it = 0; it < 60; ++it) { const double m = 0.5 * (t0 + t1); if ((Y(m) < y) == up) t0 = m; else t1 = m; }
+                const double t = 0.5 * (t0 + t1), u = 1 - t;
+                x = u * u * p.x0 + 2 * u * t * p.cx + t * t * p.x1;
+            }
+            xs.push_back({x, dir});
+        }
+        std::sort(xs.begin(), xs.end());
+        const int py0 = row / kRows;
+        int wind = 0;
+        for (std::size_t i = 0; i + 1 < xs.size(); ++i) {
+            wind += xs[i].second;
+            if (wind == 0) continue;
+            const double a = std::max(0.0, xs[i].first), bb = std::min((double)w, xs[i + 1].first);
+            for (int c = std::max(0, (int)std::floor(a)); c < w && c < bb; ++c) {
+                const double ov = std::min(bb, c + 1.0) - std::max(a, (double)c);
+                if (ov > 0) acc[(std::size_t)py0 * w + c] += ov / kRows;
+            }
+        }
+    }
+    b.px.resize(acc.size());
+    for (std::size_t i = 0; i < acc.size(); ++i) b.px[i] = (std::uint8_t)std::lround(std::min(1.0, std::max(0.0, acc[i])) * 255.0);
+    return b;
+}
 
 std::uint32_t g_rng = 12345;
 std::uint32_t Rnd() { g_rng = g_rng * 1664525u + 1013904223u; return g_rng >> 8; }
@@ -825,21 +1019,43 @@ int main() {
         CHECK(f.HMetrics(A, adv, lsb) && adv == 1401 && lsb == 16);
         CHECK(f.FindGlyph(0x4E00) == 0 && f.FindGlyph(0xE9) != 0 && f.FindGlyph(0x416) != 0);
 
-        // Reference bitmaps: box exact, coverage within a small error of exact-area truth.
-        double sumAll = 0; long nAll = 0; int worst = 0;
-        for (const Ref& r : kRefs) {
-            Bmp b = Draw(f, f.FindGlyph(r.cp), r.px);
-            CHECK(b.ok && b.x0 == r.x0 && b.y0 == r.y0 && b.w == r.w && b.h == r.h);
-            std::vector<std::uint8_t> want = FromHex(r.hex);
-            CHECK(want.size() == (std::size_t)r.w * r.h);
-            if (!b.ok || want.size() != b.px.size()) continue;
+        // Real glyphs against the reference worked out in this file (RefFont / RefDraw above): the box must be exact
+        // and the coverage within a small error of the exact area per pixel. Simple glyphs, composites (e-acute,
+        // A-dieresis), lines and curves, holes (g, @, %), sizes 10 to 41 px.
+        const RefFont rf(dejavu);
+        CHECK(rf.numGlyphs == 6253 && rf.locFormat == 1);
+        struct Case { unsigned cp; float px; };
+        const Case cases[] = {{'g', 16}, {'@', 24}, {0xE9, 20}, {'W', 12}, {0xC4, 18}, {'%', 10}, {0xDF, 14}, {'Q', 37}, {'&', 41}, {0x416, 22}};
+        double sumAll = 0; long nAll = 0; int worst = 0; int compared = 0;
+        for (const Case& c : cases) {
+            const int gi = f.FindGlyph(c.cp);
+            Bmp b = Draw(f, gi, c.px);
+            std::vector<RContour> cs;
+            CHECK(rf.Contours(gi, cs) && !cs.empty());
+            const std::vector<RSeg> segs = Segments(cs);
+            const float scale = f.ScaleForPixelHeight(c.px);
+            float xmin = 1e9f, ymin = 1e9f, xmax = -1e9f, ymax = -1e9f;
+            for (const RContour& k : cs) for (const RPt& p : k) {
+                xmin = std::min(xmin, (float)p.x); xmax = std::max(xmax, (float)p.x);
+                ymin = std::min(ymin, (float)p.y); ymax = std::max(ymax, (float)p.y);
+            }
+            const int bx0 = (int)std::floor(xmin * scale), by0 = (int)std::floor(-ymax * scale);
+            const int bx1 = (int)std::ceil(xmax * scale), by1 = (int)std::ceil(-ymin * scale);
+            CHECK(b.ok && b.x0 == bx0 && b.y0 == by0 && b.w == bx1 - bx0 && b.h == by1 - by0);
+            if (!b.ok || b.w != bx1 - bx0 || b.h != by1 - by0) continue;
+            const Bmp want = RefDraw(segs, scale, bx0, by0, b.w, b.h);
+            // The reference itself against the exact area (Green's theorem), then the rasterizer against it.
+            const double area = std::fabs(ExactArea(segs)) * (double)scale * (double)scale;
+            CHECK_NEAR(want.Sum(), area, std::max(0.5, area * 0.003));
+            CHECK_NEAR(b.Sum(), area, std::max(0.5, area * 0.003));
             double sum = 0; int mx = 0;
-            for (std::size_t i = 0; i < want.size(); ++i) { const int e = std::abs((int)b.px[i] - (int)want[i]); sum += e; mx = std::max(mx, e); }
-            CHECK(sum / (double)want.size() < 0.6);   // mean error, in 1/255ths
+            for (std::size_t i = 0; i < want.px.size(); ++i) { const int e = std::abs((int)b.px[i] - (int)want.px[i]); sum += e; mx = std::max(mx, e); }
+            CHECK(sum / (double)want.px.size() < 0.6);   // mean error, in 1/255ths
             CHECK(mx <= 8);
-            sumAll += sum; nAll += (long)want.size(); worst = std::max(worst, mx);
+            sumAll += sum; nAll += (long)want.px.size(); worst = std::max(worst, mx); ++compared;
         }
-        std::printf("[test_ttf_rasterizer] DejaVu references: mean error %.3f/255, worst %d/255\n", nAll ? sumAll / (double)nAll : 0.0, worst);
+        CHECK(compared == (int)(sizeof cases / sizeof cases[0]));
+        std::printf("[test_ttf_rasterizer] DejaVu vs the in-test reference: %d glyphs, mean error %.3f/255, worst %d/255\n", compared, nAll ? sumAll / (double)nAll : 0.0, worst);
 
         // Every glyph at several sizes renders without trouble; coverage stays in the box.
         long drawn = 0;

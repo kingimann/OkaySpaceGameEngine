@@ -508,6 +508,8 @@ void InstallTextCodingLib(Runtime& rt) {
         ThisCodec(rt, a.thisv, false, "TextEncoder.prototype.encode");
         std::u16string s = a[0].IsUndef() ? std::u16string() : rt.ToU16(a[0]);
         rt.Charge(s.size() / 16 + 1);
+        const std::size_t used = rt.BytesInUse(), room = rt.memoryLimit > used ? rt.memoryLimit - used : 0;
+        if (s.size() > room / 3) rt.ThrowRange("TextEncoder.encode: the text is too long for the memory left");   // before the copy
         std::string bytes = Utf16To8(s);   // lone surrogates become U+FFFD (the USVString conversion)
         return Value::Obj(NewUint8Array(rt, reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
     }, 0);
@@ -589,8 +591,7 @@ void InstallTextCodingLib(Runtime& rt) {
         const std::uint8_t* data;
         std::size_t n;
         BufferSourceBytes(rt, a[0], data, n);
-        std::vector<std::uint8_t> bytes(data, data + n);   // a copy: nothing below runs script code, but keep it plain
-        rt.Charge(n / 16 + 1);
+        rt.Charge(n / 16 + 1);   // nothing below runs script code, so the bytes stay where they are while they are read
         std::u16string out;
         auto error = [&]() {
             if (c->fatal) {
@@ -606,8 +607,8 @@ void InstallTextCodingLib(Runtime& rt) {
             }
             AppendCodePoint(out, cp);
         };
-        for (std::size_t i = 0; i < bytes.size(); ++i) {
-            const std::uint8_t b = bytes[i];
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::uint8_t b = data[i];
             if (c->needed == 0) {
                 if (b <= 0x7F) emit(b);
                 else if (b >= 0xC2 && b <= 0xDF) { c->needed = 1; c->cp = b & 0x1F; }

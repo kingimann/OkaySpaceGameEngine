@@ -665,6 +665,8 @@ void TypedArrays() {
     Expect("console.log(new TextDecoder().decode(new Uint8Array([0xEF, 0xBB, 0xBF, 0x41, 0xC3, 0x28, 0xF0, 0x9F])) === 'A\\uFFFD(\\uFFFD', new TextDecoder().decode())",
            "true ");
     ExpectError("new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array([0xFF]))", "TypeError");
+    Expect("const d = new TextDecoder(); const a = d.decode(new Uint8Array([0xE2, 0x82]), {stream: true}); console.log(a.length, a + d.decode(new Uint8Array([0xAC])) === '\\u20ac', d.decode(new Uint8Array([0xE2])) === '\\uFFFD')",
+           "0 true true");
     Expect("const r = new TextEncoder().encodeInto('ab\\u20ac', new Uint8Array(4)); console.log(r.read, r.written)", "2 2");
     Expect("const u = new Uint8Array([1, 2, 3]); let s = 0; for (const x of u) s += x; const [a, ...rest] = u; console.log(s, a, rest.join(), Array.from(u.entries()).join('|'), JSON.stringify(u))",
            "6 1 2,3 0,1|1,2|2,3 {\"0\":1,\"1\":2,\"2\":3}");

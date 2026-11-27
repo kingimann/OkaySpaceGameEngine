@@ -770,6 +770,66 @@ void TestDockHostListUnderFloating() {
     CHECK(PixelAt(b, (int)(fpos.x + fsize.x * 0.5f), (int)(fpos.y + fsize.y - 10)) != red);   // inside it: under the window
 }
 
+// The menu bar behaves as one control (owner, 2026-11-27: "the top bar where file is, I gotta click, hovering over them doesn't anything"):
+// a button under the pointer is lit even with no menu open; with File open, moving onto Edit opens Edit and closes File without a click;
+// Right / Left in an open menu go to the neighbouring menu; a tap of Alt opens the first menu and Escape closes it. Drawn as the editor
+// draws it: a full-window host with Window_MenuBar and Dear ImGui's framed look pushed.
+void TestMenuBarHoverSwitch() {
+    RUN_SUITE("windows: the menu bar switches menus on hover and from the keyboard");
+    Reset();
+    Sim sim(600, 400);
+    UI::Rect fileBtn{}, editBtn{}, viewBtn{}; bool fileOpen = false, editOpen = false, viewOpen = false; bool editHovered = false;
+    auto ui = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+        UI::SetNextWindowPos(V(0, 0)); UI::SetNextWindowSize(V(600, 400));
+        if (UI::Begin("##Host", nullptr, UI::Window_MenuBar | UI::Window_NoTitleBar | UI::Window_NoMove | UI::Window_NoResize | UI::Window_NoBringToFrontOnFocus)) {
+            if (UI::BeginMenuBar()) {
+                fileOpen = UI::BeginMenu("File"); if (fileOpen) { UI::MenuItem("New"); UI::MenuItem("Open"); UI::EndMenu(); } fileBtn = UI::GetItemRect();
+                editOpen = UI::BeginMenu("Edit"); if (editOpen) { UI::MenuItem("Undo"); UI::EndMenu(); } editBtn = UI::GetItemRect(); editHovered = UI::IsItemHovered();
+                viewOpen = UI::BeginMenu("View"); if (viewOpen) { UI::MenuItem("Grid"); UI::EndMenu(); } viewBtn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::Text("body");
+        }
+        UI::End();
+        UI::PopStyleVar(1);
+    };
+    sim.Frames(2, ui);
+    sim.Move(500, 300); sim.Frames(2, ui);
+    const Bitmap& rest = sim.Draw(12, 14, 20);
+    const unsigned restPx = PixelAt(rest, (int)(editBtn.x + 4), (int)CenterY(editBtn));
+    sim.Move(CenterX(editBtn), CenterY(editBtn)); sim.Frames(2, ui);
+    CHECK(editHovered && !editOpen);
+    const Bitmap& lit = sim.Draw(12, 14, 20);
+    CHECK(PixelAt(lit, (int)(editBtn.x + 4), (int)CenterY(editBtn)) != restPx);   // hovering a closed bar button lights it
+    // open File with a click, then only move onto Edit and View
+    sim.Click(CenterX(fileBtn), CenterY(fileBtn), ui); sim.Frame(ui);
+    CHECK(fileOpen && !editOpen);
+    sim.Move(CenterX(editBtn), CenterY(editBtn)); sim.Frames(2, ui);
+    CHECK(editOpen && !fileOpen);
+    sim.Move(CenterX(viewBtn), CenterY(viewBtn)); sim.Frames(2, ui);
+    CHECK(viewOpen && !editOpen && !fileOpen);
+    // keyboard: Left goes back to Edit, Right on to View, Right again wraps to File
+    sim.Move(500, 300); sim.Frame(ui);
+    sim.Tap(Key_Left, ui); sim.Frames(2, ui);
+    CHECK(editOpen && !viewOpen);
+    sim.Tap(Key_Right, ui); sim.Frames(2, ui);
+    CHECK(viewOpen && !editOpen);
+    sim.Tap(Key_Right, ui); sim.Frames(2, ui);
+    CHECK(fileOpen && !viewOpen);
+    sim.Tap(Key_Escape, ui); sim.Frames(2, ui);
+    CHECK(!fileOpen && !editOpen && !viewOpen);
+    // nothing open: moving over the bar opens nothing by itself
+    sim.Move(CenterX(editBtn), CenterY(editBtn)); sim.Frames(2, ui);
+    CHECK(!editOpen);
+    // a tap of Alt alone opens the first menu
+    sim.Move(500, 300); sim.Frame(ui);
+    sim.Hold(UI::KeyId_Alt, true); sim.Frame(ui); sim.Hold(UI::KeyId_Alt, false); sim.Frames(2, ui);
+    CHECK(fileOpen);
+    sim.Tap(Key_Escape, ui); sim.Frames(2, ui);
+    CHECK(!fileOpen);
+}
+
 // IsWindowHovered under an open menu list: the list is hovered, not the window under it (Dear ImGui's rule). The editor's Scene view
 // asks IsWindowHovered as a fallback for its clicks, and picked the object under a View > Panels row while that row was clicked.
 void TestWindowHoveredUnderMenu() {
@@ -1005,6 +1065,7 @@ int main() {
     TestMenuItemToggle();
     TestDockHostListUnderFloating();
     TestWindowHoveredUnderMenu();
+    TestMenuBarHoverSwitch();
     TestTopLevelPopupId();
     TestModalFixedHeight();
     TestDragAcrossWindows();

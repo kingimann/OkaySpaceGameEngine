@@ -49,6 +49,38 @@ WindowRef* GetTopMostPopupModal() {
 }
 namespace { bool g_barReserved = false; LayoutState g_barSavedLay; }   // a Window_MenuBar row in use: the layout to give back at EndMenuBar
 void ui_core::menuBarReset() { g_barReserved = false; }
+
+// The menu bars' buttons, as drawn this frame and last frame, so a bar behaves as one control (standard menu-bar behaviour): while one
+// of its menus is open, moving the pointer onto another of its buttons switches to that menu without a click; Left / Right in an open menu
+// (with no sub-menu taking the key) go to the neighbouring menu; a tap of Alt alone opens the first menu of the first bar, keyboard-ready.
+namespace {
+struct BarBtn { unsigned bar; int id; float x, y, w, h; bool open; };
+constexpr int kBarBtnMax = 48;
+struct BarMem { BarBtn b[kBarBtnMax]; int n = 0; };
+BarMem g_barPrev, g_barNow;
+unsigned long long g_barFrame = ~0ull;
+unsigned g_curBar = 0;                 // the bar being drawn (from its place on screen)
+bool g_altAlone = false;               // Alt went down and nothing else happened since
+int g_barOpenReq = 0;                  // a menu to open when its button is drawn (Alt, Left / Right)
+int g_barKbOpen = 0;                   // that menu was opened from the keyboard: highlight its first row
+unsigned long long g_barKeyFrame = ~0ull;   // the frame Left / Right last switched menus (one switch per key press)
+void barFrame() {
+    if (g_barFrame == g_frameCount) return;
+    g_barFrame = g_frameCount;
+    g_barPrev = g_barNow; g_barNow.n = 0;
+}
+const BarBtn* barPrevOpen(unsigned bar) {
+    for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == bar && g_barPrev.b[i].open) return &g_barPrev.b[i];
+    return nullptr;
+}
+// The neighbour of menu `id` on its bar (last frame's order), `dir` -1 or +1, wrapping round.
+int barNeighbour(unsigned bar, int id, int dir) {
+    int idx[kBarBtnMax]; int n = 0, at = -1;
+    for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == bar) { if (g_barPrev.b[i].id == id) at = n; idx[n++] = i; }
+    if (at < 0 || n < 2) return 0;
+    return g_barPrev.b[idx[(at + dir + n) % n]].id;
+}
+}
 bool BeginMenuBar() {
     if (!g_lay.active) return false;
     const float h = rowH();
@@ -62,6 +94,22 @@ bool BeginMenuBar() {
         g_lay.ox = x; g_lay.bottom = y + h;
     } else {
         place(bw, h, x, y);
+    }
+    barFrame();
+    g_curBar = ((unsigned)(int)std::floor(x) * 73856093u) ^ ((unsigned)(int)std::floor(y) * 19349663u) ^ 0x6ba5u;
+    {   // Alt tapped alone: open the first menu of the first bar (Windows' menu key); Alt again or Escape closes it
+        bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown;
+        for (int k = 1; k < KeyId_COUNT && !other; ++k) if (k != KeyId_Alt && IsKeyPressed((KeyId)k, false)) other = true;
+        if (IsKeyPressed(KeyId_Alt, false)) g_altAlone = true;
+        else if (other) g_altAlone = false;
+        if (g_altAlone && IsKeyReleased(KeyId_Alt)) {
+            g_altAlone = false;
+            const bool firstBar = g_barNow.n == 0;
+            if (firstBar && g_popupTop == 0) {
+                if (const BarBtn* o = barPrevOpen(g_curBar)) *openState(o->id, false) = false;   // a bar menu is open: Alt closes it
+                else for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == g_curBar) { g_barOpenReq = g_barKbOpen = g_barPrev.b[i].id; break; }
+            }
+        }
     }
     if (colorIsSet(Col_MenuBarBg)) quad(x, y, bw, h, pick(Col_MenuBarBg, g_theme.track));
     quad(x, y + h - 1.0f, bw, 1.0f, g_theme.border);   // a hairline under the bar
@@ -319,8 +367,21 @@ bool BeginMenu(const char* label) {
 
     const bool inside = hit(x, y, bw, h);
     g_lastId = id; if (inside) g_hot = id;
+    barFrame();
+    {   // the bar as one control: hovering another button while a menu of this bar is open switches to it
+        const BarBtn* was = barPrevOpen(g_curBar);
+        if (inside && !*open && was && was->id != id) *open = true;
+        if (*open && !inside) {   // this menu is open and the pointer moved onto another button of the bar: it closes
+            for (int i = 0; i < g_barPrev.n; ++i) {
+                const BarBtn& o = g_barPrev.b[i];
+                if (o.bar == g_curBar && o.id != id && pointIn(g_in.mouseX, g_in.mouseY, o.x, o.y, o.w, o.h) && (g_mouseDX != 0.0f || g_mouseDY != 0.0f)) { *open = false; break; }
+            }
+        }
+        if (g_barOpenReq == id) { g_barOpenReq = 0; *open = true; }
+    }
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    if (g_barNow.n < kBarBtnMax) g_barNow.b[g_barNow.n++] = BarBtn{g_curBar, id, x, y, bw, h, *open};
     {   // a soft rounded chip under the pointer or while its menu is open
         unsigned char tmp[4];
         const float over = anim(id, 0, *open || inside);
@@ -333,6 +394,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.active = true; g_curMenu.menuId = id;
         g_curMenu.x = x; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
+        if (g_barKbOpen == id) { g_barKbOpen = 0; kbSlot(id)->idx = 0; }   // opened from the keyboard: its first row is highlighted
         menuListBegin(id, y + h, false);
         menuKeysBegin(id, false);
     } else kbSlot(id)->idx = -1;
@@ -350,7 +412,7 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
     x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
     const bool ih = enabled && hit(x, y, w, h);
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
-    if (ih || lit) rrect(x, y, w, h, g_framedWidgets ? 0.0f : g_theme.radiusSmall, pick(Col_HeaderHovered, g_theme.bgHover));
+    if (ih || lit) rrect(x + 2.0f, y, w - 4.0f, h, std::min(g_theme.radiusSmall, h * 0.3f), pick(Col_HeaderHovered, g_theme.bgHover));   // a rounded highlight inset from the popup's sides
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     drawText(ix, iy, label, s, col);
     const float right = ix + w - g_lay.spacingX;
@@ -498,6 +560,12 @@ void EndMenu() {
         }
         return;
     }
+    // Left / Right in an open bar menu that no sub-menu took: the neighbouring menu of the bar opens instead (Escape closes, as before)
+    if (g_inMenuBar && g_curMenu.kb && !g_curMenu.kb->childOpen && !g_curMenu.kb->childOpenNext && (g_in.left || g_in.right) && *openState(g_curMenu.menuId, false)
+        && g_barKeyFrame != g_frameCount) {
+        const int nb = barNeighbour(g_curBar, g_curMenu.menuId, g_in.right ? 1 : -1);
+        if (nb != 0) { *openState(g_curMenu.menuId, false) = false; g_barOpenReq = g_barKbOpen = nb; *openState(nb, false) = true; g_barKeyFrame = g_frameCount; }
+    }
     g_curMenu.active = false;
     // a bar menu ends: its button is the last item again (SameLine in the bar continues after it, not after the list's last row)
     g_lay.prevX = g_curMenu.bx; g_lay.prevY = g_curMenu.by; g_lay.prevW = g_curMenu.bw; g_lay.prevH = g_curMenu.bh; g_prevInOverlay = !g_inMenuBar && g_popupTop > 0;
@@ -533,13 +601,18 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
     const float ty = itemY + (itemH - textH()) * 0.5f;
-    if ((flags & Selectable_Header) || imguiRow) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
-        unsigned char tmp[4];
+    if ((flags & Selectable_Header) || imguiRow) {   // Dear ImGui's rows in their places, drawn OkayUI's way: the header colours on a rounded
+                                                     // highlight that eases in under the pointer; a selected row has an accent bar at its left end
+        unsigned char tmp[4], hv[4];
         const unsigned char* bg = nullptr;
+        const float over = anim(id, 0, inside && g_active != id);
         if (inside && g_active == id) bg = pick(Col_HeaderActive, g_theme.accent);
-        else if (inside)              bg = pick(Col_HeaderHovered, g_theme.bgHover);
         else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
-        if (bg) quad(x, y, w, hh, bg);
+        else if (over > 0.0f)         bg = withAlpha(pick(Col_HeaderHovered, g_theme.bgHover), over, hv);
+        const float rd = std::min(g_theme.radiusSmall, hh * 0.3f);
+        if (bg) rrect(x, y, w, hh, rd, bg);
+        if (selected && inside && g_active != id && over > 0.0f) rrect(x, y, w, hh, rd, withAlpha(g_theme.ink, 0.06f * over, hv));   // a selected row still reacts
+        if (selected && imguiRow && hh >= 10.0f) rrect(x + 1.0f, y + 3.0f, 2.0f, hh - 6.0f, 1.0f, g_theme.accent);
         drawText(imguiRow ? textX : textX + g_lay.spacingX * 0.5f, ty, imguiRow ? VisLabel(label).b : label, s, tcol);
     } else {   // the design's rows: a soft accent tint and a bar on the left when selected, a faint ink wash under the pointer
         unsigned char tmp[4];
@@ -809,6 +882,14 @@ bool BeginPopupContextItem(const char* id) {
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(g_barReserved),
+    OKAYUI_CTX_VAR(g_barPrev),
+    OKAYUI_CTX_VAR(g_barNow),
+    OKAYUI_CTX_VAR(g_barFrame),
+    OKAYUI_CTX_VAR(g_curBar),
+    OKAYUI_CTX_VAR(g_altAlone),
+    OKAYUI_CTX_VAR(g_barOpenReq),
+    OKAYUI_CTX_VAR(g_barKbOpen),
+    OKAYUI_CTX_VAR(g_barKeyFrame),
     OKAYUI_CTX_VAR(g_barSavedLay),
     OKAYUI_CTX_VAR(g_comboCloseId),
     OKAYUI_CTX_VAR(g_modalNoTitle))

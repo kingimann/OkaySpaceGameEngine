@@ -612,6 +612,7 @@ enum ColorEditFlags : int {
     ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
     ColorEdit_AlphaBar = 0,       // the alpha bar is on unless ColorEdit_NoAlphaBar: accepted for ported code
     ColorEdit_NoTooltip = 256,    // accepted and ignored: swatches have no tooltip
+    ColorEdit_HDR = 512,          // the channel cells are not held to 0..1: they share the range 0 .. the brightest channel (at least 1, rounded up)
 };
 /// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);

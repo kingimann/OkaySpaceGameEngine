@@ -39,7 +39,46 @@ static void scaleBodyAlpha(int from, float a) {
     for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (Uint8)(g_verts[i].color.a * a + 0.5f);
 }
 
+namespace {
+// A bare window (BareNextWindow) begun while another window is open is a REGION of that window, as a Dear ImGui child window is: the
+// open window is kept, the region lays its items out at (x, y, w, h) clipped to it, and its End gives the window back. This is how the
+// screens drawn into an editor window (a Project Settings section, a whole panel body) work in the editor built on OkayUI, where the
+// editor's window is itself an OkayUI window. Up to 8 deep. The region belongs to the window it is in: same stacking order, same hit tests.
+struct RegionSave { WinEnd we; LayoutState lay; CurWin cur; float baseScale; bool posOverride; };
+RegionSave g_regions[8];
+int g_regionTop = 0;
+bool beginRegion(const char* title, float x, float y, float w, float h) {
+    if (g_regionTop >= 8) return false;
+    RegionSave& r = g_regions[g_regionTop++];
+    r.we = g_we; r.lay = g_lay; r.cur = g_curWin; r.baseScale = g_winBaseScale; r.posOverride = g_posOverride;
+    g_bareNext = false; g_pinNext = false; g_resizeNext = false; g_noTitleNext = false; g_wflagsNext = 0; g_posOverride = false;
+    const int id = hashLabel(title);
+    const unsigned long long z = g_curWin.z;
+    g_curWin = CurWin{true, id, x, y, w, h, false};
+    g_curWin.z = z;
+    if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
+    g_we = WinEnd(); g_we.open = true; g_we.region = g_regionTop; g_we.id = id; g_we.x = x; g_we.y = y; g_we.w = w; g_we.h = h;
+    PushClipRect(x, y, w, h);
+    const LayoutState parent = g_lay;
+    g_lay = LayoutState();
+    g_lay.active = true; g_lay.winClip = true; g_lay.seed = id;
+    g_lay.ox = x; g_lay.oy = y; g_lay.cx = x; g_lay.cy = y; g_lay.maxRight = x;
+    g_lay.contentW = w; g_lay.bottom = y + h;
+    g_lay.spacingX = parent.spacingX; g_lay.spacingY = parent.spacingY;
+    g_lay.prevX = x; g_lay.prevY = y;
+    return true;
+}
+void endRegion() {
+    ChannelsMergeAll();
+    if (g_lay.winClip) PopClipRect();
+    const RegionSave& r = g_regions[--g_regionTop];
+    g_we = r.we; g_lay = r.lay; g_curWin = r.cur; g_winBaseScale = r.baseScale; g_posOverride = r.posOverride;
+}
+}   // namespace
+void ui_core::regionReset() { g_regionTop = 0; }
+
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
+    if (g_we.open && g_bareNext && !DockInsideBegin() && g_regionTop < 8) return beginRegion(title, x, y, w, h);   // a bare window inside an open one: a region of it
     g_posOverride = false;             // a SetCursorScreenPos left over from the previous window
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
     const int id = hashLabel(title);   // every widget id under it) is stable across frames
@@ -160,6 +199,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     wrecBegin(id, g_curWin.z);
     g_we = WinEnd(); g_we.open = true; g_we.hidden = hidden; g_we.id = id; g_we.slot = slot ? (int)(slot - g_wins) : -1;
     g_we.autoSize = autoSize; g_we.x = wx; g_we.y = wy; g_we.w = w; g_we.h = h; g_we.titleH = titleH;
+    // Window_MenuBar (Dear ImGui's documented meaning: the window has a menu bar): a row under the title bar is kept for it, the content
+    // starts below it, and BeginMenuBar draws there even when the window calls it after its other content.
+    const float menuBarH = (wf & Window_MenuBar) ? rowH() : 0.0f;
+    g_we.menuBarH = menuBarH;
     if (bare) {
         // A bare window draws no frame at all: the host's own window behind it is the background.
     } else if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
@@ -230,7 +273,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.active = true;
     g_lay.seed = id;
     g_lay.ox = wx + pad;
-    g_lay.oy = wy + titleH + pad - scrollY;
+    g_lay.oy = wy + titleH + menuBarH + pad - scrollY;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.maxRight = g_lay.ox;
@@ -263,6 +306,7 @@ void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, f
 
 bool ui_core::g_dockAware = false, ui_core::g_dockRouted = false;   // SetDockAwareBegin: Begin runs a window of the dock layout as DockBegin; the End that closes it as DockEnd
 void End() {
+    if (g_we.open && g_we.region > 0) { endRegion(); return; }   // the End of a region (a bare window begun inside a window)
     if (g_dockRouted) { g_dockRouted = false; DockEnd(); return; }   // closes a Begin that was run as DockBegin (SetDockAwareBegin); DockEnd calls End again, now plain
     ChannelsMergeAll();   // a channel split left open ends with its window
     if (g_winItemWDepth > 0) { if (g_itemWTop >= g_winItemWDepth) g_itemWTop = g_winItemWDepth - 1; g_winItemWDepth = 0; }
@@ -334,10 +378,14 @@ void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, siz
 // A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
 static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
 
+IO& IoRaw();   // OkayUI.cpp: the IO as the host wrote it (ConfigFlags)
 void SetDockAwareBegin(bool on) { g_dockAware = on; }
 bool DockAwareBegin() { return g_dockAware; }
 bool Begin(const char* title, bool* p_open, int flags) {
-    if (g_dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (GetDockLayout().Contains(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
+    // Dear ImGui's documented docking rule: with ConfigFlags_DockingEnable set on the IO, a window that sits in the dock layout is drawn docked
+    // by its ordinary Begin (the same routing SetDockAwareBegin(true) asks for).
+    const bool dockAware = g_dockAware || (IoRaw().ConfigFlags & ConfigFlags_DockingEnable) != 0;
+    if (dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (DockAdoptTitle(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
     if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
@@ -359,7 +407,27 @@ bool Begin(const char* title, bool* p_open, int flags) {
             return take;
         };
         if (apply(np, slot->posInit)) { slot->x = np.x; slot->y = np.y; pin = (np.cond == Cond_Always); }
-        if (apply(ns, slot->sizeInit)) { slot->w = ns.x; slot->h = ns.y; slot->sized = true; }
+        if (apply(ns, slot->sizeInit)) {
+            slot->w = ns.x; slot->h = ns.y; slot->sized = true;
+            // Dear ImGui's documented rule: an axis of 0 asks for an auto-fit on that axis. The window is measured once (its first frame
+            // is not shown, as an auto-resizing one's), then that axis takes the content's size and the window can be resized as usual.
+            const int fit = (!(ns.x > 0.0f) ? 1 : 0) | (!(ns.y > 0.0f) ? 2 : 0);
+            if (fit) {
+                const bool again = ns.cond == Cond_Always && slot->measured && slot->fitAxes == 0;   // asked every frame: measured once, not hidden again
+                slot->fitAxes = fit; slot->fitW = ns.x > 0.0f ? ns.x : 320.0f; slot->fitH = ns.y > 0.0f ? ns.y : 240.0f;
+                if (!again) slot->measured = false;
+            }
+            else slot->fitAxes = 0;
+        }
+        if (slot->fitAxes && slot->measured) {   // measured: the fitted axes take the content's size, the others what was asked
+            slot->w = (slot->fitAxes & 1) ? slot->autoW : slot->fitW;
+            slot->h = (slot->fitAxes & 2) ? slot->autoH : slot->fitH;
+            // as Dear ImGui's auto-fit, never bigger than the display (it scrolls instead)
+            if (g_dispW > 40.0f) slot->w = std::min(slot->w, g_dispW - 20.0f);
+            if (g_dispH > 40.0f) slot->h = std::min(slot->h, g_dispH - 20.0f);
+            slot->fitAxes = 0;
+        }
+        if (slot->fitAxes) { slot->w = slot->fitW; slot->h = slot->fitH; }   // measuring: laid out at the asked width
         if (created) slot->posInit = slot->sizeInit = true;            // a window that exists has had its first use (FirstUseEver / Once are spent)
         if (flags & Window_NoMove) pin = true;
         if (!slot->sized) { slot->w = 320.0f; slot->h = 240.0f; slot->sized = true; }
@@ -377,6 +445,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     g_bgAlphaCore = g_nextBgAlpha; g_nextBgAlpha = -1.0f;
     if (pin) PinNextWindow();
     if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }
+    if (slot && slot->fitAxes) flags |= Window_AlwaysAutoResize;   // the measuring frame (hidden)
     if (!(flags & (Window_NoResize | Window_AlwaysAutoResize))) ResizableNextWindow(96.0f, 64.0f);
     g_noTitleNext = (flags & Window_NoTitleBar) != 0;
     g_wflagsNext = flags | kWinFlagStyle;
@@ -434,6 +503,7 @@ CurrentWindow GetCurrentWindow() {
 }
 void SetWindowFocus(const char* title) {
     if (!title) return;
+    if (DockAdoptTitle(title)) GetDockLayout().SetActive(title);   // a docked window: its tab becomes the chosen one (Dear ImGui's focus of a docked window)
     g_focusWin = windowId(title);
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }

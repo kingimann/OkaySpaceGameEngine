@@ -1,6 +1,6 @@
 #pragma once
 // Dear ImGui modals and clicks that go nowhere (owner, v2.903.8.118: "i just cant interact with anything or click anything" after a
-// project opened; frames kept coming, so the hang watchdog stayed quiet). Header-only, Dear ImGui only, so tests run it headless
+// project opened; frames kept coming, so the hang watchdog stayed quiet). Header-only (a Dear ImGui part and an OkayUI part, OKAY_ON_OKAYUI), so tests run it headless
 // (tests/test_editor_stale_modal.cpp).
 //
 //  - Sweep: called once a frame right after ImGui::NewFrame. A modal that is open but has not been drawn (submitted) for a few
@@ -15,6 +15,9 @@
 // Written from Dear ImGui's documented popup rules (popups stay open until closed; a modal blocks the windows behind it).
 #include "imgui.h"
 #include "imgui_internal.h"
+#if defined(OKAY_ON_OKAYUI)
+#include "okay/UI/OkayUIInternals.hpp"   // ListOpenPopups, ClosePopup, CurrentPopupDepth
+#endif
 
 #include <cstdio>
 #include <functional>
@@ -27,6 +30,7 @@ namespace okayed::modalguard {
 /// in another later in the frame).
 constexpr int kUndrawnFrames = 3;
 
+#if !defined(OKAY_ON_OKAYUI)   // Dear ImGui
 /// Close the named popup if it is open (and every popup opened over it). True when something was closed. For a gate that is no
 /// longer needed (the sign-in confirmed, a project opened another way): it stops drawing its modal, so it must close it too.
 inline bool CloseIfOpen(const char* name) {
@@ -140,6 +144,94 @@ inline std::string DescribeInputState() {
     return s;
 }
 
+#else   // OkayUI
+/// The editor built on OkayUI (OKAY_ON_OKAYUI, okay-editor-okayui): the same guard over OkayUI's popups (okay/UI/OkayUIInternals.hpp:
+/// ListOpenPopups, ClosePopup). OkayUI's rules differ in two ways that matter here: a modal blocks the windows behind it only in a frame it is
+/// drawn (its blocking overlay is registered by BeginPopupModal), and a modal is always placed in the middle of the display. So an undrawn
+/// modal cannot swallow clicks; it can still hold the screen for OpenModalWhenFree, so the sweep still closes it. Nothing is ever off screen.
+inline bool CloseIfOpen(const char* name) { return OkayUI::ClosePopup(name); }
+
+/// As in the Dear ImGui build: the first question asked keeps the screen until it is answered; the next one waits. OkayUI's open popups
+/// carry no level, so "this level is taken" means another open modal when asked outside any popup, and nothing when asked inside one.
+inline bool OpenModalWhenFree(const char* name) {
+    if (ImGui::IsPopupOpen(name)) return true;
+    if (OkayUI::CurrentPopupDepth() == 0) {
+        OkayUI::PopupSlotInfo open[32];
+        const int n = OkayUI::ListOpenPopups(open, 32);
+        for (int i = 0; i < n; ++i) if (open[i].modal) return false;   // another question is on screen: wait
+    }
+    ImGui::OpenPopup(name);
+    return true;
+}
+
+/// Frames a drawn modal may stay hidden (never shown) before the guard calls it a blocking popup (not used on OkayUI: a drawn modal shows).
+constexpr int kHiddenFrames = 30;
+
+/// Once a frame, right after ImGui::NewFrame: closes a modal that is open but has not been drawn for kUndrawnFrames frames and tells
+/// `closed(name)`. `moved` and `blocking` are never called on OkayUI (see above). Returns how many were closed.
+inline int Sweep(const std::function<void(const char*)>& closed, const std::function<void(const char*)>& moved = {},
+                 const std::function<void(const char*)>& blocking = {}) {
+    (void)moved; (void)blocking;
+    OkayUI::PopupSlotInfo open[32];
+    const int n = OkayUI::ListOpenPopups(open, 32);
+    const unsigned long long now = (unsigned long long)ImGui::GetFrameCount();
+    for (int i = 0; i < n; ++i) {
+        const OkayUI::PopupSlotInfo& p = open[i];
+        if (!p.modal || now < p.openedFrame + kUndrawnFrames + 1) continue;
+        if (p.drawnFrame + kUndrawnFrames < now) {
+            const std::string name = p.name[0] ? p.name : "(unnamed)";
+            OkayUI::ClosePopupById(p.id);
+            if (closed) closed(name.c_str());
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/// The modals that opened and closed since the last call, as breadcrumb lines ("Modal opened: <name>", "Modal closed: <name>").
+class ModalTrail {
+public:
+    std::vector<std::string> Update() {
+        std::vector<std::string> out, now;
+        OkayUI::PopupSlotInfo open[32];
+        const int n = OkayUI::ListOpenPopups(open, 32);
+        for (int i = 0; i < n; ++i) if (open[i].modal) now.push_back(open[i].name);
+        for (const std::string& s : now) if (!Has(m_open, s)) out.push_back("Modal opened: " + s);
+        for (const std::string& s : m_open) if (!Has(now, s)) out.push_back("Modal closed: " + s);
+        m_open.swap(now);
+        return out;
+    }
+private:
+    static bool Has(const std::vector<std::string>& v, const std::string& s) { for (const std::string& x : v) if (x == s) return true; return false; }
+    std::vector<std::string> m_open;
+};
+
+/// What OkayUI thinks about the mouse right now, on one line.
+inline std::string DescribeInputState() {
+    ImGuiContext& g = *GImGui;
+    const ImGuiIO& io = ImGui::GetIO();
+    auto name = [](const ImGuiWindow* w) { return w ? std::string(w->Name) : std::string("none"); };
+    char buf[512];
+    OkayUI::PopupSlotInfo open[32];
+    const int n = OkayUI::ListOpenPopups(open, 32);
+    std::snprintf(buf, sizeof buf, "mouse %.0f,%.0f, display %.0fx%.0f, WantCaptureMouse %d, hovered window %s, focused window %s, active item %08X, open popups %d",
+                  io.MousePos.x, io.MousePos.y, io.DisplaySize.x, io.DisplaySize.y, io.WantCaptureMouse ? 1 : 0, name(g.HoveredWindow).c_str(),
+                  name(g.NavWindow).c_str(), (unsigned)g.ActiveId, n);
+    std::string s = buf;
+    const OkayUI::PopupSlotInfo* top = nullptr;
+    for (int i = 0; i < n; ++i) if (open[i].modal) top = &open[i];
+    if (top) {
+        std::snprintf(buf, sizeof buf, ", top modal \"%s\", drawn %llu frames ago", top->name,
+                      (unsigned long long)ImGui::GetFrameCount() - top->drawnFrame);
+        s += buf;
+    } else {
+        s += ", no modal";
+    }
+    return s;
+}
+
+#endif
+
 /// Clicks that arrive but land nowhere. The event loop calls NoteClick for every mouse press the window system delivers; the frame
 /// calls EndFrame after the UI was drawn (before ImGui::Render). Every `periodSeconds` with clicks and none landed, EndFrame returns
 /// a line for the log (empty otherwise).
@@ -150,7 +242,11 @@ public:
     std::string EndFrame(double now) {
         ImGuiContext& g = *GImGui;
         bool clicked = false;
+#if defined(OKAY_ON_OKAYUI)
+        for (int b = 0; b < 3; ++b) clicked |= ImGui::IsMouseClicked(b);
+#else
         for (int b = 0; b < 3; ++b) clicked |= g.IO.MouseClicked[b];
+#endif
         if (clicked) {
             ++m_seen;
             if (g.HoveredWindow || g.HoveredId != 0 || g.ActiveId != 0) ++m_landed;

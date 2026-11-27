@@ -4,7 +4,9 @@
 #include "okay/UI/OkayUIDockBuilder.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
+#include <map>
 
 namespace OkayUI {
 
@@ -49,6 +51,13 @@ struct Ctx {
     bool inBegin = false, began = false, clipped = false, floating = false;
     std::string curName;
     bool* pOpen = nullptr;
+    // Dear ImGui's rule: a docked window that is not submitted (its Begin not called) has no tab that frame. The frame each window last
+    // called DockBegin; a window seen this frame or the one before is "submitted".
+    std::map<std::string, long long> seen;
+    bool Submitted(const std::string& name) const {
+        const auto it = seen.find(name);
+        return it != seen.end() && it->second >= (long long)GetFrameCount() - 1;
+    }
 };
 Ctx& C() { static Ctx c; return c; }
 
@@ -57,16 +66,21 @@ void BuildTabs(Ctx& c) {
     const float pad = 10.0f, closeW = c.tabH * 0.7f;
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit() || n.tabs.empty() || n.noTabBar) continue;
+        bool anySubmitted = false;
+        for (const std::string& t : n.tabs) anySubmitted |= c.Submitted(t);
         float keep = 0.0f;
         for (const auto& rv : c.reserve) if (rv.first == n.id) keep = rv.second;
         keep = std::max(0.0f, std::min(keep, n.rect.w * 0.5f));
         std::vector<float> w;
         float total = 0.0f;
-        for (const std::string& t : n.tabs) { const float tw = CalcTextSize(Display(t).c_str()).x + 2.0f * pad + closeW; w.push_back(tw); total += tw; }
+        // windows not submitted get no tab (while none of the leaf's windows has been seen yet, e.g. a layout just built, all show)
+        auto shown = [&](const std::string& t) { return !anySubmitted || c.Submitted(t); };
+        for (const std::string& t : n.tabs) { const float tw = shown(t) ? CalcTextSize(Display(t).c_str()).x + 2.0f * pad + closeW : 0.0f; w.push_back(tw); total += tw; }
         const float room = n.rect.w - keep;
         const float scale = total > room && total > 0.0f ? room / total : 1.0f;
         float x = n.rect.x;
         for (size_t i = 0; i < n.tabs.size(); ++i) {
+            if (!shown(n.tabs[i])) continue;
             TabRect t;
             t.name = n.tabs[i]; t.node = n.id; t.index = (int)i;
             const float tw = w[i] * scale;
@@ -188,6 +202,16 @@ void DockSpace(Rect area) {
     c.area = Rect{x0, y0, std::max(0.0f, x1 - x0), std::max(0.0f, y1 - y0)};
     c.tabH = GetFrameHeight();
     for (size_t i = c.reserve.size(); i-- > 0;) if (!c.layout.Find(c.reserve[i].first)) c.reserve.erase(c.reserve.begin() + (std::ptrdiff_t)i);
+    if (c.seen.size() > 256)   // (titles with counts in them come and go: forget names not seen for a while)
+        for (auto it = c.seen.begin(); it != c.seen.end();) { if (it->second < frame - 600) it = c.seen.erase(it); else ++it; }
+    {   // a leaf whose chosen window is not submitted shows its first submitted one instead, as Dear ImGui's dock does
+        std::vector<std::string> pick;
+        for (const DockLayout::Node& n : c.layout.Nodes()) {
+            if (n.IsSplit() || n.tabs.empty() || c.Submitted(n.tabs[(size_t)n.active])) continue;
+            for (const std::string& t : n.tabs) if (c.Submitted(t)) { pick.push_back(t); break; }
+        }
+        for (const std::string& t : pick) c.layout.SetActive(t);
+    }
     Rebuild(c);
 
     const Vec2 m = GetMousePos();
@@ -337,6 +361,7 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
         return false;
     }
     if (p_open && !*p_open) { DockBuilderDropNext(); return false; }
+    c.seen[name] = GetFrameCount();   // submitted this frame: it has a tab
     DockBuilderApplyNext(name);   // SetNextWindowDockID
     if (!c.layout.Contains(name)) {
         const float k = (float)(c.layout.FloatingWindows().size() % 8) * 26.0f;
@@ -407,6 +432,19 @@ Rect GetDockStripRect(int leaf) {
     return Rect{n->rect.x, n->rect.y, n->rect.w, std::min(c.tabH, n->rect.h)};
 }
 
+bool DockAdoptTitle(const char* title) {
+    if (!title || !*title) return false;
+    DockLayout& L = C().layout;
+    if (L.Contains(title)) return true;
+    const char* key = std::strstr(title, "###");
+    if (!key) return false;
+    const std::size_t keyLen = std::strlen(key);
+    for (const std::string& n : L.Windows()) {
+        const std::size_t at = n.find("###");
+        if (at != std::string::npos && n.size() - at == keyLen && n.compare(at, keyLen, key) == 0) return L.Rename(n, title);
+    }
+    return false;
+}
 bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
 bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)
 

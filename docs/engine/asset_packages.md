@@ -128,6 +128,24 @@ Why the per-user view: most loaders (images, audio, meshes, scenes, fonts) open 
 bytes is round 2. Until then the view keeps every part of the engine working unchanged. Cost: the data on disk twice,
 and the first start writes it.
 
+### Anti-cheat
+
+What anti-cheat (`shared/AntiCheatIntegrity.hpp`, `okayac::VerifyInstall`) checks, before and after packages:
+
+* **Before (loose files):** at start, every file listed in `Data/manifest.json` is checked (size and SHA-256), and any
+  program file (`.exe`, `.dll`, ...) the build did not ship is a problem. The runtime guard (`AntiCheatChecks.hpp`:
+  debugger, loaded modules, clock) never hashes files, so a file changed after start was never seen, then or now.
+* **After (packed game):** at start, the same manifest check covers `game.okaypkg` (and the loose `StreamingAssets`,
+  `build.json`, config files); then `assetpkg::VerifyView` compares **every file of the per-user view byte for byte**
+  with its entry read from the package (the package's own Hash64 is not trusted against a deliberate forgery, which is
+  why bytes are compared), and lists program files in the view that no package has. Each finding is added with
+  `okayac::AddProblems` and counts exactly like a changed shipped file: report mode logs it (and sends it with the run's
+  report), enforce mode and players with trusted keys refuse to start. A changed or missing copy is put back from the
+  package in every mode. Test: `asset_package`, suites "a data folder, mounted and materialised" (a copy edited with its
+  size and time kept, a longer copy, a deleted copy, a planted `.dll`) and "a changed cache copy counts for anti-cheat".
+* Cost: with anti-cheat on, every start reads the whole view and unpacks every entry once (before: SHA-256 of every
+  loose file). With anti-cheat off nothing is read, as before.
+
 ## 4. Benchmarks
 
 `test_asset_package_bench [files] [MB]` on the Linux build container (Release, GCC 13; numbers depend on the machine and
@@ -179,9 +197,6 @@ is removed on purpose (checked: without the alignment and metadata-hash checks, 
 ## 6. Left for later rounds
 
 1. Loaders reading straight from the package (`Image`, `AudioClip`, meshes, scenes, fonts), then drop the per-user view.
-   Until then, with anti-cheat on, the view's files are not checked against the package after they are written (only the
-   package file is in the anti-cheat list): a cheater can edit the view. Round 2 must hash the view at start when
-   anti-cheat is on, or read from the package.
 2. Streaming one large entry by chunk (entries are read whole today).
 3. Editor: a package window (entries, names, sizes, compression, dependencies), patch making from Build Settings
    (Claude 3's files: needs an `Agree:`), and a Build Settings switch instead of `OKAY_BUILD_LOOSE_FILES`.

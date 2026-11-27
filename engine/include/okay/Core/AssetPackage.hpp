@@ -286,6 +286,23 @@ struct MaterializeStats { std::size_t written = 0, kept = 0, removed = 0, loose 
 bool Materialize(const PackageStack& stack, const std::string& dataDir, const std::string& viewDir,
                  MaterializeStats* stats, std::string& why);
 
+/// What VerifyView found: names are package names ('/'-separated, relative to the view).
+struct ViewCheck {
+    std::size_t checked = 0, restored = 0;
+    std::vector<std::string> changed;      ///< a file whose bytes are not the package's
+    std::vector<std::string> missing;      ///< a file the packages have and the view lacks
+    std::vector<std::string> unexpected;   ///< a program file (.exe, .dll, .so ...) in the view that no package has
+    bool Clean() const { return changed.empty() && missing.empty() && unexpected.empty(); }
+    /// One plain line per finding, as anti-cheat reports a changed shipped file.
+    std::vector<std::string> Problems() const;
+};
+/// Anti-cheat's check of the view (docs/engine/asset_packages.md, "Anti-cheat"): every visible entry's file in `viewDir`
+/// is compared byte for byte with the entry read from its package (the package file itself is in the anti-cheat list
+/// and checked with SHA-256 first; the per-entry Hash64 is not trusted against a deliberate forgery, so bytes are
+/// compared). With `restore`, a changed or missing file is written again from the package and recorded in the view's
+/// state, so the next start keeps it. False (and `why`) only when the check itself cannot run.
+bool VerifyView(const PackageStack& stack, const std::string& viewDir, bool restore, ViewCheck& out, std::string& why);
+
 // ---- Packing an exported game's data folder (engine/src/Core/AssetPackageBuild.cpp) -----------------------------
 
 struct PackFolderOptions {

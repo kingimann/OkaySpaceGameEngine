@@ -607,6 +607,7 @@ add_test(NAME debug_overlay COMMAND test_debug_overlay)
 # manifest, data folder mount and view, packing an exported folder, async reads, the AssetManager mount.
 add_executable(test_asset_package test_asset_package.cpp)
 target_link_libraries(test_asset_package PRIVATE okay::engine)
+target_include_directories(test_asset_package PRIVATE ${CMAKE_SOURCE_DIR}/shared)   # AntiCheatIntegrity.hpp
 add_test(NAME asset_package COMMAND test_asset_package)
 set_tests_properties(asset_package PROPERTIES TIMEOUT 300)
 # The package benchmark (pack / unpack speed, load time against loose files, memory). Prints numbers; run by hand:

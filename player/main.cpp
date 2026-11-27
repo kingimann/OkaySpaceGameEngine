@@ -1326,6 +1326,8 @@ int main(int argc, char** argv) {
     // packages.manifest) is mounted and checked here, then laid out once in the per-user cache folder so every part of the
     // engine that opens files by path finds them there (a later start with the same packages writes nothing). The
     // AssetManager reads straight from the packages. A game exported with loose files runs exactly as before.
+    std::shared_ptr<okay::assetpkg::PackageStack> gamePackages;   // also checked by anti-cheat below
+    std::string gameView;
     {
         auto packages = std::make_shared<okay::assetpkg::PackageStack>();
         std::string pkgWhy;
@@ -1348,6 +1350,8 @@ int main(int argc, char** argv) {
             pb->Log("packages: " + std::to_string(packages->Layers()) + " mounted; " + std::to_string(ms.written) + " file(s) written, " +
                     std::to_string(ms.kept) + " kept, " + std::to_string(ms.removed) + " removed in " + view);
             okay::AssetManager::Instance().MountPackages(packages, view);
+            gamePackages = packages;
+            gameView = view;
             baseDir = view + "/";
         }
     }
@@ -1619,6 +1623,17 @@ int main(int argc, char** argv) {
         const okayac::TrustedKeySet acTrusted = okayac::TrustedKeys();
         acStart = okayac::DecideStart(std::filesystem::u8path(acRoot), okayac::ParseMode(cfg.antiCheat),
                                       okayac::ParseMode(acEnv ? acEnv : ""), acTrusted, acScene);
+        // A packed game: anti-cheat checked game.okaypkg above; the copies the engine reads (the per-user view) are
+        // compared with the package byte for byte too, and a changed one counts like a changed shipped file and is put back.
+        if (acStart.result.ran && gamePackages && gamePackages->Layers() > 0) {
+            okay::assetpkg::ViewCheck vc;
+            std::string vwhy;
+            std::vector<std::string> found;
+            if (!okay::assetpkg::VerifyView(*gamePackages, gameView, true, vc, vwhy)) found.push_back("the game's cache folder could not be checked: " + vwhy);
+            for (const std::string& p : vc.Problems()) found.push_back(p);
+            acStart.result.filesChecked += (int)vc.checked;
+            okayac::AddProblems(acStart, found, acTrusted.required);
+        }
         if (acStart.result.ran) {
             acLog("[anti-cheat] " + std::string(okayac::ModeName(acStart.mode)) + ": " + acStart.result.Summary());
             for (const std::string& n : acStart.result.notes) acLog("[anti-cheat] note: " + n);

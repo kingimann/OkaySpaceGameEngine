@@ -586,4 +586,22 @@ inline StartDecision DecideStart(const fs::path& root, Mode configMode, Mode env
     return s;
 }
 
+// Problems found outside VerifyInstall count exactly like a changed shipped file: the asset packages' per-user copies
+// (assetpkg::VerifyView, docs/engine/asset_packages.md "Anti-cheat"). Report mode logs them; enforce, or a player with
+// trusted keys built in, refuses to start. Does nothing when anti-cheat did not run or nothing was found.
+inline void AddProblems(StartDecision& s, const std::vector<std::string>& problems, bool trustedRequired) {
+    if (!s.result.ran || problems.empty()) return;
+    s.result.ok = false;
+    for (const std::string& p : problems) {
+        if (s.result.problems.size() < 20) s.result.problems.push_back(p);
+        else { if (s.result.problems.size() == 20) s.result.problems.push_back("...and more"); break; }
+    }
+    if (trustedRequired || s.mode == Mode::Enforce) {
+        s.allow = false;
+        s.message = detail::RefusalText(s.result);
+    } else {
+        s.message = "[anti-cheat] " + s.result.Summary();
+    }
+}
+
 } // namespace okayac

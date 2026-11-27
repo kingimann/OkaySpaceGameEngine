@@ -93,6 +93,15 @@ std::map<AssetId, ViewRow> ReadViewState(const fs::path& file) {
     return rows;
 }
 
+bool WriteViewState(const fs::path& file, const std::map<AssetId, ViewRow>& rows, std::string& why) {
+    std::string text = "okaypkg-view 1\n";
+    for (const auto& r : rows)
+        text += Hex64(r.first) + " " + Hex64(r.second.hash) + " " + std::to_string(r.second.size) + " " + std::to_string(r.second.stamp) + " " + r.second.name + "\n";
+    std::string w;
+    if (!savefmt::AtomicWriteChecked(file.u8string(), text, &w, {false, false, true})) { why = "cannot write " + file.u8string() + " (" + w + ")"; return false; }
+    return true;
+}
+
 } // namespace
 
 bool MountFolder(const std::string& dataDir, PackageStack& out, std::string& why, const Limits& limits) {
@@ -190,13 +199,84 @@ bool Materialize(const PackageStack& stack, const std::string& dataDir, const st
         if (ec || !savefmt::MoveOver(tmp, target, ec)) { fs::remove(tmp, ec); why = "cannot copy " + n + " into " + viewDir; return false; }
         ++st.loose;
     }
-    std::string text = "okaypkg-view 1\n";
-    for (const auto& r : now)
-        text += Hex64(r.first) + " " + Hex64(r.second.hash) + " " + std::to_string(r.second.size) + " " + std::to_string(r.second.stamp) + " " + r.second.name + "\n";
-    std::string w;
-    if (!savefmt::AtomicWriteChecked(stateFile.u8string(), text, &w, {false, false, true})) { why = "cannot write " + stateFile.u8string() + " (" + w + ")"; return false; }
+    if (!WriteViewState(stateFile, now, why)) return false;
     st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     if (stats) *stats = st;
+    return true;
+}
+
+std::vector<std::string> ViewCheck::Problems() const {
+    std::vector<std::string> out;
+    for (const std::string& n : changed) out.push_back(n + " was modified (the copy in the game's cache folder; put back from the game's packages)");
+    for (const std::string& n : missing) out.push_back(n + " is missing (the copy in the game's cache folder; put back from the game's packages)");
+    for (const std::string& n : unexpected) out.push_back("unexpected program file " + n + " in the game's cache folder");
+    return out;
+}
+
+namespace {
+bool IsProgramFile(const std::string& name) {
+    for (const char* e : {".exe", ".dll", ".so", ".dylib", ".asi", ".sys", ".com"})
+        if (str::EndsWithNoCaseAscii(name, e)) return true;
+    return false;
+}
+bool SameAsBytes(const fs::path& p, const std::vector<std::uint8_t>& want) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    std::vector<char> buf(1 << 16);
+    std::size_t at = 0;
+    while (f) {
+        f.read(buf.data(), (std::streamsize)buf.size());
+        const std::size_t n = (std::size_t)f.gcount();
+        if (n > want.size() - at || std::memcmp(buf.data(), want.data() + at, n) != 0) return false;
+        at += n;
+    }
+    return at == want.size();
+}
+} // namespace
+
+bool VerifyView(const PackageStack& stack, const std::string& viewDir, bool restore, ViewCheck& out, std::string& why) {
+    out = ViewCheck();
+    const fs::path view = fs::u8path(viewDir);
+    std::error_code ec;
+    if (!fs::is_directory(view, ec)) { why = viewDir + " is not a folder"; return false; }
+    const fs::path stateFile = view / kViewState;
+    std::map<AssetId, ViewRow> state = ReadViewState(stateFile);
+    bool stateChanged = false;
+    std::set<std::string> known;   // lower-case names the packages have
+    std::vector<std::uint8_t> bytes;
+    for (const PackageStack::Hit& h : stack.Visible()) {
+        const std::string name = stack.NameOf(h.entry->id);
+        if (name.empty()) { why = "the game's packages have no file names"; return false; }
+        known.insert(str::LowerAscii(name));
+        fs::path target;
+        std::string w;
+        if (!pathsafety::StaysInside(view, name, &target, &w)) { why = "'" + name + "' cannot be checked: " + w; return false; }
+        ++out.checked;
+        const bool present = fs::is_regular_file(target, ec);
+        bool good = false;
+        if (present && fs::file_size(target, ec) == h.entry->size && !ec) {
+            if (!h.package->Read(*h.entry, bytes, why)) return false;
+            good = SameAsBytes(target, bytes);
+        }
+        if (good) continue;
+        (present ? out.changed : out.missing).push_back(name);
+        if (!restore) continue;
+        if (!h.package->Read(*h.entry, bytes, why) || !WriteThrough(target, bytes, why)) return false;
+        ViewRow r;
+        r.hash = h.entry->contentHash; r.size = h.entry->size; r.stamp = Stamp(target); r.name = name;
+        state[h.entry->id] = r;
+        stateChanged = true;
+        ++out.restored;
+    }
+    for (fs::recursive_directory_iterator it(view, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) && !it->is_symlink(ec)) continue;
+        const std::string rel = fs::relative(it->path(), view, ec).generic_u8string();
+        if (IsProgramFile(rel) && !known.count(str::LowerAscii(rel))) out.unexpected.push_back(rel);
+    }
+    std::sort(out.changed.begin(), out.changed.end());
+    std::sort(out.missing.begin(), out.missing.end());
+    std::sort(out.unexpected.begin(), out.unexpected.end());
+    if (stateChanged && !WriteViewState(stateFile, state, why)) return false;
     return true;
 }
 

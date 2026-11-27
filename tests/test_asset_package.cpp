@@ -10,6 +10,7 @@
 #include "okay/Core/Jobs.hpp"
 #ifndef OKAY_ASSETPKG_STANDALONE
 #include "okay/Core/AssetManager.hpp"
+#include "AntiCheatIntegrity.hpp"   // okayac::AddProblems: the view check counts like a changed shipped file
 #endif
 #include <algorithm>
 #include <atomic>
@@ -669,6 +670,35 @@ void TestFolderAndView() {
     CHECK(Materialize(s, data.string(), view.string(), &ms, why));
     CHECK(ms.written == 1 && Text(ReadFile(view / "Assets" / "a.txt")) == "a v1");
 
+    // Anti-cheat on the view: a copy edited after start, with its size and time kept, is not seen by Materialize (it
+    // trusts size and time), so VerifyView compares every file with the package's bytes, reports it and puts it back.
+    {
+        const fs::path f = view / "Assets" / "a.txt";
+        const auto stamp = fs::last_write_time(f);
+        WriteFile(f, Bytes("a v9"));   // same size as "a v1"
+        fs::last_write_time(f, stamp);
+        CHECK(Materialize(s, data.string(), view.string(), &ms, why));
+        CHECK(ms.written == 0 && Text(ReadFile(f)) == "a v9");   // the gap: the view still holds the edited copy
+        WriteFile(view / "Assets" / "sub" / "c.txt", Bytes("c v1 but longer"));
+        fs::remove(view / "game.okayscene");
+        WriteFile(view / "Assets" / "hook.dll", Bytes("MZ"));
+        ViewCheck vc;
+        CHECK(VerifyView(s, view.string(), false, vc, why));
+        CHECK(vc.checked == 3);
+        CHECK(vc.changed == (std::vector<std::string>{"Assets/a.txt", "Assets/sub/c.txt"}));
+        CHECK(vc.missing == (std::vector<std::string>{"game.okayscene"}));
+        CHECK(vc.unexpected == (std::vector<std::string>{"Assets/hook.dll"}));
+        CHECK(vc.Problems().size() == 4 && !vc.Clean());
+        CHECK(Text(ReadFile(f)) == "a v9");   // without restore nothing is touched
+        CHECK(VerifyView(s, view.string(), true, vc, why));
+        CHECK(vc.restored == 3);
+        CHECK(Text(ReadFile(f)) == "a v1" && Text(ReadFile(view / "game.okayscene")) == "scene");
+        fs::remove(view / "Assets" / "hook.dll");
+        CHECK(VerifyView(s, view.string(), false, vc, why) && vc.Clean() && vc.checked == 3);
+        CHECK(Materialize(s, data.string(), view.string(), &ms, why));
+        CHECK(ms.written == 0 && ms.kept == 3);   // the restored files are recorded: the next start writes nothing
+    }
+
     // A patch: a changed, c removed, d added; the manifest lists both packages.
     PackageWriter pw;
     pw.Add("Assets/a.txt", Bytes("a v2"));
@@ -815,6 +845,31 @@ void TestPackFolder() {
     fs::remove_all(dir);
 }
 
+void TestAntiCheatViewProblems() {
+    RUN_SUITE("asset_package: a changed cache copy counts for anti-cheat like a changed shipped file");
+    const std::vector<std::string> found = {"Assets/a.txt was modified (the copy in the game's cache folder; put back from the game's packages)"};
+    okayac::StartDecision report;
+    report.mode = okayac::Mode::Report; report.result.ran = true;
+    okayac::AddProblems(report, found, false);
+    CHECK(!report.result.ok && report.allow && report.result.problems.size() == 1);
+    CHECK(report.message.find("integrity check failed") != std::string::npos);
+    okayac::StartDecision enforce;
+    enforce.mode = okayac::Mode::Enforce; enforce.result.ran = true;
+    okayac::AddProblems(enforce, found, false);
+    CHECK(!enforce.allow && enforce.message.find("Assets/a.txt was modified") != std::string::npos);
+    okayac::StartDecision signedGame;   // trusted keys built in: any problem stops the game, whatever the mode
+    signedGame.mode = okayac::Mode::Report; signedGame.result.ran = true;
+    okayac::AddProblems(signedGame, found, true);
+    CHECK(!signedGame.allow);
+    okayac::StartDecision clean;
+    clean.mode = okayac::Mode::Enforce; clean.result.ran = true;
+    okayac::AddProblems(clean, {}, true);
+    CHECK(clean.allow && clean.result.ok && clean.message.empty());
+    okayac::StartDecision off;   // anti-cheat off: nothing ran, nothing is added
+    okayac::AddProblems(off, found, false);
+    CHECK(off.allow && off.result.ok);
+}
+
 void TestAssetManagerMount() {
     RUN_SUITE("asset_package: AssetManager reads from mounted packages");
     PackageWriter w;
@@ -876,6 +931,7 @@ int main() {
 #ifndef OKAY_ASSETPKG_STANDALONE
     TestFolderAndView();
     TestPackFolder();
+    TestAntiCheatViewProblems();
     TestAssetManagerMount();
 #endif
     TEST_MAIN_RESULT();

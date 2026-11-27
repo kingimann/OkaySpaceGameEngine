@@ -18,14 +18,14 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `ExportResult` struct, line 90
 - `IsoUtc` function, line 98
 - `CountRows` function, line 110: Count top-level objects in a JSON array text (rows).
-- `DeleteRequest` struct, line 177
-- `BuildDeleteRequest` function, line 181: The request sent to the Edge Function. Identity is the bearer token that
-- `DeleteOutcome` struct, line 186
-- `MapDeleteResponse` function, line 196: Turn the function's response into a user message. Never claims success unless
+- `BuildDeleteRequest` function, line 182: The call made to the server function. Identity is the bearer token the
+- `SendDelete` function, line 187: Send it through the signed-in account (AccountService::Functions).
+- `DeleteOutcome` struct, line 189
+- `MapDeleteResponse` function, line 199: Turn the function's response into a user message. Never claims success unless
 
 ## `engine/include/okay/Platform/Account/AccountDetail.hpp`
 
-- `PublicName` function, line 40: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `PublicName` function, line 41: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
@@ -35,7 +35,7 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `Provider` enum, line 109: Which backend signs players in.
 - `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
 - `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 985: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `DefaultConfigDir` function, line 1010: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -53,7 +53,7 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/BlockList.hpp`
 
-- `BlockList` class, line 9
+- `BlockList` class, line 13
 
 ## `engine/include/okay/Platform/BmpWriter.hpp`
 
@@ -101,11 +101,11 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Friends.hpp`
 
-- `Friend` struct, line 31
-- `FriendEvent` struct, line 50
-- `FeedLine` struct, line 60: One line of the friends' activity panel: the newest of a run of the same event (same person, same kind, same detail), how
-- `GroupFeed` function, line 65: The activity panel's lines from the feed (newest first): your own events are left out (the server's activity policy lets
-- `Friends` class, line 84
+- `Friend` struct, line 33
+- `FriendEvent` struct, line 52
+- `FeedLine` struct, line 62: One line of the friends' activity panel: the newest of a run of the same event (same person, same kind, same detail), how
+- `GroupFeed` function, line 67: The activity panel's lines from the feed (newest first): your own events are left out (the server's activity policy lets
+- `Friends` class, line 86
 
 ## `engine/include/okay/Platform/GameIpc.hpp`
 
@@ -130,23 +130,23 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Invites.hpp`
 
-- `GameInvite` struct, line 28
-- `InviteState` enum, line 41
-- `PresenceSeen` enum, line 43: Whether the sender's presence was read. Known + an empty link means they are not in a joinable game now.
-- `InviteView` struct, line 45
-- `Left` function, line 53
-- `What` function, line 59
-- `ViewInvite` function, line 69: What the card for 'inv' says at 'now'. For a game invite, 'senderLink' is the sender's current presence
-- `ViewLegacyInvite` function, line 96: A chat invite with no record (an older launcher, or before chat_invites.sql ran): only its age is known.
-- `ViewSentInvite` function, line 104: The sender's own copy of an invite card: what happened to the invite they sent to 'recipientName'.
-- `InviteCard` struct, line 120: What one invite card in chat shows and which buttons it has. 'rec' is the game_invites record the card's link
-- `InviteAnswerOk` function, line 178: respond_invite / cancel_invite answered this: the change was made.
-- `InviteAnswerText` function, line 180: The server's answer (or an okay_rule reason) in a plain sentence.
-- `InviteEventsSince` function, line 194: The notification event for invites that are new since 'seenId' and still worth showing at 'now'
-- `JoinCheck` struct, line 211
-- `CheckJoinFriend` function, line 218: Whether "Join game" on 'f' works now. 'blocked' = either of you blocked the other.
-- `Joinable` function, line 238: For the friend list's Join button: shown enabled only when CheckJoinFriend would pass (not blocked).
-- `Invites` class, line 243: game_invites over Supabase's REST API, through the signed-in AccountService (same pattern as Friends).
+- `GameInvite` struct, line 29
+- `InviteState` enum, line 42
+- `PresenceSeen` enum, line 44: Whether the sender's presence was read. Known + an empty link means they are not in a joinable game now.
+- `InviteView` struct, line 46
+- `Left` function, line 54
+- `What` function, line 60
+- `ViewInvite` function, line 70: What the card for 'inv' says at 'now'. For a game invite, 'senderLink' is the sender's current presence
+- `ViewLegacyInvite` function, line 97: A chat invite with no record (an older launcher, or before chat_invites.sql ran): only its age is known.
+- `ViewSentInvite` function, line 105: The sender's own copy of an invite card: what happened to the invite they sent to 'recipientName'.
+- `InviteCard` struct, line 121: What one invite card in chat shows and which buttons it has. 'rec' is the game_invites record the card's link
+- `InviteAnswerOk` function, line 179: respond_invite / cancel_invite answered this: the change was made.
+- `InviteAnswerText` function, line 181: The server's answer (or an okay_rule reason) in a plain sentence.
+- `InviteEventsSince` function, line 195: The notification event for invites that are new since 'seenId' and still worth showing at 'now'
+- `JoinCheck` struct, line 212
+- `CheckJoinFriend` function, line 219: Whether "Join game" on 'f' works now. 'blocked' = either of you blocked the other.
+- `Joinable` function, line 239: For the friend list's Join button: shown enabled only when CheckJoinFriend would pass (not blocked).
+- `Invites` class, line 245: game_invites through the signed-in AccountService and OkayBackend's Database (acct_.Db(); round 5), byte for byte what it
 
 ## `engine/include/okay/Platform/Messages.hpp`
 
@@ -251,9 +251,9 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Parties.hpp`
 
-- `PartyMember` struct, line 20
-- `Party` struct, line 29
-- `Parties` class, line 43
+- `PartyMember` struct, line 24
+- `Party` struct, line 33
+- `Parties` class, line 47
 
 ## `engine/include/okay/Platform/Platform.hpp`
 
@@ -305,36 +305,36 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Privacy.hpp`
 
-- `IsMissingTable` function, line 29: 404 (PostgREST PGRST205 "not in the schema cache"), or a 400 / 42P01 naming a
-- `Support` enum, line 36
-- `SetupNote` function, line 38
-- `Rule` enum, line 43: ---- Rules the database enforces ------------------------------------------
-- `ParseRule` function, line 48: Finds "okay_rule:<reason>" anywhere in 'text' (a response body or an error).
-- `RuleText` function, line 66
-- `IsRuleText` function, line 83: True when 'text' is exactly one of the RuleText sentences (the Friends API hands
-- `FailureText` function, line 91: The sentence to show when a call failed: the rule's text if a server rule said
-- `Settings` struct, line 100: ---- Settings -----------------------------------------------------------------
-- `ReachWord` function, line 108
-- `ReachFromWord` function, line 109
-- `SettingsJson` function, line 115
-- `SettingsFromBody` function, line 121: First object of a PostgREST array. false when 'body' has no row.
-- `PendingOp` struct, line 139: ---- Block list changes kept while offline -----------------------------------
-- `QueueOp` function, line 144: Record "block uid" / "unblock uid". A newer change for the same person
-- `ApplyPending` function, line 149: The list to show: the server's list with unsent changes applied on top.
-- `EncodeOp` function, line 154: launcher.cfg encoding: "+uid/name" / "-uid/name" (name may be empty).
-- `DecodeOp` function, line 155
-- `LocalListAction` enum, line 168: How the one-time migration of the old PC-only list works. 'marker' is the
-- `ClassifyLocalList` function, line 169
-- `ProfilesViewState` function, line 176: ---- Reading profiles ---------------------------------------------------------
-- `ProfilesGet` function, line 180: GET /rest/v1/profiles?<query> but through profiles_visible when it exists (so
+- `IsMissingTable` function, line 30: 404 (PostgREST PGRST205 "not in the schema cache"), or a 400 / 42P01 naming a
+- `Support` enum, line 37
+- `SetupNote` function, line 39
+- `Rule` enum, line 44: ---- Rules the database enforces ------------------------------------------
+- `ParseRule` function, line 49: Finds "okay_rule:<reason>" anywhere in 'text' (a response body or an error).
+- `RuleText` function, line 67
+- `IsRuleText` function, line 84: True when 'text' is exactly one of the RuleText sentences (the Friends API hands
+- `FailureText` function, line 92: The sentence to show when a call failed: the rule's text if a server rule said
+- `Settings` struct, line 101: ---- Settings -----------------------------------------------------------------
+- `ReachWord` function, line 109
+- `ReachFromWord` function, line 110
+- `SettingsJson` function, line 116
+- `SettingsFromBody` function, line 122: First object of a PostgREST array. false when 'body' has no row.
+- `PendingOp` struct, line 140: ---- Block list changes kept while offline -----------------------------------
+- `QueueOp` function, line 145: Record "block uid" / "unblock uid". A newer change for the same person
+- `ApplyPending` function, line 150: The list to show: the server's list with unsent changes applied on top.
+- `EncodeOp` function, line 155: launcher.cfg encoding: "+uid/name" / "-uid/name" (name may be empty).
+- `DecodeOp` function, line 156
+- `LocalListAction` enum, line 169: How the one-time migration of the old PC-only list works. 'marker' is the
+- `ClassifyLocalList` function, line 170
+- `ProfilesViewState` function, line 177: ---- Reading profiles ---------------------------------------------------------
+- `ProfilesGet` function, line 203: The same with the query written by hand ("select=...&id=eq...."). Only Messages,
 
 ## `engine/include/okay/Platform/Profiles.hpp`
 
-- `PublicProfile` struct, line 32
-- `FollowEntry` struct, line 46: Someone in a followers / following list.
-- `PlaytimeEntry` struct, line 49: Time played in one game (or "editor" for time in the editor).
-- `ProfileBundle` struct, line 51
-- `Profiles` class, line 76
+- `PublicProfile` struct, line 34
+- `FollowEntry` struct, line 48: Someone in a followers / following list.
+- `PlaytimeEntry` struct, line 51: Time played in one game (or "editor" for time in the editor).
+- `ProfileBundle` struct, line 53
+- `Profiles` class, line 78
 
 ## `engine/include/okay/Platform/Servers.hpp`
 

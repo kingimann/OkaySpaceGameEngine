@@ -40,7 +40,9 @@ const char* const kShared[] = {
     "GetDragDropPayload()::copy", "AcceptDragDropPayload(char const*, int)::out", "GetTopMostPopupModal()::ref", "TableGetSortSpecs()::arr",
     "TableGetSortSpecs()::out", "SaveIniSettingsToMemory(unsigned long*)::s", "FillContextFromWindowTable(OkayUI::Context&, unsigned int, unsigned int, unsigned int, unsigned int)::popRefs",
     "GetStyle()::s", "finalizeFrame()::reports", "Begin(char const*, float, float, float, float, bool*)::s_bareOpen",
-    "UseLauncherLook(bool)::classic",
+    "UseLauncherLook(bool)::classic", "UseLauncherLook(bool)::other",
+    // the design system (okay/UI/OkayUIDesign.hpp): the chosen design is the program's, the same in every window
+    "design::g_lastPoll", "design::g_cur", "design::g_rev", "design::g_stamp", "design::g_follow", "Designs()::kAll",
     // the state of the one item being dragged or typed into: one item is held at a time in the whole program
     "::s_logT", "::s_pastThreshold", "colorEditRow_ed(char const*, float*, int, int)::hexBuf", "colorEditRow_ed(char const*, float*, int, int)::hexId",
     "colorEditRow_ed(char const*, float*, int, int)::hexNext",
@@ -74,7 +76,9 @@ std::string LastPart(const std::string& nIn) {   // "OkayUI::ui_core::g_hot" -> 
     }
     return last;
 }
-bool IsShared(const std::string& name) {
+bool IsShared(const std::string& nameIn) {
+    std::string name = nameIn;
+    for (std::size_t at; (at = name.find("(anonymous namespace)::")) != std::string::npos;) name.erase(at, 23);
     const std::string last = LastPart(name);
     for (const char* s : kShared) {
         const std::string k = s;

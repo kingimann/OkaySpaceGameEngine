@@ -354,7 +354,9 @@ int hashLabel(const char* s) {
     // Dear ImGui's documented "###" rule: "Text###id" is identified by the "###id" part alone, so the text may change (a count in a title)
     // and the window or item stays the same one.
     if (s) { const char* k = std::strstr(s, "###"); if (k) s = k; }
-    unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
+    // Outside every window (after End) the last window's id is not part of the key: a modal opened and begun at the top level (the editor's
+    // built-in file browser) got a different id each frame the last window changed, and closed itself after one frame.
+    unsigned h = (2166136261u ^ (g_lay.active ? (unsigned)g_lay.seed : 0u) ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;

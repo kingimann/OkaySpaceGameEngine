@@ -1,6 +1,7 @@
 #include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <string>
+#include <cstring>
 #include <cmath>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
@@ -316,6 +317,11 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
     ListScope s(overlay, bottomHost); unsigned char c[4]; unpack(col, c);
+    if (std::strchr(text, '\n')) {   // a line break starts the next line a text line lower (Dear ImGui's AddText), not a '?' glyph
+        float y = pos.y;
+        imguiWrap(text, 1.0e9f, scale, [&](const char* l) { if (l[0]) drawText(pos.x, y, l, scale, c); y += fH() * scale; return 1.0e9f; });
+        return;
+    }
     drawText(pos.x, pos.y, text, scale, c);
 }
 

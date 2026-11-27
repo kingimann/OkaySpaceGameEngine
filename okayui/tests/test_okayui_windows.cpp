@@ -801,6 +801,54 @@ void TestWindowHoveredUnderMenu() {
     CHECK(belowHovered);
 }
 
+// A modal opened and begun outside every window keeps its id when the window drawn last changes (the editor's built-in file browser,
+// begun after all windows: it closed itself one frame after it opened, because the key took in the last window's id).
+void TestTopLevelPopupId() {
+    RUN_SUITE("windows: a popup begun outside every window keeps its id");
+    Reset();
+    Sim sim(640, 480);
+    int frame = 0; bool shown = false;
+    auto ui = [&] {
+        const char* order[2] = {frame < 2 ? "A" : "B", frame < 2 ? "B" : "A"};   // the window drawn last changes on frame 2
+        for (const char* n : order) { UI::SetNextWindowPos(V(n[0] == 'A' ? 10.0f : 300.0f, 10), UI::Cond_FirstUseEver); if (UI::Begin(n, nullptr, 0)) UI::Text(n); UI::End(); }
+        if (frame == 1) UI::OpenPopup("###browser");
+        shown = UI::BeginPopupModal("Open a folder###browser");
+        if (shown) { UI::Text("files"); UI::EndPopup(); }
+        ++frame;
+    };
+    sim.Frames(2, ui);
+    CHECK(shown);
+    sim.Frames(3, ui);
+    CHECK(shown);   // still open after the last window changed
+}
+
+// A modal given a size (SetNextWindowSize before BeginPopupModal) is that tall, and GetContentRegionAvail ends at its inner bottom: the
+// editor's file browser sizes its list from it and puts Cancel / Choose under the list, which drew below the box before.
+void TestModalFixedHeight() {
+    RUN_SUITE("windows: a modal given a height keeps it; the content region ends there");
+    Reset();
+    Sim sim(800, 600);
+    UI::Rect footer{}; float availY = 0.0f; bool shown = false;
+    auto ui = [&] {
+        if (!UI::IsPopupOpen("Browse")) UI::OpenPopup("Browse");
+        UI::SetNextWindowSize(V(500, 360), UI::Cond_Appearing);
+        shown = UI::BeginPopupModal("Browse");
+        if (shown) {
+            availY = UI::GetContentRegionAvail().y;
+            const float footerH = UI::GetFrameHeightWithSpacing() + 8.0f;
+            if (UI::BeginChild("list", V(0, availY - footerH), UI::Child_Borders)) { for (int i = 0; i < 40; ++i) UI::Text("file"); }
+            UI::EndChild();
+            UI::Button("Choose"); footer = UI::GetItemRect();
+            UI::EndPopup();
+        }
+    };
+    sim.Frames(4, ui);
+    CHECK(shown);
+    CHECK(availY > 200.0f && availY < 360.0f);
+    const float boxBottom = (600.0f + 360.0f) * 0.5f;          // centred, 360 tall
+    CHECK(footer.y + footer.h <= boxBottom + 1.0f);            // the footer is inside the box
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -820,5 +868,7 @@ int main() {
     TestMenuItemToggle();
     TestDockHostListUnderFloating();
     TestWindowHoveredUnderMenu();
+    TestTopLevelPopupId();
+    TestModalFixedHeight();
     TEST_MAIN_RESULT();
 }

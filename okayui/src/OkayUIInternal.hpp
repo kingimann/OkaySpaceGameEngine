@@ -83,7 +83,8 @@ struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0
                    unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
                    unsigned long long opened = 0, drawn = 0;   // the frame it was last opened, and the last frame its body was begun (ListOpenPopups)
                    char name[48] = {0};              // the name it was opened or begun with (empty when opened by id only)
-                   bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
+                   bool combo = false; float boxTop = 0, boxRight = 0;
+                   float fixedH = 0.0f; };   // a modal given a height (SetNextWindowSize): its box is that tall and GetContentRegionAvail ends at it   // a combo's list: placed around its box as Dear ImGui places one
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
 // slot that was asked for longest ago is given to the new id: a closed popup has nothing worth keeping but its last place.
 PopupSlot* popupSlot(int id, bool create);

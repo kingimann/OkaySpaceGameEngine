@@ -565,7 +565,7 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
     if (p && id && !p->open) { std::snprintf(p->name, sizeof p->name, "%s", id); p->opened = g_frameCount; }
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; g_openPopupThisFrame = p->id; }
 }
 
 void CloseCurrentPopup() {
@@ -589,6 +589,7 @@ bool ui_core::beginPopupBody(int id) {
     const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float* wSlot = floatState(id ^ 0x9091, 0.0f);   // the widest line of last frame's content (plus padding): the popup grows to fit it
+    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * (g_popupPadY >= 0.0f ? g_popupPadY : 6.0f));   // a height asked for: the box keeps it
     float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
     if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
     if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
@@ -627,14 +628,18 @@ bool ui_core::beginPopupBody(int id) {
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
     g_lay.maxRight = px;   // measure how far the content reaches
+    if (p->fixedH > 0.0f) g_lay.bottom = py + *hSlot + padY;   // GetContentRegionAvail ends at the box's inner bottom
     return true;
 }
 
 void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
-    *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
-    if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
+    PopupSlot* fixedP = popupSlot(c.id, false);
+    if (!(fixedP && fixedP->fixedH > 0.0f)) {
+        *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
+        if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
+    }
     *c.wSlot = g_lay.maxRight > c.x ? (g_lay.maxRight - c.x) + c.padX : 0.0f;   // and the width it needs, plus padding
     while (g_clipTop > g_clipBase) PopClipRect();   // a child left open inside the popup
     g_clipBase = c.clipBase;
@@ -672,7 +677,7 @@ bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
 void OpenPopup(unsigned id, int) {
     PopupSlot* p = popupSlot((int)id, true);
     if (p && !p->open) p->opened = g_frameCount;
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; g_openPopupThisFrame = p->id; }
 }
 bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
 
@@ -693,6 +698,8 @@ bool BeginPopupModal(const char* name, bool* open) {
     if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
         if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
+        // a height too (Dear ImGui sizes the modal to it; the editor's file browser lays its list out from GetContentRegionAvail().y)
+        if (g_nextWinSize.y > 0.0f && std::isfinite(g_nextWinSize.y)) p->fixedH = g_dispH > 0.0f && g_nextWinSize.y > g_dispH - 16.0f ? g_dispH - 16.0f : g_nextWinSize.y;
         g_nextWinSize.set = false;
     }
     g_nextWinPos.set = false;   // consumed: it must not move the next window
@@ -700,6 +707,7 @@ bool BeginPopupModal(const char* name, bool* open) {
     if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
     const float pad = 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
+    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * pad);   // centred by the height it was given
     const float titleH = rowH() + 4.0f;
     if (g_dispW > 0.0f && g_dispH > 0.0f) {   // centre it, using last frame's measured height
         p->x = (g_dispW - p->w) * 0.5f;

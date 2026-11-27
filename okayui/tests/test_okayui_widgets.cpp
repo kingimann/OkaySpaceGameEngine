@@ -537,6 +537,7 @@ void TestImGuiLookTree() {
         UI::SliderFloat("slide", &v, 0.0f, 1.0f); sl = UI::GetItemRect();
         UI::SliderInt("count", &iv, 0, 10);
         const float y0 = UI::GetCursorScreenPos().y; UI::Text("first line\nsecond line"); lines = UI::GetCursorScreenPos().y - y0;   // a line break: two lines
+        UI::GetWindowDrawList().AddText(UI::Vec2{300.0f, 300.0f}, UI::RGBA(201, 31, 77, 255), "top\nbottom");   // the draw list's text breaks lines too
         UI::PopStyleVar(2);
     };
     r.Frames(3);
@@ -546,7 +547,14 @@ void TestImGuiLookTree() {
     CHECK(std::fabs((c1.x - n1.x) - 30.0f) <= 0.5f);                   // the style's IndentSpacing
     CHECK(std::fabs(n2.x - n1.x) <= 0.5f);                             // TreePop took the same 30 back
     CHECK(sl.h > fontH + 2.0f);
-    CHECK(lines >= 2.0f * fontH - 0.5f);                               // "first\nsecond": two text lines (it was one line with a '?' glyph)                                       // a framed slider: a frame tall
+    CHECK(lines >= 2.0f * fontH - 0.5f);
+    {   // "top\nbottom" on the draw list: pixels of its colour on two lines, a text line apart
+        const Bitmap b = r.sim.Draw(12, 14, 20);
+        int top = 0, bottom = 0;
+        for (int y = 300; y < 300 + (int)fontH; ++y) for (int x = 300; x < 360; ++x) if (PixelAt(b, x, y) == Rgba(201, 31, 77)) ++top;
+        for (int y = 300 + (int)fontH; y < 300 + 2 * (int)fontH; ++y) for (int x = 300; x < 360; ++x) if (PixelAt(b, x, y) == Rgba(201, 31, 77)) ++bottom;
+        CHECK(top > 0 && bottom > 0);
+    }                               // "first\nsecond": two text lines (it was one line with a '?' glyph)                                       // a framed slider: a frame tall
     // the framed slider puts its value in the frame (pixels of the text colour inside it); a click sets the value from the pointer
     r.Click(sl.x + 4.0f, CenterY(sl));
     CHECK(v < 0.1f);

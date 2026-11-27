@@ -5284,6 +5284,13 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+# asset_streaming_stress holds streaming work per frame to a few-millisecond budget. On Linux it measures the main thread's
+# CPU time, so sharing the machine does not matter; Windows has no fine thread-CPU clock and it measures wall time, which
+# counts the moments the OS gave the CPU to the other tests (it failed one of its 620 checks on the Windows runner while
+# sharing it, 2026-11-27). There it runs alone, as the timing tests above do.
+if(WIN32 AND TEST asset_streaming_stress)
+    set_tests_properties(asset_streaming_stress PROPERTIES RUN_SERIAL TRUE)
+endif()
 
 # Typed actions, composites, processors and control schemes (Input/ActionSet.hpp), with the real Input fed by hand; pictures with OKAY_SHOT_DIR.
 add_executable(test_action_set test_action_set.cpp)

@@ -302,7 +302,9 @@ std::uint64_t DirectorySize(const fs::path& dir);
 /// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed. A .partial- folder in
 /// which something was written less than `busyFor` ago is left alone: it may be an install, or the update's copy of the current editor
 /// (KeepCurrent, on the update thread), still at work (the page's start-up clean-up used to delete those, and the kept copy never appeared).
-int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0));
+/// `now` is the time "ago" counts from (tests pass a later time instead of back-dating folders: Windows cannot set a folder's time).
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0),
+               fs::file_time_type now = fs::file_time_type::clock::now());
 
 struct RemoveGuards {
     std::string running;                 ///< the version of the editor/launcher in use (the one in Tools/): never removed

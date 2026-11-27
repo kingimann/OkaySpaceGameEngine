@@ -179,5 +179,27 @@ int main() {
         CHECK(r.Range(5.0f, 5.0f) == 5.0f);
     }
 
+    // ---- PositionSeed: a seed from where a spawner or NPC stands (#888 F52) ----
+    // Spawner, NPCController and BehaviorTreeRunner cast |x| * 73856093 + |z| * 19349663 (a float) to uint32. Past about 58
+    // units from the origin that is out of range: undefined behaviour (a trap in the sanitizer build) and, where it
+    // saturates, the same seed for every spawner and NPC out there.
+    {
+        // Where the old formula was defined it gives the same seed, so existing levels keep their patterns.
+        for (float x : {0.0f, 1.5f, -10.0f, 40.0f, 58.0f})
+            for (float z : {0.0f, 3.0f, -100.0f})
+                CHECK(Random::PositionSeed(x, z, 7u) == (std::uint32_t)(std::fabs(x) * 73856093.0f + std::fabs(z) * 19349663.0f) + 7u);
+        // Far out, nearby places still get different seeds, and the salt still separates components.
+        std::map<std::uint32_t, int> seen;
+        for (int i = 0; i < 200; ++i) seen[Random::PositionSeed(60.0f + 7.25f * (float)i, 1000.0f + 3.5f * (float)i, 7u)]++;
+        CHECK(seen.size() >= 195);
+        CHECK(Random::PositionSeed(500.0f, 20.0f, 7u) != Random::PositionSeed(800.0f, 20.0f, 7u));
+        CHECK(Random::PositionSeed(500.0f, 20.0f, 7u) != Random::PositionSeed(500.0f, 20.0f, 1u));
+        CHECK(Random::PositionSeed(1e30f, 0.0f, 7u) != Random::PositionSeed(2e30f, 0.0f, 7u));
+        // Not-a-number and infinity give a defined seed (and the same one each time).
+        const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+        CHECK(Random::PositionSeed(nan, 0.0f, 7u) == Random::PositionSeed(nan, 0.0f, 7u));
+        CHECK(Random::PositionSeed(inf, -inf, 7u) == Random::PositionSeed(inf, -inf, 7u));
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -184,7 +184,12 @@ void OkayScriptVM::Impl::RegisterAudioSaveBuiltins(BuiltinCtx& c) {
         auto& b = c.b;
         auto sceneOf = c.sceneOf;
         // Global audio settings (for options menus).
-        b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
+        // 0..1 like Audio.masterVolume and set_group_volume; NaN is ignored (it passes a clamp and turns the mix into NaN, #888 F48).
+        b["set_volume"] = [](std::vector<Value>& a) {
+            const float v = a.empty() ? 1.0f : a[0].AsFloat();
+            if (!std::isnan(v)) AudioMixer::masterVolume = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+            return Value{};
+        };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
         // Mixer groups: set_group_volume / group_volume are in the shared table (Scripting/ScriptApiCore.cpp).

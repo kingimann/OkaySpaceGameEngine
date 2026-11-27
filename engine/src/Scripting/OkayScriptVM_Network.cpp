@@ -848,24 +848,48 @@ void OkayScriptVM::Impl::RegisterSteamBuiltins(BuiltinCtx& c) {
             return Value{(float)Steam::Get().CloudFiles().size()};
         };
         // Steam Workshop (community content).
+        // Ids are 64-bit (real ones have ten digits): a float would round them (#888 F32: 2847193562 became 2847193600).
+        // Publish returns a whole number (Value::Int); an id is read back from a whole number, from text of digits, or
+        // from a float only when it is finite and not negative. Anything else is 0, "no item" (no out-of-range cast).
+        auto workshopId = [](const Value& v) -> std::uint64_t {
+            if (const std::int64_t* i = v.IntPtr()) return *i > 0 ? (std::uint64_t)*i : 0;
+            if (v.IsString()) {
+                const std::string t = v.AsString();
+                if (t.empty() || t.size() > 20) return 0;
+                std::uint64_t id = 0;
+                for (char ch : t) {
+                    if (ch < '0' || ch > '9') return 0;
+                    const std::uint64_t d = (std::uint64_t)(ch - '0');
+                    if (id > (UINT64_MAX - d) / 10) return 0;
+                    id = id * 10 + d;
+                }
+                return id;
+            }
+            const float f = v.AsFloat();
+            return (std::isfinite(f) && f >= 1.0f && f < 1.8e19f) ? (std::uint64_t)f : 0;
+        };
         b["steam_workshop_publish"] = [](std::vector<Value>& a) {
             WorkshopItem it;
             if (a.size() >= 1) it.title = a[0].AsString();
             if (a.size() >= 2) it.contentPath = a[1].AsString();
             if (a.size() >= 3) it.description = a[2].AsString();
-            return Value{(float)Steam::Get().WorkshopPublish(it)};
+            const std::uint64_t id = Steam::Get().WorkshopPublish(it);
+            return id <= (std::uint64_t)INT64_MAX ? Value::Int((std::int64_t)id) : Value{std::to_string(id)};
         };
-        b["steam_workshop_subscribe"] = [](std::vector<Value>& a) {
-            return Value{(!a.empty() && Steam::Get().WorkshopSubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        b["steam_workshop_subscribe"] = [workshopId](std::vector<Value>& a) {
+            const std::uint64_t id = a.empty() ? 0 : workshopId(a[0]);
+            return Value{(id && Steam::Get().WorkshopSubscribe(id)) ? 1.0f : 0.0f};
         };
-        b["steam_workshop_unsubscribe"] = [](std::vector<Value>& a) {
-            return Value{(!a.empty() && Steam::Get().WorkshopUnsubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        b["steam_workshop_unsubscribe"] = [workshopId](std::vector<Value>& a) {
+            const std::uint64_t id = a.empty() ? 0 : workshopId(a[0]);
+            return Value{(id && Steam::Get().WorkshopUnsubscribe(id)) ? 1.0f : 0.0f};
         };
         b["steam_workshop_count"] = [](std::vector<Value>&) {
             return Value{(float)Steam::Get().WorkshopSubscribedItems().size()};
         };
-        b["steam_workshop_path"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
+        b["steam_workshop_path"] = [workshopId](std::vector<Value>& a) {
+            const std::uint64_t id = a.empty() ? 0 : workshopId(a[0]);
+            return Value{id ? Steam::Get().WorkshopItemPath(id) : std::string{}};
         };
         // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
         // counters that climb high belong here rather than in steam_*_stat.

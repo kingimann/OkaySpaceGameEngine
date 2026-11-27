@@ -6,6 +6,9 @@ using namespace okay;
 // The steam_* OkayScript builtins drive the shared process-wide Steam service
 // (the in-memory simulation in tests), so games can do achievements/stats/cloud
 // from script with no setup.
+// The simulation's first Workshop id (NullSteamService): ten digits, like a real one.
+static const std::uint64_t kFirstId = 2847193562ull;
+
 int main() {
     RUN_SUITE("steam_script");
 
@@ -23,7 +26,11 @@ int main() {
         "  if (steam_get_stat(\"kills\") >= 5) { steam_unlock(\"WIN\"); }\n"
         "  steam_cloud_write(\"save\", \"level=2\");\n"
         "  steam_leaderboard(\"high\", 500);\n"
-        "  steam_workshop_publish(\"My Map\", \"/maps/mine\", \"a level\");\n"
+        "  var wid = steam_workshop_publish(\"My Map\", \"/maps/mine\", \"a level\");\n"
+        "  steam_cloud_write(\"wid\", wid);\n"
+        "  steam_cloud_write(\"wpath\", steam_workshop_path(wid));\n"
+        "  steam_cloud_write(\"wpath_text\", steam_workshop_path(\"" + std::to_string(kFirstId) + "\"));\n"
+        "  steam_cloud_write(\"wneg\", steam_workshop_path(-1) + \"|\" + steam_workshop_path(sqrt(0 - 1)) + \"|\" + steam_workshop_subscribe(-5));\n"
         "}\n");
     s.Start();
     s.Update(0.016f);
@@ -33,6 +40,12 @@ int main() {
     CHECK(Steam::Get().IsAchievementUnlocked("WIN"));
     CHECK(Steam::Get().CloudRead("save") == "level=2");
     CHECK(Steam::Get().WorkshopSubscribedItems().size() == 1);   // publish auto-subscribes
+    // #888 F32: Workshop ids are 64-bit (ten digits for real ones, as the simulation hands out). They went through a
+    // 32-bit float, so 2847193562 came back as 2847193600 and path / subscribe asked for another item.
+    CHECK(Steam::Get().CloudRead("wid") == std::to_string(kFirstId));
+    CHECK(Steam::Get().CloudRead("wpath") == "/maps/mine");
+    CHECK(Steam::Get().CloudRead("wpath_text") == "/maps/mine");          // an id given as text is exact too
+    CHECK(Steam::Get().CloudRead("wneg") == "||0");                       // negative and NaN ids are no item (no UB cast)
     {
         auto top = Steam::Get().DownloadLeaderboardTop("high", 5);
         CHECK(top.size() == 1);

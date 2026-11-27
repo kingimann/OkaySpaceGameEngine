@@ -1,8 +1,10 @@
 // Golden-image test for the engine UI renderer (okay::ui2d::RenderSceneUI).
 //
 // Each scene in ui_golden_scenes.hpp is drawn onto the software painter (okayui/soft, ui_soft_render.hpp) and compared
-// pixel for pixel with tests/golden/ui/<scene>.png. The PNGs were made on SDL's software renderer before SDL2 left the
-// desktop builds (2026-11-27), so this also pins "our painter draws what SDL drew", within the tolerance below.
+// pixel for pixel with tests/golden/ui/<scene>.png. The PNGs were made again on our painter on 2026-11-27, when SDL2 left the
+// desktop builds. Against the old pictures (SDL's software renderer) most differing pixels were off by 1 or 2 levels (SDL
+// truncates blends, our painter rounds); the rest were text placed up to one pixel apart and textures inside rounded and round
+// masks sampled smoothly instead of nearest. Checked by eye on side-by-side pictures; nothing was missing or misplaced.
 // Those PNGs were captured from the player's own UI pass (player/main.cpp) before it
 // moved into the engine, so this pins "the engine renderer draws what the player
 // drew". Each scene is also drawn through ui2d::BatchPainter (the player's batched

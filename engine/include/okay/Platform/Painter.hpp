@@ -102,6 +102,9 @@ public:
     /// Decode an image file once and cache the texture, blended, nearest-sampled (a miss is cached too).
     /// Tries `path`, then the base directory + `path`.
     ui2d::Tex LoadTexture(const std::string& path) override;
+    /// The picture filtered down to `w` x `h` (UIDownscaleImage, UIImageScale.hpp), linear-sampled and cached per size, so an image
+    /// drawn smaller than its file skips no texels. Falls back to LoadTexture when the file cannot be read or a size is not positive.
+    ui2d::Tex LoadTextureSized(const std::string& path, int w, int h) override;
     /// How cached image textures are sampled when drawn at another size: linear (smooth UI) or nearest
     /// (pixel-art). Textures start nearest, as before; the UI pass sets it each frame (UIPainter.hpp).
     void SetImageFilter(bool linear) override;
@@ -123,6 +126,7 @@ private:
     std::string m_baseDir;
     bool m_imgLinear = false;
     std::unordered_map<std::string, ui2d::Tex> m_cache;
+    std::unordered_map<std::string, ui2d::Tex> m_sized;   // LoadTextureSized: "path@WxH" -> texture (always linear; a miss is cached)
     std::unordered_map<okay::TtfFont*, FontUp> m_fonts;
 };
 

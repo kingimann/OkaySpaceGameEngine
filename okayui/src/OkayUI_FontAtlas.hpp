@@ -33,7 +33,7 @@ struct Atlas {
     unsigned char* rgba = nullptr;   // w*h*4
     float whiteU = 0, whiteV = 0;    // a fully opaque texel
     int   nsizes = 0;
-    Size  sizes[6];
+    Size  sizes[7];
     /// The baked size to draw `pixelHeight` text with (the smallest that's >= it,
     /// else the largest).
     const Size& Pick(float pixelHeight) const;

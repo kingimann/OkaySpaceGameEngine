@@ -589,5 +589,33 @@ int main() {
         UI::GetIO().FontGlobalScale = -3.0f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w1);   // out of range: ignored
         UI::GetIO().FontGlobalScale = 1.0f;
     }
+    {   // UseImGuiCoordinates: cursor positions from the window's / child's corner (padding included), window size of the innermost child
+        Reset(); Sim s(400, 300);
+        UI::Vec2 p0{}, p1{}, wsz{}, cpos{}, csz{}, after{}, own0{};
+        float winH = 0.0f;
+        auto ui = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 300});
+            UI::Begin("root", nullptr, UI::Window_NoTitleBar);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);   // (Dear ImGui's child padding rules, as the launcher uses)
+            p0 = UI::GetCursorPos(); wsz = UI::GetWindowSize();
+            UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{28, 20});
+            UI::BeginChild("content", UI::Vec2{0, 0}, UI::Child_AlwaysUseWindowPadding);
+            UI::PopStyleVar();
+            p1 = UI::GetCursorPos(); cpos = UI::GetWindowPos(); csz = UI::GetWindowSize(); winH = UI::GetWindowHeight();
+            UI::SetCursorPosY(winH - 40.0f); after = UI::GetCursorScreenPos();   // a footer pinned 40 px above the child's bottom
+            UI::EndChild();
+            UI::PopStyleVar();
+            UI::End();
+        };
+        UI::UseImGuiCoordinates(false); s.Frames(2, ui); own0 = p0;
+        CHECK(own0.x == 0.0f && own0.y == 0.0f);                          // OkayUI's own rule: from the content corner
+        UI::UseImGuiCoordinates(true); s.Frames(2, ui);
+        CHECK(p0.x > 0.0f && p0.x == p0.y);                              // Dear ImGui's: the window padding
+        CHECK(wsz.x == 400.0f && wsz.y == 300.0f);
+        CHECK(p1.x == 28.0f && p1.y == 20.0f);                            // inside the child: its own padding
+        CHECK(csz.y == winH && csz.y < 300.0f && csz.x < 400.0f && cpos.x > 0.0f);   // the child's rectangle, not the window's
+        CHECK(after.y == cpos.y + winH - 40.0f);
+        UI::UseImGuiCoordinates(false);
+    }
     TEST_MAIN_RESULT();
 }

@@ -410,6 +410,7 @@ float g_framePadX = -1.0f;
 float g_sbSize = -1.0f;
 // StyleVar_FramedWidgets (OkayUI's own; 0 = off): check boxes as a frame with a check mark, combos as a field with a square arrow button.
 bool g_framedWidgets = false;
+float g_childRounding = -1.0f;   // StyleVar_ChildRounding / GetStyle().ChildRounding: the corners of children (< 0: the frame rounding)
 // A pushed StyleVar_WindowPadding (y; < 0 = none pushed): a framed or padded child (the flags form of BeginChild) then pads its content by
 // the window padding (x, y) instead of 6 pixels each way.
 float g_childPadY = -1.0f;
@@ -1785,7 +1786,7 @@ void Separator() {
 
 namespace {
 // One line of text at the cursor in colour `col`.
-float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a frame's height (rowH)
+float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a frame's height (rowH); < 0 = the text's own height (textH, follows the scale)
 // StyleVar_CellPadding: the gap inside a cell, across (default 4) and above and below (default -1: none, and the row ends after the
 // last item's spacing, as it always did; 0 or more: that much above the first item and below the last one, without its spacing).
 } // namespace
@@ -1800,7 +1801,7 @@ namespace ui_core { float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -
 namespace ui_core {
 inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) {
-    const float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : rowH());
+    const float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : (g_textRowH < 0.0f ? textH() : rowH()));
     const bool after = g_lay.pendingSameLine && !g_posOverride;
     const float prevH = g_lay.prevH;
     const bool onText = after && g_lay.hasLineTop;   // after a centred text: on that text's line (one baseline), the line's top kept
@@ -1808,7 +1809,7 @@ void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) 
     g_lay.hasLineTop = false;
     float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
     if (onText) { g_lay.hasLineTop = true; g_lay.lineTopY = top; }
-    else if (after && prevH > h && g_textRowH > 0.0f) { g_lay.hasLineTop = true; g_lay.lineTopY = y; y += (prevH - h) * 0.5f; g_lay.prevY = y; }   // Dear ImGui's text rows: centred on the taller item before it on this line
+    else if (after && prevH > h && g_textRowH != 0.0f) { g_lay.hasLineTop = true; g_lay.lineTopY = y; y += (prevH - h) * 0.5f; g_lay.prevY = y; }   // Dear ImGui's text rows: centred on the taller item before it on this line
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
@@ -1836,7 +1837,7 @@ struct ParaLines {
 void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest) {
     char line[512]; int n = 0;
     const char* p = text;
-    const bool imguiRows = g_textRowH > 0.0f;
+    const bool imguiRows = g_textRowH != 0.0f;
     bool first = true;
     ParaLines para(col);   // OkayUI's own rows: the lines of a paragraph one text pitch apart (main's ParaLines)
     auto emit = [&](const char* l) {
@@ -1910,7 +1911,7 @@ void textBlock(const char* s, const unsigned char* col) {
         if (g_wrapPos > 0.0f && g_wrapPos < maxW) maxW = g_wrapPos;
         if (g_wrapPos > 0.0f && g_wrapPos < rest) rest = g_wrapPos;
         wrapLines(s, maxW, col, rest);
-    } else if (s && g_textRowH <= 0.0f && std::strchr(s, '\n')) {   // several lines: each on its own row, close together (Dear ImGui's text rows keep one item)
+    } else if (s && g_textRowH == 0.0f && std::strchr(s, '\n')) {   // several lines: each on its own row, close together (Dear ImGui's text rows keep one item)
         ParaLines para(col);
         char line[512];
         for (const char* p = s;;) {
@@ -2062,8 +2063,8 @@ void PushStyleVar(StyleVar var, Vec2 value) {
         case StyleVar_ItemSpacing:   s.a = g_lay.spacingX; s.b = g_lay.spacingY; g_lay.spacingX = value.x; g_lay.spacingY = value.y; break;
         case StyleVar_WindowPadding: s.a = g_theme.windowPadding; s.b = g_childPadY; g_theme.windowPadding = value.x;
                                      g_childPadY = std::isfinite(value.y) && value.y >= 0.0f ? std::min(value.y, 256.0f) : 6.0f; break;
-        case StyleVar_FrameRounding:
-        case StyleVar_ChildRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
+        case StyleVar_FrameRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
+        case StyleVar_ChildRounding: s.a = g_childRounding; g_childRounding = std::isfinite(value.x) && value.x >= 0.0f ? std::min(value.x, 256.0f) : -1.0f; break;
         case StyleVar_WindowRounding: s.a = g_theme.windowRounding; g_theme.windowRounding = value.x; break;
         case StyleVar_BorderSize:    s.a = g_theme.borderPx; g_theme.borderPx = value.x; break;
         case StyleVar_CellPadding:   s.a = g_cellPadX; s.b = g_cellPadY;
@@ -2075,7 +2076,7 @@ void PushStyleVar(StyleVar var, Vec2 value) {
         case StyleVar_ScrollbarSize: s.a = g_sbSize; g_sbSize = std::isfinite(value.x) && value.x >= 4.0f ? std::min(value.x, 64.0f) : -1.0f; break;
         case StyleVar_FramedWidgets: s.a = g_framedWidgets ? 1.0f : 0.0f; g_framedWidgets = std::isfinite(value.x) && value.x != 0.0f; break;
         case StyleVar_ButtonTextAlign: s.a = g_btnAlignX; g_btnAlignX = std::isfinite(value.x) ? std::min(1.0f, std::max(0.0f, value.x)) : 0.5f; break;
-        case StyleVar_TextRowHeight: s.a = g_textRowH; g_textRowH = (std::isfinite(value.x) && value.x > 0.0f) ? std::min(value.x, 4096.0f) : 0.0f; break;
+        case StyleVar_TextRowHeight: s.a = g_textRowH; g_textRowH = !std::isfinite(value.x) ? 0.0f : (value.x > 0.0f ? std::min(value.x, 4096.0f) : (value.x < 0.0f ? -1.0f : 0.0f)); break;
         case StyleVar_PopupPadding:  s.a = g_popupPadX; s.b = g_popupPadY;
                                      g_popupPadX = std::isfinite(value.x) && value.x >= 0.0f ? std::min(value.x, 256.0f) : -1.0f;
                                      g_popupPadY = std::isfinite(value.y) && value.y >= 0.0f ? std::min(value.y, 256.0f) : -1.0f; break;
@@ -2092,8 +2093,8 @@ void PopStyleVar(int count) {
         switch ((StyleVar)s.var) {
             case StyleVar_ItemSpacing:   g_lay.spacingX = s.a; g_lay.spacingY = s.b; break;
             case StyleVar_WindowPadding: g_theme.windowPadding = s.a; g_childPadY = s.b; break;
-            case StyleVar_FrameRounding:
-            case StyleVar_ChildRounding: g_theme.rounding = s.a; break;
+            case StyleVar_FrameRounding: g_theme.rounding = s.a; break;
+            case StyleVar_ChildRounding: g_childRounding = s.a; break;
             case StyleVar_WindowRounding: g_theme.windowRounding = s.a; break;
             case StyleVar_BorderSize:    g_theme.borderPx = s.a; break;
             case StyleVar_TextRowHeight: g_textRowH = s.a; break;
@@ -2575,6 +2576,7 @@ void ApplyStyleWrites() {
         if (!SameColor(o.Colors[i], w.Colors[i])) SetStyleColor((Col)i, ToByte(o.Colors[i].x), ToByte(o.Colors[i].y), ToByte(o.Colors[i].z), ToByte(o.Colors[i].w));
     if (o.WindowRounding != w.WindowRounding) g_theme.windowRounding = Sane(o.WindowRounding, 0.0f, 64.0f, g_theme.windowRounding);
     if (o.FrameRounding != w.FrameRounding) g_theme.rounding = Sane(o.FrameRounding, 0.0f, 64.0f, g_theme.rounding);
+    if (o.ChildRounding != w.ChildRounding) g_childRounding = Sane(o.ChildRounding, 0.0f, 64.0f, g_childRounding);
     if (o.WindowPadding.x != w.WindowPadding.x) g_theme.windowPadding = Sane(o.WindowPadding.x, 0.0f, 200.0f, g_theme.windowPadding);
     if (o.FrameBorderSize != w.FrameBorderSize) g_theme.borderPx = Sane(o.FrameBorderSize, 0.0f, 16.0f, g_theme.borderPx);
     else if (o.WindowBorderSize != w.WindowBorderSize) g_theme.borderPx = Sane(o.WindowBorderSize, 0.0f, 16.0f, g_theme.borderPx);
@@ -2600,7 +2602,7 @@ StyleInfo& GetStyle() {
     s.ItemInnerSpacing = Vec2{g_lay.spacingX * 0.5f, g_lay.spacingY};
     s.CellPadding = Vec2{6.0f, 3.0f};
     s.ScrollbarSize = kScrollbarW;
-    s.WindowRounding = g_theme.windowRounding; s.ChildRounding = g_theme.rounding; s.FrameRounding = g_theme.rounding;
+    s.WindowRounding = g_theme.windowRounding; s.ChildRounding = childRnd(); s.FrameRounding = g_theme.rounding;
     s.WindowBorderSize = g_theme.borderPx; s.ChildBorderSize = g_theme.borderPx; s.FrameBorderSize = g_theme.borderPx;
     s.FontScale = g_theme.textScale;
     for (int i = 0; i < Col_COUNT && i < 64; ++i) s.Colors[i] = GetStyleColorVec4((Col)i);
@@ -3348,15 +3350,22 @@ void SetCursorScreenPos(Vec2 p) {
     g_lay.cx = p.x; if (!onLine) g_lay.cy = p.y;
     g_posOverride = true; g_posX = p.x; g_posY = p.y; g_posSameLine = onLine;
 }
+// The point window-relative cursor positions count from: the content's corner, or with UseImGuiCoordinates Dear ImGui's (the window's,
+// child's or popup's top-left corner moved by its scroll, so the first item of a padded window is at the padding).
+namespace ui_core { bool g_imguiCoords = false; }
+static float cursorBaseX() { return g_imguiCoords && g_lay.winW > 0.0f ? g_lay.baseX : g_lay.ox; }
+static float cursorBaseY() { return g_imguiCoords && g_lay.winW > 0.0f ? g_lay.baseY : g_lay.oy; }
+void UseImGuiCoordinates(bool on) { g_imguiCoords = on; }
+bool ImGuiCoordinates() { return g_imguiCoords; }
 Vec2 GetCursorPos() {
     const Vec2 s = GetCursorScreenPos();
-    return Vec2{ s.x - g_lay.ox, s.y - g_lay.oy };
+    return Vec2{ s.x - cursorBaseX(), s.y - cursorBaseY() };
 }
-void SetCursorPos(Vec2 p) { SetCursorScreenPos(Vec2{ g_lay.ox + p.x, g_lay.oy + p.y }); }
+void SetCursorPos(Vec2 p) { SetCursorScreenPos(Vec2{ cursorBaseX() + p.x, cursorBaseY() + p.y }); }
 float GetCursorPosX() { return GetCursorPos().x; }
 float GetCursorPosY() { return GetCursorPos().y; }
-void SetCursorPosX(float x) { SetCursorScreenPos(Vec2{ g_lay.ox + x, GetCursorScreenPos().y }); }
-void SetCursorPosY(float y) { SetCursorScreenPos(Vec2{ GetCursorScreenPos().x, g_lay.oy + y }); }
+void SetCursorPosX(float x) { SetCursorScreenPos(Vec2{ cursorBaseX() + x, GetCursorScreenPos().y }); }
+void SetCursorPosY(float y) { SetCursorScreenPos(Vec2{ GetCursorScreenPos().x, cursorBaseY() + y }); }
 Vec2 GetContentRegionAvail() {
     if (!g_lay.active) return Vec2{};
     const Vec2 c = GetCursorScreenPos();
@@ -3482,7 +3491,7 @@ void ResetState() {
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
-    g_styleHanded = false; g_fontGlobalApplied = 1.0f; g_io.FontGlobalScale = 1.0f;
+    g_styleHanded = false; g_fontGlobalApplied = 1.0f; g_io.FontGlobalScale = 1.0f; g_childRounding = -1.0f; g_imguiCoords = false;
 }
 
 // ---- Edit tracking: every value widget below reports through noteEdit (see IsItemEdited) ----
@@ -3869,6 +3878,7 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_font),
     OKAYUI_CTX_VAR(ui_core::g_frame),
     OKAYUI_CTX_VAR(ui_core::g_frameCount),
+    OKAYUI_CTX_VAR(ui_core::g_childRounding),
     OKAYUI_CTX_VAR(ui_core::g_framedWidgets),
     OKAYUI_CTX_VAR(ui_core::g_framePadX),
     OKAYUI_CTX_VAR(ui_core::g_framePadY),
@@ -3879,6 +3889,7 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_hitWinOn),
     OKAYUI_CTX_VAR(ui_core::g_hitWinZ),
     OKAYUI_CTX_VAR(ui_core::g_hot),
+    OKAYUI_CTX_VAR(ui_core::g_imguiCoords),
     OKAYUI_CTX_VAR(ui_core::g_hoverFrame),
     OKAYUI_CTX_VAR(ui_core::g_hoverKey),
     OKAYUI_CTX_VAR(ui_core::g_hoverStart),

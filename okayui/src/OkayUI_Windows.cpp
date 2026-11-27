@@ -232,6 +232,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.seed = id;
     g_lay.ox = wx + pad;
     g_lay.oy = wy + titleH + pad - scrollY;
+    g_lay.winX = wx; g_lay.winY = wy; g_lay.winW = w; g_lay.winH = h; g_lay.baseX = wx; g_lay.baseY = wy - scrollY;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.maxRight = g_lay.ox;
@@ -384,10 +385,12 @@ bool Begin(const char* title, bool* p_open, int flags) {
     return Begin(title, x, y, w, h, (flags & Window_NoTitleBar) ? nullptr : p_open);
 }
 
-Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
-Vec2 GetWindowSize() { return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
-float GetWindowWidth() { return g_curWin.valid ? g_curWin.w : 0.0f; }
-float GetWindowHeight() { return g_curWin.valid ? g_curWin.h : 0.0f; }
+// With UseImGuiCoordinates, inside a child or a popup these are the child's or popup's rectangle, as in Dear ImGui.
+static bool innerWin() { return g_imguiCoords && g_lay.active && g_lay.winW > 0.0f; }
+Vec2 GetWindowPos() { if (innerWin()) return Vec2{g_lay.winX, g_lay.winY}; return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
+Vec2 GetWindowSize() { if (innerWin()) return Vec2{g_lay.winW, g_lay.winH}; return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
+float GetWindowWidth() { return GetWindowSize().x; }
+float GetWindowHeight() { return GetWindowSize().y; }
 bool IsWindowHovered() {
     return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
            && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
@@ -580,8 +583,10 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
 
     // Frame + clip to the region.
     if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
+    else if (trim && !outline && colorIsSet(Col_ChildBg) && g_theme.colors[Col_ChildBg][3] > 0)   // Dear ImGui's form: a child without a border still fills Col_ChildBg (rounded by ChildRounding)
+        rrect(rx, ry, rw, rh, childRnd(), g_theme.colors[Col_ChildBg]);
     if (outline) {   // a stroked outline (filling under it would cost a whole child's area twice on a CPU rasteriser)
-        const float rd = rnd();
+        const float rd = childRnd();
         if (colorIsSet(Col_ChildBg)) rrect(rx, ry, rw, rh, rd, g_theme.colors[Col_ChildBg]);
         const unsigned char* bc = pick(Col_Border, g_theme.border);
         // one-pixel edges between the corners, and each corner as three short segments of its arc (a fixed table: no sine per frame)
@@ -615,6 +620,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     g_lay.contentW = rw - 2.0f * padX - (reserveBar || *maxSlot > 0.0f ? (g_sbSize > 0.0f ? g_sbSize : kScrollbarW) : 0.0f);
     g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
+    g_lay.winX = rx; g_lay.winY = ry; g_lay.winW = rw; g_lay.winH = rh; g_lay.baseX = rx; g_lay.baseY = ry - *scroll;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.indent = 0.0f;

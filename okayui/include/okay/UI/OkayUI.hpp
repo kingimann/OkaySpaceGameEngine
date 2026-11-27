@@ -1379,7 +1379,8 @@ bool IsKeyReleased(KeyId key);
 /// nothing, so ported code compiles: SelectableTextAlign, Alpha.
 /// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
 /// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
-/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line), and a value below 0 is the text's own height at
+/// the moment (Dear ImGui's text rows that follow SetWindowFontScale and the text scale). A shorter text line that follows a taller item
 /// on the same line is centred on it.
 /// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
 /// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the

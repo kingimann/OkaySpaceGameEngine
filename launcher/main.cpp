@@ -75,8 +75,10 @@
 #include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
 #include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
+#endif
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
 #include "okay/UI/OkayUI.hpp"
-#include "OkayUIScreens.hpp"
+#include "OkayUIScreens.hpp"   // What's New and Tips, drawn by OkayUI
 #include "OkayUIPanels.hpp"
 #endif
 
@@ -10864,6 +10866,10 @@ static bool ChatHostCreate() {
         g_imguiChatFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
     } else ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
     if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
+#ifdef OKAY_ON_OKAYUI
+    OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
+    OkayUI::UseImGuiCoordinates(true);           // the launcher's code places things by Dear ImGui's coordinate rules
+#endif
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -11150,11 +11156,18 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
     if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
+#ifdef OKAY_ON_OKAYUI
+    OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);
+    OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);
+#endif
     DrawChatWindow(account);
     DrawChatLinkConfirm();   // a link clicked in this window asks here
     DrawIncomingCall();
     okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
+#ifdef OKAY_ON_OKAYUI
+    OkayUI::PopStyleVar(2);
+#endif
     ImGui::Render();
     okay::pb::SetDrawColor(g_chatHost.ren, 21, 23, 29, 255);
     okay::pb::Clear(g_chatHost.ren);
@@ -12740,6 +12753,23 @@ static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
     embed.SetHostTextures([](const void* t) { return (ImTextureID)(intptr_t)t; });
     okayuihost::HostPanelArea(itemId, ra, g_okayRegion, embed, s_cap, draw);
 }
+#elif defined(OKAY_ON_OKAYUI)
+// On OkayUI the whole launcher is one OkayUI frame: an OkayUI page is drawn in place, in the rectangle `ra` at the cursor.
+template <class Draw>
+static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(itemId);
+    // these pages are OkayUI's own code: its own layout rules while they draw (the rest of the launcher uses Dear ImGui's, see the frame start)
+    OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 0.0f);
+    OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, 0.0f);
+    OkayUI::UseImGuiCoordinates(false);
+    draw(p, ra);
+    OkayUI::UseImGuiCoordinates(true);
+    OkayUI::PopStyleVar(2);
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(p);
+    ImGui::Dummy(ra);
+}
 #endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
@@ -13527,6 +13557,10 @@ int main(int argc, char** argv) {
     g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"), true);   // own by default; =sdl2 goes back
     std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
     if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
+#ifdef OKAY_ON_OKAYUI
+    OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
+    OkayUI::UseImGuiCoordinates(true);           // the launcher's code places things by Dear ImGui's coordinate rules
+#endif
 
     std::string editor = FindExe(EDITOR_EXE_NAMES);
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
@@ -14071,6 +14105,10 @@ int main(int argc, char** argv) {
         if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
         if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+#ifdef OKAY_ON_OKAYUI
+        OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);   // Dear ImGui's layout rules for children, fields and combos (popped before Render)
+        OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);  // and its text rows: a line of text is the text's own height
+#endif
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
@@ -14960,15 +14998,8 @@ int main(int argc, char** argv) {
             if (mode == BrowserPageMode::Browser) {   // hosted in Dear ImGui's draw order, like What's New: ImGui's tooltips and popups lie over it
                 ImVec2 ra = ImGui::GetContentRegionAvail();
                 ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
-#ifdef OKAY_HAVE_OKAYUI
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
                 HostOkayPage("##okayui_browser", ra, [&](ImVec2 p, ImVec2 a) { DrawBrowserPage(p.x, p.y, a.x, a.y); });
-#elif defined(OKAY_ON_OKAYUI)
-                {   // on OkayUI the browser is drawn in place, in the page's own window (no second frame to host)
-                    const ImVec2 p = ImGui::GetCursorScreenPos();
-                    DrawBrowserPage(p.x, p.y, ra.x, ra.y);
-                    ImGui::SetCursorScreenPos(p);
-                    ImGui::Dummy(ra);
-                }
 #else
                 ImGui::Dummy(ra);
 #endif
@@ -15771,7 +15802,7 @@ int main(int argc, char** argv) {
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
         } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
-#ifdef OKAY_HAVE_OKAYUI
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
             // docs/ui/own_ui_toolkit.md section 5.
@@ -16031,7 +16062,7 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();   // ##wnbody
         } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
-#ifdef OKAY_HAVE_OKAYUI
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
             static okayuiscreens::TipsModel tm;
@@ -22827,6 +22858,9 @@ int main(int argc, char** argv) {
 
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) OkayUIClaimKeyboard();   // before Render: ImGui learns that a hosted OkayUI field has the keyboard
+#endif
+#ifdef OKAY_ON_OKAYUI
+        OkayUI::PopStyleVar(2);
 #endif
         ImGui::Render();
         okay::pb::SetDrawColor(renderer, 30, 30, 32, 255);

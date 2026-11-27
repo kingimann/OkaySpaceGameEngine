@@ -467,6 +467,7 @@ bool ui_core::beginPopupBody(int id) {
     c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
     g_lay.ox = px + padX; g_lay.oy = py + padY;
+    g_lay.winX = px; g_lay.winY = py; g_lay.winW = w; g_lay.winH = *hSlot + padY * 2.0f; g_lay.baseX = px; g_lay.baseY = py;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
     g_lay.contentW = w - 2.0f * padX;
     g_lay.indent = 0.0f; g_lay.seed = id;

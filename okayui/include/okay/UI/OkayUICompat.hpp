@@ -246,6 +246,13 @@ const char* FindRenderedTextEnd(const char* text, const char* textEnd = nullptr)
 /// OkayUI's state (ResetState) and makes GetCurrentContext return null until CreateContext again, SetCurrentContext(null) does the same
 /// without resetting, SetCurrentContext(handle) makes it current. Any other handle is ignored. These exist so host code that guards on
 /// "is there a context" compiles; there is no NewFrame (call BeginFrame with the frame's Input).
+/// Dear ImGui's coordinate rules, for a host that runs Dear ImGui code as a whole program (the launcher on OkayUI). On: GetCursorPos /
+/// SetCursorPos (and their X / Y forms) count from the top-left corner of the innermost window, child or popup, moved by its scroll, so
+/// the first item of a window sits at its padding (Dear ImGui's ImGui::GetCursorPos); GetWindowPos / GetWindowSize / GetWindowWidth /
+/// GetWindowHeight are those of the innermost child or popup, not of the window around it. Off (the default): both count from the
+/// content's corner and the outer window, as OkayUI's own code expects. One setting per context; ResetState turns it off.
+void UseImGuiCoordinates(bool on);
+bool ImGuiCoordinates();
 struct Context;   // defined in OkayUIInternals.hpp
 Context* CreateContext();
 void DestroyContext(Context* ctx = nullptr);

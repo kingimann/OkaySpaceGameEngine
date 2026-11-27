@@ -40,7 +40,7 @@ void Build() {
         if (gi) { cps[n] = all[k]; glyphIds[n] = gi; ++n; }
     }
 
-    const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
+    const float sizes[] = {13.0f, 16.0f, 17.0f, 20.0f, 26.0f, 34.0f, 46.0f};   // 17: the launcher's text size (Roboto Medium 17 px)
     const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
     const int W = 1024, H = 1024, packH = H - 4;   // bottom rows: solid white patch
     std::vector<unsigned char> alpha((std::size_t)W * H, 0);

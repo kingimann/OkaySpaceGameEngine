@@ -953,10 +953,41 @@ void TestModalFitsContent() {
         CHECK(pops[0].size.y <= contentH + 40.0f);           // nor below the buttons
         CHECK(pops[0].size.x >= contentW && pops[0].size.y >= contentH);
     }
-    giveW = 600.0f;                                          // a width the program asks for each frame is kept
+    giveW = 1000.0f;                                         // a width the program asks for each frame (wider than the content) is kept
     sim.Frames(3, ui);
     n = UI::ListOpenPopups(pops, 4);
-    CHECK(n == 1 && std::fabs(pops[0].size.x - 600.0f) < 1.0f);
+    CHECK(n == 1 && std::fabs(pops[0].size.x - 1000.0f) < 1.0f);
+
+    // ... but it is the least width, not a cage: a line longer than it makes the auto-resizing modal grow to hold it (round 4 left this:
+    // the editor's Project panel asks 480 for its Delete dialog, and "It goes to the project's trash. Ctrl+Z in the Project panel brings
+    // it back." ran past the right edge). Dear ImGui's AlwaysAutoResize fits the content after the frame the size was given on.
+    for (int cond = 0; cond < 2; ++cond) {
+        Reset();
+        Sim sim2(1160, 752);
+        UI::Rect line{}, btn{};
+        auto del = [&] {
+            UI::UseImGuiCoordinates(true);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+            if (!UI::IsPopupOpen("##projdel")) UI::OpenPopup("##projdel");
+            UI::SetNextWindowSize(V(300, 0), cond ? UI::Cond_Always : UI::Cond_Appearing);
+            if (UI::BeginPopupModal("##projdel", nullptr, UI::Window_NoTitleBar | UI::Window_AlwaysAutoResize)) {
+                UI::Text("Delete \"Wood.png\"?");
+                UI::TextDisabled("It goes to the project's trash. Ctrl+Z brings it back.");
+                line = UI::GetItemRect();
+                UI::Button("Delete", V(110, 0)); btn = UI::GetItemRect();
+                UI::EndPopup();
+            }
+            UI::PopStyleVar(2);
+            UI::UseImGuiCoordinates(false);
+        };
+        sim2.Frames(4, del);
+        n = UI::ListOpenPopups(pops, 4);
+        CHECK(n == 1 && line.w > 300.0f && line.w < 1000.0f);   // longer than the width asked for, shorter than the display
+        if (n == 1) {
+            CHECK(line.x + line.w <= pops[0].pos.x + pops[0].size.x - 6.0f);   // the long line is inside the box, with padding
+            CHECK(btn.x - pops[0].pos.x >= 6.0f);
+        }
+    }
 }
 
 // Drags between windows, the editor's way (round 3 of the editor on OkayUI): a file dragged from the Project panel (a tile with a
@@ -1096,6 +1127,90 @@ void TestDragSourceThatMoves() {
     CHECK(got == "Wood.png");
 }
 
+// Keyboard focus (round 5; round 4 left "Tab-key focus through every control with the focus ring"): Tab moves the focus to the next
+// control of the window under the pointer (or of the one already focused), Shift+Tab to the one before, both wrap round; the focused button
+// or check box gets the focus ring; Space or Enter presses it; a text field reached with Tab takes the keyboard with its text selected (typing
+// replaces it), and Tab leaves it again; a field that completes on Tab is not in the order and keeps Tab for itself; a click hides the ring.
+void TestTabFocus() {
+    RUN_SUITE("windows: Tab and Shift+Tab move the keyboard focus; the focus ring; Space and Enter press");
+    Reset();
+    Sim sim(640, 480);
+    char name[32] = "hello", cmd[32] = "";
+    bool snap = false; int apply = 0, done = 0;
+    UI::Rect ra{}, rd{}, rc{};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Form", nullptr, 0)) {
+            if (UI::Button("Apply")) ++apply;
+            ra = UI::GetItemRect();
+            UI::Checkbox("Snap", &snap);
+            UI::InputText("Name", name, (int)sizeof name);
+            if (UI::Button("Done")) ++done;
+            rd = UI::GetItemRect();
+            UI::InputText("Command", cmd, (int)sizeof cmd, UI::InputText_CallbackCompletion);   // keeps Tab for its completion
+            rc = UI::GetItemRect();
+        }
+        UI::End();
+    };
+    auto tab = [&](bool back) { sim.shift = back; sim.Hold(UI::KeyId_Tab, true); sim.Frame(ui); sim.Hold(UI::KeyId_Tab, false); sim.shift = false; sim.Frame(ui); };
+    auto key = [&](UI::KeyId k) { sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.Frame(ui); };
+    sim.Move(200, 200);   // the pointer over the window: Tab starts there
+    sim.Frames(3, ui);
+    const Bitmap& before = sim.Draw(0, 0, 0);
+    const unsigned edgeBefore = PixelAt(before, (int)ra.x - 3, (int)(ra.y + ra.h * 0.5f));
+    tab(false);                                               // Apply
+    const Bitmap& ring = sim.Draw(0, 0, 0);
+    CHECK(PixelAt(ring, (int)ra.x - 3, (int)(ra.y + ra.h * 0.5f)) != edgeBefore);   // the focus ring round Apply
+    key(UI::KeyId_Space);
+    CHECK(apply == 1);                                        // Space pressed it
+    tab(false);                                               // Snap
+    key(UI::KeyId_Space);
+    CHECK(snap);                                              // Space ticked it
+    tab(false);                                               // Name: it takes the keyboard, its text selected
+    CHECK(UI::WantsTextInput());
+    sim.Type("Ann"); sim.Frame(ui); sim.Frame(ui);
+    CHECK(std::string(name) == "Ann");                        // typing replaced the selected text
+    tab(false);                                               // Done: the field gives the keyboard up
+    CHECK(!UI::WantsTextInput());
+    key(UI::KeyId_Enter);
+    CHECK(done == 1 && apply == 1);                           // Enter pressed Done, nothing else
+    tab(false);                                               // past the last control: round to Apply (Command is not in the order)
+    key(UI::KeyId_Enter);
+    CHECK(apply == 2 && !UI::WantsTextInput());
+    sim.Move(CenterX(rc), CenterY(rc)); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+    CHECK(UI::WantsTextInput());                              // Command clicked: it has the keyboard ...
+    tab(false);
+    CHECK(UI::WantsTextInput());                              // ... and keeps Tab for its completion
+    sim.Move(CenterX(rd), CenterY(rd)); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+    CHECK(done == 2 && !UI::WantsTextInput());                // a click on Done: pressed, the field let go
+    tab(true);                                                // Shift+Tab from Done: back to Name
+    CHECK(UI::WantsTextInput());
+    tab(true); tab(true);                                     // Snap, then Apply
+    key(UI::KeyId_Enter);
+    CHECK(apply == 3);
+    tab(true);                                                // before Apply: round to the last control (Done)
+    key(UI::KeyId_Space);
+    CHECK(done == 3);
+    sim.Move(600, 460); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);   // a click outside: nothing focused, no ring
+    const Bitmap& after = sim.Draw(0, 0, 0);
+    CHECK(PixelAt(after, (int)ra.x - 3, (int)(ra.y + ra.h * 0.5f)) == edgeBefore);
+
+    // A window begun with Window_NoNavInputs (the editor's Scene and Game views, where Tab and Space are the view's own keys) is left out:
+    // Tab over it focuses nothing, and Space presses nothing.
+    int tool = 0;
+    auto canvas = [&] {
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Canvas", nullptr, UI::Window_NoNavInputs)) { if (UI::Button("Move tool")) ++tool; }
+        UI::End();
+    };
+    Reset();
+    Sim s2(640, 480);
+    s2.Move(200, 200); s2.Frames(3, canvas);
+    s2.Hold(UI::KeyId_Tab, true); s2.Frame(canvas); s2.Hold(UI::KeyId_Tab, false); s2.Frame(canvas);
+    s2.Hold(UI::KeyId_Space, true); s2.Frame(canvas); s2.Hold(UI::KeyId_Space, false); s2.Frame(canvas);
+    CHECK(tool == 0);
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -1119,6 +1234,7 @@ int main() {
     TestTopLevelPopupId();
     TestModalFixedHeight();
     TestModalFitsContent();
+    TestTabFocus();
     TestDragAcrossWindows();
     TestDragSourceThatMoves();
     TEST_MAIN_RESULT();

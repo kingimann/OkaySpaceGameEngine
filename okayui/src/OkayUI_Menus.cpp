@@ -676,7 +676,7 @@ bool ui_core::beginPopupBody(int id) {
     float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
     if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
     if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
-    if (p->modal && g_dispW > 0.0f) p->x = (g_dispW - w) * 0.5f;   // a modal stays centred when it grew
+    if (p->modal && g_dispW > 0.0f) { p->x = (g_dispW - w) * 0.5f; if (!p->fixedW) p->w = w; }   // a modal stays centred when it grew (and reports the width it has)
     float px = p->x, py = p->y;
     // A combo's list goes where Dear ImGui's documented combo placement puts it: under the box toward the right; if that does not fit
     // in the display, above the box toward the right; then under it toward the left (its right edge on the box's right edge); then
@@ -806,7 +806,9 @@ bool BeginPopupModal(const char* name, bool* open) {
         p->w = *wSlot > 0.0f ? *wSlot : 320.0f;
     }
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
-        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
+        // An AlwaysAutoResize modal takes the width as its least: a longer line makes it grow to hold the line (beginPopupBody), as Dear
+        // ImGui's auto-fit does after the frame the size is given on (the editor's Project panel Delete dialog ran its text past the edge).
+        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = !g_modalAutoFit; }
         // a height too (Dear ImGui sizes the modal to it; the editor's file browser lays its list out from GetContentRegionAvail().y)
         if (g_nextWinSize.y > 0.0f && std::isfinite(g_nextWinSize.y)) p->fixedH = g_dispH > 0.0f && g_nextWinSize.y > g_dispH - 16.0f ? g_dispH - 16.0f : g_nextWinSize.y;
         g_nextWinSize.set = false;
@@ -879,6 +881,10 @@ bool BeginCombo(const char* label, const char* preview) {
             g_comboCloseId = 0; g_active = 0;
         }
     } else if (takesPress && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
+    if (navItem(id, x, y, boxW, h, rnd()) && ps) {   // Tab reaches it; Space or Enter opens (or closes) its list
+        if (ps->open) ps->open = false;
+        else { ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id; ps->combo = true; ps->boxTop = y; ps->boxRight = x + boxW; }
+    }
     const bool open = ps && ps->open;
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, preview);
     else comboBox(id, x, y, boxW, h, insideBox, open, preview);

@@ -344,6 +344,22 @@ void softShadow(float x, float y, float w, float h, float rad);
 void elevation(float x, float y, float w, float h, float rad, int depth);
 void ringRect(float x, float y, float w, float h, float rad, float t, const unsigned char c[4]);
 void focusRing(float x, float y, float w, float h, float rad);
+// Keyboard focus moved with Tab and Shift+Tab (docs/ui/own_ui_toolkit.md section 35). Each focusable control calls navItem with its box
+// every frame it is drawn; the list of one frame is the Tab order of the next (submission order, one window or popup at a time). The
+// control with the keyboard focus gets the focus ring while the keyboard was used last; Space or Enter acts on it (navItem returns true).
+// A text field reached with Tab takes the keyboard (g_focus) with its text selected.
+struct NavEntry { int id = 0, win = 0; float wx = 0, wy = 0, ww = 0, wh = 0; bool text = false; };
+struct NavState {
+    static constexpr int kMax = 512;
+    int id = 0, activate = 0, selectAll = 0;
+    bool visible = false;
+    int nPrev = 0, nNow = 0;
+    NavEntry prev[kMax], now[kMax];
+    bool childOff[8] = {};   // per open child region (g_childStack): begun with Window_NoNav / Window_NoNavInputs
+};
+extern NavState g_nav;
+bool navItem(int id, float x, float y, float w, float h, float rad, bool text = false);
+void navFrameStart();
 void controlBox(float x, float y, float w, float h, float rad, const unsigned char* fill);
 const unsigned char* mixColor(const unsigned char a[4], const unsigned char b[4], float t, unsigned char out[4]);
 void animFrame(double now);
@@ -524,7 +540,8 @@ inline int clampPx(float v, int nan) {
     return (int)v;
 }
 
-struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; char title[96] = {0}; };
+struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; char title[96] = {0};
+                bool noNav = false; };   // noNav: begun with Window_NoNav or Window_NoNavInputs (its controls are not in the Tab order)
 extern CurWin g_curWin;
 struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = false, autoSize = false, hidden = false;
                 int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0;

@@ -41623,7 +41623,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Early-out when the panel is collapsed or sitting as a hidden/background dock
     // tab: the Scene view's 3D render + synchronous GPU->CPU readback is the single
     // biggest per-frame cost, so don't pay it when the panel isn't visible.
-    if (!ImGui::Begin(uiPanel ? "UI" : "Scene", uiPanel ? &g_showUIEditor : nullptr)) {
+    // NoNavInputs: Tab, Space and the arrows are the view's own keys (Tab switches Object / Edit mode), not a walk through its toolbar
+    if (!ImGui::Begin(uiPanel ? "UI" : "Scene", uiPanel ? &g_showUIEditor : nullptr, ImGuiWindowFlags_NoNavInputs)) {
         ImGui::End();
         return;
     }
@@ -42826,7 +42827,7 @@ void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
     if (g_focusGameOnPlay) { ImGui::SetNextWindowFocus(); g_focusGameOnPlay = false; }
-    if (!ImGui::Begin("Game", &g_showGame)) { ImGui::End(); return; }
+    if (!ImGui::Begin("Game", &g_showGame, ImGuiWindowFlags_NoNavInputs)) { ImGui::End(); return; }   // the game gets Tab and Space, not a focus walk
 
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;

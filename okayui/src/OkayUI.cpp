@@ -880,6 +880,66 @@ void focusRing(float x, float y, float w, float h, float rad) {
     const float t = g_theme.focusRingPx, gap = 2.0f;
     ringRect(x - gap - t, y - gap - t, w + 2.0f * (gap + t), h + 2.0f * (gap + t), rad > 0.0f ? rad + gap + t : 0.0f, t, g_theme.focusRing);
 }
+// ---- Keyboard focus with Tab (see NavState in OkayUIInternal.hpp). Written from the usual desktop rules: Tab goes to the next control of the
+// window, Shift+Tab to the one before, both wrap round; a click puts the focus on what was clicked without showing the ring; Space or Enter
+// presses the focused control; Escape hides the ring.
+NavState g_nav;
+bool navItem(int id, float x, float y, float w, float h, float rad, bool text) {
+    if (!id || g_disCount > 0 || !g_lay.active) return false;
+    if (g_popupTop == 0 && g_curWin.valid && g_curWin.noNav) return false;            // a window that keeps the keys for itself
+    const int childBase = g_popupTop > 0 ? g_popupStack[g_popupTop - 1].childTop : 0;   // (a popup opened from such a child is not one)
+    for (int i = childBase; i < g_childTop && i < 8; ++i) if (g_nav.childOff[i]) return false;   // ... or a child region of one
+    NavState& n = g_nav;
+    NavEntry e; e.id = id; e.text = text;
+    if (g_popupTop > 0) {   // inside a popup or a modal: its own Tab order
+        const PopupCtx& c = g_popupStack[g_popupTop - 1];
+        e.win = c.id; e.wx = c.x; e.wy = c.y; e.ww = c.w; e.wh = (c.hSlot ? *c.hSlot : 0.0f) + 2.0f * c.padY;
+    } else if (g_curWin.valid) { e.win = g_curWin.id; e.wx = g_curWin.x; e.wy = g_curWin.y; e.ww = g_curWin.w; e.wh = g_curWin.h; }
+    else { e.win = 0; e.wx = 0.0f; e.wy = 0.0f; e.ww = g_dispW; e.wh = g_dispH; }
+    if (n.nNow < NavState::kMax) n.now[n.nNow++] = e;
+    if (g_active == id && g_pressed) n.id = id;   // a click: the focus goes there, without the ring
+    if (n.visible && n.id == id && !text) focusRing(x, y, w, h, rad);   // (a text field draws its own ring while it has the keyboard)
+    return n.activate == id && !text;
+}
+void navFrameStart() {
+    NavState& n = g_nav;
+    for (int i = 0; i < n.nNow; ++i) n.prev[i] = n.now[i];
+    n.nPrev = n.nNow; n.nNow = 0; n.activate = 0;
+    if (g_pressed) { n.visible = false; n.id = 0; }
+    auto edgeOf = [](int k) { return g_keyNow[k] && !g_keyPrev[k]; };
+    const bool tab = edgeOf(KeyId_Tab) && !g_io.keyCtrl && !g_io.keyAlt;
+    if (tab && n.nPrev > 0) {
+        // where the focus is now: a text field with the keyboard, else the last control focused; a field that is not in the Tab order
+        // (a multi-line field, one that completes on Tab, a code editor) keeps Tab for itself
+        int cur = -1;
+        bool own = true;
+        if (g_focus != 0) { own = false; for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == g_focus) { cur = i; own = n.prev[i].text; } }
+        else for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == n.id) cur = i;
+        int win = 0; bool haveWin = cur >= 0;
+        if (haveWin) win = n.prev[cur].win;
+        else {   // nothing focused yet: the window or popup under the pointer (the last one listed there is in front)
+            for (int i = 0; i < n.nPrev; ++i) {
+                const NavEntry& q = n.prev[i];
+                if (pointIn(g_in.mouseX, g_in.mouseY, q.wx, q.wy, q.ww, q.wh)) { win = q.win; haveWin = true; }
+            }
+        }
+        if (own && haveWin) {
+            int idx[NavState::kMax]; int cnt = 0, at = -1;
+            for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].win == win) { if (i == cur) at = cnt; idx[cnt++] = i; }
+            if (cnt > 0) {
+                const bool back = g_io.keyShift;
+                const int pos = at < 0 ? (back ? cnt - 1 : 0) : (at + (back ? cnt - 1 : 1)) % cnt;
+                const NavEntry& t = n.prev[idx[pos]];
+                n.id = t.id; n.visible = true;
+                if (t.text) { if (g_focus != 0 && g_focus != t.id) g_focusLostEnd = g_focus; g_focus = t.id; g_focusClaimed = true; n.selectAll = t.id; }
+                else if (g_focus != 0) { g_focusLostEnd = g_focus; g_focus = 0; }
+            }
+        }
+    }
+    if (n.visible && n.id != 0 && g_focus == 0 && (edgeOf(KeyId_Space) || edgeOf(KeyId_Enter) || g_in.enter)) n.activate = n.id;
+    if (n.visible && g_focus == 0 && (edgeOf(KeyId_Escape) || g_in.escape)) n.visible = false;
+    if (n.visible && n.id != 0) g_io.wantCaptureKeyboard = true;   // the keys go to the focused control, not to the program's shortcuts
+}
 // A control's box: the design's outline when it has one (Theme::controlBorders), then the fill.
 void controlBox(float x, float y, float w, float h, float rad, const unsigned char* fill) {
     const float b = g_theme.borderPx;
@@ -1090,6 +1150,7 @@ void BeginFrame(const Input& in) {
         g_keyNow[k] = in.keyDown[k] || (k == KeyId_Ctrl && in.ctrl) || (k == KeyId_Shift && in.shift);
         if (g_keyNow[k] && !g_keyPrev[k]) { g_keySince[k] = g_clock; g_keyNextRepeat[k] = g_clock + 0.5; }
     }
+    navFrameStart();   // Tab / Shift+Tab, Space / Enter on the focused control (after the keys and g_pressed of this frame)
     g_dblClick = false;
     if (g_pressed) {
         const float dx = in.mouseX - g_lastPressX, dy = in.mouseY - g_lastPressY;
@@ -1279,6 +1340,9 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     // SetKeyboardFocusHere / a typed number: applied after the click handling above, so the same-frame click on the box
     // cannot undo the caret or the select-all.
     if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = (g_focusSelectAll || (flags & InputText_AutoSelectAll)) ? 0 : len; g_focusSelectAll = false; }   // AutoSelectAll also when the focus is given with SetKeyboardFocusHere
+    // In the Tab order unless it keeps Tab for itself (completion or Tab input); reached with Tab, its text is selected
+    if (!(flags & (InputText_CallbackCompletion | InputText_AllowTabInput))) navItem(id, x, y, w, h, rnd(), true);
+    if (g_nav.selectAll == id && g_focus == id) { g_nav.selectAll = 0; ts->anchor = 0; ts->caret = len; }
     if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
     if (focused) { g_fieldFocus = id; g_fieldFocusSeen = true; }
@@ -2995,6 +3059,7 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
     g_lastId = id; if (insideBox) g_hot = id;
     if (g_active == id) { if (g_released) { if (insideBox) *open = !*open; g_active = 0; } }
     else if (insideBox && g_pressed) g_active = id;
+    if (navItem(id, x, y, boxW, h, rnd())) *open = !*open;   // Tab reaches it; Space or Enter opens its list
 
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, cur);
@@ -4209,6 +4274,7 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_fieldPadR),
     OKAYUI_CTX_VAR(ui_core::g_floats),
     OKAYUI_CTX_VAR(ui_core::g_focus),
+    OKAYUI_CTX_VAR(ui_core::g_nav),
     OKAYUI_CTX_VAR(ui_core::g_focusAtFrameStart),
     OKAYUI_CTX_VAR(ui_core::g_focusClaimed),
     OKAYUI_CTX_VAR(ui_core::g_focusLostEnd),

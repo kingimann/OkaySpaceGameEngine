@@ -548,6 +548,70 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Member names that hide namespace functions ([basic.lookup.unqual], [class.member.lookup]): a static member function
+// called from a lambda in a member function (UITheme.hpp's `Contrast(fg, panel)` beside okay::Contrast(); before "wrong
+// number of arguments to okay::Contrast"), and a static member function template called from another one (Log.hpp's
+// Error calling Emit beside a namespace okay::Emit; before "wrong number of arguments to okay::Emit").
+static void r34_hiding(Tally& tally) {
+    std::printf("r34_hiding\n");
+    okayms_test::run_both(kRun, tally, "hiding", std::string(kAlloc) + R"OKMS(
+#include <string>
+namespace okay {
+inline float& Contrast() { static float v = 1.0f; return v; }
+inline int Emit(const std::string& body, int k) { return (int)body.size() + k; }
+struct Theme {
+  float a = 2, b = 5;
+  static float Contrast(float x, float y) { return x > y ? x / y : y / x; }
+  float Worst() { auto w = [&](float f) { return Contrast(f, a) + Contrast(f, b); }; return w(10.0f); }
+};
+struct Log {
+  static int last;
+  template <typename... Args> static void Error(Args&&... args) { Emit(3, "ERROR", nullptr, args...); }
+  template <typename... Args> static void Emit(int level, const char* tag, const char* cat, Args&&... args) {
+    (void)tag; (void)cat; last = level * 10 + (int)sizeof...(args);
+  }
+};
+int Log::last = 0;
+}
+int entry(void) {
+  okay::Theme t;
+  CK(1, t.Worst() == 7.0f);
+  okay::Log::Error(std::string("x"), 2);
+  CK(2, okay::Log::last == 32);
+  CK(3, okay::Contrast() == 1.0f && okay::Emit("ab", 1) == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// An enumerator named through a class's alias of a scoped enumeration ([class.qual], [dcl.typedef] 2): `Builder::K::Bool`
+// and `B::K::Int` with `using K = ParamDef::Kind;` in Builder (GuidedArchitecture.cpp:514 and three more Modeling
+// files; before "expected '('").
+static void r34_enum_alias(Tally& tally) {
+    std::printf("r34_enum_alias\n");
+    okayms_test::run_both(kRun, tally, "enum_alias", R"OKMS(
+namespace g { struct ParamDef { enum class Kind { Float, Int, Bool, Choice }; Kind kind = Kind::Float; }; }
+using namespace g;
+struct Builder {
+  using K = ParamDef::Kind;
+  int last = -1;
+  void P(const char* id, K k, double d) { (void)id; (void)d; last = (int)k; }
+  void Q() { P("q", K::Choice, 0); }
+};
+int entry(void) {
+  Builder b;
+  b.P("w", Builder::K::Bool, 1.0);
+  CK(1, b.last == 2);
+  using B = Builder;
+  b.P("s", B::K::Int, 2.0);
+  CK(2, b.last == 1);
+  b.Q();
+  CK(3, b.last == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -564,5 +628,7 @@ int main(int argc, char** argv) {
     r34_list(tally);
     r34_winsock(tally);
     r34_templates(tally);
-    return tally.finish(12);
+    r34_hiding(tally);
+    r34_enum_alias(tally);
+    return tally.finish(14);
 }

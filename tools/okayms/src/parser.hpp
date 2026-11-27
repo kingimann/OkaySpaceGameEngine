@@ -805,6 +805,19 @@ struct Parser {
                 ++i;
                 continue;
             }
+            if (t.kind == TIdent && i + 4 < tokens.size() && tokens[i + 1].kind == TColonColon &&
+                tokens[i + 2].kind == TIdent && scoped_alias.count(tokens[i + 2].text) > 0 && tokens[i + 3].kind == TColonColon &&
+                tokens[i + 4].kind == TIdent && !alias_at(tokens[i + 2].text, i).empty() &&
+                is_enumerator(alias_at(tokens[i + 2].text, i), tokens[i + 4].text)) {
+                // Builder::K::Float with `using K = ParamDef::Kind;` in Builder (GuidedArchitecture.cpp:514; Round 34,
+                // [class.qual], [dcl.typedef] 2): the enumerator of the enumeration the class's alias names. Before,
+                // "expected '('".
+                Token n = tokens[i + 2];
+                n.text = alias_at(tokens[i + 2].text, i) + "::" + tokens[i + 4].text;
+                out.push_back(n);
+                i += 4;
+                continue;
+            }
             if (t.kind == TIdent && scoped_alias.count(t.text) > 0 && i + 2 < tokens.size() &&
                 tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
                 (i == 0 || tokens[i - 1].kind != TColonColon) && !alias_at(t.text, i).empty()) {
@@ -3459,6 +3472,17 @@ struct Parser {
         if (next != TLParen) return false;
         for (const Method& m : d.methods)
             if (m.name == name) return true;
+        // A member function template hides it as well (Round 34, Log.hpp's static Error<Args...> calling the static
+        // member template Emit beside a namespace function okay::Emit; before "wrong number of arguments to okay::Emit").
+        int tmpl_owner = -1;
+        if (find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) return true;
+        // In a lambda written in a member function, the members of that class hide a namespace function too
+        // ([expr.prim.lambda.closure] 12, [basic.lookup.unqual]; Round 34, UITheme.hpp's `Contrast(fg, panel)` in a
+        // lambda called the free okay::Contrast()).
+        for (int outer = d.lam_scope, depth = 0; outer >= 0 && static_cast<size_t>(outer) < structs.size() && depth < 16;
+             outer = structs[static_cast<size_t>(outer)].lam_scope, ++depth)
+            for (const Method& m : structs[static_cast<size_t>(outer)].methods)
+                if (m.name == name) return true;
         return false;
     }
 

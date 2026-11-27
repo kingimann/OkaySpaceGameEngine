@@ -41,7 +41,7 @@ int VisualScriptApp::Impl::menuBox(const std::string& id, float px, float py, co
     UI::BareNextWindow();
     if (UI::Begin((cfg.idPrefix + id).c_str(), x, y, w, total)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + total), kPanel, 4.0f);
+        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + total), kOverlay, 4.0f);
         dl->AddRect(UI::Vec2(x, y), UI::Vec2(x + w, y + total), kLine, 4.0f, 1.0f);
         const UI::Vec2 m = UI::GetMousePos();
         float ry = y + 4;
@@ -91,7 +91,7 @@ void VisualScriptApp::Impl::drawStartCards(float X, float Y, float W, float H, b
         const float tw = UI::CalcTextWidth(t) * size / std::max(1.0f, fs);   // the proportional font's width, scaled to `size`
         dl->AddText(font, size, UI::Vec2(X + (W - tw) * 0.5f, Y + y), col, t);
     };
-    centred("What do you want to make?", fs * 1.6f, 22.0f, Rgb(238, 242, 248));
+    centred("What do you want to make?", fs * 1.6f, 22.0f, kText);
     centred("Pick one. It appears already connected, and you can change it.", fs, 22.0f + fs * 2.3f, kDim);
     const std::vector<vsed::VsStartCard> cards = vsed::VsStartCards();
     const std::vector<vsed::VsStartRect> rects = vsed::VsStartLayout((int)cards.size(), W, H);
@@ -103,8 +103,8 @@ void VisualScriptApp::Impl::drawStartCards(float X, float Y, float W, float H, b
         const Rect r{X + q.x, Y + q.y, X + q.x + q.w, Y + q.y + q.h};
         startCards.push_back(r);
         const bool hot = !overlay && r.in(m.x, m.y);
-        dl->AddRectFilled(UI::Vec2(r.x0, r.y0), UI::Vec2(r.x1, r.y1), hot ? Rgb(48, 58, 78) : Rgb(34, 39, 52), 10.0f);
-        dl->AddRect(UI::Vec2(r.x0, r.y0), UI::Vec2(r.x1, r.y1), hot ? Rgb(130, 175, 245) : Rgb(86, 98, 124), 10.0f, hot ? 2.0f : 1.0f);
+        dl->AddRectFilled(UI::Vec2(r.x0, r.y0), UI::Vec2(r.x1, r.y1), hot ? kHover : kTabOn, 10.0f);
+        dl->AddRect(UI::Vec2(r.x0, r.y0), UI::Vec2(r.x1, r.y1), hot ? kAccent : kLine, 10.0f, hot ? 2.0f : 1.0f);
         // a small sketch of the recipe: one coloured block per step, joined by a line
         const int blocks = std::min(5, std::max(2, vsed::VsGraphNodeCount(vsed::VsRecipes()[(std::size_t)cards[i].recipe].graph)));
         float bx = r.x0 + 14.0f;
@@ -115,7 +115,7 @@ void VisualScriptApp::Impl::drawStartCards(float X, float Y, float W, float H, b
             bx += 32.0f;
         }
         dl->PushClipRect(UI::Vec2(r.x0, r.y0), UI::Vec2(r.x1, r.y1));
-        dl->AddText(font, fs * 1.05f, UI::Vec2(r.x0 + 14.0f, r.y0 + 36.0f), Rgb(244, 247, 252), cards[i].title.c_str(), nullptr, q.w - 28.0f);
+        dl->AddText(font, fs * 1.05f, UI::Vec2(r.x0 + 14.0f, r.y0 + 36.0f), kText, cards[i].title.c_str(), nullptr, q.w - 28.0f);
         const float th = font->CalcTextSizeA(fs * 1.05f, FLT_MAX, q.w - 28.0f, cards[i].title.c_str()).y;
         dl->AddText(font, fs * 0.92f, UI::Vec2(r.x0 + 14.0f, r.y0 + 40.0f + th), kDim, cards[i].line.c_str(), nullptr, q.w - 28.0f);
         dl->PopClipRect();
@@ -158,9 +158,9 @@ void VisualScriptApp::Impl::drawHelpCard(bool modal) {
     UI::BareNextWindow();
     if (UI::Begin((cfg.idPrefix + "_helpcard").c_str(), x, y, w, h)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + h), Rgb(26, 30, 40, 244), 8.0f);
-        dl->AddRect(UI::Vec2(x, y), UI::Vec2(x + w, y + h), Rgb(110, 160, 235, 190), 8.0f, 1.0f);
-        dl->AddText(UI::Vec2(x + 12, y + 8), Rgb(140, 190, 255), Fit(helpTitle, w - 80).c_str());
+        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kCard, 8.0f);
+        dl->AddRect(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kAccent, 8.0f, 1.0f);
+        dl->AddText(UI::Vec2(x + 12, y + 8), kAccent, Fit(helpTitle, w - 80).c_str());
         const UI::Vec2 m = UI::GetMousePos();
         const char* tog = open ? "Hide" : "Show";
         helpToggle = {x + w - 52, y + 5, x + w - 8, y + 27};
@@ -271,10 +271,10 @@ void VisualScriptApp::Impl::drawHintBar(float X, float Y, float W, float H) {
     const float maxW = std::max(120.0f, W - 220.0f);
     const float bw = std::min(maxW, UI::CalcTextWidth(hintLine.c_str()) + 44.0f);
     const UI::Vec2 b0(X + 12.0f, Y + H - lh - 24.0f), b1(X + 12.0f + bw, Y + H - 10.0f);
-    dl->AddRectFilled(b0, b1, Rgb(28, 58, 96, 238), 10.0f);
-    dl->AddRect(b0, b1, Rgb(110, 160, 235, 200), 10.0f, 1.0f);
-    dl->AddCircleFilled(UI::Vec2(b0.x + 16.0f, (b0.y + b1.y) * 0.5f), 4.5f, Rgb(120, 190, 255));
-    dl->AddText(UI::Vec2(b0.x + 30.0f, b0.y + (b1.y - b0.y - lh) * 0.5f), Rgb(232, 240, 252), Fit(hintLine, bw - 40.0f).c_str());
+    dl->AddRectFilled(b0, b1, kCard, 10.0f);
+    dl->AddRect(b0, b1, kAccent, 10.0f, 1.0f);
+    dl->AddCircleFilled(UI::Vec2(b0.x + 16.0f, (b0.y + b1.y) * 0.5f), 4.5f, kAccent);
+    dl->AddText(UI::Vec2(b0.x + 30.0f, b0.y + (b1.y - b0.y - lh) * 0.5f), kText, Fit(hintLine, bw - 40.0f).c_str());
 }
 
 // ---- Pick a Recipe and Templates ------------------------------------------------------------------------------------------------

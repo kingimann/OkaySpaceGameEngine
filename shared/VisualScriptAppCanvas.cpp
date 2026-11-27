@@ -262,7 +262,7 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
                 const bool h = hovered && std::fabs(m.x - p.x) <= kr + 3 && std::fabs(m.y - p.y) <= kr + 3;
                 if (h) knotHit = i;
                 dl->AddCircleFilled(p, kr, h || ide.knotDrag == i ? Rgb(255, 255, 255) : Rgb(205, 208, 218));
-                dl->AddCircle(p, kr, Rgb(30, 32, 40), 0, 1.5f);
+                dl->AddCircle(p, kr, kCanvas, 0, 1.5f);
             }
             if (knotHit >= 0 && ide.knotDrag < 0) UI::SetTooltip("Knot: drag to move, right-click to remove");
             if (ide.knotDrag >= 0 && ide.knotDrag < (int)g.knots.size()) {
@@ -320,7 +320,7 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
             if (d->param) {
                 const std::string arg = (d->param >= 3 && d->param <= 5) ? vsed::VsStepLine(n) : n.arg.empty() ? std::string(d->paramHint ? d->paramHint : "") : n.arg;
                 const bool keyArg = vsed::IsKeyNode(n.type) && !n.arg.empty();
-                dl->AddRectFilled(UI::Vec2(p0.x + pad, p0.y + headerH + 2), UI::Vec2(p1.x - pad, p0.y + headerH + rowH - 2), Rgb(30, 32, 38), 3.0f);
+                dl->AddRectFilled(UI::Vec2(p0.x + pad, p0.y + headerH + 2), UI::Vec2(p1.x - pad, p0.y + headerH + rowH - 2), kCanvas, 3.0f);
                 dl->AddText(UI::GetFont(), fs, UI::Vec2(p0.x + pad + 4, p0.y + headerH + (rowH - fs) * 0.5f), n.arg.empty() ? kDim : kText,
                             Fit(keyArg ? "Key: " + vsed::VsKeyLabel(n.arg) : arg, (r.x1 - r.x0) - pad * 2 - 8).c_str());
             }
@@ -595,7 +595,7 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
             if (UI::IsMouseDown(0)) {
                 if (boxing) {
                     const UI::Vec2 a(std::min(s.boxStart.x, m.x), std::min(s.boxStart.y, m.y)), b(std::max(s.boxStart.x, m.x), std::max(s.boxStart.y, m.y));
-                    dl->AddRectFilled(a, b, Rgb(86, 156, 214, 40));
+                    dl->AddRectFilled(a, b, UI::ColorMulAlpha(kAccent, 0.16f));
                     dl->AddRect(a, b, kAccent, 0.0f, 1.0f);
                 } else {
                     vsed::VsPanFrame pf;
@@ -682,7 +682,7 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
             const float mw = 160.0f, mh = 100.0f;
             const float mx0 = X + W - mw - 10, my0 = Y + H - mh - 10;
             const float k = std::min(mw / std::max(1.0f, x1 - x0), mh / std::max(1.0f, y1 - y0));
-            dl->AddRectFilled(UI::Vec2(mx0, my0), UI::Vec2(mx0 + mw, my0 + mh), Rgb(18, 19, 23, 220), 4.0f);
+            dl->AddRectFilled(UI::Vec2(mx0, my0), UI::Vec2(mx0 + mw, my0 + mh), kStrip, 4.0f);
             auto mp = [&](float wx, float wy) { return UI::Vec2(mx0 + (wx - x0) * k, my0 + (wy - y0) * k); };
             for (const auto& n : g.nodes) {
                 const auto it = blockRects.find(n.id);
@@ -999,7 +999,7 @@ void VisualScriptApp::Impl::drawPalette(float X, float Y, float W, float H) {
     UI::BareNextWindow();
     if (UI::Begin((cfg.idPrefix + "_palette").c_str(), x, y, pw, ph)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + pw, y + ph), kPanel, 6.0f);
+        dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + pw, y + ph), kOverlay, 6.0f);
         dl->AddRect(UI::Vec2(x, y), UI::Vec2(x + pw, y + ph), kLine, 6.0f, 1.0f);
         vsed::VsEditState& s = st();
         vsed::VsPaletteStore& store = vsed::VsStore();

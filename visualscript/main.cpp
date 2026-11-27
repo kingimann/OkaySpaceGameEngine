@@ -20,6 +20,7 @@
 #include "okay/Platform/Painter.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"   // design::FollowUserFile
 
 #include <cstdio>
 #include <cstdlib>
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
     desc.maxFrames = frames;
     okayuihost::platform::ProgramHooks hooks;
     hooks.start = [&](okay::platform::Backend& be, okay::platform::Painter&) {
+        OkayUI::design::FollowUserFile();   // the person's design (appearance.json), shared with the launcher, the editor and the other programs
         OkayUI::UseLauncherLook(true);   // the editor's look: the proportional UI font
         vsapp::VisualScriptApp::Config cfg;
         const std::string data = be.PrefPath("OkaySpace", "VisualScript");

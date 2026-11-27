@@ -10,6 +10,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 
 namespace OkayUI {
 using namespace ui_core;
@@ -18,36 +19,25 @@ using namespace ui_core;
 Theme& Style() { return g_theme; }
 
 Theme SlateTheme() {
-    // The launcher's "Slate" palette (shared/OkayTheme.hpp) in bytes.
-    Theme t;
-    auto set = [](unsigned char* c, int r, int g, int b, int a) { c[0] = (unsigned char)r; c[1] = (unsigned char)g; c[2] = (unsigned char)b; c[3] = (unsigned char)a; };
-    set(t.bg, 51, 56, 71, 255);        // kControl
-    set(t.bgHover, 67, 72, 86, 255);
-    set(t.bgDown, 45, 50, 64, 255);
-    set(t.border, 255, 255, 255, 22);  // hairline
-    set(t.text, 230, 235, 245, 255);
-    set(t.panel, 30, 33, 41, 250);     // kBase
-    set(t.track, 41, 46, 59, 255);     // kField
-    set(t.accent, 66, 150, 250, 255);
-    set(t.textDim, 140, 150, 171, 255);
-    set(t.titleBg, 23, 25, 31, 255);
-    set(t.field, 41, 46, 59, 255);
-    t.borderPx = 1.0f; t.textScale = 2.0f; t.rounding = 6.0f;
-    t.windowRounding = 10.0f; t.windowPadding = 14.0f; t.windowShadow = true;
-    return t;
+    design::Options o; std::snprintf(o.design, sizeof o.design, "Slate");
+    return design::ThemeFor(design::Resolve(o), true);
 }
 
+// TrueType text on (or back to the bitmap font) with the design in force. The theme of the other text mode is kept and comes back,
+// so a program (or a test) that changed Style() by hand and turns the TrueType text off again gets its own values back.
 void UseLauncherLook(bool on) {
-    static Theme classic;
+    static Theme other;
     if (on == g_look) return;
     if (on) {
-        classic = g_theme;
-        g_theme = SlateTheme();
+        other = g_theme;
+        Theme next = design::ThemeFor(design::CurrentTokens(), true);
+        next.caretBlink = g_theme.caretBlink;
+        g_theme = next;
         const fontatlas::Atlas& a = fontatlas::Get();
         g_ttf = a.ok ? &a : nullptr;
         if (g_ttf) { g_defTex = kAtlasTex; g_whiteU = a.whiteU; g_whiteV = a.whiteV; }
     } else {
-        g_theme = classic;
+        g_theme = other;
         g_ttf = nullptr; g_defTex = nullptr; g_whiteU = g_whiteV = 0.0f;
     }
     g_look = on;

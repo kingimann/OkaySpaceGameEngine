@@ -400,6 +400,8 @@ BACKEND_PATTERNS = [
     (re.compile(r'(?:\.|->)Rpc\(\s*"([A-Za-z_]\w*)"'), "RPC", "okay::backend"),
     # A function name passed in a variable (Invites' and Parties' own Rpc helpers, round 5): counted as "(dynamic)".
     (re.compile(r'Db\(\)\s*\.\s*Rpc\(\s*(?=[A-Za-z_])()'), "RPC", "okay::backend"),
+    # A table name passed in a variable (Messages' sends to "messages" / "group_messages", round 6): "(dynamic)" too.
+    (re.compile(r'(?:\bdb|Db\(\))\s*\.\s*From\(\s*(?=[A-Za-z_])()'), "Database", "okay::backend"),
     # Calls through OkayBackend's Storage and Functions (round 4): the bucket or function name is on the calling line. The
     # Supabase provider's public route used directly (the updater's address, links the launcher recognises) counts too.
     (re.compile(r'Storage\(\)\s*\.\s*(?:Upload|ReadPublic|List|Remove|RemoveObject|PublicUrl)\(\s*"([a-z][\w-]*)"'), "Storage",

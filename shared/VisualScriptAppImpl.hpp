@@ -23,8 +23,22 @@ namespace vsed = okay::editor::vsed;
 namespace detail {
 // The OkayUI apps' colours (OkayUIAppKit.hpp), and the canvas's own: a darker canvas, its grid, a block's body, the selection.
 using namespace okayuiapp;
-inline const UI::Color32 kCanvas = Rgb(24, 26, 31), kGrid = Rgb(34, 37, 44), kGridBold = Rgb(44, 48, 57), kBody = Rgb(46, 49, 57),
-                  kSelect = Rgb(255, 196, 84);
+inline UI::Color32 kCanvas = Rgb(24, 26, 31), kGrid = Rgb(34, 37, 44), kGridBold = Rgb(44, 48, 57), kBody = Rgb(46, 49, 57),
+                   kSelect = Rgb(255, 196, 84), kCard = Rgb(26, 30, 40), kOverlay = Rgb(37, 40, 46);
+/// Every chrome colour from the design in force, at the start of each frame (the apps' shared ones, then the canvas's own: the canvas
+/// is the design's darkest surface, its grid a faint line of the text colour, a block's body a raised card, the selection its warning
+/// colour, the cards and menus over the canvas its popover colour).
+inline void FollowDesignColours() {
+    okayuiapp::FollowDesignColours();
+    const UI::Theme& t = UI::Style();
+    kCanvas = OkayUI::design::Packed(t.track);
+    kGrid = OkayUI::design::PackedMix(t.track, t.text, 0.06f);
+    kGridBold = OkayUI::design::PackedMix(t.track, t.text, 0.12f);
+    kBody = OkayUI::design::Packed(t.raised);
+    kSelect = OkayUI::design::Packed(t.warning);
+    kCard = OkayUI::design::Packed(t.overlay, 244);
+    kOverlay = OkayUI::design::Packed(t.overlay);
+}
 /// `text` cut to `maxW` pixels of the UI font, with an ellipsis.
 inline std::string Fit(const std::string& text, float maxW) {
     return okaypanels::HierEllipsize(text, maxW, [](const std::string& s) { return UI::CalcTextWidth(s.c_str()); });

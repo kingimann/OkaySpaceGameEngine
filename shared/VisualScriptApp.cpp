@@ -1089,7 +1089,7 @@ bool VisualScriptApp::ToggleBreakpoint() {
     okay::vs::VsDebugger::Get().ToggleBreakpoint(s.g.path, s.selected);
     return okay::vs::VsDebugger::Get().HasBreakpoint(s.g.path, s.selected);
 }
-void VisualScriptApp::Frame(float x, float y, float w, float h) { m->frame(x, y, w, h); }
+void VisualScriptApp::Frame(float x, float y, float w, float h) { detail::FollowDesignColours(); m->frame(x, y, w, h); }
 bool VisualScriptApp::WantsQuit() const { return m->quit; }
 std::string VisualScriptApp::WindowTitle() const {
     const vsed::VsEditState& s = vsed::State();

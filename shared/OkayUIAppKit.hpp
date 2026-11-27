@@ -4,6 +4,7 @@
 // document tabs with close buttons, and a window program's command line ([PATH ...] [--frames N]). One copy for every app
 // (rule 19c). Written for this project from the OkayUI interface.
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"   // Packed / PackedMix: the design's colours
 
 #include <algorithm>
 #include <cstdio>
@@ -16,10 +17,20 @@ namespace okayuiapp {
 namespace UI = OkayUI;
 
 inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The apps' own colours: a plain dark scheme.
-inline const UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
-                  kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
-                  kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
+// The apps' chrome colours: the design in force (okay/UI/OkayUIDesign.hpp), taken from OkayUI's theme at the start of every frame
+// (FollowDesignColours), so the apps match the launcher and the editor in every design and scheme. The values below are the
+// dark scheme they start with.
+inline UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
+                   kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
+                   kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
+inline void FollowDesignColours() {
+    const UI::Theme& t = UI::Style();
+    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
+    kBack = c(t.panel); kPanel = c(t.raised); kStrip = c(t.track); kLine = mix(t.panel, t.text, 0.14f);
+    kText = c(t.text); kDim = c(t.textDim); kAccent = c(t.accent); kTabOn = c(t.bg); kHover = c(t.bgHover);
+    kError = c(t.danger); kWarn = c(t.warning); kAdd = c(t.success);
+}
 
 /// A bare OkayUI window over (X, Y, W, H) filled with `fill`, with a line along its top edge when `topLine`. Call UI::End() after,
 /// whatever it returns.

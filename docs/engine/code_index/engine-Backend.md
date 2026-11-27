@@ -26,7 +26,7 @@ Back to the [code index](../code_index.md). 8 headers, 39 names.
 - `Return` enum, line 49: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
 - `IsValue` enum, line 52: The values PostgREST's "is" operator accepts.
 - `Query` class, line 59: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
-- `Database` class, line 211: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
+- `Database` class, line 213: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
 
 ## `engine/include/okay/Backend/Functions.hpp`
 

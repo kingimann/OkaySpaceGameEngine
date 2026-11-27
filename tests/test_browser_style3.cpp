@@ -133,11 +133,14 @@ int main() {
     {
         const LayoutResult r = Lay(B0 + "<img id=a src=small.png srcset='a1.png 1x, a2.png 2x' width=10 height=10>"
                                    "<img src=s.png srcset='w200.png 200w, w800.png 800w, w1600.png 1600w' width=10 height=10>"
-                                   "<picture><source media='(min-width: 2000px)' srcset=huge.png><source type=image/webp srcset=x.webp>"
-                                   "<source srcset=pic.png><img src=fallback.png width=10 height=10></picture>", 600);
+                                   "<picture><source media='(min-width: 2000px)' srcset=huge.png><source type=image/avif srcset=x.avif>"
+                                   "<source srcset=pic.png><img src=fallback.png width=10 height=10></picture>"
+                                   "<picture><source type=image/webp srcset=y.webp><img src=y.jpg width=10 height=10></picture>"
+                                   "<picture><source type=image/svg+xml srcset=z.svg><img src=z.png width=10 height=10></picture>", 600);
         std::vector<std::string> srcs;
         for (const DrawCmd& c : r.cmds) if (c.kind == DrawCmd::Image) srcs.push_back(c.text);
-        CHECK(srcs.size() == 3 && srcs[0] == "a1.png" && srcs[1] == "w800.png" && srcs[2] == "pic.png");
+        // a type we cannot decode (AVIF) is skipped; WebP and SVG are read by our own decoders (Core/ImageDecode)
+        CHECK(srcs.size() == 5 && srcs[0] == "a1.png" && srcs[1] == "w800.png" && srcs[2] == "pic.png" && srcs[3] == "y.webp" && srcs[4] == "z.svg");
         bool listed = false;
         for (const std::string& i : r.images) if (i == "w800.png") listed = true;
         CHECK(listed);   // the host fetches the chosen one

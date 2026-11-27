@@ -13,7 +13,7 @@ namespace okay::js {
 struct RegexProg;
 
 // ============================================================ tokens (ECMA-262 ch. 12)
-enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex };
+enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex, BigInt };
 
 // Punctuators, longest first within each starting character is handled by the lexer.
 enum P : std::uint16_t {
@@ -38,6 +38,7 @@ struct Token {
     std::u16string s;           ///< name text, string value, template cooked text, regular expression body
     std::u16string flags;       ///< regular expression flags
     bool badEscape = false;     ///< a template piece with an invalid escape (only allowed when tagged)
+    std::u16string raw;         ///< a template piece's raw text (12.9.6 TRV: as written, CR LF read as LF)
 };
 
 /// Tokenize the whole source (templates are split into pieces; regular expression
@@ -47,6 +48,13 @@ bool Tokenize(const std::string& src, std::vector<Token>& out, SyntaxError& err)
 extern const int kReservedCount;
 /// WhiteSpace and LineTerminator code units (12.2, 12.3): what trim and the number readers skip.
 bool IsJsSpace(char16_t c);
+/// The value of a hex digit (0-9, a-f, A-F), or -1: the lexer, the RegExp pattern reader and the URI functions share it.
+inline int HexDigitValue(char32_t c) {
+    if (c >= U'0' && c <= U'9') return (int)(c - U'0');
+    if (c >= U'a' && c <= U'f') return (int)(c - U'a') + 10;
+    if (c >= U'A' && c <= U'F') return (int)(c - U'A') + 10;
+    return -1;
+}
 /// Simple one-to-one case mapping (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic).
 char16_t JsLower(char16_t c);
 char16_t JsUpper(char16_t c);
@@ -56,7 +64,7 @@ enum class NK : std::uint8_t {
     // expressions
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
-    Yield, Await, Hole, TaggedTemplate, Regex,
+    Yield, Await, Hole, TaggedTemplate, Regex, BigInt, ImportCall,
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -93,6 +101,7 @@ enum NodeFlag : std::uint32_t {
     NF_Method = 64,        ///< method shorthand in a literal
     NF_CoverInit = 128,    ///< {a = 1} seen in a literal (only valid as a pattern)
     NF_Paren = 256,        ///< written in parentheses
+    NF_Await = 512,        ///< for await (...)
 };
 
 enum DeclKind : int { DK_Var = 0, DK_Let = 1, DK_Const = 2 };
@@ -170,6 +179,7 @@ enum Op : std::uint16_t {
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
+    OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome, OP_ImportCall,
     OP_Count
 };
 
@@ -292,6 +302,7 @@ struct IterRec : Object {
     Value iter, next;
     bool done = false;
     std::uint8_t fast = 0;   ///< 1 array, 2 string
+    std::uint8_t async = 0;  ///< for await: 1 an async iterator, 2 a sync iterator read asynchronously (27.1.6)
     std::uint32_t pos = 0;
     IterRec() : Object(Cls::IterRecord) {}
     void Trace(Runtime& rt) override;
@@ -320,6 +331,56 @@ Value MakeRegExpLiteral(Runtime& rt, String* pattern, String* flags);
 Value RegExpReplace(Runtime& rt, const Value& rx, String* str, const Value& replacement, bool all);
 Value RegExpSplit(Runtime& rt, const Value& rx, String* str, std::uint32_t limit);
 Value RegExpMatch(Runtime& rt, const Value& rx, String* str, int mode);   ///< 0 match, 1 matchAll, 2 search
+
+/// WeakMap, WeakSet, WeakRef and FinalizationRegistry (26.1, 26.2, 24.3, 24.4). Keys (objects and
+/// symbols that are not registered: CanBeHeldWeakly) are not traced: the collector drops entries whose
+/// key died, and a WeakMap value is kept only while its key is (an ephemeron), see Runtime::Collect.
+struct WeakObj : Object {
+    std::unordered_map<GcObj*, Value> entries;   ///< WeakMap: key -> value; WeakSet: key -> undefined
+    GcObj* target = nullptr;                      ///< WeakRef: the referent (nullptr once it died)
+    struct Cell {
+        GcObj* target;   ///< weak
+        Value held;      ///< strong
+        GcObj* token;    ///< weak, may be nullptr
+    };
+    std::vector<Cell> cells;                      ///< FinalizationRegistry
+    Value cleanup;                                ///< FinalizationRegistry: the callback (kept, never called: 9.10 allows that)
+    explicit WeakObj(Cls c) : Object(c) {}
+    WeakObj() : Object(Cls::WeakMap) {}
+    void Trace(Runtime& rt) override;
+    std::size_t Bytes() const override { return Object::Bytes() + entries.size() * 48 + cells.capacity() * sizeof(Cell); }
+};
+bool CanBeHeldWeakly(const Value& v);
+
+// ---- BigInt (6.1.6.2; JsLibNumber.cpp): sign and magnitude in 32-bit limbs, least significant first
+using Limbs = std::vector<std::uint32_t>;
+struct BigNum {
+    bool neg = false;   ///< never set on zero
+    Limbs mag;          ///< no zero top limb; zero is empty
+};
+struct BigIntV : GcObj {
+    BigNum v;
+    BigIntV() : GcObj(Kind::BigInt) {}
+    std::size_t Bytes() const override { return sizeof(BigIntV) + v.mag.capacity() * 4; }
+};
+void DropTopZeros(Limbs& m);
+Value NewBigValue(Runtime& rt, bool neg, Limbs mag);
+bool BigIsZero(const Value& v);
+bool BigEquals(const Value& a, const Value& b);
+std::size_t BigHash(const Value& v);
+std::u16string BigToString(Runtime& rt, const Value& v, int radix);
+/// false: not an integer text. `charge`: count the work against the budget (not while compiling a literal, which
+/// the lexer already limits to 20000 digits: a budget stop must not escape from Compile).
+bool StringToBigInt(Runtime& rt, const std::u16string& s, Value& out, bool charge = true);
+Value BigFromDouble(Runtime& rt, double d);
+double BigToDouble(const Value& v);
+int BigCompareNum(const Value& a, double d);   ///< -1, 0, 1; 2 when d is NaN
+int BigCompare(const Value& a, const Value& b);
+Value BigBinary(Runtime& rt, int op, const Value& a, const Value& b);   ///< op: OP_Add ... OP_Shr
+Value BigUnary(Runtime& rt, int op, const Value& a);                    ///< OP_Neg, OP_BitNot, OP_Inc, OP_Dec
+Value ToBigIntValue(Runtime& rt, const Value& v);                       ///< 7.1.13 ToBigInt
+void InstallBigIntLib(Runtime& rt);
+void InstallIntlLib(Runtime& rt);
 
 struct ForInObj : Object {
     Value obj;
@@ -417,6 +478,10 @@ void InstallJsonLib(Runtime& rt);
 void InstallCollectionsLib(Runtime& rt);
 void InstallGlobalLib(Runtime& rt);
 void InstallRegExpLib(Runtime& rt);
+void InstallDateLib(Runtime& rt);
+void InstallWeakLib(Runtime& rt);
+/// console.log's text for a Date (JsLibNumber.cpp).
+std::string DateDisplay(Object* o);
 
 // small helpers for library code
 NativeFunc* DefNative(Runtime& rt, Object* on, const char* name, NativeFn fn, int length, std::uint8_t flags = kHidden);

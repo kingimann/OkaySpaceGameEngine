@@ -173,7 +173,7 @@ try {
     if ($MinimalTest) {
         Step 2 'Writing a minimal TEST export (a tiny tool is compiled first)'
         $exportExe = Join-Path $work 'okay-xbox-export.exe'
-        $img = 'engine\src\Graphics\Image.cpp', 'engine\src\Core\ImageDecode.cpp', 'engine\src\Core\ImageDecodeJpeg.cpp', 'engine\src\Core\ImageWrite.cpp' | ForEach-Object { Join-Path $SourceRoot $_ }
+        $img = 'engine\src\Graphics\Image.cpp', 'engine\src\Core\ImageDecode.cpp', 'engine\src\Core\ImageDecodeJpeg.cpp', 'engine\src\Core\ImageDecodeWebp.cpp', 'engine\src\Core\ImageDecodeSvg.cpp', 'engine\src\Core\ImageWrite.cpp' | ForEach-Object { Join-Path $SourceRoot $_ }
         $code = Compile-Cpp 'export' (@((Join-Path $packSrc 'tool\okay_xbox_export.cpp')) + $img) @($packSrc, (Join-Path $SourceRoot 'engine\include'), (Join-Path $SourceRoot 'engine\src')) $exportExe
         Require-Ok $code 'Compiling okay-xbox-export'
         if (-not (Test-Path -LiteralPath $exportExe)) { throw 'okay-xbox-export.exe was not produced.' }

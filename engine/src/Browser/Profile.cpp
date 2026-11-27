@@ -560,12 +560,12 @@ AnswerUse UseOfAnswer(const std::string& ct, const std::string& disposition, con
         const std::string ext = ExtensionOf(url);
         if (ext.empty() || ext == "html" || ext == "htm" || ext == "xhtml" || ext == "php" || ext == "asp" || ext == "aspx") return AnswerUse::Page;
         if (ext == "txt" || ext == "md" || ext == "css" || ext == "js" || ext == "json" || ext == "csv") return AnswerUse::PlainText;
-        if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "gif" || ext == "bmp") return AnswerUse::Image;
+        if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "gif" || ext == "bmp" || ext == "webp" || ext == "svg") return AnswerUse::Image;
         return AnswerUse::Download;
     }
     if (t == "text/html" || t == "application/xhtml+xml") return AnswerUse::Page;
     if (t.rfind("text/", 0) == 0 || t == "application/json" || t == "application/javascript") return AnswerUse::PlainText;
-    if (t == "image/png" || t == "image/jpeg" || t == "image/gif" || t == "image/bmp" || t == "image/webp" || t == "image/x-tga")
+    if (t == "image/png" || t == "image/jpeg" || t == "image/gif" || t == "image/bmp" || t == "image/webp" || t == "image/x-tga" || t == "image/svg+xml")
         return AnswerUse::Image;
     return AnswerUse::Download;
 }

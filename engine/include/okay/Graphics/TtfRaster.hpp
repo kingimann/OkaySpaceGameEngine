@@ -6,7 +6,7 @@
 // formats 0/4/6/12/13) and glyph outlines from either `glyf` (simple and composite
 // glyphs, quadratic curves) or `CFF ` (Type 2 charstrings, cubic curves). Outlines
 // are filled with exact-area anti-aliased coverage (a signed-area accumulation
-// buffer, non-zero winding) and are NOT hinted, so sizes scale smoothly.
+// buffer, non-zero winding; the shared okay/Graphics/CoverageRaster.hpp) and are NOT hinted, so sizes scale smoothly.
 //
 // The reader never trusts the file: every read is bounds-checked, recursion and
 // work are capped, and a corrupt font or glyph yields "no font" / an empty glyph,

@@ -5,6 +5,7 @@
 // whole source is tokenized first (the parser looks ahead to find arrow functions);
 // template substitutions are tracked with a stack of open braces.
 #include "JsInternal.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -101,7 +102,8 @@ struct Lexer {
     std::size_t lineStart = 0;
     SyntaxError& err;
     std::vector<Token>& out;
-    std::vector<int> braces;   // 0 = a plain {, 1 = a template's ${
+    std::vector<int> braces;   // 0 = an expression's { (object literal), 1 = a template's ${, 2 = a block's {
+    std::vector<bool> parens;  // per open '(': it holds the head of if / for / while / with
     bool sawNl = false;
 
     Lexer(const std::string& src, std::vector<Token>& o, SyntaxError& e) : s(src), err(e), out(o) {}
@@ -187,12 +189,7 @@ struct Lexer {
         return true;
     }
 
-    int Hex(char c) const {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    }
+    int Hex(char c) const { return HexDigitValue((unsigned char)c); }
 
     // \u escapes (12.9.4): \uXXXX or \u{X...}. i is just after the 'u'. -1 = bad.
     std::int64_t UnicodeEscape() {
@@ -285,6 +282,20 @@ struct Lexer {
         return k;
     }
 
+    // the digits (with their 0x / 0o / 0b prefix, separators removed) of a BigInt literal, after its 'n'
+    bool BigIntLiteral(int ln, int col, const std::string& digits) {
+        if (digits.size() > 20000) return Fail("this BigInt literal is too long (over 20000 digits)");
+        ++i;   // n
+        if (i < s.size()) {
+            int len;
+            std::uint32_t c = PeekCp(i, &len);
+            if (IsIdStart(c) || (c >= '0' && c <= '9')) return Fail("a name can not start right after a number");
+        }
+        Token& t = Push(TT::BigInt, ln, col);
+        t.s = AsciiTo16(digits.c_str());
+        return true;
+    }
+
     bool Number(int ln, int col) {
         std::size_t start = i;
         double v = 0;
@@ -317,6 +328,7 @@ struct Lexer {
             if (!digitsWithSep(base, txt)) return false;
             if (txt.empty()) return Fail("a number needs digits after 0" + std::string(1, k));
             for (char c : txt) v = v * base + Hex(c);
+            if (i < s.size() && s[i] == 'n') return BigIntLiteral(ln, col, std::string("0") + k + txt);
         } else {
             std::string txt;
             if (s[i] == '0' && i + 1 < s.size() && s[i + 1] >= '0' && s[i + 1] <= '9')
@@ -340,7 +352,12 @@ struct Lexer {
             }
             v = std::strtod(txt.c_str(), nullptr);
         }
-        if (i < s.size() && s[i] == 'n') return Fail("BigInt literals (123n) are not supported");
+        if (i < s.size() && s[i] == 'n') {   // 12.9.3: a BigInt literal is an integer with no fraction or exponent
+            std::string txt(s, start, i - start);
+            txt.erase(std::remove(txt.begin(), txt.end(), '_'), txt.end());
+            if (txt.find_first_of(".eE") != std::string::npos) return Fail("a BigInt literal (123n) must be an integer");
+            return BigIntLiteral(ln, col, txt);
+        }
         if (i < s.size()) {
             int len;
             std::uint32_t c = PeekCp(i, &len);
@@ -380,23 +397,41 @@ struct Lexer {
     bool TemplatePiece(int ln, int col, bool head) {
         std::u16string v;
         bool bad = false;
+        const std::size_t start = i;
+        // the raw text (TRV) of s[start, end): as written, with CR LF and CR read as LF
+        auto rawOf = [&](std::size_t end) {
+            std::u16string r = Utf8To16(std::string_view(s).substr(start, end - start));
+            std::u16string out;
+            out.reserve(r.size());
+            for (std::size_t k = 0; k < r.size(); ++k) {
+                if (r[k] == u'\r') {
+                    out += u'\n';
+                    if (k + 1 < r.size() && r[k + 1] == u'\n') ++k;
+                } else out += r[k];
+            }
+            return out;
+        };
         while (true) {
             if (i >= s.size()) { line = ln; return Fail("this `template` is never closed"); }
             char c = s[i];
             if (c == '`') {
+                std::u16string raw = rawOf(i);
                 ++i;
                 Token& t = Push(TT::Template, ln, col);
                 t.tpl = head ? 0 : 3;
                 t.s = std::move(v);
+                t.raw = std::move(raw);
                 t.badEscape = bad;
                 return true;
             }
             if (c == '$' && i + 1 < s.size() && s[i + 1] == '{') {
+                std::u16string raw = rawOf(i);
                 i += 2;
                 braces.push_back(1);
                 Token& t = Push(TT::Template, ln, col);
                 t.tpl = head ? 1 : 2;
                 t.s = std::move(v);
+                t.raw = std::move(raw);
                 t.badEscape = bad;
                 return true;
             }
@@ -427,9 +462,12 @@ struct Lexer {
         if (out.empty()) return true;
         const Token& t = out.back();
         switch (t.t) {
-            case TT::Num: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
+            case TT::Num: case TT::BigInt: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
             case TT::Template: return t.tpl == 1 || t.tpl == 2;   // after `...${ an expression starts
-            case TT::Punct: return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_RBrace || t.p == P_Inc || t.p == P_Dec);
+            case TT::Punct:
+                if (t.p == P_RBrace) return t.tpl == 1;   // after a block (function f() {} /re/.test(x)), not after an object literal
+                if (t.p == P_RParen) return t.tpl == 1;   // after if (...) / for (...) / while (...): a statement starts
+                return !(t.p == P_RBrack || t.p == P_Inc || t.p == P_Dec);
             case TT::Name: {
                 static const char* const before[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
                                                      "throw", "case", "do", "else", "yield", "await"};
@@ -444,6 +482,33 @@ struct Lexer {
             }
             default: return true;
         }
+    }
+
+    // Whether the '{' about to be read opens a block (a statement, function or class body) rather than an object
+    // literal, judged from the token before it: blocks follow ';', '{', '}', ')', '=>', a statement keyword or a
+    // class name; object literals follow operators, '(', '[', ',', ':', '?' and keywords such as return.
+    bool BlockBraceAhead() const {
+        if (out.empty()) return true;
+        const Token& t = out.back();
+        if (t.t == TT::Punct) return t.p == P_Semi || t.p == P_LBrace || t.p == P_RBrace || t.p == P_RParen || t.p == P_Arrow;
+        if (t.t != TT::Name) return false;
+        static const char* const exprWords[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw",
+                                                "case", "yield", "await", "default"};
+        for (const char* w : exprWords) {
+            std::size_t n = std::char_traits<char>::length(w);
+            if (t.s.size() != n) continue;
+            std::size_t k = 0;
+            while (k < n && t.s[k] == (char16_t)w[k]) ++k;
+            if (k == n && !t.escaped) return false;
+        }
+        return true;   // else, do, try, finally, a class name, extends X ...
+    }
+
+    // Whether the '(' about to be read is the head of if / for / while / with (its ')' starts a statement).
+    bool ControlHeadAhead() const {
+        if (out.empty() || out.back().t != TT::Name || out.back().escaped) return false;
+        const std::u16string& w = out.back().s;
+        return w == u"if" || w == u"for" || w == u"while" || w == u"with";
     }
 
     bool RegexLit(int ln, int col) {
@@ -557,10 +622,20 @@ struct Lexer {
                 std::size_t n = std::char_traits<char>::length(p.text);
                 if (s.compare(i, n, p.text) != 0) continue;
                 if (p.id == P_QDot && i + 2 < s.size() && s[i + 2] >= '0' && s[i + 2] <= '9') continue;
-                if (p.id == P_LBrace) braces.push_back(0);
-                if (p.id == P_RBrace && !braces.empty()) braces.pop_back();
+                bool closesBlock = false;
+                if (p.id == P_LParen) parens.push_back(ControlHeadAhead());
+                if (p.id == P_RParen && !parens.empty()) {
+                    closesBlock = parens.back();
+                    parens.pop_back();
+                }
+                if (p.id == P_LBrace) braces.push_back(BlockBraceAhead() ? 2 : 0);
+                if (p.id == P_RBrace && !braces.empty()) {
+                    closesBlock = braces.back() == 2;
+                    braces.pop_back();
+                }
                 Token& t = Push(TT::Punct, ln, col);
                 t.p = (std::uint16_t)p.id;
+                t.tpl = closesBlock ? 1 : 0;   // on a '}' or ')': it closed a block or a statement head, so '/' starts a regex
                 i += n;
                 matched = true;
                 break;

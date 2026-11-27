@@ -235,6 +235,8 @@ int main() {
         CHECK(UseOfAnswer("application/xhtml+xml", "", "https://a/") == AnswerUse::Page);
         CHECK(UseOfAnswer("text/plain", "", "https://a/x") == AnswerUse::PlainText);
         CHECK(UseOfAnswer("image/png", "", "https://a/x") == AnswerUse::Image);
+        CHECK(UseOfAnswer("image/svg+xml", "", "https://a/x") == AnswerUse::Image);   // our own SVG renderer shows it
+        CHECK(UseOfAnswer("", "", "https://a/logo.svg") == AnswerUse::Image && UseOfAnswer("", "", "https://a/p.webp") == AnswerUse::Image);
         CHECK(UseOfAnswer("text/html", "attachment; filename=x.html", "https://a/") == AnswerUse::Download);
         CHECK(UseOfAnswer("application/zip", "", "https://a/x.zip") == AnswerUse::Download);
         CHECK(UseOfAnswer("application/octet-stream", "", "https://a/x") == AnswerUse::Download);

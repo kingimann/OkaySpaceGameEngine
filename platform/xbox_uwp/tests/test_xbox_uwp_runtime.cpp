@@ -650,7 +650,7 @@ static void BackendTests() {
     b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
     b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); CHECK(b.TakeBackPresses() == 0); }   // already sent
     { using namespace okay::platform; CHECK(Default() == nullptr && Get(BackendKind::Own) == nullptr);
-      InstallBackend(&b); CHECK(Default() == &b && Get(BackendKind::Own) == &b && Get(BackendKind::Sdl2) == nullptr && IsCompiledIn(BackendKind::Own) && !IsCompiledIn(BackendKind::Sdl2) && DefaultKind() == BackendKind::Own);
+      InstallBackend(&b); CHECK(Default() == &b && Get(BackendKind::Own) == &b && IsCompiledIn(BackendKind::Own) && DefaultKind() == BackendKind::Own);
       CHECK(TicksMs() <= b.TicksMs() + 5); okay::platform::Log("through the registry"); CHECK(!b.LogLines().empty() && b.LogLines().back() == "through the registry");
       BackendKind k; CHECK(ParseBackendName("own", k) && k == BackendKind::Own && !ParseBackendName("x", k) && !ParseBackendName(nullptr, k)); InstallBackend(nullptr); CHECK(Default() == nullptr); }
     b.SetClipboardText("clip"); CHECK(b.GetClipboardText() == "clip");

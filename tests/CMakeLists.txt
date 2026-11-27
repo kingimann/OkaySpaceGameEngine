@@ -4015,6 +4015,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_include_directories(test_platform_win32_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
     target_compile_features(test_platform_win32_pure PRIVATE cxx_std_17)
     add_test(NAME platform_win32_pure COMMAND test_platform_win32_pure)
+    # The web backend's decisions with no browser (engine/src/Platform/WebInput.hpp): DOM key codes, which keys the page must
+    # not act on, wheel units, the Gamepad API's standard layout, the canvas's device pixels, the learned keyboard layout.
+    add_executable(test_platform_web_pure test_platform_web_pure.cpp)
+    target_include_directories(test_platform_web_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
+    target_compile_features(test_platform_web_pure PRIVATE cxx_std_17)
+    add_test(NAME platform_web_pure COMMAND test_platform_web_pure)
     add_executable(test_platform_selftest_logic test_platform_selftest_logic.cpp)
     target_include_directories(test_platform_selftest_logic PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/tools/platform_selftest)
     target_compile_features(test_platform_selftest_logic PRIVATE cxx_std_17)

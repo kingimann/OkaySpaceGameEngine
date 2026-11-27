@@ -82,7 +82,7 @@ int main() {
     std::unique_ptr<Painter> p = OkayUI::soft::CreateWindowPainter(*win, pd, &err);
     CHECK(p != nullptr);
     if (!p) { std::cerr << err << "\n"; return 1; }
-    CHECK(p->Kind() == PainterKind::Software && p->NativeRenderer() == nullptr);
+    CHECK(p->Kind() == PainterKind::Software);
     int w = 0, h = 0;
     p->OutputSize(&w, &h);
     CHECK(w == 320 && h == 240);

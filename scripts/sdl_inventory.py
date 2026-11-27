@@ -45,12 +45,15 @@ TOKEN = re.compile(r'\b(SDL_[A-Za-z0-9_]+|SDLK_[A-Za-z0-9_]+|ImGui_ImplSDL[A-Za-
                    r'|AUDIO_[SUF](?:8|16|32)(?:LSB|MSB|SYS)?|(?:Uint|Sint)(?:8|16|32|64))\b(\s*\()?')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]+)[>"]', re.M)
 
-# The SDL2 implementation of the seams: it is SDL on purpose and goes away together with SDL2.
-SEAM_BACKEND = (
-    "engine/src/Platform/SdlBackend.cpp",
-    "engine/src/Platform/SdlPainter.cpp",
-    "engine/include/okay/UI/UIPainterSDL.hpp",
-)
+# The SDL2 implementation of the seams. Empty since 2026-11-27: SdlBackend.cpp and SdlPainter.cpp (the web player's last SDL)
+# were deleted when our own web backend (engine/src/Platform/WebBackend.cpp) replaced them, UIPainterSDL.hpp before that.
+SEAM_BACKEND = ()
+
+# SDL2 is gone from every program, so these may not come back anywhere (the ratchet fails on any): Emscripten's SDL2 port
+# option, a CMake search for SDL2, or an SDL header include. Not searched: prose (docs, *.md), this script, and our own
+# build tool's tests (tools/okaybuild), which check that a host's SDL2 is NOT picked up.
+GONE_PATTERN = r'USE_SDL|find_package\(SDL2|#[ \t]*include[ \t]*[<"](SDL2/)?SDL[._a-z]*'
+GONE_SKIP = ("docs", "tools/okaybuild")
 
 # ---------------------------------------------------------------------------------------------------------------
 # Families (the kinds of API) and capabilities (one row each: which SDL names, what covers them)
@@ -985,8 +988,28 @@ def ratchet_rises(base, now):
     return res
 
 
+def gone_hits(ref):
+    """Lines that bring SDL2 back (GONE_PATTERN), as "path:line: text"; the working tree (untracked files too) when ref is None."""
+    opts, where = ([], [ref]) if ref is not None else (["--untracked"], [])
+    out = git("grep", *opts, "-n", "-I", "-E", GONE_PATTERN, *where, "--", ".", *[":!%s" % d for d in GONE_SKIP], ":!*.md",
+              ":!scripts/sdl_inventory.py", check=False).decode()
+    hits = []
+    for line in out.split("\n"):
+        if not line:
+            continue
+        if ref is not None and line.startswith(ref + ":"):
+            line = line[len(ref) + 1:]
+        hits.append(line)
+    return hits
+
+
 def ratchet_check(ref, path):
-    """Exit status 1 when any file has more SDL calls or words than the baseline, or a file not in it has any."""
+    """Exit status 1 when SDL2 comes back (gone_hits), when any file has more SDL calls or words than the baseline, or a
+    file not in it has any."""
+    gone = gone_hits(ref)
+    if gone:
+        print("sdl ratchet: FAILED, SDL2 is gone from every program and may not come back:\n  " + "\n  ".join(gone[:20]))
+        return 1
     base = ratchet_load(path)
     if base is None:
         print("sdl ratchet: no baseline %s (nothing to compare; write one with --update-ratchet)" % path)
@@ -1023,8 +1046,9 @@ def ratchet_update(ref, path, allow_rise):
             sys.stderr.write("refusing: the baseline may only go down; these files rose: %s\n" % ", ".join(p for p, _, _, _ in up))
             return 1
     data = collections.OrderedDict()
-    data["about"] = ("SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). "
-                     "--ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).")
+    data["about"] = ("SDL calls and SDL words per file (scripts/sdl_inventory.py; tests and tools not counted). --ratchet fails when a "
+                     "file rises above its numbers, and on any SDL2 port option, CMake search for SDL2 or SDL header include anywhere (SDL2 "
+                     "left every program on 2026-11-27); the baseline may only go down (--update-ratchet).")
     data["totals"] = ratchet_totals(now)
     data["files"] = collections.OrderedDict(sorted(now.items()))
     with open(os.path.join(ROOT, path), "w", encoding="utf-8", newline="\n") as f:

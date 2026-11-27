@@ -23,7 +23,6 @@ public:
 
     // ---- okay::platform::Painter ----
     okay::platform::PainterKind Kind() const override { return okay::platform::PainterKind::Software; }
-    void* NativeRenderer() override { return nullptr; }
     void OutputSize(int* w, int* h) override { if (w) *w = surf_.Width(); if (h) *h = surf_.Height(); }
     void Clear() override { surf_.FillRect(IRect{0, 0, surf_.Width(), surf_.Height()}, cR_, cG_, cB_, cA_, false, IRect{0, 0, surf_.Width(), surf_.Height()}); surf_.MarkAll(); }
     void SetBlendMode(okay::platform::BlendMode m) override { blend_ = m; }

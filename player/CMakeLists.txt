@@ -2,12 +2,12 @@
 #
 # This is what the editor's "Build Game" ships beside an exported scene: a
 # single executable that loads game.okayscene and plays it. Desktop: our own okay::platform backend and
-# painters, no third-party library. Web: Emscripten's SDL2 port (below), the one place SDL2 remains.
+# painters, no third-party library. Web: the same backend's browser part (engine/src/Platform/WebBackend.cpp) and the
+# OpenGL painter on WebGL 2; no SDL2 anywhere (it left the web player on 2026-11-27).
 # Enabled with -DOKAY_BUILD_PLAYER=ON (also built when -DOKAY_BUILD_EDITOR=ON).
 
 # ---- Web build (Emscripten) ------------------------------------------
-# SDL2 comes from Emscripten's ports (-sUSE_SDL=2), not find_package. Outputs
-# okay-player.html/.js/.wasm you can serve in a browser. Build via
+# Outputs okay-player.html/.js/.wasm you can serve in a browser. Build via
 # scripts/build-web.sh (or emcmake cmake ...). Assets are preloaded at build
 # time; drop a game.okayscene next to this CMakeLists or pass --preload-file.
 # The page around it is ours: platform/web/shell.html (loading screen, errors in plain words, full-screen button) and
@@ -18,10 +18,10 @@ if(EMSCRIPTEN)
     add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
     target_link_libraries(okay-player PRIVATE okay::engine)
     target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/platform/web)
-    target_compile_options(okay-player PRIVATE "-sUSE_SDL=2")
     set(_okay_web_dir ${CMAKE_SOURCE_DIR}/platform/web)
     target_link_options(okay-player PRIVATE
-        "-sUSE_SDL=2" "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0"
+        "-sMAX_WEBGL_VERSION=2"       # the painter's WebGL 2 context (Emscripten links WebGL 1 only without it)
+        "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0"
         "-sENVIRONMENT=web"            # browser only: no Node.js or worker start-up code in the .js
         "-sFORCE_FILESYSTEM=1" "-lidbfs.js"   # okay_web.js writes the game pack into FS and mounts the saves on IDBFS
         "-sSTACK_SIZE=1048576"         # 1 MB, nearer a desktop thread's stack than Emscripten's 64 KB (deep scene and script recursion)

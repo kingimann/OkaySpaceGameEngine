@@ -9,7 +9,7 @@ web build.
 
 Where the texts come from: the licence statements of the build tools and libraries on the machine that prepared this
 file (Debian's copies of the upstream notices, /usr/share/doc/<package>/copyright: mingw-w64-common,
-gcc-mingw-w64-base, libsodium23, libsdl2-2.0-0), the font licence files in Assets/Fonts and the Apache License 2.0 text
+gcc-mingw-w64-base, libsodium23), the font licence files in Assets/Fonts and the Apache License 2.0 text
 kept in the repository. Items marked UNVERIFIED were written from memory and must be checked against the versions
 a release really ships (prepared 2026-11-26).
 
@@ -31,10 +31,9 @@ Parts and licences
    public-domain parts. Text: section C. (Debian's statement for 1.0.18; the authors and licences of 1.0.20 are
    UNVERIFIED against its own LICENSE file.)
 
-4. SDL2 (window, input, audio), in web builds only: Emscripten's SDL2 port inside okay-player.wasm. The Windows and
-   Linux programs and games contain none of it since 2026-11-27 (our own okay::platform; no SDL2.dll is shipped).
-   Copyright (C) 1997-2024 Sam Lantinga and the authors named in section D. Licence: zlib; its HIDAPI part is used
-   under the BSD 3-clause option. Text: section D.
+4. (No longer used.) SDL2 was the window, input and sound layer until 2026-11-27: first the desktop programs, then the
+   web player stopped using it (our own okay::platform, also in the browser). Builds from then on contain none of it.
+   Section D is kept empty so the letters below stay.
 
 5. (No longer used.) Dear ImGui was the editor's and the launcher's user interface until 2026-11-27. Builds from then on
    contain none of it: both are drawn by our own UI toolkit, OkayUI. Section E is kept empty so the letters below stay.
@@ -49,7 +48,6 @@ Parts and licences
      "Copyright (c) 2010-2014 Emscripten authors, see AUTHORS file." MIT text: section F.
    - its C library (based on musl): MIT License, "Copyright (c) 2005-2020 Rich Felker, et al." MIT text: section F.
    - libc++, libc++abi and compiler-rt from LLVM: Apache License 2.0 with LLVM Exceptions. Texts: sections J and G.
-   - the SDL2 port: as item 4.
 
 8. Fonts.
    - Roboto Medium (the built-in UI font, inside the engine and so inside every program and game): "Copyright 2011
@@ -730,117 +728,8 @@ License: public-domain
 
 
 ====================================================================================================
-D. SDL2 (item 4; Debian's statement of the upstream notices)
+D. (Empty: item 4, SDL2, is no longer in any program.)
 ====================================================================================================
-
-Files: *
-Copyright:
- 1997-2024 Sam Lantinga <slouken@libsdl.org>
- 2012 Raspberry Pi Foundation
- 2012-2018 RISC OS Open Ltd
- 2018-2019 EXL
- 2020-2022 Valve Corporation
- 2022 Collabora Ltd.
- 2023 Max Maisel
-License: zlib/libpng and zlib-libpng-like-permissive
-
-Files: include/SDL_hidapi.h
-       src/hidapi/*
-Copyright: 2009-2010 Alan Ott, Signal 11 Software
-           1997-2021 Sam Lantinga
-           2021 Valve Corporation
-License: BSD-3-clause or GPL-3 or hidapi-orig, and zlib/libpng
-
-License: BSD-3-clause
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
-     * Redistributions of source code must retain the above copyright
-       notice, this list of conditions and the following disclaimer.
-     * Redistributions in binary form must reproduce the above copyright
-       notice, this list of conditions and the following disclaimer in the
-       documentation and/or other materials provided with the distribution.
-     * Neither the name of the LibQxt project nor the
-       names of its contributors may be used to endorse or promote products
-       derived from this software without specific prior written permission.
- .
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-Comment:
-  Copyright (C) 1997-2011 Sam Lantinga <slouken@libsdl.org>
-  .
-  This software is provided 'as-is', without any express or implied
-  warranty.  In no event will the authors be held liable for any damages
-  arising from the use of this software.
-  .
-  Permission is granted to anyone to use this software for any purpose,
-  including commercial applications, and to alter it and redistribute it
-  freely.
-  .
-  .
-  Copyright (c) 2011, Edgar Simo Serra
-  All rights reserved.
-  .
-  Redistribution and use in source and binary forms, with or without
-  modification, are permitted provided that the following conditions are met:
-  .
-    * Redistributions of source code must retain the above copyright notice,
-      this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-    * Neither the name of the Simple Directmedia Layer (SDL) nor the names of
-      its contributors may be used to endorse or promote products derived from
-      this software without specific prior written permission.
-  .
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
-  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-License: GPL-3
- On Debian systems, the complete text of the GNU General
- Public License version 3 can be found in
- /usr/share/common-licenses/GPL-3.
-
-License: zlib-libpng-like-permissive
-  This software is provided 'as-is', without any express or implied
-  warranty.  In no event will the authors be held liable for any damages
-  arising from the use of this software.
-  .
-  Permission is granted to anyone to use this software for any purpose,
-  including commercial applications, and to alter it and redistribute it
-  freely.
-
-License: zlib/libpng
- This software is provided 'as-is', without any express or implied
- warranty.  In no event will the authors be held liable for any damages
- arising from the use of this software.
- .
- Permission is granted to anyone to use this software for any purpose,
- including commercial applications, and to alter it and redistribute it
- freely, subject to the following restrictions:
- .
- 1. The origin of this software must not be misrepresented; you must not
-    claim that you wrote the original software. If you use this software
-    in a product, an acknowledgment in the product documentation would be
-    appreciated but is not required.
- 2. Altered source versions must be plainly marked as such, and must not be
-    misrepresented as being the original software.
- 3. This notice may not be removed or altered from any source distribution.
 
 
 ====================================================================================================

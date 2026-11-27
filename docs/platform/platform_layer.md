@@ -1,6 +1,6 @@
 # The platform layer (`okay::platform`) and our own backend
 
-> **What this is:** The platform layer. SDL2 left the desktop programs on 2026-11-27; it remains only in the web build (see "Choosing a backend").
+> **What this is:** The platform layer. SDL2 left the desktop programs and then the web player on 2026-11-27; our own backend is the only one (see "Choosing a backend").
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
@@ -17,11 +17,14 @@ launcher off SDL2: `docs/platform/sdl_removal_plan.md`.
 
 ## Choosing a backend
 
-Since 2026-11-27 (`claude/no-sdl2-2`) there is nothing to choose on the desktop: our own backend is the only one compiled into
-Windows and Linux builds, and no desktop program links SDL2. `OKAY_PLATFORM_BACKEND` (CMake and environment) is kept as a name:
-on the desktop it is always `own`, and an environment value naming a backend the build lacks (`sdl2`) is ignored. The web build
-(Emscripten) still uses the sdl2 backend and the sdl2 painter over Emscripten's own SDL2 port, because there is no own web backend
-yet; `SdlBackend.cpp` and `SdlPainter.cpp` are compiled only there. The rounds below are history.
+Since 2026-11-27 there is nothing to choose: our own backend is the only one, on Windows, Linux and the web.
+`BackendKind` has one value (`Own`) and `PainterKind` has `Software` and `OpenGL`; `sdl2` is no longer a backend name
+(`ParseBackendName("sdl2")` is false). `OKAY_PLATFORM_BACKEND` (CMake and environment) is kept as a name only: always `own`.
+The desktop left SDL2 on `claude/no-sdl2-2`, the web player on `claude/web-backend-1` (`SdlBackend.cpp`, `SdlPainter.cpp` and
+`-sUSE_SDL=2` deleted). `scripts/sdl_inventory.py --ratchet` (ctest `sdl_ratchet`) fails if an SDL header include, a CMake
+search for SDL2 or Emscripten's SDL2 port option comes back anywhere. The rounds below are history.
+
+The web backend (`engine/src/Platform/WebBackend.cpp`) and what was and was not run: `docs/platform/sdl_removal_plan.md`, top section.
 
 ## What the audit found (origin/main before this change)
 

@@ -107,7 +107,7 @@ void Stress(Backend& b) {
 
 int main() {
     int ran = 0;
-    for (BackendKind k : {BackendKind::Sdl2, BackendKind::Own}) {
+    for (BackendKind k : {BackendKind::Own}) {
         if (!IsCompiledIn(k)) { std::cout << "[skip] " << BackendName(k) << " not compiled in\n"; continue; }
         Backend* b = Get(k);
         CHECK(b != nullptr);
@@ -122,7 +122,7 @@ int main() {
     CHECK(ran >= 1);
 
     // CharForKey is KeyForChar's inverse (US layout in the base class, the OS layout on a real backend).
-    for (BackendKind k : {BackendKind::Sdl2, BackendKind::Own}) {
+    for (BackendKind k : {BackendKind::Own}) {
         if (!IsCompiledIn(k)) continue;
         Backend* b = Get(k);
         if (!b) continue;

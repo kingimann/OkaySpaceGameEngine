@@ -23,45 +23,26 @@
 
 namespace okay::platform {
 
-const char* BackendName(BackendKind k) { return k == BackendKind::Own ? "own" : "sdl2"; }
+const char* BackendName(BackendKind) { return "own"; }
 
 bool ParseBackendName(const char* s, BackendKind& out) {
-    if (!s) return false;
-    if (std::strcmp(s, "sdl2") == 0) { out = BackendKind::Sdl2; return true; }
-    if (std::strcmp(s, "own") == 0)  { out = BackendKind::Own;  return true; }
-    return false;
+    if (!s || std::strcmp(s, "own") != 0) return false;   // "sdl2" named the backend that was deleted on 2026-11-27
+    out = BackendKind::Own;
+    return true;
 }
 
 bool IsCompiledIn(BackendKind k) {
-#ifdef OKAY_PLATFORM_HAVE_SDL2
-    if (k == BackendKind::Sdl2) return true;
-#endif
 #ifdef OKAY_PLATFORM_HAVE_OWN
-    if (k == BackendKind::Own) return true;
-#endif
+    return k == BackendKind::Own;
+#else
+    (void)k;
     return false;
+#endif
 }
 
-BackendKind DefaultKind() {
-    // The build picks the default (OKAY_PLATFORM_BACKEND at configure time). The same
-    // variable at run time overrides it for this process, so one binary can be tried
-    // on either backend; a value that is not "sdl2" or "own" is ignored.
-    static const BackendKind kind = [] {
-#if defined(OKAY_PLATFORM_DEFAULT_OWN)
-        BackendKind k = BackendKind::Own;
-#else
-        BackendKind k = BackendKind::Sdl2;
-#endif
-        BackendKind fromEnv;
-        if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv) && IsCompiledIn(fromEnv)) k = fromEnv;   // (a backend this build lacks is ignored)
-        else if (const char* o = std::getenv("OKAY_OWN_PLATFORM")) {   // short switch: 1 / true / yes / on = own
-            const std::string v = o;
-            if (v == "1" || v == "true" || v == "yes" || v == "on") k = BackendKind::Own;
-        }
-        return k;
-    }();
-    return kind;
-}
+// One backend (our own) on every platform, so the build's choice and the OKAY_PLATFORM_BACKEND / OKAY_OWN_PLATFORM
+// variables that chose between two have nothing left to pick.
+BackendKind DefaultKind() { return BackendKind::Own; }
 
 namespace {
 // Set when a backend instance is destroyed. That happens only during static destruction, at the very end of the process (after
@@ -80,26 +61,17 @@ struct BackendHolder {
 bool BackendsShutDown() { return g_backendsGone.load(); }
 
 Backend* Get(BackendKind k) {
-    if (k == BackendKind::Sdl2) {
-#ifdef OKAY_PLATFORM_HAVE_SDL2
-        static BackendHolder inst(CreateSdl2Backend());
-        return inst.p.get();
-#else
-        return nullptr;
-#endif
-    }
 #ifdef OKAY_PLATFORM_HAVE_OWN
+    if (k != BackendKind::Own) return nullptr;
     static BackendHolder inst(CreateOwnBackend());
     return inst.p.get();
 #else
+    (void)k;
     return nullptr;
 #endif
 }
 
-Backend* Default() {
-    if (Backend* b = Get(DefaultKind())) return b;
-    return Get(DefaultKind() == BackendKind::Own ? BackendKind::Sdl2 : BackendKind::Own);
-}
+Backend* Default() { return Get(BackendKind::Own); }
 
 // ---- Backend defaults (shared by both backends) ----------------------------------
 Key Backend::KeyForChar(char c) {

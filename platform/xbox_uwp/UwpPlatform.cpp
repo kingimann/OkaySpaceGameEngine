@@ -24,14 +24,13 @@ platform::Backend* InstalledBackend() { return g_installed; }
 
 namespace okay::platform {
 
-const char* BackendName(BackendKind k) { return k == BackendKind::Own ? "own" : "sdl2"; }
+const char* BackendName(BackendKind) { return "own"; }
 bool ParseBackendName(const char* s, BackendKind& out) {
-    if (!s) return false;
-    if (std::strcmp(s, "sdl2") == 0) { out = BackendKind::Sdl2; return true; }
-    if (std::strcmp(s, "own") == 0)  { out = BackendKind::Own;  return true; }
-    return false;
+    if (!s || std::strcmp(s, "own") != 0) return false;
+    out = BackendKind::Own;
+    return true;
 }
-// Only the UWP backend (reported as Own) exists in this build; SDL2 is not compiled in.
+// Only the UWP backend (reported as Own) exists in this build.
 bool IsCompiledIn(BackendKind k) { return k == BackendKind::Own; }
 BackendKind DefaultKind() { return BackendKind::Own; }
 Backend* Get(BackendKind k) { return k == BackendKind::Own ? xbox::InstalledBackend() : nullptr; }

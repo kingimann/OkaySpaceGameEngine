@@ -745,13 +745,9 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
 okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
-# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the OpenGL painter; the software painter
-# lives in okayui/soft (okay_ui_soft). The sdl2 painter (SdlPainter.cpp) is built for the web (Emscripten) only.
+# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the OpenGL painter (also the web player's,
+# on WebGL 2); the software painter lives in okayui/soft (okay_ui_soft).
 target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/GLPainter.cpp)
-if(EMSCRIPTEN)
-    target_sources(okay_engine PRIVATE src/Platform/SdlPainter.cpp)
-    set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
-endif()
 
 # The model reader defaults below (OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they are put on that one
 # file: switching a reader's default rebuilds one file, not the whole engine. Every model reader is our own (Assimp was

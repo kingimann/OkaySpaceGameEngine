@@ -1147,8 +1147,8 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 int main(int argc, char** argv) {
     okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     okay::Log::Info("[okay] modules: ", okay::ModuleRegistry::Get().Summary());   // engine modules in this player (docs/engine/modular_engine.md)
-    // The window, events, input and GL context go through okay::platform (our own backend on the desktop,
-    // the sdl2 backend over Emscripten's port on the web; see docs/platform/platform_layer.md).
+    // The window, events, input and GL context go through okay::platform (our own backend: X11 / Win32 on the desktop,
+    // the browser page on the web; see docs/platform/platform_layer.md).
     okay::platform::Backend* pb = okay::platform::Default();
     if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
@@ -1676,7 +1676,7 @@ int main(int argc, char** argv) {
     wd.highDpi = true;
     wd.resizable = cfg.resizable;
 #ifdef __EMSCRIPTEN__
-    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); SDL follows its CSS size only for a resizable window
+    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); the web backend follows its CSS size
 #endif
     wd.fullscreen = cfg.fullscreen;
     wd.borderless = cfg.borderless;
@@ -1719,15 +1719,15 @@ int main(int argc, char** argv) {
     }
     applyDisplay();
     // The 2D drawing goes through okay::platform::Painter: on the desktop the software painter (okayui/soft), which draws
-    // into a frame buffer on the CPU and hands it to the window; on the web the sdl2 painter over Emscripten's SDL2 port
-    // (docs/platform/platform_layer.md).
+    // into a frame buffer on the CPU and hands it to the window; on the web the OpenGL painter on the canvas's WebGL 2
+    // context (docs/platform/platform_layer.md).
     std::unique_ptr<okay::platform::Painter> painterOwner;
     if (window) {
         okay::platform::PainterDesc pd;
         pd.vsync = cfg.vsync;
         std::string perr;
 #if defined(__EMSCRIPTEN__)
-        painterOwner = okay::platform::CreateSdl2Painter(*window, pd, &perr);
+        painterOwner = okay::platform::CreateGLPainter(*window, *pb, pd, &perr);
 #elif defined(OKAY_HAVE_OKAYUI)
         painterOwner = OkayUI::soft::CreateWindowPainter(*window, pd, &perr);
 #else
@@ -2222,14 +2222,13 @@ int main(int argc, char** argv) {
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         Input::FeedMouse(s_virtualMouse, okay::InputMouseMask(mb));   // left, right, middle and the two side buttons
-        // On-screen controls and gestures read the SDL finger events already fed above
-        // (desktop and the web build). This stays on the SDL player path: it does not
-        // switch on the own platform backend.
+        // On-screen controls and gestures read the finger events already fed above (the web build and the Xbox app;
+        // the desktop backends send none yet).
         {
             int ow = 0, oh = 0;
             renderer->OutputSize(&ow, &oh);
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
-            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // own desktop: none yet; web (sdl2): the browser's touch
+            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // desktop: none yet; web: a touch screen the browser reports
             TouchControls::Sample(scene);
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }

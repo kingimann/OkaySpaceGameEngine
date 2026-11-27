@@ -6,8 +6,8 @@
 //             window (Window::PresentPixels: XPutImage on X11, StretchDIBits on Win32). No GPU.
 //   opengl    (own backend; CreateGLPainter below, engine/src/Platform/GLPainter.cpp) draws with OpenGL 3.3 core
 //             (3.0 / GLSL 1.30 when that is all there is) on the window's own GL context (GLX on X11, WGL on
-//             Win32). Entry points come from Backend::GLProcAddress, so there is no link-time GL.
-//   sdl2      the web build only (Emscripten's SDL2 port, SdlPainter.cpp): wraps an SDL_Renderer. Not in desktop builds.
+//             Win32), or OpenGL ES 3.0 on WebGL 2 in the browser (the web player's painter). Entry points come from
+//             Backend::GLProcAddress, so there is no link-time GL.
 //
 // It extends okay::ui2d::Painter (the primitive set the in-game UI pass already draws through: colour
 // state, rects, lines, clip, textures, copies, triangle geometry) with what an app needs around that:
@@ -26,8 +26,8 @@
 
 namespace okay::platform {
 
-enum class PainterKind { Sdl2, Software, OpenGL };
-enum class BlendMode { None, Blend };      // SDL_BLENDMODE_NONE / SDL_BLENDMODE_BLEND (source-over)
+enum class PainterKind { Software, OpenGL };
+enum class BlendMode { None, Blend };      // None writes the colour as it is; Blend is source-over
 enum class ScaleMode { Nearest, Linear };
 
 struct TextureDesc {
@@ -45,9 +45,7 @@ public:
     ~Painter() override = default;
 
     virtual PainterKind Kind() const = 0;
-    const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : Kind() == PainterKind::OpenGL ? "opengl" : "software"; }
-    /// The SDL_Renderer* behind an sdl2 painter (the web build only), else null.
-    virtual void* NativeRenderer() = 0;
+    const char* Name() const { return Kind() == PainterKind::OpenGL ? "opengl" : "software"; }
 
     /// Size of the render target in pixels (the drawable size of the window).
     virtual void OutputSize(int* w, int* h) = 0;
@@ -90,8 +88,8 @@ public:
     /// Show what was drawn. Software: copies the frame buffer to the window, then (with SetVSync(true))
     /// waits for the next refresh period, because a software present has no display sync to lean on.
     virtual void Present() = 0;
-    /// Ask for vertical sync. Returns true when the display really syncs the present (sdl2 with a
-    /// driver that can); false when it only paces (software) or cannot.
+    /// Ask for vertical sync. Returns true when the display really syncs the present (a GL swap interval,
+    /// or the browser's frame timing); false when it only paces (software) or cannot.
     virtual bool SetVSync(bool on) = 0;
     /// The target's pixels as RGBA8, top row first (screenshots, tests). False when unsupported.
     virtual bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) = 0;
@@ -136,17 +134,12 @@ struct PainterDesc {
     bool requireAccelerated = false;
 };
 
-#if defined(__EMSCRIPTEN__)
-/// sdl2 (the web build only, Emscripten's SDL2 port): a renderer on an sdl2 window (accelerated, else any).
-/// Null when `w` is not an sdl2 window or the renderer cannot be made (`err`, when given, says why).
-std::unique_ptr<Painter> CreateSdl2Painter(Window& w, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
-#endif
-
 /// opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
 /// window's GL context (Window::CreateGLContext, 3.3 core first, else what the driver gives), loads its entry points through
 /// `b.GLProcAddress` and owns the context (destroyed with the painter, which must go before the window). Pixels and rules follow
 /// the software painter (same device rounding, source-over blending, nearest = floor(u * w), clip = scissor), so the two agree
-/// within GPU rounding. Null (and `err`) for an sdl2 window, a window without a GL pixel format, or a GL older than 3.0.
+/// within GPU rounding. In the browser the context is WebGL 2 (OpenGL ES 3.0, GLSL ES 3.00 shaders). Null (and `err`) for a
+/// window without a GL pixel format, or a GL older than 3.0 (ES 3.0).
 std::unique_ptr<Painter> CreateGLPainter(Window& w, Backend& b, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
 
 } // namespace okay::platform

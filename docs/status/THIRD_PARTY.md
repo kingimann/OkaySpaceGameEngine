@@ -19,7 +19,7 @@ until an outside review (rule 18). The per-library plan, state and blockers are 
 removed it is allowed only because the replacement is not ready, and a new library must not be added when writing our
 own is possible; add one only with the same removal plan.
 
-Order: the small, easy libraries first (done), then model import (ufbx deleted 2026-11-23; Assimp deleted 2026-11-24), then the platform layer (SDL2, left the desktop programs 2026-11-27; only Emscripten's port in the web build remains),
+Order: the small, easy libraries first (done), then model import (ufbx deleted 2026-11-23; Assimp deleted 2026-11-24), then the platform layer (SDL2, left the desktop programs and then the web player on 2026-11-27: removed),
 then the editor toolkit (Dear ImGui, removed 2026-11-27), and encryption (libsodium) last. For encryption, writing our own is a security
 risk, so it needs an outside review before it can be the default; see [crypto_review_package.md](../platform/crypto_review_package.md).
 Services run by other companies (Steamworks, Photon, our hosting) are not libraries and stay.
@@ -47,7 +47,7 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 
 | Library | Used for | Licence | How we get it | Replacement and state |
 |---|---|---|---|---|
-| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | **Web build only since 2026-11-27**: Emscripten's SDL2 port (`-sUSE_SDL=2`) inside `okay-player.wasm`. Not in any Windows or Linux program, not downloaded in CI or release, no `SDL2.dll` shipped (`claude/no-sdl2-2`) | `okay::platform` (`docs/platform/platform_layer.md`) is the only platform layer on the desktop: own X11/GLX/ALSA/evdev backend on Linux (tested under Xvfb), own Win32/WGL/WASAPI/XInput/HID backend on Windows (compiled with MinGW; **not yet run on real Windows**); the SDL backend and painter build only for Emscripten. Left: an own web backend (canvas, WebGL, Web Audio, Gamepad API), then SDL2 leaves the web build too |
+| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | **Removed 2026-11-27.** Left the desktop programs (`claude/no-sdl2-2`), then the web player (`claude/web-backend-1`: no `-sUSE_SDL=2`, `SdlBackend.cpp` and `SdlPainter.cpp` deleted). No program, build or package uses or ships any of it | `okay::platform` (`docs/platform/platform_layer.md`) is the only platform layer: own X11/GLX/ALSA/evdev backend on Linux (tested under Xvfb), own Win32/WGL/WASAPI/XInput/HID backend on Windows (compiled with MinGW; **not yet run on real Windows**), own web backend over Emscripten's html5 / WebGL 2 / Web Audio / Gamepad API (`engine/src/Platform/WebBackend.cpp`; **not yet run in a browser**: CI's web job is its first run). `scripts/sdl_inventory.py --ratchet` fails if SDL2 comes back |
 | ~~[Dear ImGui](https://github.com/ocornut/imgui)~~ | Was: the editor and launcher UI | MIT | **Removed** (2026-11-27: the launcher, `docs/ui/own_ui_toolkit.md` section 31; the editor, branch `claude/editor-okayui-2`, section 33). Nothing is downloaded at configure time any more | `okayui`, our own toolkit: both programs are compiled against OkayUI only; not run on Windows |
 | ~~[Assimp](https://github.com/assimp/assimp) v5.4.3~~ | Was: importing 3D model formats beyond the built-in ones | BSD 3-clause | **Deleted 2026-11-24** (`claude/no-assimp-1`): `engine/src/Render/ModelImportAssimp.cpp`, the `OKAY_USE_ASSIMP` and `OKAY_PREFER_OWN_READERS` options, the FetchContent block (and the zlib it built), `-DOKAY_USE_ASSIMP=ON` in `scripts/build-windows-dist.sh`, `AssimpAvailable()` and `ImportBackend::Assimp` | Our own readers are the only model readers, for every extension Assimp read except Nendo `.ndo` (dropped: no public description of the format and no usable sample file; `docs/content/model_readers.md`, section Nendo). A file our reader refuses fails the import with the reason. CI still fetches the Assimp v5.4.3 source tree, as **data only**, for the real-file corpus in its `test/` folder (job `model-corpus`, `docs/content/model_corpus.md`); nothing from it is compiled or shipped |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | **Deleted 2026-11-23** (`claude/third-party-2`): `engine/third_party/ufbx` and every use are gone | Our own FBX reader `okay::fbx` is the only FBX reader (the `OKAY_OWN_FBX` switch is gone too). Before the deletion it agreed with ufbx on 42 of 43 real files (the 43rd is damaged) and all fixtures; those values are now fixed expected numbers in `fbx_reader`. Not run on real Windows after the deletion |
@@ -60,9 +60,9 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 
 Found by the 2026-11-26 audit. The "what" and "where" columns were checked in the files named; the licence column is
 from memory and is **unverified** (the licence pages could not be reached). **Notice file (2026-11-26):**
-`dist/THIRD_PARTY_NOTICES.txt` names every part below plus SDL2 and the fonts, with the licence texts
-(taken from the Debian copyright files of the build machine's MinGW-w64, GCC, libsodium and SDL2 packages and the
-font licence files; Dear ImGui's item is empty since it left the programs on 2026-11-27; the Emscripten and Steamworks lines are still from memory and
+`dist/THIRD_PARTY_NOTICES.txt` names every part below and the fonts, with the licence texts
+(taken from the Debian copyright files of the build machine's MinGW-w64, GCC and libsodium packages and the
+font licence files; the SDL2 and Dear ImGui items are empty since they left the programs on 2026-11-27; the Emscripten and Steamworks lines are still from memory and
 marked UNVERIFIED in the file). It ships beside `OkaySpace.exe` and in `Tools\` (`scripts/build-windows-dist.sh`, so
 also in the installer), in every exported desktop game (`editor/BuildGame.cpp`) and in every web build
 (`scripts/web_package.py`, checked by `tests/scripts/test_web_package.py`).
@@ -72,7 +72,7 @@ also in the installer), in every exported desktop game (`editor/BuildGame.cpp`) 
 | MinGW-w64 GCC runtime: libgcc and libstdc++ | linked statically into every Windows program (`cmake/mingw-w64-x86_64.toolchain.cmake`, `-static-libgcc -static-libstdc++`) | GPLv3 with the GCC Runtime Library Exception | our own compilers (`tools/okaycc`, `tools/okayms`) and their own runtimes, not yet used for releases (rule 24a) |
 | winpthreads (MinGW-w64) | linked statically, whole archive, into every Windows program (same file); its own version resource is taken out of the copy | MIT-style, asks for its notice in copies | none planned yet |
 | libsodium | linked **statically** (`libsodium.a`, `SODIUM_STATIC`) into release builds, which must have it (`OKAY_REQUIRE_SODIUM`, `engine/CMakeLists.txt`) | ISC | `okay::crypto`, off until reviewed (rule 18) |
-| Emscripten runtime and system libraries, and its SDL2 port | compiled into the web player `okay-player.js` / `.wasm` (`player/CMakeLists.txt`, `-sUSE_SDL=2`; CI uses Emscripten 3.1.51) | Emscripten MIT / NCSA; its C library (musl-based) MIT; libc++ Apache-2.0 with LLVM exception; SDL2 zlib | none planned yet |
+| Emscripten runtime and system libraries | compiled into the web player `okay-player.js` / `.wasm` (`player/CMakeLists.txt`; CI uses Emscripten 3.1.51). No Emscripten port (its SDL2 port left on 2026-11-27); the web backend calls Emscripten's html5 / WebGL C functions, which are part of this runtime | Emscripten MIT / NCSA; its C library (musl-based) MIT; libc++ Apache-2.0 with LLVM exception | none planned yet |
 | `steam_api64.dll` (Steamworks SDK redistributable) | copied into the Windows package only when `STEAMWORKS_SDK_PATH` is set (`scripts/build-windows-dist.sh`) | Valve's Steamworks SDK terms (proprietary) | none: an optional service hook (rule 19a) |
 
 ## Data in our code that came from outside (added 2026-11-26)

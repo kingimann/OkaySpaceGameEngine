@@ -1,5 +1,5 @@
 {
- "about": "SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). --ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).",
+ "about": "SDL calls and SDL words per file (scripts/sdl_inventory.py; tests and tools not counted). --ratchet fails when a file rises above its numbers, and on any SDL2 port option, CMake search for SDL2 or SDL header include anywhere (SDL2 left every program on 2026-11-27); the baseline may only go down (--update-ratchet).",
  "totals": {
   "launcher": {
    "calls": 0,

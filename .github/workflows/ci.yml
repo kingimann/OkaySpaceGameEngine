@@ -853,8 +853,8 @@ jobs:
           restore-keys: |
             ccache-web-
 
-      # Pull in Emscripten. This runner has network, so Emscripten's SDL2 port is
-      # fetched + cached here (the one online step the web build needs).
+      # Pull in Emscripten (cached). The web player uses no Emscripten port (no SDL2 since
+      # 2026-11-27: engine/src/Platform/WebBackend.cpp), so nothing else is downloaded.
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v15
         with:

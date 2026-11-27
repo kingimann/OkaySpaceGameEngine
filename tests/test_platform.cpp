@@ -1,5 +1,5 @@
 // okay::platform without a display: the registry, timers, audio devices and
-// controllers on every backend that is compiled in (own on the desktop; sdl2 exists only in the web build),
+// controllers on every backend that is compiled in (our own: the only backend since 2026-11-27),
 // plus the own backend's evdev mapping fed through a pipe. Windows, events,
 // GL and the clipboard need an X server: see test_platform_window.cpp.
 #include "test_framework.hpp"
@@ -251,7 +251,7 @@ void TestHelpers(Backend& b) {
         CHECK(b.SupportsRelativeMouseState());
     }
     b.Log("platform test log line (expected on stderr)");
-    if (b.Kind() == BackendKind::Own) CHECK(b.IsCursorShown());   // no display: nothing hid it (sdl2 needs video to answer)
+    if (b.Kind() == BackendKind::Own) CHECK(b.IsCursorShown());   // no display: nothing hid it
     CHECK(b.ModState() == 0);   // no keys held
 }
 
@@ -280,8 +280,8 @@ int main(int argc, char** argv) {
     }
     RUN_SUITE("platform");
     BackendKind k{};
-    CHECK(ParseBackendName("sdl2", k) && k == BackendKind::Sdl2);
     CHECK(ParseBackendName("own", k) && k == BackendKind::Own);
+    CHECK(!ParseBackendName("sdl2", k));   // the sdl2 backend was deleted on 2026-11-27
     CHECK(!ParseBackendName("x11", k) && !ParseBackendName(nullptr, k));
     CHECK(std::strcmp(BackendName(BackendKind::Own), "own") == 0);
     TestKeyNumbering();
@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
     setenv("OKAY_ALSA_DEVICE", "null", 1);
 
     int ran = 0;
-    for (BackendKind kind : {BackendKind::Sdl2, BackendKind::Own}) {
+    for (BackendKind kind : {BackendKind::Own}) {
         std::cout << "[backend] " << BackendName(kind) << (IsCompiledIn(kind) ? "" : " (not compiled in)") << "\n";
         Backend* b = Get(kind);
         CHECK((b != nullptr) == IsCompiledIn(kind));

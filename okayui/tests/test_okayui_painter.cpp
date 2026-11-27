@@ -68,8 +68,6 @@ void Suite(plat::Painter& p, const char* label, bool software) {
     int w = 0, h = 0;
     p.OutputSize(&w, &h);
     CHECK(w == 64 && h == 48);
-    const bool wasNative = p.NativeRenderer() != nullptr;
-    CHECK(!wasNative);                                    // no third-party renderer behind it
     CHECK(p.Kind() == plat::PainterKind::Software);
 
     {   // clear, flat rects, null rect = the whole target

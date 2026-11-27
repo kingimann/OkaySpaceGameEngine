@@ -1006,7 +1006,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
             "#   docker build -t " + slug + "-server .\n"
             "#   docker run -d -p " + portS + ":" + portS + "/udp --restart unless-stopped " + slug + "-server\n"
             "FROM ubuntu:22.04\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends libsdl2-2.0-0 libsodium23 ca-certificates \\\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends libsodium23 ca-certificates \\\n"
             "    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home okayspace\n"
             "WORKDIR /srv/game\n"
             "COPY . .\n"

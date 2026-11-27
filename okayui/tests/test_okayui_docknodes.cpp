@@ -130,6 +130,55 @@ int main() {
         CHECK(UI::TabBarFindTabByID(l2->TabBar, l2->TabBar->SelectedTabId) == &l2->TabBar->Tabs[0] && UI::TabBarFindTabByID(l2->TabBar, 12345u) == nullptr && UI::TabBarFindTabByID(nullptr, 1u) == nullptr);
     }
 
+    // ---------------- the dock space inside a host window (the editor's ##OkayDockHost) ----------------
+    // The editor draws its DockSpace inside a full-screen host window with a menu bar, and opens the tab menu when the right button goes down
+    // over a tab while g.HoveredWindow is the tab's node->HostWindow. The host window itself is the topmost window under a strip, so the strip
+    // must still report the dock host (owner, 2026-11-27: "I can't right click on tabs").
+    {
+        Reset();
+        const Ids ids = Build(UI::Vec2{1000, 600});
+        Sim s(1000, 640);
+        auto ui = [&] {
+            UI::SetNextWindowPos(UI::Vec2{0, 0}); UI::SetNextWindowSize(UI::Vec2{1000, 640});
+            UI::Begin("##OkayDockHost", nullptr, UI::Window_NoTitleBar | UI::Window_NoMove | UI::Window_NoResize | UI::Window_NoBringToFrontOnFocus | UI::Window_MenuBar);
+            UI::DockSpace(kSpace, UI::Vec2{0, 0}, 0);
+            UI::End();
+            for (const char* n : kNames) { UI::DockBegin(n); UI::Text("content"); UI::DockEnd(); }
+        };
+        s.Frames(3, ui);
+        DockNodeRef* right = UI::DockBuilderGetNode(ids.right);
+        WindowRef* insp = UI::FindWindowRefByName("Inspector");
+        CHECK(right && insp && right->TabBar && insp->DC.DockTabItemRect.Max.x > insp->DC.DockTabItemRect.Min.x);
+        if (right && insp) {
+            const UI::ImRect& r = insp->DC.DockTabItemRect;
+            s.Move((r.Min.x + r.Max.x) * 0.5f, (r.Min.y + r.Max.y) * 0.5f);
+            s.Frames(2, ui);
+            UI::Context* g = UI::RefreshContext();
+            CHECK(g->HoveredWindow != nullptr && g->HoveredWindow == right->HostWindow);   // the strip of a dock space in a host window: the dock host
+            // a tab that is not the chosen one (Stats, behind Inspector) has its rectangle too, and its strip is the dock host's
+            WindowRef* stats = UI::FindWindowRefByName("Stats");
+            CHECK(stats && stats->DockNode == right && stats->DC.DockTabItemRect.Max.x > stats->DC.DockTabItemRect.Min.x + 4.0f);
+            if (stats) {
+                const UI::ImRect& q = stats->DC.DockTabItemRect;
+                s.Move((q.Min.x + q.Max.x) * 0.5f, (q.Min.y + q.Max.y) * 0.5f);
+                s.Frames(2, ui);
+                g = UI::RefreshContext();
+                CHECK(g->HoveredWindow == right->HostWindow);
+                // the editor's tab menu finds the right-clicked window again by its id and by its name: a docked tab that was never the
+                // chosen one (its Begin never ran) is found too, as in Dear ImGui (the menu closed at once for such a tab)
+                const UI::WindowInfo byName = UI::FindWindowByName("Stats"), byId = UI::FindWindowByID(stats->ID);
+                CHECK(byName.found && byName.docked && static_cast<WindowRef*>(byName) == stats);
+                CHECK(byId.found && static_cast<WindowRef*>(byId) == stats && std::string(byId.Name) == "Stats");
+                CHECK(!UI::FindWindowByName("Nope").found);
+            }
+            // over a docked panel's body the panel itself is hovered
+            s.Move(right->Pos.x + right->Size.x * 0.5f, right->Pos.y + right->Size.y * 0.5f);
+            s.Frames(2, ui);
+            g = UI::RefreshContext();
+            CHECK(g->HoveredWindow == insp);
+        }
+    }
+
     // ---------------- the current window's node ----------------
     {
         Reset();

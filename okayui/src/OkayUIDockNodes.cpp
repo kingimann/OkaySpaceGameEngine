@@ -54,6 +54,7 @@ struct Table {
     DockNodeRef planNodes[4]; int planNext = 0;
     // an amended strip
     DockNodeRef* amend = nullptr; int amendLayout = 0; bool amendBegan = false;
+    unsigned spaceOwner = 0; int spaceOwnerFrame = -1;   // the window DockSpace(id, ...) was called in (the editor's ##OkayDockHost), and when
     Table() { wins.resize(kMaxWin); winLastFlags.assign(kMaxWin, 0); winLastDockId.assign(kMaxWin, 0); nodes.resize(kMaxNode); bars.resize(kMaxNode); nodeSizeRefHanded.assign(kMaxNode, Vec2{}); nodeFirstWinHanded.assign(kMaxNode, 0u); nodeLayoutId.assign(kMaxNode, 0); }
 };
 Table& T() { static Table t; return t; }
@@ -334,6 +335,11 @@ DockId DockSpace(DockId id, Vec2 size, int flags) {
     float w = size.x > 0.0f ? size.x : av.x + size.x, h = size.y > 0.0f ? size.y : av.y + size.y;
     w = std::isfinite(w) ? std::max(1.0f, w) : 1.0f; h = std::isfinite(h) ? std::max(1.0f, h) : 1.0f;
     SetDockSpaceId(id);
+    {   // the window the dock space sits in: over the dock area it is not the hovered window, the dock host is (FillContextFromWindowTable)
+        const CurrentWindow cw = GetCurrentWindow();
+        Table& t = T();
+        t.spaceOwner = cw.valid ? cw.id : 0u; t.spaceOwnerFrame = GetFrameCount();
+    }
     Dummy(Vec2{w, h});
     if (flags & DockNode_NoTabBar) {   // the strips of the whole tree
         DockLayout& L = GetDockLayout();
@@ -350,6 +356,12 @@ void FillContextFromWindowTable(Context& c, unsigned hoveredId, unsigned activeI
     Table& t = T();
     auto byId = [&](unsigned id) -> WindowRef* { if (!id) return nullptr; for (int i = 0; i < g_winCount; ++i) if (t.wins[(size_t)i].ID == id) return &t.wins[(size_t)i]; return nullptr; };
     c.HoveredWindow = byId(hoveredId);
+    // The window the dock space was drawn in (a full-window host, as the editor's) is the topmost window under the strips and the empty
+    // nodes: there the dock host is hovered, as in Dear ImGui (the editor's tab menu checks g.HoveredWindow == node->HostWindow).
+    if (c.HoveredWindow && t.spaceOwner != 0 && c.HoveredWindow->ID == t.spaceOwner && t.spaceOwnerFrame + 1 >= GetFrameCount() && t.host.Size.x > 0.0f) {
+        const Vec2 m = GetMousePos();
+        if (m.x >= t.host.Pos.x && m.y >= t.host.Pos.y && m.x < t.host.Pos.x + t.host.Size.x && m.y < t.host.Pos.y + t.host.Size.y) c.HoveredWindow = nullptr;
+    }
     if (!c.HoveredWindow && t.host.Size.x > 0.0f && !GetFrameInput().blocked) {   // over the dock space (its strips and empty nodes): the host
         const Vec2 m = GetMousePos();
         if (m.x >= t.host.Pos.x && m.y >= t.host.Pos.y && m.x < t.host.Pos.x + t.host.Size.x && m.y < t.host.Pos.y + t.host.Size.y) c.HoveredWindow = &t.host;

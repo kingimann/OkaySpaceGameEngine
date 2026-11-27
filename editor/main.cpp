@@ -5047,6 +5047,9 @@ static void DrawPanelTabMenu() {
         if (ImGui::MenuItem("Close Other Tabs", nullptr, false, others > 0))
             for (int i = 0; i < n; ++i)
                 if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) *defs[i].open = false;
+        if (ImGui::MenuItem("Close All Tabs in Group", nullptr, false, others > 0 || (self && self->open)))
+            for (int i = 0; i < n; ++i)
+                if (defs[i].open && (&defs[i] == self || dockedHere(defs[i]))) *defs[i].open = false;
     }
     if (ImGui::MenuItem("Float (undock)")) ImGui::DockContextQueueUndockWindow(&g, w);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make this panel its own window. Drag it by its title bar to move it, to the edge of another\npanel to dock it again, or outside the editor to put it on another screen.");

@@ -196,6 +196,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 }
                 for (const Node& kid : node.kids) walk(kid);
             };
+            walk(fn.body);
             // A loop runs its condition and body again ([stmt.iter]): a variable named anywhere in a loop is live for
             // the whole loop, from before its first statement to after its last, or the next pass reads a register
             // that a later variable was given (Round 34: `for (int i = 0; i < n; i++) { short h = p[i]; ... }` gave h

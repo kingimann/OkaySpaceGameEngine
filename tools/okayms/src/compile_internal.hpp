@@ -301,6 +301,8 @@ struct StructDef {
     int local_in = -1;
     // A class defined in a function body (Round 30): its member functions name the function's static locals.
     bool local_fn = false;
+    // A local class: the locals of the function body it was defined in (Round 34; only compared, never read).
+    const void* local_body = nullptr;
     // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
     // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
     // body are read through it.

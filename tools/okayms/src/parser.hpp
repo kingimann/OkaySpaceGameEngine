@@ -2012,6 +2012,18 @@ struct Parser {
                 ++count;
             }
         if (count <= 1) return first;
+        // A local class of the function being read, or of a function around the lambda being read ([class.local],
+        // [basic.lookup.unqual] 1; Round 34: ShadowSetup.hpp's `struct Cand` named in a sort's lambda was Mesh.hpp's
+        // `struct Cand` of another function, "unknown field key"). The latest defined wins (an earlier function's body
+        // may have had the same locals vector).
+        if (cur_locals != nullptr)
+            for (size_t i = structs.size(); i-- > 0;) {
+                if (structs[i].name != name || !structs[i].local_fn || structs[i].local_body == nullptr) continue;
+                bool mine = structs[i].local_body == cur_locals;
+                for (const std::vector<Local>* outer : lam_outer_locals_)
+                    if (structs[i].local_body == outer) mine = true;
+                if (mine) return static_cast<int>(i);
+            }
         // Several classes of this name ([basic.lookup.unqual], [class.nest]): the one nested in the class being read, or
         // in the class whose member function is being compiled, or in a class around those (innermost first); then
         // one at namespace scope; else the first.
@@ -2265,6 +2277,10 @@ struct Parser {
             }
             next();
             if (!expect(TRParen, "')'")) return false;
+            // `__declspec(dllimport) const GLubyte* f(...)`: a cv-qualifier after the declspec (Round 34, our own
+            // <GL/gl.h>); dropped like a leading const (parse_type).
+            while (accept(TConst)) {
+            }
         }
         bool saw = false;
         bool had_typename = false;
@@ -5138,7 +5154,10 @@ struct Parser {
         }
         def.ns = current_ns;
         if (def.parent < 0 && pending_sym.empty() && cur_class >= 0 && cur_locals != nullptr) def.local_in = cur_class;
-        if (def.parent < 0 && pending_sym.empty() && cur_locals != nullptr) def.local_fn = true;
+        if (def.parent < 0 && pending_sym.empty() && cur_locals != nullptr) {
+            def.local_fn = true;
+            def.local_body = cur_locals;
+        }
         if (pending_sym.empty() && def.parent < 0 && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0 &&
             !ns_mangled.empty())
             for (const StructDef& other : structs)
@@ -5150,6 +5169,14 @@ struct Parser {
                     def.ns_dup = true;
                     break;
                 }
+        if (def.local_fn && pending_sym.empty() && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0) {
+            // A local class ([class.local]) is its own class in each function: `struct Cand` of two functions are two
+            // classes, so each has a decoration of its own (Round 34; before, std::vector<Cand> of the second function
+            // was the first one's instance, with the other element size: silent wrong data). Local classes have no
+            // linkage, so the form is ours: Name@__l<n>.
+            def.sym_name = name + "@__l" + std::to_string(local_class_count_++);
+            def.ns_dup = true;
+        }
         pending_sym.clear();
         // The instance itself is named by its template (Box<int> has the constructor Box); a class nested in it by its own name.
         const std::string ctor_name = inst_base_name.empty() || def.sym_name.empty() ? name : inst_base_name;
@@ -6835,6 +6862,8 @@ struct Parser {
         cur_special = saved_special;
         cur_ret_ref = saved_ret_ref;
         cur_locals = saved_locals;  // a template instance is parsed in the middle of another function
+        for (StructDef& sd : structs)  // this body's local classes are out of scope ([class.local])
+            if (sd.local_body == &locals) sd.local_body = nullptr;
         current_fn = saved_fn;
         scope_depth = saved_depth;
         scope_parent = saved_parent;
@@ -7069,6 +7098,7 @@ struct Parser {
     std::map<std::string, VarTmpl> var_templates{};
     // The local variables of the functions around the lambda bodies being read (innermost last), for decltype.
     std::vector<const std::vector<Local>*> lam_outer_locals_{};
+    int local_class_count_ = 0;  // local classes decorated so far (Name@__l<n>)
     // name<args> for a variable template: the initializer read again with the parameters bound to args, as a value
     // (okay-ms's variable templates are constants: the address of one cannot be taken).
     bool parse_var_template_use(const VarTmpl& vt, Node* out) {

@@ -11,7 +11,7 @@
 // "press Enter"), --ci (--auto on a build machine: OpenGL, the software frame, audio playback and capture
 // that the machine cannot do are NOT TESTED instead of FAIL, with the reason; windows, the event pump,
 // the clipboard, timers and a missing glGetString still fail for real),
-// --no-audio, --no-pause, --sdl2 (run the same checks on the SDL2 backend to compare).
+// --no-audio, --no-pause.
 // Exit code: 0 nothing failed, 1 something failed, 2 the backend could not start.
 #include "SelfTestLogic.hpp"
 #include "okay/Platform/Platform.hpp"
@@ -137,7 +137,7 @@ void CheckTimers(Backend* be) {
 
 int main(int argc, char** argv) {
     double seconds = 20;
-    bool autoRun = false, noAudio = false, pause = false, useSdl = false;
+    bool autoRun = false, noAudio = false, pause = false;
 #ifdef _WIN32
     pause = true;
 #endif
@@ -146,13 +146,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--ci")) { autoRun = true; g_ci = true; seconds = 2; pause = false; }
         else if (!std::strcmp(argv[i], "--no-audio")) noAudio = true;
         else if (!std::strcmp(argv[i], "--no-pause")) pause = false;
-        else if (!std::strcmp(argv[i], "--sdl2")) useSdl = true;
         else if (!std::strcmp(argv[i], "--seconds") && i + 1 < argc) { seconds = std::atof(argv[++i]); if (seconds < 1) seconds = 1; }
-        else { std::printf("usage: okay-platform-selftest [--seconds N] [--auto] [--ci] [--no-audio] [--no-pause] [--sdl2]\n"); return 2; }
+        else { std::printf("usage: okay-platform-selftest [--seconds N] [--auto] [--ci] [--no-audio] [--no-pause]\n"); return 2; }
     }
 
-    Backend* be = Get(useSdl ? BackendKind::Sdl2 : BackendKind::Own);
-    if (!be) { std::printf("This build has no %s backend.\n", useSdl ? "sdl2" : "own"); return 2; }
+    Backend* be = Get(BackendKind::Own);
+    if (!be) { std::printf("This build has no own backend.\n"); return 2; }
     std::printf("okay-platform-selftest, backend: %s\n", be->Name());
     if (!autoRun)
         std::printf("A window opens for %.0f seconds. In it: move the mouse, click, scroll, type, press keys, plug in a pad,\n"

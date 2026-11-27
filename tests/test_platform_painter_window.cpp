@@ -77,12 +77,6 @@ int main() {
     CHECK(win->Kind() == BackendKind::Own);
     Pump(*b, 300);
 
-    // the painters refuse windows they cannot draw on
-    {
-        std::string err;
-        CHECK(CreateSdl2Painter(*win, PainterDesc(), &err) == nullptr && !err.empty());
-        std::cout << "  sdl2 painter on an own window: refused (" << err << ")\n";
-    }
     PainterDesc pd; pd.vsync = false;
     std::string err;
     std::unique_ptr<Painter> p = OkayUI::soft::CreateWindowPainter(*win, pd, &err);

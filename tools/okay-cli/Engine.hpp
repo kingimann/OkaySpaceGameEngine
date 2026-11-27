@@ -23,7 +23,6 @@ struct BuildOptions {
     bool run = false;                ///< start the editor or launcher afterwards
     std::string dir = "build-local"; ///< the build folder (relative to the source checkout unless absolute)
     std::string source;              ///< the engine checkout (--source); "" = this folder or a parent
-    std::string sdl2;                ///< the SDL2 development files (--sdl2); "" = look in the usual places
 };
 /// Read `okay engine build` arguments (after "build"). False with a plain reason in `error`.
 bool ParseBuildArgs(const std::vector<std::string>& args, BuildOptions& o, std::string& error);
@@ -47,14 +46,6 @@ struct Tools {
 /// Look for the tools. `vswhere` is the full path of vswhere.exe to ask ("" = the standard place on Windows).
 Tools FindTools(const std::string& vswhere = "");
 
-/// A folder CMake's find_package(SDL2) finds when it is put in CMAKE_PREFIX_PATH: it has lib/cmake/SDL2/ or cmake/
-/// with SDL2Config.cmake or sdl2-config.cmake. For an unpacked SDL2 download the right sub-folder is returned
-/// (SDL2-2.x.y/x86_64-w64-mingw32 for MinGW, SDL2-2.x.y itself for Visual Studio). "" when `dir` has none.
-std::string Sdl2PrefixIn(const std::string& dir, bool mingw);
-/// SDL2: `given` when set, else the usual places (SDL2_DIR / SDL2_ROOT, <source>/third_party, <source>/external, next to
-/// the checkout, C:/SDL2, C:/libs, C:/dev, MSYS2's mingw64; each also with an SDL2-<version> folder inside). "" = none.
-std::string FindSdl2(const std::string& given, const std::string& source, bool mingw, const std::vector<std::string>& moreRoots = {});
-
 /// Everything one build needs, worked out before anything runs.
 struct Plan {
     std::string source, buildDir;     ///< absolute
@@ -63,12 +54,11 @@ struct Plan {
     bool multiConfig = false;         ///< Visual Studio: the config is chosen at build time, not CMAKE_BUILD_TYPE
     bool windows = false, mingw = false;
     std::string makeProgram, cCompiler, cxxCompiler;   ///< full paths given to CMake ("" = CMake finds them)
-    std::string sdl2;                 ///< CMAKE_PREFIX_PATH ("" = none)
     bool editor = false, launcher = false, player = false, sandbox = false;
     int jobs = 2;
 };
 /// Make the plan from the options and the tools found. False with a plain reason (what is missing and where to get it).
-bool MakePlan(const BuildOptions& o, const Tools& t, const std::string& source, const std::string& sdl2, Plan& plan,
+bool MakePlan(const BuildOptions& o, const Tools& t, const std::string& source, Plan& plan,
               std::string& error);
 /// cmake's arguments (after the program name) to configure, as build-local.ps1 passes them, plus the full tool paths.
 std::vector<std::string> ConfigureArgs(const Plan& p);
@@ -78,7 +68,7 @@ std::vector<std::string> BuildArgs(const Plan& p);
 std::string BinDir(const Plan& p);
 
 /// What `okay engine doctor` says: every tool found or missing, in plain words with where to get it.
-std::string DoctorText(const Tools& t, const std::string& source, const std::string& sdl2, int* problems);
+std::string DoctorText(const Tools& t, const std::string& source, int* problems);
 
 /// `inner` is the folder `outer` or inside it; `ignoreCase` compares as Windows does ("C:/Games" is "c:/games").
 bool PathWithin(const std::string& inner, const std::string& outer, bool ignoreCase);

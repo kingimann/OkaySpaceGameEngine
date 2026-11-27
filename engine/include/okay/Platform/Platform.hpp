@@ -43,8 +43,8 @@ BackendKind DefaultKind();
 bool BackendsShutDown();
 
 // ---- Keys ------------------------------------------------------------------
-// Physical keys, numbered with the USB HID usage ids (the same numbers as SDL
-// scancodes). Only the keys the engine uses have names; others come through as
+// Physical keys, numbered with the USB HID usage ids (HID Usage Tables, keyboard
+// page). Only the keys the engine uses have names; others come through as
 // their raw number (< kKeyCount) so nothing is lost.
 enum class Key : uint16_t {
     Unknown = 0,

@@ -147,6 +147,13 @@ Rgba Mix(Rgba a, Rgba b, float t);
 Rgba WithAlpha(Rgba c, unsigned char a);
 /// WCAG 2.x contrast ratio of two opaque colours (1..21).
 float Contrast(Rgba a, Rgba b);
+/// A Theme colour (4 bytes) as a packed Color32 with the alpha given; `a` blended toward `b` by `t` (for screens that keep packed
+/// colours of their own and follow the design: the Script Editor, the browser chrome, the editor-panel screens).
+inline Color32 Packed(const unsigned char* c, unsigned alpha = 255u) { return RGBA(c[0], c[1], c[2], alpha); }
+inline Color32 PackedMix(const unsigned char* a, const unsigned char* b, float t, unsigned alpha = 255u) {
+    auto m = [&](int i) { return (unsigned)(a[i] + (b[i] - a[i]) * t + 0.5f); };
+    return RGBA(m(0), m(1), m(2), alpha);
+}
 
 } // namespace design
 } // namespace OkayUI

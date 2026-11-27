@@ -349,8 +349,8 @@ Tokens Resolve(const Options& in) {
     // Pressed: a step toward the deepest surface (a control pushed in); where that is too close to see (light schemes, flat black or
     // white controls) a stronger ink tint instead.
     t.controlPressed = Mix(p.control, p.deep, 0.45f);
-    auto far = [](Rgba a, Rgba b) { return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) > 15; };
-    if (!far(t.controlPressed, p.control)) t.controlPressed = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.14f : 0.18f);
+    auto apart = [](Rgba a, Rgba b) { return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) > 15; };
+    if (!apart(t.controlPressed, p.control)) t.controlPressed = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.14f : 0.18f);
     t.accentHover = Mix(p.accent, p.light ? black : white, 0.12f);
     t.accentPressed = Mix(p.accent, black, 0.15f);
     t.selection = WithAlpha(p.accent, 102);

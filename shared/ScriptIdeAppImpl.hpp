@@ -6,6 +6,7 @@
 //
 // Written from general editor behaviour and the OkayUI / OkayUI::CodeEdit interfaces; no code, names, icons or look from any other
 // editor (rule 19a).
+#include "okay/UI/OkayUIDesign.hpp"
 #include "ScriptIdeApp.hpp"
 #include "okay/UI/OkayUI.hpp"
 
@@ -38,9 +39,8 @@ inline UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = R
                    kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
 inline void FollowDesignColours() {
     const UI::Theme& t = UI::Style();
-    auto c = [](const unsigned char* v) { return Rgb(v[0], v[1], v[2]); };
-    auto mix = [](const unsigned char* a, const unsigned char* b, float k) {
-        return Rgb((int)(a[0] + (b[0] - a[0]) * k + 0.5f), (int)(a[1] + (b[1] - a[1]) * k + 0.5f), (int)(a[2] + (b[2] - a[2]) * k + 0.5f)); };
+    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
     kBack = c(t.panel); kPanel = c(t.raised); kStrip = c(t.track); kLine = mix(t.panel, t.text, 0.14f);
     kText = c(t.text); kDim = c(t.textDim); kAccent = c(t.accent); kTabOn = c(t.bg); kHover = c(t.bgHover);
     kError = c(t.danger); kWarn = c(t.warning); kAdd = c(t.success);

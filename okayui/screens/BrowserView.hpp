@@ -12,6 +12,7 @@
 // with a ring, and text selection (PageKeys).
 #include "okay/Browser/Browser.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 
 #include <functional>
 #include <string>
@@ -160,9 +161,8 @@ inline OkayUI::Color32 kDivider = Rgb(62, 67, 80);
 /// The chrome follows the design in force (okay/UI/OkayUIDesign.hpp): called at the start of each browser frame.
 inline void FollowDesign() {
     const OkayUI::Theme& t = OkayUI::Style();
-    auto c = [](const unsigned char* v) { return Rgb(v[0], v[1], v[2]); };
-    auto mix = [](const unsigned char* a, const unsigned char* b, float k) {
-        return Rgb((int)(a[0] + (b[0] - a[0]) * k + 0.5f), (int)(a[1] + (b[1] - a[1]) * k + 0.5f), (int)(a[2] + (b[2] - a[2]) * k + 0.5f)); };
+    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
     kStrip = c(t.track); kToolbar = c(t.raised); kTabHover = mix(t.track, t.raised, 0.5f); kField = c(t.field); kFieldHover = c(t.bgHover);
     kHover = c(t.bgHover); kPressed = c(t.bgDown); kText = c(t.text); kTextDim = c(t.textDim); kIconOff = c(t.textFaint);
     kAccent = c(t.accent); kWarn = c(t.danger); kDivider = mix(t.raised, t.text, 0.16f);

@@ -2,6 +2,7 @@
 // and sections drawn with OkayUI. Written from what the
 // editor's own Dear ImGui panels show and do (editor/EditorPanelViews.cpp draws the same models) and from Dear ImGui's documented
 // behaviour where the look had to match; no code from any other project.
+#include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIEditorPanels.hpp"
 
 #include <algorithm>
@@ -95,9 +96,7 @@ UI::Color32 kAccentLit = UI::RGBA(115, 159, 218);         // Mix(accent, white, 
 UI::Color32 kCardBg = UI::RGBA(41, 43, 51);               // the object header card: the raised surface
 void FollowDesign() {
     const UI::Theme& t = UI::Style();
-    auto mix = [](const unsigned char* a, const unsigned char* b, float k, int alpha = 255) {
-        auto m = [&](int i) { return (unsigned)std::lround(a[i] + (b[i] - a[i]) * k); };
-        return UI::RGBA(m(0), m(1), m(2), (unsigned)alpha); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
     const unsigned char white[4] = {255, 255, 255, 255}, black[4] = {0, 0, 0, 255};
     const unsigned char* ink = t.ink;
     kPopupBg = UI::RGBA(t.overlay[0], t.overlay[1], t.overlay[2], 255);

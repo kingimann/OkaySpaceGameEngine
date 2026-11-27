@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 75 headers, 1134 names.
+Back to the [code index](../code_index.md). 76 headers, 1145 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -172,6 +172,15 @@ Back to the [code index](../code_index.md). 75 headers, 1134 names.
 - `SpawnHelperProcess` function, line 692
 - `StartHelper` function, line 768: Starts the helper and returns. The caller must exit so the wait can finish.
 - `DispatchHelper` function, line 787: Run as the first thing in main. Returns -1 when this is a normal launch.
+
+## `shared/AppearanceUI.hpp`
+
+- `Commit` function, line 22: Make 'o' the live choice and save it (when the program follows the per-user file).
+- `DrawPreview` function, line 26: A small picture of a design at 'p' (w x h): its page, header rail, side list, a card with text lines, an accent button,
+- `DesignPicker` function, line 74: The design cards. Returns true when the person picked another design (already applied and saved).
+- `AccentChoice` struct, line 106: The accents offered besides the design's own (our own picks; one row of swatches).
+- `AccentChoices` function, line 107
+- `Customization` function, line 118: The person's options. 'showScale': the UI scale slider (the launcher; the editor sizes itself to the screen and multiplies).
 
 ## `shared/BrowserApp.hpp`
 
@@ -799,39 +808,43 @@ Back to the [code index](../code_index.md). 75 headers, 1134 names.
 
 ## `shared/OkayTheme.hpp`
 
-- `Palette` struct, line 20: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
-- `SlatePalette` function, line 30
-- `MidnightPalette` function, line 41: Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
-- `LightPalette` function, line 52: Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
-- `Current` function, line 62
-- `SetPalette` function, line 73
-- `Ink` function, line 86: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
-- `InkV` function, line 91
-- `Shade` function, line 93: A shadow or a dim layer (black in every theme, lighter on Light).
-- `TextU32` function, line 94
-- `TextDimU32` function, line 95
-- `SuccessU32` function, line 96
-- `DangerU32` function, line 97
-- `WarningU32` function, line 98
-- `InfoU32` function, line 99
-- `OnColorU32` function, line 100
-- `SurfaceU32` function, line 101
-- `SuccessFill` function, line 103: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
-- `DangerFill` function, line 104
-- `WarningFill` function, line 105
-- `SuccessFillU32` function, line 106
-- `DangerFillU32` function, line 107
-- `WarningFillU32` function, line 108
-- `Luminance` function, line 111: WCAG contrast ratio of two opaque colours (1..21).
-- `Contrast` function, line 115
-- `Mix` function, line 120
-- `WithAlpha` function, line 123
-- `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
-- `OnFillSoft` function, line 132: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
-- `AccentText` function, line 139: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
-- `ApplySlateMetrics` function, line 146: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplyColors` function, line 155: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
-- `ApplySlateColors` function, line 221: The Slate colours (the editor and the launcher's default theme).
+- `Palette` struct, line 22: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
+- `PaletteFrom` function, line 34
+- `DesignPalette` function, line 44: A built-in design's palette for one scheme (Auto: the design's own first choice).
+- `SlatePalette` function, line 49: The three palettes the launcher offered before designs (frozen names): Slate, Midnight, and Slate's light scheme.
+- `MidnightPalette` function, line 50
+- `LightPalette` function, line 51
+- `Current` function, line 52
+- `SetPalette` function, line 63
+- `Ink` function, line 76: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
+- `InkV` function, line 81
+- `Shade` function, line 83: A shadow or a dim layer (black in every theme, lighter on Light).
+- `TextU32` function, line 84
+- `TextDimU32` function, line 85
+- `SuccessU32` function, line 86
+- `DangerU32` function, line 87
+- `WarningU32` function, line 88
+- `InfoU32` function, line 89
+- `OnColorU32` function, line 90
+- `SurfaceU32` function, line 91
+- `SuccessFill` function, line 93: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
+- `DangerFill` function, line 94
+- `WarningFill` function, line 95
+- `SuccessFillU32` function, line 96
+- `DangerFillU32` function, line 97
+- `WarningFillU32` function, line 98
+- `Luminance` function, line 101: WCAG contrast ratio of two opaque colours (1..21).
+- `Contrast` function, line 105
+- `Mix` function, line 110
+- `WithAlpha` function, line 113
+- `ReadableOn` function, line 115: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
+- `OnFillSoft` function, line 122: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+- `AccentText` function, line 129: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplyDesignMetrics` function, line 136: Rounding + borders from the design (spacing/padding stay per-app; ApplyDensity scales them). Call before ScaleAllSizes.
+- `ApplyDensity` function, line 146: The person's density (Compact / Comfortable / Spacious): paddings and gaps times the design's spacing. Call before ScaleAllSizes.
+- `DesignAccent` function, line 154: The design's accent as an ImVec4.
+- `ApplyColors` function, line 157: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplyDesign` function, line 225: Everything a Dear ImGui host takes from the design in force: the live palette (SetPalette), rounding and borders, the
 
 ## `shared/OkayThreads.hpp`
 
@@ -877,22 +890,22 @@ Back to the [code index](../code_index.md). 75 headers, 1134 names.
 ## `shared/OkayUIFrameLoop.hpp`
 
 - `FrameLoop` class, line 37
-- `ProgramHooks` struct, line 70: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
-- `ProgramDesc` struct, line 77
-- `AppHooks` function, line 85: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
-- `RunProgram` function, line 92: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
+- `ProgramHooks` struct, line 71: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
+- `ProgramDesc` struct, line 78
+- `AppHooks` function, line 86: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
+- `RunProgram` function, line 93: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
 
 ## `shared/OkayUIHost.hpp`
 
-- `HostKeys` enum, line 31: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
-- `InputCollector` class, line 34: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 315: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 370: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `HostedKeys` function, line 381: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
-- `WantsKeyboard` function, line 388: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 412: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 439: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 519: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostKeys` enum, line 32: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+- `InputCollector` class, line 35: Collects what OkayUI needs from SDL events between two frames.
+- `Region` class, line 316: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 371: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 382: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 389: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 413: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 440: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 520: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -1188,14 +1201,15 @@ Back to the [code index](../code_index.md). 75 headers, 1134 names.
 
 ## `shared/ScriptIdeAppImpl.hpp`
 
-- `EngineLanguageOf` function, line 30
-- `Rgb` function, line 33
-- `FileText` function, line 39
-- `WriteText` function, line 54
-- `Fit` function, line 68
-- `TimeText` function, line 75
-- `Normal` function, line 82
-- `ScriptIdeApp` struct, line 93
+- `EngineLanguageOf` function, line 31
+- `Rgb` function, line 34
+- `FollowDesignColours` function, line 40
+- `FileText` function, line 49
+- `WriteText` function, line 64
+- `Fit` function, line 78
+- `TimeText` function, line 85
+- `Normal` function, line 92
+- `ScriptIdeApp` struct, line 103
 
 ## `shared/SelfUpdate.hpp`
 

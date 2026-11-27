@@ -320,7 +320,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a thumbnail shows an old version of a texture | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
 | a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
-| a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
+| a toast is the wrong colour | [40.2](40-okayui-library.md#402-designs-theme-and-fonts) Designs, theme and fonts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
@@ -350,8 +350,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a window cannot be dragged in the demo | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | a wire is refused | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | a workflow run is cancelled | [41.8](41-build-tools-infra.md#418-github-workflows-and-templates) GitHub workflows and templates |
-| accent colours differ from the launcher | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
-| accented characters or CJK show as boxes | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
+| accent colours differ from the launcher | [40.2](40-okayui-library.md#402-designs-theme-and-fonts) Designs, theme and fonts |
+| accented characters or CJK show as boxes | [40.2](40-okayui-library.md#402-designs-theme-and-fonts) Designs, theme and fonts |
 | account calls fail behind a proxy | [37.6](37-platform-windowing.md#376-native-http-and-the-game-to-launcher-link) Native HTTP and the game-to-launcher link |
 | achievement doesn't unlock or show | [17.7](17-launcher-platform.md#177-profiles-badges-achievements) Profiles, badges, achievements |
 | achievements are not shared with the launcher | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
@@ -970,7 +970,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | text is blurry or too small | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | text is not drawn | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
 | text looks like the pixel font | [42.7](42-examples-samples.md#427-starter-assets) Starter assets |
-| text looks pixelated (classic look) when it should be smooth | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
+| text looks pixelated (classic look) when it should be smooth | [40.2](40-okayui-library.md#402-designs-theme-and-fonts) Designs, theme and fonts |
 | text overflows the box | [10.4](10-story-cinematics.md#104-story-ui-dialogue-box-quest-tracker-and-journal) Story UI: dialogue box, quest tracker and journal |
 | text sits in the wrong corner | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | text sits under the notch | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |

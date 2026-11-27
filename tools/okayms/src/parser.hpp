@@ -650,6 +650,44 @@ struct Parser {
                     i = j;
                     continue;
                 }
+                {
+                    // using Base::Base; using ns::Base::Base; using Base<T>::Base; : a using-declaration that names the
+                    // constructors of a base inherits them ([namespace.udecl] 3, [class.inhctor.init]; okayscript's
+                    // `using ScriptError::ScriptError;`, Round 34). It becomes `__inherit_ctors Base ;` for the class.
+                    size_t j = i + 1;
+                    std::string prev;
+                    std::string last;
+                    bool ok = true;
+                    while (j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd) {
+                        if (tokens[j].kind == TIdent) {
+                            prev = last;
+                            last = tokens[j].text;
+                        } else if (tokens[j].kind == TLt) {
+                            int angle = 0;  // the template arguments of Base<T>: stepped over
+                            for (; j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd; ++j) {
+                                if (tokens[j].kind == TLt) ++angle;
+                                else if (tokens[j].kind == TGt && --angle == 0) break;
+                            }
+                            if (j >= tokens.size() || tokens[j].kind != TGt) ok = false;
+                        } else if (tokens[j].kind != TColonColon) {
+                            ok = false;
+                        }
+                        if (!ok) break;
+                        ++j;
+                    }
+                    if (ok && j < tokens.size() && tokens[j].kind == TSemi && !last.empty() && last == prev &&
+                        tokens[j - 2].kind == TColonColon) {
+                        Token mark = t;
+                        mark.kind = TIdent;
+                        mark.text = "__inherit_ctors";
+                        out.push_back(mark);
+                        Token base_name = tokens[j - 1];
+                        out.push_back(base_name);
+                        out.push_back(tokens[j]);
+                        i = j;
+                        continue;
+                    }
+                }
                 if (tokens[i + 1].kind == TIdent && i + 3 < tokens.size() && tokens[i + 2].kind == TColonColon) {
                     // using a::b::name; ([namespace.udecl]): read as a directive for the namespace a::b, which is a
                     // little wider than the declaration (every function of it can be called by its bare name).
@@ -965,6 +1003,7 @@ struct Parser {
     int cur_special = 0;
     bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
+    int cur_inherit_sid = -1;  // the base whose constructor the implicit constructor being made inherits (Round 34)
     int rv_count = 0;
     // The adjustor thunks the secondary tables name (Round 29): made as functions at the end of the file.
     struct Thunk {
@@ -1126,7 +1165,7 @@ struct Parser {
         const StructDef& d = structs[static_cast<size_t>(sid)];
         if (d.poly || d.base >= 0 || class_needs_dtor(d)) return false;
         for (const Method& m : d.methods)
-            if (m.name == "<ctor>" && !m.implicit) return false;
+            if (m.name == "<ctor>" && (!m.implicit || m.inherit_sid >= 0)) return false;
         *out = Node{};
         out->kind = Node::Block;
         out->text = "init";
@@ -1177,7 +1216,7 @@ struct Parser {
         const StructDef& sd = structs[static_cast<size_t>(sid)];
         if (sd.poly || sd.base >= 0 || sd.fields.empty() || has_ctor_template(sid)) return false;
         for (const Method& m : sd.methods)
-            if (m.name == "<ctor>" && !m.implicit) return false;
+            if (m.name == "<ctor>" && (!m.implicit || m.inherit_sid >= 0)) return false;
         if (args.size() == 1) {
             Type at;
             if (static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array() && at.struct_id == sid)
@@ -1446,6 +1485,9 @@ struct Parser {
         Node assign;
         assign.kind = Node::Assign;
         assign.op = TAssign;
+        // A class item made by a call (`{Color::FromBytes(1, 2, 3)}`) writes the member itself (Round 34; before,
+        // "not an address: a call").
+        if (type.base == 3 && type.pointers == 0 && !type.is_ref) assign.number = 1;
         assign.kids.push_back(target);
         assign.kids.push_back(std::move(value));
         Node stmt;
@@ -1594,6 +1636,26 @@ struct Parser {
 
     // C a[N] = { x, { y, z } }: element i is built by a constructor given its item (a brace is a
     // list of arguments); elements without an item use the default constructor.
+    // An aggregate ([dcl.init.aggr] 1: no constructor written, no base, no virtual function) whose members can be set
+    // by plain stores after its implicit default constructor: no reference member, and each member of class type is
+    // copied as bytes (no copy constructor, no destructor).
+    bool is_list_aggregate(int sid) const {
+        if (sid < 0) return false;
+        const StructDef& sd = structs[static_cast<size_t>(sid)];
+        if (sd.poly || sd.base >= 0 || !sd.ref_members.empty() || has_ctor_template(sid)) return false;
+        for (const Method& m : sd.methods)
+            if (m.name == "<ctor>" && (!m.implicit || m.inherit_sid >= 0 || m.implicit_copy)) return false;
+        if (class_needs_dtor(sd)) return false;
+        for (const Field& f : sd.fields) {
+            const Type ft = peel_array(f.type);
+            if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && ft.struct_id >= 0 &&
+                (ft.struct_id == sid || structs[static_cast<size_t>(ft.struct_id)].poly || class_has_copy(ft.struct_id) ||
+                 class_needs_dtor(structs[static_cast<size_t>(ft.struct_id)])))
+                return false;
+        }
+        return true;
+    }
+
     bool array_init_calls(const std::string& name, const Type& type, Node& init, std::vector<Node>* calls) {
         const int count = type.array_len;
         const int sid = type.struct_id;
@@ -1623,6 +1685,36 @@ struct Parser {
             index.number = static_cast<uint64_t>(i);
             index.type.base = 1;
             element.kids.push_back(std::move(index));
+            if (i < static_cast<int>(init.kids.size()) && is_list_aggregate(sid) &&
+                init.kids[static_cast<size_t>(i)].kind == Node::Block && init.kids[static_cast<size_t>(i)].text == "init") {
+                // An element of an aggregate class whose members need constructors (UIGallery.hpp's local
+                // `struct Blob { const char* name; Color col; Vec2 pos, size; }` array; Round 34, before "bad
+                // expression"): the implicit default constructor runs (default member initializers, member
+                // constructors), then each member given an item is set from it ([dcl.init.aggr] 4).
+                if (class_needs_ctor(structs[static_cast<size_t>(sid)])) {
+                    Node call;
+                    if (!special_call(sid, "<ctor>", node_addr(element), {}, &call)) return false;
+                    calls->push_back(std::move(call));
+                }
+                const StructDef& sd = structs[static_cast<size_t>(sid)];
+                size_t k = 0;
+                for (const Field& f : sd.fields) {
+                    if (f.name.compare(0, 6, "__vptr") == 0) continue;
+                    if (k >= args.size()) break;
+                    Node member;
+                    member.kind = Node::Field;
+                    member.op = TDot;
+                    member.text = f.name;
+                    member.kids.push_back(element);
+                    if (!lower_aggr(f.type, member, &args[k], calls)) return false;
+                    ++k;
+                }
+                if (k < args.size()) {
+                    error = "too many initializers for " + sd.name;
+                    return false;
+                }
+                continue;
+            }
             Node call;
             if (!special_call(sid, "<ctor>", node_addr(std::move(element)), std::move(args), &call)) return false;
             calls->push_back(std::move(call));
@@ -2060,9 +2152,18 @@ struct Parser {
         if (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
         // std::string(int, float) in function<std::string(int, float)>: the namespace names were kept because a '('
         // follows; where a type is read they are dropped here.
+        // The qualifier goes on the type's name, as strip_namespace_qualifiers gives it (Round 34: `okay::http::Result(...)`
+        // in a std::function was the last-declared `Result`, another namespace's enumeration).
+        std::string kept_qual;
         while (is(TIdent) && namespaces.count(cur().text) > 0 && at + 2 < tokens.size() &&
-               tokens[at + 1].kind == TColonColon && tokens[at + 2].kind == TIdent)
+               tokens[at + 1].kind == TColonColon && tokens[at + 2].kind == TIdent) {
+            kept_qual += (kept_qual.empty() ? "" : "::") + cur().text;
             at += 2;
+        }
+        if (!kept_qual.empty() && !tokens[at].nsq && !(at + 1 < tokens.size() && tokens[at + 1].kind == TColonColon)) {
+            tokens[at].nsq = true;
+            tokens[at].qual = kept_qual;
+        }
         if (!parse_type_core(type, imported, exported)) return false;
         while (accept(TConst)) lead_const = true;
         if (!memptr_suffix(type, lead_const)) return false;
@@ -2154,6 +2255,29 @@ struct Parser {
             at += 4;
             type->deduce = 2;
             return true;
+        }
+        if (is(TIdent) && cur().text == "decltype" && at + 5 < tokens.size() && tokens[at + 1].kind == TLParen &&
+            tokens[at + 2].kind == TIdent && tokens[at + 3].kind == TColonColon && tokens[at + 4].kind == TIdent &&
+            tokens[at + 5].kind == TRParen) {
+            // decltype(C::m) of a non-static data member, outside a member function ([expr.prim.id] 3: allowed in an
+            // unevaluated operand; [dcl.type.decltype] 1.3: the member's declared type). OkayScriptVMInternal.hpp's
+            // `using BuiltinTable = decltype(Runtime::builtins);` (Round 34).
+            int sid = -1;
+            auto td = typedefs.find(tokens[at + 2].text);
+            if (td != typedefs.end() && td->second.base == 3 && td->second.pointers == 0 && !td->second.is_array())
+                sid = td->second.struct_id;
+            if (sid < 0) sid = find_struct(tokens[at + 2].text);
+            if (sid >= 0) {
+                const StructDef& d = structs[static_cast<size_t>(sid)];
+                const int fi = find_field_named(d, tokens[at + 4].text);
+                if (fi >= 0 && d.ref_members.count(tokens[at + 4].text) == 0) {
+                    *type = d.fields[static_cast<size_t>(fi)].type;
+                    type->is_ref = false;
+                    type->rref = false;
+                    at += 6;
+                    return true;
+                }
+            }
         }
         if (is(TIdent) && cur().text == "decltype" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
             // decltype(expression) ([dcl.type.decltype]): the expression's type as okay-ms knows it. Own simplification:
@@ -3624,6 +3748,15 @@ struct Parser {
     // has_init_list_ctor, and (at the list) every item can become an element: each item is read once to learn its type,
     // and everything the reading made (temporaries, hidden locals) is dropped again ([over.match.list] 1, [over.ics.rank];
     // Round 33: `return {names.begin(), names.end()};` of a set into a vector<string> took the list constructor).
+    // init_list_ctor_at for the list at token pos (a default member initializer read in the constructor; Round 34: the
+    // engine's `std::vector<Env> scopes{1};` is one element made by vector(1), not a list of the number 1).
+    bool init_list_ctor_at_pos(int sid, size_t pos, Type* list_type) {
+        const size_t saved = at;
+        at = pos;
+        const bool r = init_list_ctor_at(sid, list_type);
+        at = saved;
+        return r;
+    }
     bool init_list_ctor_at(int sid, Type* list_type) {
         if (!has_init_list_ctor(sid, list_type)) return false;
         if (at >= tokens.size() || tokens[at].kind != TLBrace) return true;
@@ -4651,6 +4784,55 @@ struct Parser {
         for (const Type& t : params) out += cxx_type(t, &structs);
         return out;
     }
+    // `using Base::Base;` ([namespace.udecl] 3, [class.inhctor.init], [over.match.funcs] 8): each constructor of the
+    // named direct base becomes a constructor of this class, except the copy and move constructors and one whose
+    // parameters this class's own constructors already have (those hide it). Own simplification: the inherited ones
+    // are made as constructors of this class (the C++11 model; the base's default arguments are kept), which gives
+    // the same objects.
+    bool inherit_ctors(StructDef* def, int self) {
+        for (const std::string& base_name : def->inherit_ctors) {
+            int bsid = -1;
+            for (const StructDef::BaseInfo& bi : def->bases) {
+                const StructDef& b = structs[static_cast<size_t>(bi.sid)];
+                if (b.name == base_name || b.tmpl == base_name) bsid = bi.sid;
+            }
+            if (bsid < 0) {
+                error = "using " + base_name + "::" + base_name + ": " + base_name + " is not a direct base";
+                return false;
+            }
+            const std::vector<Method> base_methods = structs[static_cast<size_t>(bsid)].methods;
+            for (const Method& bm : base_methods) {
+                if (bm.name != "<ctor>" || bm.params.empty() || !bm.tsym.empty()) continue;
+                if (bm.implicit && bm.inherit_sid < 0) continue;  // the implicit copy constructor
+                if (is_copy_param(bm, bsid) || is_move_param(bm, bsid)) continue;
+                bool hidden = false;
+                for (const Method& own : def->methods) {
+                    if (own.name != "<ctor>" || own.params.size() != bm.params.size()) continue;
+                    bool same = true;
+                    for (size_t k = 0; k < own.params.size(); ++k)
+                        if (!same_shape(own.params[k], bm.params[k])) same = false;
+                    if (same) hidden = true;
+                }
+                if (hidden) continue;
+                Method m;
+                m.name = "<ctor>";
+                m.ret.base = 3;
+                m.ret.struct_id = self;
+                m.ret.pointers = 1;
+                m.params = bm.params;
+                m.defaults = bm.defaults;
+                for (size_t k = 0; k < bm.params.size(); ++k) m.param_names.push_back("__i" + std::to_string(k));
+                m.access = bm.access;
+                m.implicit = true;
+                m.inherit_sid = bsid;
+                m.has_body = true;
+                m.body_at = 1;
+                if (!add_method(def, self, std::move(m))) return false;
+            }
+        }
+        return true;
+    }
+
     bool add_method(StructDef* def, int self, Method m) {
         m.owner = self;
         m.this_adj = 0;
@@ -5152,6 +5334,11 @@ struct Parser {
                 if (!parse_member_template(self)) return false;
                 continue;
             }
+            if (is(TIdent) && cur().text == "__inherit_ctors" && at + 2 < tokens.size() && tokens[at + 2].kind == TSemi) {
+                def.inherit_ctors.push_back(tokens[at + 1].text);  // using Base::Base; (lower_cxx_spellings)
+                at += 3;
+                continue;
+            }
             bool is_virtual = false;
             if (is(TIdent) && cur().text == "virtual") {
                 is_virtual = true;
@@ -5624,6 +5811,7 @@ struct Parser {
                 m.body_at = 1;
                 if (!add_method(&def, self, std::move(m))) return false;
             }
+            if (!inherit_ctors(&def, self)) return false;
         }
         if (def.poly) {
             def.vtable_sym = "??_7" + def.symname() + "@@6B@";
@@ -5800,6 +5988,7 @@ struct Parser {
         const size_t resume = at;
         at = m.body_at;
         cur_implicit_copy = m.implicit_copy;
+        cur_inherit_sid = m.inherit_sid;
         // An out-of-class definition may call the class template's parameters by other names.
         TDecl alias;
         for (const std::string& n : m.ool_names) {
@@ -5927,7 +6116,7 @@ struct Parser {
         for (const Method& m : d.methods) {
             if (m.name != "<ctor>" || m.owner != sid) continue;
             any = true;
-            if (m.implicit && !m.implicit_copy) return true;
+            if (m.implicit && !m.implicit_copy && m.inherit_sid < 0) return true;
             size_t required = m.params.size();
             while (required > 0 && required - 1 < m.defaults.size() &&
                    !(m.defaults[required - 1].kind == Node::Block && m.defaults[required - 1].kids.empty() &&
@@ -5970,6 +6159,14 @@ struct Parser {
             path->pop_back();
         }
         return false;
+    }
+
+    // One argument that is an object of class sid (a copy, not an aggregate's first item), or whose type is not known.
+    bool same_class_arg(const std::vector<Node>& args, int sid) {
+        Type t;
+        if (args.size() != 1) return false;
+        if (!static_type(args[0], &t)) return true;
+        return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id == sid;
     }
 
     static int find_field_named(const StructDef& d, const std::string& name) {
@@ -6062,6 +6259,14 @@ struct Parser {
                 stmt_pre.resize(hoist_from);
                 inits.push_back(std::move(init));
             } while (accept(TComma));
+        }
+        if (special == 1 && implicit && cur_inherit_sid >= 0 && fn->params.size() >= 1) {
+            // An inherited constructor ([class.inhctor.init] 1): the base is made by the base's constructor with this
+            // constructor's parameters, the other parts as the implicit default constructor makes them.
+            Init init;
+            init.name = structs[static_cast<size_t>(cur_inherit_sid)].name;
+            for (size_t k = 1; k < fn->param_names.size(); ++k) init.args.push_back(node_name(fn->param_names[k]));
+            inits.push_back(std::move(init));
         }
         if (special == 1 && implicit && cur_implicit_copy) {
             // Copy constructor made by the compiler: the base (its copy constructor if it has one,
@@ -6202,7 +6407,7 @@ struct Parser {
                     const size_t brace = field.init_at < 0 ? 0 : static_cast<size_t>(field.init_at) - (field.init_aggr ? 0 : 1);
                     if (init == nullptr && field.init_at >= 0 && (field.init_braced || field.init_aggr) &&
                         tokens[brace].kind == TLBrace && tokens[brace + 1].kind != TRBrace &&
-                        has_init_list_ctor(field.type.struct_id, &list_type)) {
+                        init_list_ctor_at_pos(field.type.struct_id, brace, &list_type)) {
                         // std::vector<std::string> options{"a", "b"}; as a default member initializer: the constructor
                         // that takes an initializer_list ([over.match.list], [class.base.init] 9).
                         const size_t saved_at = at;
@@ -6300,6 +6505,18 @@ struct Parser {
                 } else if (init != nullptr && init->args.empty()) {
                     // `m()`: value-initialisation, zero for a scalar or an aggregate ([dcl.init]).
                     if (!lower_aggr(field.type, node_this_field(field.name), nullptr, &pre)) return false;
+                } else if (init != nullptr && !init->args.empty() && field.type.base == 3 && field.type.pointers == 0 &&
+                           !field.type.is_ref && !field.type.is_array() && field.type.struct_id >= 0 &&
+                           !same_class_arg(init->args, field.type.struct_id)) {
+                    // m{a, b} for a member of an aggregate class ([class.base.init] 7, [dcl.init.aggr] 4; the engine's
+                    // BuiltinCtx `findNamed{&r, HostSceneFn{&r}}`, Round 34): each member from its item, the rest
+                    // value-initialized.
+                    Node list;
+                    list.kind = Node::Block;
+                    list.text = "init";
+                    for (Node& a : init->args) list.kids.push_back(std::move(a));
+                    list = elide_braces(field.type, list);
+                    if (!lower_aggr(field.type, node_this_field(field.name), &list, &pre)) return false;
                 } else if (init != nullptr) {
                     if (init->args.size() != 1) {
                         error = "member " + field.name + " takes one initializer";

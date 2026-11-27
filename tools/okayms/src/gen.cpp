@@ -405,6 +405,18 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
             sret_dest_off = offset;
             return gen_expr(node);
         }
+        if (node.kind == Node::Call && fits_register(type)) {
+            // A small object returned in rax (`{Color::FromBytes(1, 2, 3), ...}`; Round 34, before "not an address: a
+            // call"): its bytes are stored.
+            if (!gen_expr(node)) return false;
+            const int bytes = std::max(1, size_of(type));
+            if (bytes >= 8) b(0x48);
+            else if (bytes == 2) b(0x66);
+            b(bytes == 1 ? 0x88 : 0x89);  // mov [rbp+offset], al/ax/eax/rax
+            b(0x85);
+            disp(offset);
+            return true;
+        }
         if (!gen_addr(node)) return false;
         if (last_type.base == 3 && last_type.pointers == 0 && last_type.struct_id == type.struct_id) {
             b(0x48);  // mov rsi, rax

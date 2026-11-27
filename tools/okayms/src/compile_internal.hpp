@@ -196,6 +196,9 @@ struct Method {
     bool implicit = false;
     // The implicit copy constructor: copies the base and each member.
     bool implicit_copy = false;
+    // An inherited constructor (Round 34, [class.inhctor.init]): the base inherit_sid is made by its constructor
+    // with these parameters, then the other members as the implicit default constructor makes them.
+    int inherit_sid = -1;
     // A static member function: no this, decorated with S/C/K instead of the Q/A/I letters.
     bool is_static = false;
     // The decorated spelling of a member function template instance's name ("$add@H"), else empty.
@@ -263,6 +266,9 @@ struct StructDef {
     size_t base_fields = 0;
     bool poly = false;
     std::vector<Method> methods;
+    // The bases named by `using Base::Base;` in the class body (Round 34, [class.inhctor.init]): their constructors
+    // are inherited when the class is complete.
+    std::vector<std::string> inherit_ctors;
     // Symbol of the function in each virtual slot. Empty for a pure virtual.
     std::vector<std::string> vtable;
     std::string vtable_sym;

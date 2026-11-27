@@ -1698,7 +1698,21 @@ bool Parser::parse_unary(Node* out) {
                 if (outer == nullptr) continue;
                 for (size_t k = outer->size(); k-- > 0;)
                     if ((*outer)[k].name == name) {
-                        if ((*outer)[k].is_static && !(*outer)[k].symbol.empty()) name = (*outer)[k].symbol;
+                        const Local& ol = (*outer)[k];
+                        if (ol.has_cval && !ol.is_static && ol.type.pointers == 0 && !ol.type.is_array() &&
+                            !ol.type.is_ref && !is(TAssign) && !is(TPlusPlus) && !is(TMinusMinus)) {
+                            // A constant of the function around (`constexpr int kMax = 1 << 20;`), read in a lambda
+                            // without a capture: not an odr-use, so its value is used ([basic.def.odr] 5,
+                            // [expr.prim.lambda.capture] 8; Round 34, okayscript's CoreBuiltins.hpp `kMaxRepeatCount`).
+                            Node c;
+                            c.kind = Node::IntLit;
+                            c.type = ol.type;
+                            c.type.is_const = false;
+                            c.number = ol.cval;
+                            *out = std::move(c);
+                            return parse_postfix(out);
+                        }
+                        if (ol.is_static && !ol.symbol.empty()) name = ol.symbol;
                         found = true;
                         break;
                     }
@@ -3442,7 +3456,7 @@ bool Parser::parse_type_trait(Node* out) {
             bool any_ctor = false;
             for (const Method& m : d.methods)
                 if (m.name == "<ctor>") {
-                    if (!m.implicit) any_ctor = true;
+                    if (!m.implicit || m.inherit_sid >= 0) any_ctor = true;
                     if (m.params.size() >= types.size() - 1 &&
                         required_args(m.defaults, m.params.size()) <= types.size() - 1)
                         v = true;

@@ -7,7 +7,11 @@ namespace okayms {
 namespace {
 
 constexpr uint32_t kMaxSections = 96;
-constexpr uint32_t kMaxSymbolRecords = 100000;
+// The COFF header's NumberOfSymbols is 32 bits (PE Format, COFF File Header); this is our own bound on what one object
+// may hold, 18 bytes a record (72 MiB). It was 100000 until Round 34: Script/EngineApi.cpp and the OkayScriptVM files,
+// whose builtins are hundreds of lambdas, need more ("too many symbols"). A file read must hold every record it
+// claims (the range check after the header), so the bound only limits the memory a hostile count could ask for.
+constexpr uint32_t kMaxSymbolRecords = 4u * 1024u * 1024u;
 constexpr uint32_t kMaxSectionBytes = 32u * 1024u * 1024u;
 constexpr uint32_t kMaxStringBytes = 16u * 1024u * 1024u;
 // PE Format, Section Flags: IMAGE_SCN_LNK_NRELOC_OVFL, "the section contains extended relocations". A section with more

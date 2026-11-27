@@ -404,14 +404,19 @@ void TestDragDock() {
     CHECK_NEAR(q.L().FindFloating("Solo")->rect.x, x0 + 60, 1.5);
 }
 
-void TestTabsAndClose() {
-    RUN_SUITE("dock space: tabs, reorder, tear off, close");
-    Rig r;
+// The three windows as tabs of the root leaf, Alpha chosen, drawn for three frames.
+void DockThreeTabs(Rig& r) {
     r.L().Dock("Alpha", r.L().Root(), DockSide_Center);
     r.L().Dock("Beta", r.L().Root(), DockSide_Center);
     r.L().Dock("Gamma", r.L().Root(), DockSide_Center);
     r.L().SetActive("Alpha");
     r.Frames(3);
+}
+
+void TestTabsAndClose() {
+    RUN_SUITE("dock space: tabs, reorder, tear off, close");
+    Rig r;
+    DockThreeTabs(r);
     CHECK(r.shown["Alpha"] && !r.shown["Beta"] && !r.shown["Gamma"]);
     // click a tab to choose it
     UI::Vec2 tb = r.TabCentre("Beta");
@@ -456,10 +461,7 @@ UI::DockTabInfo TabInfo(const std::string& name) { for (const UI::DockTabInfo& t
 void TestTabsSlide() {
     RUN_SUITE("dock space: tabs slide aside while one is dragged along the strip");
     Rig r;
-    r.L().Dock("Alpha", r.L().Root(), DockSide_Center);
-    r.L().Dock("Beta", r.L().Root(), DockSide_Center);
-    r.L().Dock("Gamma", r.L().Root(), DockSide_Center);
-    r.Frames(3);
+    DockThreeTabs(r);
     const UI::DockTabInfo a0 = TabInfo("Alpha"), b0 = TabInfo("Beta");
     CHECK(std::fabs(a0.shown.x - a0.rect.x) < 0.5f && std::fabs(b0.shown.x - b0.rect.x) < 0.5f);   // at rest: drawn at the slot
     const UI::Vec2 ta = r.TabCentre("Alpha");

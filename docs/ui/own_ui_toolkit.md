@@ -3544,8 +3544,8 @@ launcher's Dear ImGui coordinates and text rows switched on in the editor's fram
 Play (the Game tab comes forward), the Edit menu and Project Settings look and act like the Dear ImGui editor's run of the same
 script, apart from rows 15b and 15c. All 76 `okayui_*` and `editor_okayui` ctest tests pass.
 
-**What is left before Dear ImGui can go from the editor** (rule 17 and 19d: then OkayUI is the editor's only UI and the Dear ImGui
-build is deleted). After round 2 the editor was NOT switched over; this is what is left, in order:
+**What was left before Dear ImGui could go from the editor** (done in round 3, section 33: the switch is made, multi-window panels are a
+recorded gap). After round 2 the editor was NOT switched over; this is what is left, in order:
 1. Multi-window panels (row 17): OkayUI draws into one OS window. Either OkayUI gets more than one OS window, or the owner drops the
    feature for now (the editor already turns it off when the platform cannot do it).
 2. Not tried yet: a drag from the Project panel to the Scene or an Inspector slot, a file dropped on the window, typing with an input method.
@@ -3597,3 +3597,65 @@ only) and never run on Windows.
 the Dear ImGui launcher of the same commit, side by side; the chat demo in its own window; a scripted run (sidebar, Settings
 categories, typing, the New Project dialog, a combo, Escape, Settings > Experimental); Settings > Appearance picking another design.
 Pictures were looked at and are not in the repository.
+
+## 33. The switch: the editor is OkayUI only, Dear ImGui leaves the repository (round 3, 2026-11-27)
+
+Owner, 2026-11-27: "i want to move off imgui first". `okay-editor` (`bin/OkayEngine`) is now built the way the second program
+`okay-editor-okayui` was in section 32: the editor's sources, still written in Dear ImGui's names, compiled only against OkayUI's
+compatibility layer (`okayui/probe` first on the include path). One editor, one name (rule 19e).
+
+**Deleted with the switch** (each name was searched for in the whole repository first): the second program `okay-editor-okayui`
+(`OkayEngineOkayUI`, ctest `editor_okayui`) and its option `OKAY_EDITOR_ON_OKAYUI`; the `okay_imgui` library and the Dear ImGui
+FetchContent blocks in `editor/` and `tests/`; `OKAY_IMGUI_TAG` and `OKAY_UI_DEFAULT_BACKEND`; in `editor/main.cpp` the
+`imgui_impl_sdl2` / `imgui_impl_sdlrenderer2` paths, the `OKAY_PLATFORM_EVENTS` / `OKAY_IMGUI_RENDER` choice and the multi-viewport
+renderer (`OkayVp*`); the code that hosted OkayUI inside Dear ImGui windows (`shared/OkayUIImGuiEmbed.hpp`, `shared/OkayUIHostImGui.hpp`,
+every `OKAY_HAVE_OKAYUI` block of the editor); `OKAY_ON_OKAYUI` (every user is on OkayUI now, so its `#if` branches were resolved);
+the Dear ImGui renderer `shared/ImGuiPainterRenderer.hpp` and the backend shim `shared/OkayUIImGuiBackendShim.cpp` with
+`okayui/probe/backends/`; window mode (`OKAY_UI_HOST=okayui`, a second, OkayUI-owned editor window with copies of the panels:
+`editor/OkayUIHost*`, `shared/OkayUIHostMode.hpp`, `shared/OkayUIHostState.hpp` and its seven tests), because the whole editor is now
+that; the Dear ImGui reference bodies `editor/EditorPanelViews.*`; four hand-run picture tools that compiled Dear ImGui
+(`tests/modeling_easy_shot.cpp`, `tests/modeling_advanced_shot.cpp`, `tools/project_menu_shots.cpp`, `tools/input_shots.*`); the
+`docs/try_it` pages of the removed programs. CI (`ci.yml`) builds and self-tests the one editor; `scripts/build-windows-dist.sh` no
+longer copies `OkayEngineOkayUI.exe` or takes `OKAY_IMGUI_SRC`; `dist/THIRD_PARTY_NOTICES.txt` item 5 (Dear ImGui) is empty.
+
+**Tests that were on Dear ImGui.** The 27 Visual Script model tests take `okayui/probe` (`OKAY_UI_COMPAT_INCLUDE`, nothing linked);
+`imgui_platform_feed` runs a real OkayUI context (it found four OkayUI gaps, below); deleted with reason: `okayui_editor_panels_imgui`,
+`okayui_hierarchy_imgui`, `okayui_inspector_imgui` (their reference was the Dear ImGui bodies; the OkayUI sides keep their goldens in
+`okayui_editor_panels`, `okayui_hierarchy`, `okayui_inspector`), `okayui_host_layering`, `okayui_panels_imgui`, `okayui_codeedit_imgui`
+(they tested OkayUI hosted inside Dear ImGui, which is gone), `editor_stale_modal` (Dear ImGui's popup stack; its twin
+`okayui_port_modalguard` tests the guard), `imgui_painter_render` (the deleted renderer).
+
+**Decision (safe default, the owner's to change):** multi-window panels are off. OkayUI draws into one OS window, so a panel that Dear
+ImGui let you drag out of the editor is a floating window inside it. Recorded in `docs/status/UNFINISHED.md`; not built here.
+
+**Round 3 gaps, each closed in OkayUI or the feed with a test that failed first (run):**
+
+| Gap (what broke) | Closed by | Test |
+|---|---|---|
+| Typing with an input method: the candidate window was never placed (OkayUI keeps the caret in `GetImeRect()` and does not call `Platform_SetImeDataFn`) | the feed sends the focused field's caret to the window when it changes and when a field takes the keyboard; the committed text arrives as text (composition stays the OS window's, as in Dear ImGui) | `imgui_platform_feed` (5 failures first) |
+| `io.KeySuper` never true; right Alt (AltGr) not `io.KeyAlt` | from the left / right keys and the modifier keys a feed sends | `imgui_platform_feed` |
+| `ImGuiMouseCursor_None` showed the arrow | `SetMouseCursor(MouseCursor_None)` is kept | `imgui_platform_feed` |
+| Paste gave the last copied text after another program emptied the clipboard | a feed's clipboard is the clipboard, empty included | `imgui_platform_feed` |
+| A drop target's outline showed for any payload type and with `AcceptNoDrawDefaultRect` | drawn by `AcceptDragDropPayload` for the accepted type only (Dear ImGui's rule) | `okayui_windows` (2 failures first); `okayui_color` now accepts its payload |
+| The Project panel's tiles: the second tile's name was drawn under the first tile's (groups did not lock their start x) | `BeginGroup` locks the line start at the group's left edge; `EndGroup` gives it back and puts the next line below the tallest group | `okayui_widgets` (4 failures first) |
+| A first drag from the Project panel did not start when the press selected the tile (the selection shows the details strip, the tiles shrink and the second tile moves; the source was known by its position) | a drag source is known by the last item's id (Dear ImGui's rule), by position only for an item with no id | `okayui_windows` (2 failures first) |
+| ... and `ImageButton` (the tiles with a thumbnail) gave no item id, so such a source was still known by its position | `ImageButton` records its id | by a run of the editor (the drag from a freshly selected tile now starts) |
+| The Project panel's details strip: the heading (first line of a group beside the picture) was centred on the picture and the next line overlapped it | a group's first line starts at the group's top; the line below a group is below everything the group's cursor reached (a table inside) | `okayui_widgets` (2 failures first); `okayui_editor_panels` (Stats) stays on its golden |
+
+**Tried headless in the editor** (Linux, Xvfb, the own platform backend, `scripts/run_app_script.sh` with `drop`, `down` / `move` /
+`up`, `wheel`; pictures outside the repository): a file dropped on the window from outside (OS file drop) is imported into Assets
+(Wood.png, Stone.png: "All Textures 2"); a texture dragged from the Project panel onto the Scene view becomes a sprite object; onto
+the Sprite Renderer's texture slot (Inspector locked) it replaces the texture, with the slot outlined while hovered; onto a Hierarchy
+row (Ground) it sets that object's texture ("Set texture on Ground"); the drag preview follows the pointer as a tooltip. Typed text that
+an input method would commit (`type Café Ünï 日本`) lands in the object's name field, CJK glyphs included. Pressing a Project tile
+selects it, so the Inspector shows the asset during the drag (as before, the same code): lock the Inspector to drop on an object's
+slot. **Results:** 144 of 144 ctest tests pass in one run (all `okayui_*`, the 27+ Visual Script tests now on OkayUI, the `editor_*` and
+`launcher_*` tests, `imgui_platform_feed`, `editor` self-test, `sdl_ratchet`); `vs_registry_effect` failed once in an earlier run at
+three jobs and passed in the two runs after (not looked into). Not run: a real input method (no IME on the test machine; the committed text and the caret are
+tested), a drop of a script on the Inspector's free area (the window-wide target is tested in `okayui_windows`). A script's `key ctrl+A` (Ctrl pressed and released inside one frame) did not select all in a field: not looked
+into (a person holds Ctrl across frames).
+
+Unverified: Windows (the changed files and `editor/main.cpp` were syntax-checked with MinGW only; never built or run on Windows), a
+real GPU or window manager. Still to do: the Inspector bodies that exist twice (a Dear ImGui-API body and an OkayUI-screen body, both
+OkayUI now: feature map 40.10) and the UI backend switch that chooses between them; `Event::native` in the platform seam (its only
+consumer, `imgui_impl_sdl2`, is gone).

@@ -978,7 +978,9 @@ void reorderWindows() {
     auto stateAt = [&](int idx) { DrawSpan st{0, false, SDL_Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
     auto emit = [&](int a, int b) {
         if (b <= a || fail) return;
-        if (nns + 1 + g_nspans > kMaxSpans) { fail = true; return; }
+        int inner = 0;   // the spans that start inside [a, b): exactly what this run adds besides its first
+        for (int k = 0; k < g_nspans; ++k) if (g_spans[k].startIdx > a && g_spans[k].startIdx < b) ++inner;
+        if (nns + 1 + inner > kMaxSpans) { fail = true; return; }
         DrawSpan st = stateAt(a); st.startIdx = nn;
         if (nns > 0 && nsp[nns - 1].startIdx == nn) nsp[nns - 1] = st; else nsp[nns++] = st;
         for (int k = 0; k < g_nspans; ++k) {

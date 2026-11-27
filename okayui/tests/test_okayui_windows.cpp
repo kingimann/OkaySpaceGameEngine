@@ -753,6 +753,11 @@ void TestDockHostListUnderFloating() {
     Sim sim(400, 300);
     UI::Vec2 fpos{}, fsize{};
     auto ui = [&] {
+        // a busy window first: many clip changes (draw spans), as the editor's frame has; the stacking order must still be applied
+        UI::SetNextWindowPos(V(0, 250), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(60, 40), UI::Cond_FirstUseEver);
+        if (UI::Begin("Busy", nullptr, 0))
+            for (int i = 0; i < 200; ++i) { UI::PushClipRect(V(1.0f + (float)(i % 50), 251), V(52.0f + (float)(i % 50), 289), true); UI::GetWindowDrawList().AddRectFilled(V(2, 260), V(4, 262), UI::RGBA(9, 9, 9, 255)); UI::PopClipRect(); }
+        UI::End();
         UI::SetNextWindowPos(V(100, 80), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 150), UI::Cond_FirstUseEver);
         if (UI::Begin("Floating", nullptr, 0)) { fpos = UI::GetWindowPos(); fsize = UI::GetWindowSize(); UI::Text("over the dock"); }
         UI::End();

@@ -54,7 +54,7 @@ extern int g_novSpans;
 // texture. A span records the index where a state begins; EndFrame draws each range
 // with the matching clip rect + texture. The overlay batch is never clipped.
 struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
-constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
+constexpr int kMaxSpans = 1024;   // 128 before window z-order, then 256: reordering adds a span per window segment (the editor's frame went past 256 and was left unordered)
 extern DrawSpan g_spans[kMaxSpans];
 extern int g_nspans;
 extern SDL_Rect g_clipStack[16];

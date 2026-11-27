@@ -140,9 +140,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
-# The same launcher and editor built on our own UI (CMake OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): copied only when they were built.
-# The launcher sits at the top beside OkaySpace.exe (Settings > Experimental > "Run on our own UI" restarts into it), the editor beside OkayEngine.exe.
-[ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
+# The editor built on our own UI (CMake OKAY_EDITOR_ON_OKAYUI, off by default): copied beside OkayEngine.exe only when it was built.
+# (The launcher, OkaySpace.exe, is drawn by our own UI itself since 2026-11-27.)
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # The Script Editor program (scripteditor/, the editor shows the same one in View > Editors & Tools > Script Editor (Files)).

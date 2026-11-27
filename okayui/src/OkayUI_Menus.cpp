@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -524,6 +525,7 @@ bool ui_core::beginPopupBody(int id) {
     c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
     g_lay.ox = px + padX; g_lay.oy = py + padY;
+    g_lay.winX = px; g_lay.winY = py; g_lay.winW = w; g_lay.winH = *hSlot + padY * 2.0f; g_lay.baseX = px; g_lay.baseY = py;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
     g_lay.contentW = w - 2.0f * padX;
     g_lay.indent = 0.0f; g_lay.seed = id;
@@ -690,4 +692,11 @@ bool BeginPopupContextItem(const char* id) {
     return beginPopupBody(pid);
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_comboCloseId),
+    OKAYUI_CTX_VAR(g_modalNoTitle))
 } // namespace OkayUI

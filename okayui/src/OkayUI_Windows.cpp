@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -66,6 +67,7 @@ bool beginRegion(const char* title, float x, float y, float w, float h) {
     g_lay.contentW = w; g_lay.bottom = y + h;
     g_lay.spacingX = parent.spacingX; g_lay.spacingY = parent.spacingY;
     g_lay.prevX = x; g_lay.prevY = y;
+    g_lay.winX = x; g_lay.winY = y; g_lay.winW = w; g_lay.winH = h; g_lay.baseX = x; g_lay.baseY = y;   // a region's own window coordinates (UseImGuiCoordinates)
     return true;
 }
 void endRegion() {
@@ -123,7 +125,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     // a click on the topmost window under the pointer raises it. NoBringToFront windows stay at the bottom.
     {
         const float bh = *collapsed ? titleH : h;
-        const bool fresh = slot && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
+        const bool fresh = slot && (slot->lastFrame == 0 || (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount));
         if (slot) {
             if (noFront) slot->z = 0;
             else if (slot->z == 0) slot->z = ++g_zCounter;
@@ -191,7 +193,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     const unsigned char* titleCol = pick(*collapsed ? Col_TitleBgCollapsed : (g_focusWin == id ? Col_TitleBgActive : Col_TitleBg), g_theme.titleBg);
     g_winBaseScale = g_theme.textScale;
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
-    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
+    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount)};   // appearing: never drawn, or not on the frame before
     g_curWin.z = slot ? slot->z : 0;
     if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
     if (slot) { slot->lastFrame = g_frameCount; if (title) std::snprintf(slot->title, sizeof slot->title, "%s", title); }
@@ -268,6 +270,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.seed = id;
     g_lay.ox = wx + pad;
     g_lay.oy = wy + titleH + menuBarH + pad - scrollY;
+    g_lay.winX = wx; g_lay.winY = wy; g_lay.winW = w; g_lay.winH = h; g_lay.baseX = wx; g_lay.baseY = wy - scrollY;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.maxRight = g_lay.ox;
@@ -391,7 +394,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     }
     bool pin = false;
     if (slot) {
-        const bool appearing = slot->lastFrame + 1 < g_frameCount;      // not drawn on the frame before
+        const bool appearing = (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);      // not drawn on the frame before
         auto apply = [&](const NextWin& n, bool& init) {
             if (!n.set) return false;
             const bool take = n.cond == Cond_Always || ((n.cond == Cond_Once || n.cond == Cond_FirstUseEver) && !init) || (n.cond == Cond_Appearing && appearing);
@@ -429,7 +432,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     if (g_nextCollapse.set) {   // SetNextWindowCollapsed, with the same conditions as position and size
         const NextCollapse nc = g_nextCollapse; g_nextCollapse = NextCollapse();
         if (slot) {
-            const bool appearing = slot->lastFrame + 1 < g_frameCount;
+            const bool appearing = (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
             const bool take = nc.cond == Cond_Always || ((nc.cond == Cond_Once || nc.cond == Cond_FirstUseEver) && !slot->collInit) || (nc.cond == Cond_Appearing && appearing);
             if (take) { *openState(id ^ 0x5c01, false) = nc.value; slot->collInit = true; }
         }
@@ -444,10 +447,12 @@ bool Begin(const char* title, bool* p_open, int flags) {
     return Begin(title, x, y, w, h, (flags & Window_NoTitleBar) ? nullptr : p_open);
 }
 
-Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
-Vec2 GetWindowSize() { return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
-float GetWindowWidth() { return g_curWin.valid ? g_curWin.w : 0.0f; }
-float GetWindowHeight() { return g_curWin.valid ? g_curWin.h : 0.0f; }
+// With UseImGuiCoordinates, inside a child or a popup these are the child's or popup's rectangle, as in Dear ImGui.
+static bool innerWin() { return g_imguiCoords && g_lay.active && g_lay.winW > 0.0f; }
+Vec2 GetWindowPos() { if (innerWin()) return Vec2{g_lay.winX, g_lay.winY}; return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
+Vec2 GetWindowSize() { if (innerWin()) return Vec2{g_lay.winW, g_lay.winH}; return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
+float GetWindowWidth() { return GetWindowSize().x; }
+float GetWindowHeight() { return GetWindowSize().y; }
 bool IsWindowHovered() {
     return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
            && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
@@ -470,7 +475,7 @@ bool SetWindowSize(const char* title, Vec2 size, Cond cond) {
     if (!title || !*title || !std::isfinite(size.x) || !std::isfinite(size.y)) return false;
     const int id = windowId(title);
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool appearing = (ws.lastFrame == 0 || ws.lastFrame + 1 < g_frameCount);
         const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.sizeInit);
         if (!take) return true;   // found, the condition said no
         ws.w = size.x < 1.0f ? 1.0f : (size.x > 1.0e6f ? 1.0e6f : size.x);
@@ -507,7 +512,7 @@ bool SetWindowPos(const char* title, Vec2 pos, Cond cond) {
     if (!title || !*title || !std::isfinite(pos.x) || !std::isfinite(pos.y)) return false;
     const int id = windowId(title);
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool appearing = (ws.lastFrame == 0 || ws.lastFrame + 1 < g_frameCount);
         const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.posInit);
         if (!take) return true;
         ws.x = pos.x < -1.0e6f ? -1.0e6f : (pos.x > 1.0e6f ? 1.0e6f : pos.x);
@@ -641,8 +646,10 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
 
     // Frame + clip to the region.
     if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
+    else if (g_imguiCoords && trim && !outline && colorIsSet(Col_ChildBg) && g_theme.colors[Col_ChildBg][3] > 0)   // Dear ImGui's rules (UseImGuiCoordinates): a child without a border still fills Col_ChildBg (rounded by ChildRounding)
+        rrect(rx, ry, rw, rh, childRnd(), g_theme.colors[Col_ChildBg]);
     if (outline) {   // a stroked outline (filling under it would cost a whole child's area twice on a CPU rasteriser)
-        const float rd = rnd();
+        const float rd = childRnd();
         if (colorIsSet(Col_ChildBg)) rrect(rx, ry, rw, rh, rd, g_theme.colors[Col_ChildBg]);
         const unsigned char* bc = pick(Col_Border, g_theme.border);
         // one-pixel edges between the corners, and each corner as three short segments of its arc (a fixed table: no sine per frame)
@@ -676,6 +683,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     g_lay.contentW = rw - 2.0f * padX - (reserveBar || *maxSlot > 0.0f ? (g_sbSize > 0.0f ? g_sbSize : kScrollbarW) : 0.0f);
     g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
+    g_lay.winX = rx; g_lay.winY = ry; g_lay.winW = rw; g_lay.winH = rh; g_lay.baseX = rx; g_lay.baseY = ry - *scroll;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.indent = 0.0f;
@@ -741,4 +749,24 @@ void EndChild() {
     g_posOverride = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_bareNext),
+    OKAYUI_CTX_VAR(g_childAutoSlot),
+    OKAYUI_CTX_VAR(ui_core::g_curWin),
+    OKAYUI_CTX_VAR(ui_core::g_dockAware),
+    OKAYUI_CTX_VAR(ui_core::g_dockRouted),
+    OKAYUI_CTX_VAR(ui_core::g_focusWin),
+    OKAYUI_CTX_VAR(ui_core::g_nextWinPos),
+    OKAYUI_CTX_VAR(ui_core::g_nextWinSize),
+    OKAYUI_CTX_VAR(ui_core::g_noTitleNext),
+    OKAYUI_CTX_VAR(ui_core::g_pinNext),
+    OKAYUI_CTX_VAR(g_resizeMinH),
+    OKAYUI_CTX_VAR(g_resizeMinW),
+    OKAYUI_CTX_VAR(ui_core::g_resizeNext),
+    OKAYUI_CTX_VAR(ui_core::g_we),
+    OKAYUI_CTX_VAR(ui_core::g_wflagsNext))
 } // namespace OkayUI

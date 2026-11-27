@@ -224,7 +224,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-editor -j "$(bash scripts/ci_jobs.sh 4)"
           ./build-editor/bin/OkayEngine --selftest
-          # the same editor built on OkayUI (no Dear ImGui; docs/ui/own_ui_toolkit.md section 31): it must keep building and pass the same self-test
+          # the same editor built on OkayUI (no Dear ImGui; docs/ui/own_ui_toolkit.md section 32): it must keep building and pass the same self-test
           ./build-editor/bin/OkayEngineOkayUI --selftest
 
       - name: Upload editor

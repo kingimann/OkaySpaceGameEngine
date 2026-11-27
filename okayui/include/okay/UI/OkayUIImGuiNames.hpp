@@ -220,6 +220,7 @@ constexpr auto ImGuiInputTextFlags_EnterReturnsTrue = OkayUI::InputText_EnterRet
 constexpr auto ImGuiInputTextFlags_Password = OkayUI::InputText_Password;
 constexpr auto ImGuiInputTextFlags_ReadOnly = OkayUI::InputText_ReadOnly;
 constexpr auto ImGuiItemFlags_MixedValue = OkayUI::Item_MixedValue;
+constexpr auto ImGuiItemFlags_NoTabStop = OkayUI::Item_NoTabStop;   // accepted (OkayUI's Tab goes field to field, never to a button)
 typedef OkayUI::KeyId ImGuiKey;
 constexpr auto ImGuiKey_0 = OkayUI::KeyId_0;
 constexpr auto ImGuiKey_1 = OkayUI::KeyId_1;
@@ -374,6 +375,20 @@ constexpr auto ImGuiTabBarFlags_FittingPolicyResizeDown = OkayUI::TabBar_Fitting
 constexpr auto ImGuiTabBarFlags_FittingPolicyScroll = OkayUI::TabBar_FittingPolicyScroll;
 constexpr auto ImGuiTabBarFlags_IsFocused = OkayUI::TabBar_IsFocused;
 constexpr auto ImGuiTabBarFlags_Reorderable = OkayUI::TabBar_Reorderable;
+// The launcher's Command line page (launcher/CommandLineUI.cpp):
+constexpr auto ImGuiKey_4 = OkayUI::KeyId_4;
+constexpr auto ImGuiKey_5 = OkayUI::KeyId_5;
+constexpr auto ImGuiKey_6 = OkayUI::KeyId_6;
+constexpr auto ImGuiKey_7 = OkayUI::KeyId_7;
+constexpr auto ImGuiKey_8 = OkayUI::KeyId_8;
+constexpr auto ImGuiKey_9 = OkayUI::KeyId_9;
+constexpr auto ImGuiKey_F4 = OkayUI::KeyId_F4;
+constexpr auto ImGuiKey_F6 = OkayUI::KeyId_F6;
+constexpr auto ImGuiKey_F7 = OkayUI::KeyId_F7;
+constexpr auto ImGuiKey_F8 = OkayUI::KeyId_F8;
+constexpr auto ImGuiTabBarFlags_AutoSelectNewTabs = OkayUI::TabBar_AutoSelectNewTabs;
+constexpr auto ImGuiInputTextFlags_NoUndoRedo = OkayUI::InputText_NoUndoRedo;
+constexpr auto ImGuiInputTextFlags_WordWrap = OkayUI::InputText_WordWrap;
 using OkayUI::ImGuiTabItem;
 typedef int ImGuiTabItemFlags;
 constexpr auto ImGuiTabItemFlags_Button = OkayUI::TabItem_Button;

@@ -1,6 +1,7 @@
 // DockBuilder subset and SetNextWindowDockID over the OkayUI dock layout (see OkayUIDockBuilder.hpp for the design).
 // Written from what the calls are for: a plan tree of nodes with caller-chosen ids that is turned into a DockLayout text blob
 // (the layout's own save format) and loaded, so the layout's checks and repairs apply to whatever the plan holds.
+#include "OkayUI_ContextState.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
 
 #include <algorithm>
@@ -322,4 +323,10 @@ void DockBuilderApplyNext(const std::string& name) {
 
 void DockBuilderReset() { State& s = S(); s = State(); }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(S()))
 } // namespace OkayUI

@@ -189,7 +189,7 @@ endif()
 # The SAME sources as okay-editor, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's),
 # so no Dear ImGui is in the program. Input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path), the painter-renderer is
 # okayui/probe/ImGuiPainterRenderer.hpp, the backend entry points shared/OkayUIImGuiBackendShim.cpp. Output: bin/OkayEngineOkayUI(.exe) next to OkayEngine(.exe).
-# First built and run headless on 2026-11-27 (docs/ui/own_ui_toolkit.md section 31); the full CI run builds it in the editor job and runs its self-test.
+# First built and run headless on 2026-11-27 (docs/ui/own_ui_toolkit.md section 32); the full CI run builds it in the editor job and runs its self-test.
 if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     get_target_property(_ed_srcs okay-editor SOURCES)
     list(FILTER _ed_srcs EXCLUDE REGEX "TARGET_OBJECTS")   # the window-mode panel copies are Dear ImGui-API sources compiled for the other editor

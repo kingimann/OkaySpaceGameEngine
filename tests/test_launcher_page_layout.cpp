@@ -1,8 +1,8 @@
 // The launcher's page layouts (launcher/PageLayout.hpp): the Marketplace, Community and Notifications pages at the
 // small window (960 x 600), the normal one (1280 x 800) and the large one (1920 x 1080), at UI scale 1.0 and 1.5.
 // Nothing overlaps, every label fits its button, every piece stays inside its card or panel.
-// With OKAY_LAYOUT_REAL_FONT the labels are measured with the launcher's own font (Roboto Medium, 17 px, Dear ImGui's
-// atlas, no window); without it an average glyph width stands in.
+// With OKAY_LAYOUT_REAL_FONT the labels are measured with the launcher's own font as OkayUI draws it (Roboto Medium, 17 px, no
+// window); without it an average glyph width stands in.
 #include "test_framework.hpp"
 #include "PageLayout.hpp"
 
@@ -11,8 +11,7 @@
 #include <vector>
 
 #ifdef OKAY_LAYOUT_REAL_FONT
-#include "imgui.h"
-#include "EmbeddedFonts.hpp"
+#include "imgui.h"   // OkayUI's (okayui/probe)
 #endif
 
 namespace L = okay::launcherlayout;
@@ -473,17 +472,18 @@ int main() {
         CHECK(L::Inside(fl, L::Rect{0, 0, 700, 500})); CHECK_NEAR(fl.y + fl.h, 488.0f, 1e-4);
     }
 #ifdef OKAY_LAYOUT_REAL_FONT
+    // The launcher's text as OkayUI draws it (the launcher is OkayUI only): its look, Roboto Medium at 17 px (launcher/main.cpp).
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
-    ImFontConfig fc; fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-    CHECK(okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 17.0f, fc) != nullptr);
-    { unsigned char* px = nullptr; int fw = 0, fh = 0; io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh); }   // build the atlas (no renderer here)
+    OkayUI::UseLauncherLook(true);
+    OkayUI::Style().textScale = 17.0f / 8.0f;
+    OkayUI::UseImGuiCoordinates(true);
 #endif
     for (float scale : {1.0f, 1.5f}) {
         g_scale = scale;
 #ifdef OKAY_LAYOUT_REAL_FONT
-        ImGui::GetStyle().FontScaleMain = scale;   // what Settings > UI scale sets (io.FontGlobalScale before 1.92)
+        io.FontGlobalScale = scale;   // what Settings > UI scale sets
         io.DisplaySize = ImVec2(1920, 1080);
         io.DeltaTime = 1.0f / 60.0f;
         ImGui::NewFrame();
@@ -493,7 +493,7 @@ int main() {
         RunAll();
 #ifdef OKAY_LAYOUT_REAL_FONT
         ImGui::End();
-        ImGui::EndFrame();
+        ImGui::Render();
 #endif
     }
 #ifdef OKAY_LAYOUT_REAL_FONT

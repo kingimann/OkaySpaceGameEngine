@@ -3,6 +3,7 @@
 // variables; the families that were split out of OkayUI.cpp (tooltips, tables, draw list; O1 in docs/engine/modularization_plan.md) reach it through these
 // declarations. Not part of the public API (that is okay/UI/OkayUI.hpp). Definitions stay in OkayUI.cpp.
 #include <SDL.h>
+#include <functional>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "OkayUI_FontAtlas.hpp"
@@ -133,8 +134,12 @@ struct LayoutState {
     float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
     float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
     int   seed = 0;                 // window id, mixed into label->id hashing
+    // The innermost window, child or popup being laid out, for Dear ImGui's coordinate rules (UseImGuiCoordinates): its rectangle and the
+    // point GetCursorPos counts from (its top-left corner, moved up by its scroll).
+    float winX = 0, winY = 0, winW = 0, winH = 0, baseX = 0, baseY = 0;
 };
 extern LayoutState g_lay;
+extern bool g_imguiCoords;   // UseImGuiCoordinates (OkayUICompat.hpp)
 // BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
 struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
 extern GroupBox g_grp[8];
@@ -434,6 +439,13 @@ inline float cursorX() {
 inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
 inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 inline float rnd() { return g_theme.rounding; }
+extern float g_childRounding;
+extern bool g_focusNextField, g_focusSelectAll;   // SetKeyboardFocusHere: the next text widget takes the keyboard (OkayUI.cpp)
+/// Dear ImGui's text wrapping (OkayUI.cpp): each line of `text` broken at `maxW` pixels at text scale `scale`; `line` answers the next width.
+void imguiWrap(const char* text, float maxW, float scale, const std::function<float(const char*)>& line);
+/// The size of `text` at `scale` wrapped at `wrapW` (<= 0: only at line breaks): the widest line by the number of lines.
+Vec2 wrappedTextSize(const char* text, float wrapW, float scale);
+inline float childRnd() { return g_childRounding >= 0.0f ? g_childRounding : rnd(); }   // a child's corners (StyleVar_ChildRounding)
 struct OvRect { float x, y, w, h; bool modal; };
 extern OvRect g_ovCur[16];  extern int g_ovCurN;
 extern OvRect g_ovPrev[16]; extern int g_ovPrevN;

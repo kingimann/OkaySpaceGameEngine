@@ -14627,6 +14627,13 @@ int main(int argc, char** argv) {
         if (navRow("##navbrowser", "Browser", kIcoGlobe, tab == kBrowserTab && !g_pfOpen, 0, 0)) { tab = kBrowserTab; ClosePublicProfile(); }
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
+        // The Script Editor and Visual Script are programs of their own: these rows start them (shown only when installed).
+        for (const okaylcli::FoundProgram& p : CommandLineHost().programs) {
+            const int ico = p.label == "Script Editor" ? kIcoCode : p.label == "Visual Script" ? kIcoNodes : -1;
+            if (ico < 0) continue;   // the Browser has its own page above
+            if (navRow(("##navprog" + p.label).c_str(), p.label.c_str(), ico, false, 0, 0)) okaylcli::OpenProgram(CommandLineHost(), p);
+            if (!g_navCollapsed && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.tip.c_str());
+        }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
         if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, ChatUnreadTotal(), navRed)) {

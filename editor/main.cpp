@@ -36,6 +36,7 @@
 #include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
 #include "ScriptEditorAppHost.hpp"     // the Script Editor app (shared/ScriptIdeApp) in a window: the same one as the Script Editor program
+#include "VisualScriptAppHost.hpp"     // the Visual Script app (shared/VisualScriptApp) in a window: the same one as the Visual Script program
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -4393,6 +4394,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Command Line",  "Command Line",              &g_showCommandLine,   "Panels", PI_Console},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
+        {"Visual Script (App)", "Visual Script (App)", &g_showVisualScriptApp, "Editors & Tools", PI_Nodes},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
@@ -6035,7 +6037,7 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.savemanager", &g_showSaveManager}, {"panel.history", &g_showHistory},
         {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
         {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug}, {"panel.commandline", &g_showCommandLine},
-        {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
+        {"tool.visualscript", &g_showVisualScript}, {"tool.visualscriptapp", &g_showVisualScriptApp}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
@@ -52539,6 +52541,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         if (oked::scriptui::TakeDensityChanged()) { g_view.scriptDensity = oked::scriptui::g_scriptDensity; SaveSettings(); }   // a Density menu was used
         { OKAY_PROFILE("UI.ScriptEditor"); DrawScriptEditorApp(ed); }   // ScriptEditorAppHost.cpp: the shared app
+        { OKAY_PROFILE("UI.VisualScriptApp"); DrawVisualScriptApp(ed); }   // VisualScriptAppHost.cpp: the shared app
         if (const char* vsOpen = std::getenv("OKAY_VS_OPEN")) {
             static bool opened = false;
             if (!opened && *vsOpen) {

@@ -3703,3 +3703,41 @@ may be normal maps, which are lavender at a glance).
 labels on the left of Inspector fields; Tab-key focus through every control with the focus ring; sticky table headers; text that runs past
 fixed-width dialogs (the Project panel's Delete dialog); multi-OS-window panels; Project Settings opens floating rather than docked (a
 decision, unchanged); list-view column widths are not saved.
+
+## 35. Round 5: one Inspector body, tabs that slide, Tab-key focus, dialogs that grow, a list header that stays (2026-11-27)
+
+Owner, 2026-11-27: "Okay ui needs a ton of more work". Round 4's "Left" list, worked in the coordinator's order.
+
+| Item | What was wrong | Change | Test |
+|---|---|---|---|
+| Two copies of the Inspector bodies and the switch (rule 19d) | since round 3 the OkayUI-screen copies (112 `Draw*WithOkayUI` functions in `editor/main.cpp`, the row builders in the Navigation, Behavior Tree, First Person Hands and terrain files, the generic card's copy) called draw stubs that always returned false: they never drew, and the component bar's copy took the bar's tooltip before falling back, so those tooltips never showed | deleted, with `shared/OkayUIBackend.hpp`, its test `ui_backend`, the Settings > Experimental items "OkayUI screens" (`OKAY_UI_BACKEND`) and "OkayUI Inspector" (`OKAY_UI_INSPECTOR`), the editor's `uibackend` setting and the stubs in `editor/OkayPanels.*`; old `uibackend`, `off=okayui` and `off=inspector` lines are ignored; the stack line says `ui=okayui`. The editor now does what it did with the switch unticked | `own_switches` (6 failures first), `own_stack` |
+| Tabs jumped while one was dragged along its strip | the strip was drawn at the new order at once | the held tab is drawn under the pointer (where it was grabbed, inside the strip) and on top; the others ease from where they were drawn to their slots (about 90% in 0.13 s); clicks use the slot (`DockTabInfo::rect`), the drawing `DockTabInfo::shown`, and a host's `DockTabItemRect` is the drawn one (the editor's panel icons move with their tabs) | `okayui_dock` `TestTabsSlide` (2 failures first) |
+| No keyboard focus | none existed | buttons, check boxes, combo boxes and single-line text fields are in the Tab order of their window or popup; Tab / Shift+Tab (wrapping), the focus ring, Space / Enter press, a text field reached with Tab takes the keyboard with its text selected; a field that completes on Tab keeps Tab; a click hides the ring; `Window_NoNav` / `Window_NoNavInputs` windows and child regions are left out (the editor's Scene and Game views, where Tab and Space are the view's keys; the Project panel's tree and tiles already had it) | `okayui_windows` `TestTabFocus` (written with the code; 11 failures with it switched off on purpose) |
+| Text ran past fixed-width dialogs (the Project panel's Delete dialog) | an `AlwaysAutoResize` modal kept a width given with `SetNextWindowSize` as a cage | that width is the least width; a longer line makes the dialog grow (up to the display less 16 px) in the frames after it opens, later only for a line more than 24 px longer (a field that fills the row would otherwise widen it every frame), and it keeps the width it grew to while open; an `InputText` with no visible label honours a negative width (the name prompt's ".okaymat" was outside the dialog) | `okayui_windows` (2 failures first); goldens `port_project_*` (six, checked one by one); the editor's Delete dialog seen fitting its text |
+| The list view's header scrolled away; its column widths were lost on restart | the header was drawn inside the scrolling list; the widths were statics | the header is drawn above the scrolling list (the geometry is worked out for the list's width with its scrollbar); the widths are saved in `okay_projectview.txt` (`listname`, `listtype`, `listsize`, `listdate`, clamped as the drag clamps them) | run in the editor (below) |
+| Launcher "You're up to date": the heading and the notes box sat at the dialog's edge | the after-picture was taken before round 4's "modals take the window padding" change | nothing more needed: rendered again, the logo, the heading and the box all start 24 px in, the box ends 24 px before the right edge | picture outside the repository (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`) |
+
+**Not done in this round:** labels on the left of Inspector fields (a label column): each OkayUI widget draws its own label after its
+box, so this needs a label-column mode in about twenty widgets and a check of every Inspector body in a running editor; not started. Text
+sharpness at 125% and 150%: read, not measured or changed. The built-in atlas bakes the UI font at 13, 16, 20, 26, 34 and 46 px
+(`OkayUI_FontAtlas.cpp`) and `drawText` snaps glyphs to whole pixels only when the wanted size is within 3% of a baked one: 16 px text at
+125% (20 px) hits a baked size, at 150% (24 px) it is the 26 px glyphs scaled down and not snapped, which is likely to look soft; a loaded
+TrueType font (`drawTextWith`) is scaled from its bake height and never snapped. Both fixes are in the font and glyph-atlas code, which was
+off limits this round (the paused memory work). Tab order for sliders, drags, selectables, tree rows and menu items, and arrow keys inside
+a window, are not done. The library's own Inspector views (feature map 40.10) have no editor caller now.
+
+**How it was checked.** Linux, Xvfb, the own platform backend, `-O1`, the editor and the launcher built with test hooks, scripted runs
+(`scripts/run_app_script.sh`): Tab, Tab, Tab and Shift+Tab in the editor's "Open a project" dialog (the ring on "Open a project folder...",
+then Name with its text selected, then Location, then back to Name); five files dropped into a new project, the Project panel made taller,
+list view, scrolled (the header stayed), a border dragged (the file got `listtype 187`), Delete on a texture (the dialog fits its text);
+the Console tab dragged along the bottom strip past Problems (Problems slid to the first place with its icon, Console under the pointer);
+the launcher's Software Update dialog (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`). Pictures are outside the repository. 89 tests (every
+`okayui_*`, `launcher_*` and `editor_*` test, `own_switches`, `own_stack`, `imgui_platform_feed`) pass.
+
+**Seen and left for the next round (worst first):** the Inspector's import settings for a texture: the grey help lines under each setting
+are cut on the left ("igger pictures are made smaller when / oaded"); while a tab is dragged over its neighbour, the neighbour's panel icon
+(drawn by the editor after the strip) shows on top of the dragged tab; in the list view a hovered .fbx row has no model icon; a dialog
+whose text is wider than the whole display is capped at the display and the text still runs past it (it is not wrapped).
+
+**Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU, 125% / 150% scale, the list column widths coming
+back in a picture after a restart (the file is written and read; the test project lives in a temporary folder).

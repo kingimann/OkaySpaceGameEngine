@@ -1504,6 +1504,36 @@ add_test(NAME okay_backend_golden_auth COMMAND test_okay_backend_golden_auth)
 add_executable(test_okay_backend_golden_db test_okay_backend_golden_db.cpp)
 target_link_libraries(test_okay_backend_golden_db PRIVATE okay::engine)
 add_test(NAME okay_backend_golden_db COMMAND test_okay_backend_golden_db)
+# OkayBackend round 4: every Storage and Functions request (chat attachments and media library, workshop uploads, the
+# launcher's Official game admin tab, "Delete my account", the session ticket) must send byte-identical requests, file bodies
+# and time limits included, to the golden texts recorded before the move, and the Supabase provider called directly the
+# same; the updater's releases address must keep its exact text and never follow the backend setting. Fake server only.
+# Small on purpose: the shared account (Account.cpp) and the version list reader are compiled in, not the whole engine.
+add_executable(test_okay_backend_golden_storage test_okay_backend_golden_storage.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Platform/Account/Account.cpp)
+target_compile_features(test_okay_backend_golden_storage PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_storage PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared
+    ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_okay_backend_golden_storage PRIVATE Threads::Threads ${CMAKE_DL_LIBS} okay::crypto)
+if(WIN32)
+    target_link_libraries(test_okay_backend_golden_storage PRIVATE shell32)
+endif()
+add_test(NAME okay_backend_golden_storage COMMAND test_okay_backend_golden_storage)
+# OkayBackend round 5: every table request and database function call of the community headers, part 1 (Profiles, Friends,
+# BlockList, Privacy's ProfilesGet, Invites, Parties) must send byte-identical requests to the golden texts recorded before the
+# move, and the Supabase provider called directly the same. Fake server only. Header-only, like test_okay_backend.
+add_executable(test_okay_backend_golden_community1 test_okay_backend_golden_community1.cpp)
+target_compile_features(test_okay_backend_golden_community1 PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_community1 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_community1 COMMAND test_okay_backend_golden_community1)
+# OkayBackend round 6: every table request and database function call of the community headers, part 2 (Messages: direct
+# messages, group chats, reactions, typing and read marks, search, edit history, pins; Servers: servers, channels, members,
+# likes, owner management; both with the text form of ProfilesGet) must send byte-identical requests to the golden texts
+# recorded before the move, and the Supabase provider called directly the same. Fake server only. Header-only.
+add_executable(test_okay_backend_golden_community2 test_okay_backend_golden_community2.cpp)
+target_compile_features(test_okay_backend_golden_community2 PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_community2 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_community2 COMMAND test_okay_backend_golden_community2)
 # OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
 # header order, the transports, reading token claims. Header-only, no network.
 add_executable(test_okay_backend test_okay_backend.cpp)
@@ -1631,6 +1661,8 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_executable(test_own_switches test_own_switches.cpp)
 target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME own_switches COMMAND test_own_switches)
+# The configured okay::platform default (cmake/OkayPlatform.cmake: own on Linux since #1341, sdl2 elsewhere): the default-build check expects it.
+target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_PLATFORM="${OKAY_PLATFORM_BACKEND}")
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
@@ -4500,6 +4532,9 @@ if(TARGET launcher_imgui)
     add_executable(test_launcher_theme test_launcher_theme.cpp)
     target_include_directories(test_launcher_theme PRIVATE ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(test_launcher_theme PRIVATE launcher_imgui)
+    if(TARGET okay_ui)   # the palettes come from OkayUI's designs (okay/UI/OkayUIDesign.hpp)
+        target_link_libraries(test_launcher_theme PRIVATE okay_ui)
+    endif()
     target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     target_compile_features(test_launcher_theme PRIVATE cxx_std_17)
     add_test(NAME launcher_theme COMMAND test_launcher_theme)

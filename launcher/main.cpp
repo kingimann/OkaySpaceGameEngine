@@ -16,7 +16,8 @@
 #include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
 #include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
-#include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
+#include "OkayTheme.hpp"  // the design's palette for Dear ImGui (launcher + editor)
+#include "AppearanceUI.hpp"  // Settings > Appearance: the design picker and the person's options (shared with the editor)
 #include "NavSidebarLayout.hpp"   // which sidebar layout fits a short window (pure maths, tested)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
 #include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/release/updater.md)
@@ -24,6 +25,7 @@
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
 #include "CrashUpload.hpp"    // scrub + send crash reports (docs/online/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
+#include "OfficialAdmin.hpp"  // the Official game admin tab's requests (releases bucket, official/)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
 #include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence (Admin > Anti-cheat)
@@ -2183,7 +2185,6 @@ std::vector<okay::privacy::PendingOp> g_blockPending;   // block/unblock changes
 std::string g_blocksSyncedFor;    // username the local block list was last synced for; "" = old PC-only list, uploaded once at sign-in (persisted)
 std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
 std::map<std::string, std::string> g_blockedNames;   // uid -> name, for the Blocked list (persisted)  // last window size (persisted) — roomier first-launch default
-const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
 // kind: 0 = info (accent), 1 = success (green), 2 = error (red).
@@ -2630,12 +2631,16 @@ void RecordPlayed(const std::string& p) {
     }
 }
 
-// Apply the selected theme (g_themeIndex: 0 Slate, 1 Midnight, 2 Light), accent (kAccent) and UI scale. Every colour comes from
-// the theme's palette (shared/OkayTheme.hpp): ImGui's own colours here, and the page code's through the okaytheme tokens.
+// Apply the design in force (okay/UI/OkayUIDesign.hpp: Settings > Appearance, saved in the per-user appearance.json and shared
+// with the editor and every OkayUI program): its palette (ImGui's colours here, the page code's through the okaytheme tokens),
+// its rounding and borders, the person's accent, density, text size and UI scale.
+static unsigned s_designRevision = 0;   // the design revision DarkTheme last applied
 void DarkTheme() {
-    const okaytheme::Palette P = g_themeIndex == 1 ? okaytheme::MidnightPalette() : g_themeIndex == 2 ? okaytheme::LightPalette() : okaytheme::SlatePalette();
-    okaytheme::SetPalette(P);
-    if (P.light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
+    const OkayUI::design::Tokens tok = OkayUI::design::CurrentTokens();
+    g_uiScale = tok.uiScale;
+    kAccent = okaytheme::DesignAccent(tok);
+    kAccentDim = okaytheme::Mix(kAccent, okaytheme::kDeep, 0.28f);
+    if (tok.c.light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
     s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 6);
@@ -2644,20 +2649,38 @@ void DarkTheme() {
     s.SeparatorTextPadding = ImVec2(14, 5);
     s.TabBarBorderSize = 1.0f;
     s.DisabledAlpha = 0.55f;
-    okaytheme::ApplySlateMetrics(s);
+    okaytheme::ApplyDensity(s, tok);
+    okaytheme::ApplyDesign(s, tok);
     s.WindowRounding = 0.0f;           // the launcher's root window fills the OS window
-    okaytheme::ApplyColors(s, P, kAccent);
-    ImGui::GetIO().FontGlobalScale = g_uiScale;
+    ImGui::GetIO().FontGlobalScale = g_uiScale * tok.textSize;
+    s_designRevision = OkayUI::design::Revision();
 }
 
-// Apply an accent preset and restyle the whole UI live.
+// Restyle the whole UI live (the accent itself is the design's or the person's: Settings > Appearance). `idx` is kept for the
+// older settings that still name an accent preset (the splash, the profile banner).
 void ApplyAccent(int idx) {
     int n = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
     if (idx < 0 || idx >= n) idx = 0;
     g_accentIndex = idx;
-    kAccent    = kAccentPresets[idx].col;
-    kAccentDim = kAccentPresets[idx].dim;
-    DarkTheme();          // re-apply the palette with the new accent
+    DarkTheme();
+}
+
+// The first start with designs: carry the launcher's old theme, accent and UI scale over (Slate 0 becomes the new default design;
+// Midnight stays Midnight; Light is Slate's light scheme), then save them so every program starts from the same choice.
+static void LoadAppearance() {
+    if (OkayUI::design::FollowUserFile()) return;
+    OkayUI::design::Options o;
+    if (g_themeIndex == 1) std::snprintf(o.design, sizeof o.design, "Midnight");
+    else if (g_themeIndex == 2) { std::snprintf(o.design, sizeof o.design, "Slate"); o.scheme = OkayUI::design::Scheme::Light; }
+    const int n = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+    if (g_accentIndex > 0 && g_accentIndex < n) {
+        const ImVec4 c = kAccentPresets[g_accentIndex].col;
+        o.customAccent = true;
+        o.accent = OkayUI::design::Rgba{(unsigned char)(c.x * 255.0f + 0.5f), (unsigned char)(c.y * 255.0f + 0.5f), (unsigned char)(c.z * 255.0f + 0.5f), 255};
+    }
+    o.uiScale = g_uiScale;
+    OkayUI::design::Set(o);
+    OkayUI::design::SaveUserFile();
 }
 
 // ---- Shared look-and-feel helpers ------------------------------------------
@@ -3471,19 +3494,8 @@ okayuihost::Region         g_okayRegion;  // where the hosted page was last fram
 static void OkayUIFrameBegin() {
     static bool looked = false;
     if (!looked) { looked = true; OkayUI::SetFont(OkayUI::FontDefault()); OkayUI::UseLauncherLook(true); }
-    OkayUI::Theme& t = OkayUI::Style();   // follow the launcher's UI scale and accent, so the page does not look like a stranger
-    t.textScale = OkayUI::SlateTheme().textScale * g_uiScale;
-    {   // and the launcher's theme (Slate, Midnight or Light): the same palette tokens as the ImGui pages
-        auto put = [](unsigned char* d, const ImVec4& c, float a = 1.0f) {
-            d[0] = (unsigned char)(c.x * 255.0f + 0.5f); d[1] = (unsigned char)(c.y * 255.0f + 0.5f);
-            d[2] = (unsigned char)(c.z * 255.0f + 0.5f); d[3] = (unsigned char)(c.w * a * 255.0f + 0.5f); };
-        const okaytheme::Palette& P = okaytheme::Current();
-        put(t.bg, P.control); put(t.bgHover, okaytheme::Mix(P.control, P.ink, 0.08f)); put(t.bgDown, okaytheme::Mix(P.control, P.ink, 0.14f));
-        put(t.border, okaytheme::Mix(P.raised, P.ink, 0.10f)); put(t.text, P.text); put(t.textDim, P.textDim);
-        put(t.panel, P.base); put(t.track, P.sunken);   // (cards are a step up from the panel: OkayUI BeginCard) put(t.titleBg, P.deep); put(t.field, P.field);
-    }
-    t.accent[0] = (unsigned char)(kAccent.x * 255.0f + 0.5f); t.accent[1] = (unsigned char)(kAccent.y * 255.0f + 0.5f);
-    t.accent[2] = (unsigned char)(kAccent.z * 255.0f + 0.5f);
+    OkayUI::Theme& t = OkayUI::Style();   // the design is OkayUI's own (design::Set restyles it); the page follows the launcher's UI scale
+    t.textScale = 2.0f * OkayUI::design::CurrentTokens().textSize * g_uiScale;
     ImGuiIO& io = ImGui::GetIO();
     g_okayRegion.NextFrame();
     int mx = 0, my = 0;
@@ -9908,7 +9920,7 @@ static int AcctDeleteWorker(void*) {
     okay::thr::LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username, pw = g_acctDataJob.password; g_acctDataJob.password.clear(); okay::thr::UnlockMutex(g_acctDataMutex);
     namespace ad = okay::account::data;
     ad::DeleteRequest q = ad::BuildDeleteRequest(user, pw);
-    okay::account::ApiResponse r = a.Api(q.path, q.method, q.body);
+    okay::account::ApiResponse r = ad::SendDelete(a, q);
     ad::DeleteOutcome o = ad::MapDeleteResponse(r);
     if (o.ok) a.Logout();   // the account is gone: drop the saved session
     AcctJobFinish(o.ok, o.message, {}, o.signOut, o.notDeployed);
@@ -11682,7 +11694,6 @@ static void DrawOfficialCard() {
 // the live version. "Make live" (rollback) rewrites NOTES.txt + VERSION.txt to
 // an existing version; Delete never touches the live one. One worker at a time;
 // what it reports lives in g_oa (g_oaMutex).
-static const char* kOaNeedSql = "Run docs/sql/official_game_admin.sql on Supabase to let admins publish.";
 
 enum OaJob { Oa_Idle, Oa_Refresh, Oa_Publish, Oa_MakeLive, Oa_Delete, Oa_Cleanup };
 struct OaVersion {
@@ -11727,93 +11738,6 @@ struct OaJobArgs {
     std::vector<std::string> targets;           // clean up
 };
 
-// Requests (worker side). Reads go to the public URL with a cache-buster, like
-// the players' launchers; writes and listings use the admin's own session.
-static okay::account::ApiResponse OaGet(const okay::account::AccountService& a, const std::string& rel) {
-    return a.Api("/storage/v1/object/public/releases/official/" + og::UrlEncodePath(rel) + "?cb=" +
-                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(okay::platform::TicksMs32()), "GET");
-}
-static okay::account::ApiResponse OaUpload(const okay::account::AccountService& a, const std::string& rel, const fs::path& file,
-                                  const char* type, int cacheSec) {
-    return a.ApiUpload("/storage/v1/object/releases/official/" + og::UrlEncodePath(rel), file.string(), type,
-                       "x-upsert: true\ncache-control: max-age=" + std::to_string(cacheSec));
-}
-static bool OaUploadText(const okay::account::AccountService& a, const std::string& rel, const std::string& text,
-                         const char* type, int cacheSec, okay::account::ApiResponse* resp) {
-    std::error_code ec;
-    const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_oa_" + std::to_string(okay::platform::TicksMs32()) + "_" +
-                                                        std::to_string(std::rand()) + ".txt");
-    { std::ofstream o(tmp, std::ios::binary | std::ios::trunc); o << text; if (!o) return false; }
-    *resp = OaUpload(a, rel, tmp, type, cacheSec);
-    fs::remove(tmp, ec);
-    return resp->ok;
-}
-// Every object under `prefix` ("official/v1.2.0/"), recursively, as bucket names.
-static bool OaListAll(const okay::account::AccountService& a, const std::string& prefix, std::vector<std::string>& out, int depth = 0) {
-    if (depth > 24) return false;
-    for (int offset = 0;; offset += 1000) {
-        const auto r = a.Api("/storage/v1/object/list/releases", "POST",
-                             "{\"prefix\":\"" + og::json::Escape(prefix) + "\",\"limit\":1000,\"offset\":" + std::to_string(offset) +
-                             ",\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
-        std::vector<og::StorageEntry> list;
-        if (!r.ok || !og::ParseStorageList(r.body, list)) return false;
-        for (const og::StorageEntry& e : list) {
-            if (e.folder) { if (!OaListAll(a, prefix + e.name + "/", out, depth + 1)) return false; }
-            else out.push_back(prefix + e.name);
-        }
-        if (list.size() < 1000) return true;
-    }
-}
-// A version's manifest, checked; false if it's missing or doesn't check out.
-static bool OaManifest(const okay::account::AccountService& a, const std::string& ver, og::Manifest& m) {
-    const auto r = OaGet(a, "v" + ver + "/" + og::kManifestName);
-    return r.ok && og::ParseManifest(r.body, m) && m.version == ver;
-}
-static std::string OaLive(const okay::account::AccountService& a, bool* reached = nullptr) {
-    const auto r = OaGet(a, "VERSION.txt");
-    if (reached) *reached = r.reached;
-    const std::string v = og::Trim(r.body.substr(0, r.body.find('\n')));
-    return r.ok && og::LooksLikeVersion(v) ? v : std::string();
-}
-// A failed write in plain words. Never the token; the server's message, capped.
-static std::string OaError(const okay::account::ApiResponse& r, const std::string& what, bool& needSql) {
-    if (!r.reached) return "Couldn't reach the server while " + what + ". Check your connection and try again.";
-    if (og::StorageDenied(r.status, r.body)) { needSql = true; return kOaNeedSql; }
-    if (r.status == 401) return "Your sign-in has expired. Sign out and back in, then try again.";
-    if (r.status == 413 || r.body.find("too large") != std::string::npos) return what + ": the file is over the server's upload limit.";
-    if (r.body.find("Bucket not found") != std::string::npos)
-        return "The releases bucket doesn't exist yet (scripts/publish-supabase.sh creates it).";
-    return what + " failed (HTTP " + std::to_string(r.status) + ")" +
-           (r.body.empty() ? std::string(".") : ": " + og::CleanText(r.body, 160, false));
-}
-static void OaLog(const okay::account::AccountService& a, const std::string& action, const std::string& ver, long long files, long long bytes) {
-    std::string body = "{\"p_version\":\"" + og::json::Escape(ver) + "\",\"p_action\":\"" + action + "\"";
-    if (files >= 0) body += ",\"p_files\":" + std::to_string(files) + ",\"p_bytes\":" + std::to_string(bytes);
-    a.Api("/rest/v1/rpc/log_official_publish", "POST", body + "}");   // best effort: the publish already happened
-}
-// Delete one version folder (never the live one). False (with a reason) on failure.
-static bool OaDeleteVersion(const okay::account::AccountService& a, const std::string& ver, std::string& why, bool& needSql) {
-    bool reached = true;
-    const std::string live = OaLive(a, &reached);
-    if (!reached) { why = "Couldn't reach the server."; return false; }
-    if (live == ver) { why = "v" + ver + " is live. Make another version live first."; return false; }
-    std::vector<std::string> names;
-    if (!OaListAll(a, "official/v" + ver + "/", names)) { why = "Couldn't list v" + ver + "'s files."; return false; }
-    if (names.empty()) { why = "v" + ver + " has no files the server lets you see. " + kOaNeedSql; needSql = true; return false; }
-    std::size_t gone = 0;
-    for (std::size_t i = 0; i < names.size(); i += 200) {
-        std::string body = "{\"prefixes\":[";
-        for (std::size_t k = i; k < std::min(names.size(), i + 200); ++k) body += (k > i ? ",\"" : "\"") + og::json::Escape(names[k]) + "\"";
-        const auto r = a.Api("/storage/v1/object/releases", "DELETE", body + "]}");
-        if (!r.ok) { why = OaError(r, "Deleting v" + ver, needSql); return false; }
-        std::vector<og::StorageEntry> del;
-        if (og::ParseStorageList(r.body, del)) gone += del.size();
-    }
-    if (gone == 0) { why = kOaNeedSql; needSql = true; return false; }
-    OaLog(a, "delete", ver, -1, 0);
-    return true;
-}
-
 static int OfficialAdminWorker(void* data) {
     std::unique_ptr<OaJobArgs> j(static_cast<OaJobArgs*>(data));
     std::string msg; int kind = 1; bool needSql = false, refresh = false;
@@ -11828,8 +11752,7 @@ static int OfficialAdminWorker(void* data) {
                 if (n.ok) view.liveNotes = og::CleanText(n.body, 4000, true);
             }
             std::vector<og::StorageEntry> top;
-            const auto r = a.Api("/storage/v1/object/list/releases", "POST",
-                                 "{\"prefix\":\"official/\",\"limit\":1000,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+            const auto r = OaListTop(a);
             std::vector<std::string> vers;
             if (r.ok && og::ParseStorageList(r.body, top)) vers = og::VersionFolders(top);
             view.listHidden = vers.empty() && !view.live.empty();
@@ -13517,6 +13440,7 @@ int main(int argc, char** argv) {
     ApplyStartupUpdateVerdict();   // was the last launcher update confirmed, not applied, or rolled back? Say so before anything else.
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
+    LoadAppearance();            // the design and the person's options (appearance.json, shared with the editor)
     ResolveUiBackend();          // Dear ImGui unless the setting or OKAY_UI_BACKEND says OkayUI
     LoadNotifs();                // the notifications feed + what was read / cleared
     LoadNewsHistory();           // release notes seen before (What's New page)
@@ -13562,11 +13486,9 @@ int main(int argc, char** argv) {
     // Build the splash style from the user's loading-screen preferences.
     auto splashStyle = [&]() {
         okay::SplashStyle st;
-        int ai = g_accentIndex;
-        int an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
-        if (ai < 0 || ai >= an) ai = 0;
+        const ImVec4 acc = okaytheme::DesignAccent(OkayUI::design::CurrentTokens());   // the design's (or the person's) accent
         if (g_splashAccentOverride) { st.ar = g_splashAccent[0]; st.ag = g_splashAccent[1]; st.ab = g_splashAccent[2]; }
-        else { st.ar = kAccentPresets[ai].col.x; st.ag = kAccentPresets[ai].col.y; st.ab = kAccentPresets[ai].col.z; }
+        else { st.ar = acc.x; st.ag = acc.y; st.ab = acc.z; }
         auto C = [](const float* c) -> okay::ui2d::RGBA {
             auto u = [](float v){ return (std::uint8_t)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
             return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
@@ -14158,6 +14080,7 @@ int main(int argc, char** argv) {
 
         if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
         if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
+        if (OkayUI::design::Poll(ImGui::GetTime()) || s_designRevision != OkayUI::design::Revision()) DarkTheme();   // another program, or Settings, changed the design
         ImGui::NewFrame();
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
@@ -17861,77 +17784,16 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 8));
 
                 if (setCat == 0) {   // ---- Appearance ----
-                    cardBegin("##sc_theme", "THEME");
-                    settingRow("Color theme", "Slate is the default look. Changes apply instantly.", 0.0f, 0.0f, [&](float w) {
-                        // Preview cards: a tiny mock window per theme (top bar, side panel,
-                        // content area, accent strip) — pick by look, not by name.
-                        const okaytheme::Palette kPrevPal[3] = {okaytheme::SlatePalette(), okaytheme::MidnightPalette(), okaytheme::LightPalette()};
-                        struct Prev { ImVec4 bg, panel, text; };
-                        const Prev kThemePrev[3] = {{kPrevPal[0].sunken, kPrevPal[0].raised, kPrevPal[0].text},
-                                                    {kPrevPal[1].sunken, kPrevPal[1].raised, kPrevPal[1].text},
-                                                    {kPrevPal[2].sunken, kPrevPal[2].raised, kPrevPal[2].text}};
-                        const float cw = std::clamp((w - 20.0f) / 3.0f, 84.0f, 132.0f), chh = std::floor(cw * 0.66f);
-                        for (int i = 0; i < 3; ++i) {
-                            if (i) ImGui::SameLine(0, 10);
-                            ImGui::PushID(i);
-                            const ImVec2 sz(cw, chh);
-                            ImVec2 p = ImGui::GetCursorScreenPos();
-                            bool clicked = ImGui::InvisibleButton("##themecard", sz);
-                            bool hov = ImGui::IsItemHovered();
-                            bool cur = (g_themeIndex == i);
-                            ImDrawList* dl = ImGui::GetWindowDrawList();
-                            dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), ImGui::GetColorU32(kThemePrev[i].bg), 8.0f);
-                            ImU32 pc = ImGui::GetColorU32(kThemePrev[i].panel);
-                            const float sideW = sz.x * 0.26f, bot = sz.y - 22.0f;
-                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + sz.x - 8, p.y + 16), pc, 3.0f);
-                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 21), ImVec2(p.x + 8 + sideW, p.y + bot), pc, 3.0f);
-                            dl->AddRectFilled(ImVec2(p.x + 13 + sideW, p.y + 21), ImVec2(p.x + sz.x - 8, p.y + bot), pc, 3.0f);
-                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + 24, p.y + 11), ImGui::GetColorU32(kAccent), 2.0f);
-                            ImVec2 ts = ImGui::CalcTextSize(kThemeNames[i]);
-                            dl->AddText(ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + sz.y - 19), ImGui::GetColorU32(kThemePrev[i].text), kThemeNames[i]);
-                            dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y),
-                                        cur ? ImGui::GetColorU32(kAccent)
-                                            : (hov ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)) : okaytheme::Ink(26)),
-                                        8.0f, 0, cur ? 2.5f : 1.5f);
-                            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                            if (clicked && !cur) { g_themeIndex = i; DarkTheme(); SavePrefs(); }
-                            ImGui::PopID();
-                        }
-                    });
-                    rowDivider();
-                    const int accentCount = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
-                    char accDesc[96];
-                    std::snprintf(accDesc, sizeof(accDesc), "Highlights, selection and primary buttons. Current: %s.", kAccentPresets[g_accentIndex].name);
-                    settingRow("Accent color", accDesc, 0.0f, 30.0f, [&](float) {
-                        ImDrawList* dl = ImGui::GetWindowDrawList();
-                        for (int i = 0; i < accentCount; ++i) {
-                            if (i) ImGui::SameLine(0, 10);
-                            ImGui::PushID(i);
-                            ImVec2 p = ImGui::GetCursorScreenPos();
-                            if (ImGui::InvisibleButton("##accent", ImVec2(30, 30))) { ApplyAccent(i); SavePrefs(); }
-                            const bool hov = ImGui::IsItemHovered(), cur = (g_accentIndex == i);
-                            ImVec2 c(p.x + 15, p.y + 15);
-                            if (cur) dl->AddCircle(c, 14.5f, okaytheme::OnColorU32(0.902f), 32, 2.0f);
-                            else if (hov) dl->AddCircle(c, 14.5f, okaytheme::Ink(90), 32, 1.5f);
-                            dl->AddCircleFilled(c, cur ? 11.0f : 12.0f, ImGui::GetColorU32(kAccentPresets[i].col), 32);
-                            if (cur) {   // drawn check on the active swatch
-                                dl->AddLine(ImVec2(c.x - 4.5f, c.y + 0.2f), ImVec2(c.x - 1.5f, c.y + 3.2f), okaytheme::OnColorU32(0.961f), 2.2f);
-                                dl->AddLine(ImVec2(c.x - 1.5f, c.y + 3.2f), ImVec2(c.x + 4.5f, c.y - 3.0f), okaytheme::OnColorU32(0.961f), 2.2f);
-                            }
-                            if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", kAccentPresets[i].name); }
-                            ImGui::PopID();
-                        }
-                    });
+                    // The design picker and the person's options (shared/AppearanceUI.hpp, the same controls as the editor's
+                    // Edit > Appearance). Changes apply at once here and in every other open program (appearance.json).
+                    cardBegin("##sc_theme", "DESIGN");
+                    ImGui::TextDisabled("Pick a design. Every program follows it: the launcher, the editor, the Script Editor, the browser and Visual Script.");
+                    ImGui::Dummy(ImVec2(0, 4));
+                    if (okayappearance::DesignPicker(ImGui::GetContentRegionAvail().x)) DarkTheme();
                     cardEnd();
 
-                    cardBegin("##sc_ui", "INTERFACE");
-                    settingRow("UI scale", "Make text and controls larger or smaller. Applies when you release the slider.", 220.0f, ImGui::GetFrameHeight(), [&](float w) {
-                        ImGui::SetNextItemWidth(std::min(w, 320.0f));
-                        if (ImGui::SliderFloat("##uiscale", &g_uiScale, 0.8f, 1.6f, "%.2fx"))
-                            ImGui::GetIO().FontGlobalScale = g_uiScale;   // live preview
-                        // Persist + restyle when the drag ends — no separate Apply click.
-                        if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
-                    });
+                    cardBegin("##sc_ui", "CUSTOMIZE");
+                    if (okayappearance::Customization(ImGui::GetContentRegionAvail().x, true)) DarkTheme();
                     if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
                     rowDivider();
                     {   // Which toolkit draws the pages that have an OkayUI port (today: What's New). Dear ImGui stays the default.
@@ -18818,11 +18680,11 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
+                    okayappearance::Commit(OkayUI::design::Options());   // the default design and options (every program follows)
                     g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
     g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; vs.skippedVersion.clear(); }   // update settings (the versions themselves stay)
-                    ImGui::GetIO().FontGlobalScale = g_uiScale;
-                    ApplyAccent(g_accentIndex);   // re-applies theme + accent
+                    ApplyAccent(g_accentIndex);   // re-applies the design
                     SavePrefs();
                     Toast("Preferences reset", 1);
                     ImGui::CloseCurrentPopup();
@@ -20493,7 +20355,7 @@ int main(int argc, char** argv) {
                     okay::filedialog::OpenOne("Choose the new file", "", {}, [](const std::string& pick) { edFile = pick; });
                 }
                 ImGui::SameLine(0, 10);
-                const bool hostedHere = std::string(edUrl).find("/storage/v1/object/public/workshop/") != std::string::npos;
+                const bool hostedHere = std::string(edUrl).find(okay::backend::supabase::routes::StoragePublic("workshop", "")) != std::string::npos;
                 if (!edFile.empty()) ImGui::TextUnformatted(fs::path(edFile).filename().string().c_str());
                 else if (hostedHere) ImGui::TextDisabled("Keeping the current file");
                 else ImGui::TextColored(okaytheme::Current().warning, "This listing uses an outside link \xE2\x80\x94 upload the file to keep it listed");

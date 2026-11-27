@@ -7,14 +7,8 @@
 namespace oked {
 
 
-// The editor's one accent colour (the highlight used on selections, buttons, checks, tabs, etc.).
-// There is no accent picker any more: Edit > Dark Mode / Light Mode is the only look choice.
-struct AccentPreset { const char* name; float r, g, b; };
-inline constexpr AccentPreset kAccents[] = {
-    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue
-};
-
-// The current accent colour, for panels that tint their own widgets to match the theme.
+// The current accent colour (the design's, or the person's from Edit > Appearance), for panels that tint their own widgets to
+// match the theme (the highlight used on selections, buttons, checks, tabs, etc.).
 ImVec4 AccentCol(float alpha = 1.0f);
 // A category tint for a component header, from its label (physics, render, audio, UI, ...).
 ImVec4 CategoryColor(const char* label);

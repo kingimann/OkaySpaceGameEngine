@@ -229,7 +229,9 @@ void InputTextTests() {
     // a long text scrolls so the caret is visible: pixels stay inside the box
     cap = 64; std::strcpy(text, "0123456789abcdefghijklmnopqrstuvwxyz"); r.Frame(); r.Tap(Key_End); r.Frame();
     const Bitmap& bm = r.sim.Draw(); const unsigned bg = PixelAt(bm, (int)(rc.x + rc.w + 4), (int)(rc.y + rc.h + 30));   // plain window panel
-    CHECK(CountNot(bm, (int)(rc.x + rc.w + 1), (int)rc.y, (int)(rc.x + rc.w + 8), (int)(rc.y + rc.h), bg) == 0);   // nothing spills past the box
+    // nothing spills past the box (the focus ring, up to 2 + Theme::focusRingPx pixels outside it, is the box's own)
+    const int ring = 3 + (int)UI::Style().focusRingPx;
+    CHECK(CountNot(bm, (int)(rc.x + rc.w + ring), (int)rc.y, (int)(rc.x + rc.w + ring + 3), (int)(rc.y + rc.h), bg) == 0);   // (the window edge is 10 past the box)
     // a null buffer, a zero capacity
     r.body = [&] { CHECK(!UI::InputText("n", nullptr, 4)); CHECK(!UI::InputText("z", text, 0)); }; r.Frames(2);
 }
@@ -298,14 +300,16 @@ void TreeAndSelectableTests() {
     r.ClickC(rs); CHECK(sel == 1);
     r.ClickC(rt); r.Frame(); CHECK(!opened);
     CHECK(tail.y == tailY);
-    // Selectable draws selected rows in the accent colour
+    // Selectable marks a selected row with the accent: a bar on its left edge (and a selection tint over the row)
     bool on = true;
     r.body = [&] { UI::Selectable("row", on); rs = UI::GetItemRect(); };
     r.Frames(2);
     const Bitmap& bm = r.sim.Draw();
-    CHECK(PixelAt(bm, (int)(rs.x + rs.w - 4), (int)(rs.y + 2)) == ThemeRgba(UI::Style().accent));
+    const unsigned tinted = PixelAt(bm, (int)(rs.x + rs.w - 4), (int)(rs.y + rs.h * 0.5f));
+    CHECK(PixelAt(bm, (int)(rs.x + 1), (int)(rs.y + rs.h * 0.5f)) == ThemeRgba(UI::Style().accent));
     on = false; r.Frames(2);
-    CHECK(PixelAt(r.sim.Draw(), (int)(rs.x + rs.w - 4), (int)(rs.y + 2)) != ThemeRgba(UI::Style().accent));
+    CHECK(PixelAt(r.sim.Draw(), (int)(rs.x + 1), (int)(rs.y + rs.h * 0.5f)) != ThemeRgba(UI::Style().accent));
+    CHECK(PixelAt(r.sim.Draw(), (int)(rs.x + rs.w - 4), (int)(rs.y + rs.h * 0.5f)) != tinted);
 }
 
 void ScrollTests() {

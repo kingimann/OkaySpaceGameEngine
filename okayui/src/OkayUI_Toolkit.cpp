@@ -96,12 +96,12 @@ bool PrimaryButton(const char* label) {
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
-    unsigned char c[4] = {g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 255};
-    if (g_active == id && inside) { c[0] = (unsigned char)(c[0] * 0.85f); c[1] = (unsigned char)(c[1] * 0.85f); c[2] = (unsigned char)(c[2] * 0.85f); }
-    else if (inside) { c[0] = (unsigned char)(c[0] + (255 - c[0]) * 0.12f); c[1] = (unsigned char)(c[1] + (255 - c[1]) * 0.12f); c[2] = (unsigned char)(c[2] + (255 - c[2]) * 0.12f); }
+    // The accent button: the accent easing to its hover shade, darker while pressed, the label in the on-accent colour.
+    const unsigned char dark[4] = {(unsigned char)(g_theme.accent[0] * 0.85f), (unsigned char)(g_theme.accent[1] * 0.85f), (unsigned char)(g_theme.accent[2] * 0.85f), 255};
+    unsigned char st[4];
+    const unsigned char* c = stateColor(id, inside, g_active == id && inside, g_theme.accent, g_theme.accentHover, dark, st);
     rrect(x, y, w, h, rnd(), c);
-    const unsigned char white[4] = {255, 255, 255, 255};
-    drawText(x + (w - visW(label)) * 0.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, white);
+    drawText(x + (w - visW(label)) * 0.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.onAccent);
     return clicked;
 }
 
@@ -118,7 +118,7 @@ void Badge(const char* text, unsigned char r, unsigned char g, unsigned char b) 
     if (!r && !g && !b) { c[0] = g_theme.accent[0]; c[1] = g_theme.accent[1]; c[2] = g_theme.accent[2]; }
     rrect(x, y, w, h, h * 0.5f, c);
     const unsigned char white[4] = {255, 255, 255, 255};
-    drawText(x + 8.0f, y + 3.5f, text, g_theme.textScale, white);
+    drawText(x + 8.0f, y + 3.5f, text, g_theme.textScale, (!r && !g && !b) ? g_theme.onAccent : white);
     PopTextScale();
 }
 
@@ -130,12 +130,8 @@ void Avatar(const char* name, float size) {
 }
 
 void CardFillColor(unsigned char out[4]) {
-    // The card is a step up from the panel: a little lighter on a dark theme (4% toward the text colour; Slate gives
-    // {38, 41, 49}), near white on a light one.
-    const unsigned char* pn = g_theme.panel;
-    const bool lightPanel = pn[0] * 0.2126f + pn[1] * 0.7152f + pn[2] * 0.0722f > 140.0f;
-    for (int k = 0; k < 3; ++k)
-        out[k] = (unsigned char)(lightPanel ? pn[k] + (255 - pn[k]) * 0.85f : pn[k] + (g_theme.text[k] - pn[k]) * 0.04f + 0.5f);
+    // The card is the design's raised surface (a step up from the panel).
+    for (int k = 0; k < 4; ++k) out[k] = g_theme.raised[k];
     out[3] = 255;
 }
 
@@ -146,12 +142,12 @@ void BeginCard(const char* id) {
     const float x = cursorX(), w = availW();
     float px, py; place(w, 0.0f, px, py);   // reserve the line; content follows inside
     g_lay.cy = py;                           // (no spacing yet: the card grows to fit)
-    const float pad = 14.0f, rad = g_look ? 10.0f : rnd();
+    const float pad = 14.0f, rad = g_theme.windowRounding;
     if (*height > 0.0f) {
         unsigned char raised[4];
         CardFillColor(raised);
         rrect(px, py, w, *height, rad, g_theme.border);
-        rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, g_look ? raised : g_theme.bg);
+        rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, raised);
     }
     CardSave& c = g_cards[g_ncards++];
     c.x = px; c.y = py; c.w = w; c.height = height; c.ox = g_lay.ox; c.contentW = g_lay.contentW;
@@ -185,9 +181,10 @@ bool ListItem(const char* title, const char* subtitle, const char* right, bool s
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
-    unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-    if (selected) rrect(x, y, w, h, 8.0f, withAlpha(g_theme.accent, 0.25f, tmp));
-    else if (inside) rrect(x, y, w, h, 8.0f, withAlpha(white, 0.06f, tmp));
+    unsigned char tmp[4];
+    const float rd = g_theme.radiusSmall + 3.0f;
+    if (selected) rrect(x, y, w, h, rd, g_theme.selection);
+    else { const float over = anim(id, 0, inside); if (over > 0.0f) rrect(x, y, w, h, rd, withAlpha(g_theme.ink, 0.07f * over, tmp)); }
     const float d = h - 12.0f;
     drawAvatar(x + 6.0f, y + 6.0f, d, title);
     const float tx = x + d + 18.0f, s = g_theme.textScale;

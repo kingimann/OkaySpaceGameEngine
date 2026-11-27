@@ -19,6 +19,7 @@
 #include "okay/Platform/ChatDelivery.hpp"
 #include "okay/Net/JoinLink.hpp"
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -239,7 +240,8 @@ inline bool Joinable(const Friend& f) { return CheckJoinFriend(f, false).ok; }
 
 // ---- the client ------------------------------------------------------------------------------
 
-/// game_invites over Supabase's REST API, through the signed-in AccountService (same pattern as Friends).
+/// game_invites through the signed-in AccountService and OkayBackend's Database (acct_.Db(); round 5), byte for byte what it
+/// always sent (tests/test_okay_backend_golden_community1.cpp).
 class Invites {
 public:
     using Support = privacy::Support;
@@ -250,7 +252,7 @@ public:
     long Send(const std::string& recipientUid, const GameInvite& inv, std::string* err = nullptr) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return 0; }
         if (recipientUid.empty() || inv.link.empty() || !ValidKind(inv.kind)) { if (err) *err = "That invite is not complete."; return 0; }
-        auto r = acct_.Api("/rest/v1/game_invites", "POST", SendBody(recipientUid, inv), "Prefer: return=representation");
+        auto r = acct_.Db().From("game_invites").Returning(okay::backend::Return::Representation).Insert(SendBody(recipientUid, inv));
         Note(r);
         if (!r.ok) { if (err) *err = support_ == Support::Missing ? std::string() : privacy::FailureText(r, "The invite could not be sent."); return 0; }
         const auto rows = Friends::SplitObjects(r.body);
@@ -258,13 +260,17 @@ public:
     }
     /// Invites sent to me with an id above `sinceId`, newest first (pending and answered).
     std::vector<GameInvite> Incoming(long sinceId = 0, int limit = 30) {
-        return List("&recipient=eq." + Friends::Url(acct_.UserId()) + "&id=gt." + std::to_string(sinceId), limit);
+        const std::string me = acct_.UserId();
+        return List([&](okay::backend::Query& q) { q.Eq("recipient", me).Gt("id", std::to_string(sinceId)); }, limit);
     }
     /// Invites I sent, newest first.
-    std::vector<GameInvite> Sent(int limit = 30) { return List("&sender=eq." + Friends::Url(acct_.UserId()), limit); }
+    std::vector<GameInvite> Sent(int limit = 30) {
+        const std::string me = acct_.UserId();
+        return List([&](okay::backend::Query& q) { q.Eq("sender", me); }, limit);
+    }
     /// One invite (an invite card looks up the record its link names). id 0 when not found or not mine.
     GameInvite Get(long id) {
-        const auto v = List("&id=eq." + std::to_string(id), 1);
+        const auto v = List([id](okay::backend::Query& q) { q.Eq("id", std::to_string(id)); }, 1);
         return v.empty() ? GameInvite{} : v[0];
     }
     /// Accept or decline (recipient). Returns the server's answer word ("accepted", "expired", ...; see
@@ -314,10 +320,14 @@ private:
         else if (r.reached && (privacy::IsMissingTable(r.status, r.body) || r.body.find("PGRST202") != std::string::npos))
             support_ = Support::Missing;
     }
-    std::vector<GameInvite> List(const std::string& filter, int limit) {
+    /// game_invites rows: `filter` adds the filters between the select and the order (newest first, at most `limit`).
+    std::vector<GameInvite> List(const std::function<void(okay::backend::Query&)>& filter, int limit) {
         std::vector<GameInvite> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/game_invites?select=*" + filter + "&order=id.desc&limit=" + std::to_string(limit), "GET");
+        auto db = acct_.Db();
+        okay::backend::Query q = db.From("game_invites").Select("*");
+        filter(q);
+        auto r = q.Order("id", true).Limit(limit).Get();
         Note(r);
         if (!r.ok) return out;
         for (const auto& o : Friends::SplitObjects(r.body)) out.push_back(FromRow(o));
@@ -325,7 +335,7 @@ private:
     }
     std::string Rpc(const std::string& fn, const std::string& body) {
         if (!acct_.IsLoggedIn()) return {};
-        auto r = acct_.Api("/rest/v1/rpc/" + fn, "POST", body);
+        auto r = acct_.Db().Rpc(fn, body);
         Note(r);
         if (!r.ok) {
             const privacy::Rule rule = privacy::ParseRule(r.body);

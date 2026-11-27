@@ -4,7 +4,9 @@
 // AccountService. Create/join go through SECURITY DEFINER RPCs (create_server /
 // join_server) so a non-member can make or join one without being able to read
 // others' servers; everything else is plain PostgREST gated by RLS. No-ops when
-// signed out / offline.
+// signed out / offline. Every table request and database function call goes
+// through OkayBackend's Database (acct_.Db(); round 6), byte for byte what it
+// sent before (tests/test_okay_backend_golden_community2.cpp).
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
 #include <string>
@@ -14,7 +16,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
-#include <cctype>
 
 namespace okay {
 
@@ -25,6 +26,7 @@ struct ServerMember { std::string uid, name, avatar, role; bool online = false; 
 
 class Servers {
 public:
+    using Query = okay::backend::Query;
     explicit Servers(okay::account::AccountService& acct) : acct_(acct) {}
 
     bool Available() const { return acct_.IsLoggedIn(); }
@@ -32,7 +34,7 @@ public:
     std::vector<Server> MyServers() {
         std::vector<Server> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/servers?select=id,name,invite_code,owner&order=created_at.asc", "GET");
+        auto r = acct_.Db().From("servers").Select("id,name,invite_code,owner").Order("created_at").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             Server s; s.id = std::atol(Field(o, "id").c_str());
@@ -46,10 +48,7 @@ public:
     // whether I own the selected server (server.owner == MyUid()).
     std::string MyUid() {
         if (myUid_.empty() && acct_.IsLoggedIn()) {
-            std::string enc; for (char c : acct_.CurrentSession().username) {
-                if (std::isalnum((unsigned char)c)||c=='-'||c=='_'||c=='.'||c=='~') enc += c;
-                else { char b[4]; std::snprintf(b,sizeof(b),"%%%02X",(unsigned char)c); enc += b; } }
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", acct_.CurrentSession().username).Get();   // the name percent-encoded
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myUid_ = Field(o[0], "id"); }
         }
         return myUid_;
@@ -58,7 +57,7 @@ public:
     bool CreateServer(const std::string& name, Server* created = nullptr, std::string* err = nullptr) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
         if (name.empty())        { if (err) *err = "Enter a server name."; return false; }
-        auto r = acct_.Api("/rest/v1/rpc/create_server", "POST", "{\"p_name\":" + JStr(name) + "}");
+        auto r = acct_.Db().Rpc("create_server", "{\"p_name\":" + JStr(name) + "}");
         if (!r.ok) { if (err) *err = r.body.empty() ? "Couldn't create server." : r.body; return false; }
         if (created) { auto o = SplitObjects(r.body);
             if (!o.empty()) { created->id = std::atol(Field(o[0], "id").c_str());
@@ -68,7 +67,7 @@ public:
 
     bool JoinServer(const std::string& code, std::string* err = nullptr) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
-        auto r = acct_.Api("/rest/v1/rpc/join_server", "POST", "{\"p_code\":" + JStr(code) + "}");
+        auto r = acct_.Db().Rpc("join_server", "{\"p_code\":" + JStr(code) + "}");
         if (!r.ok) { if (err) *err = r.body.empty() ? "Join failed." : r.body; return false; }
         // A bad code returns JSON null (no object).
         if (SplitObjects(r.body).empty()) { if (err) *err = "No server with code '" + code + "'."; return false; }
@@ -78,8 +77,7 @@ public:
     std::vector<Channel> Channels(long serverId) {
         std::vector<Channel> out;
         if (serverId <= 0) return out;
-        auto r = acct_.Api("/rest/v1/channels?server_id=eq." + std::to_string(serverId) +
-                           "&select=id,name&order=position.asc,id.asc", "GET");
+        auto r = acct_.Db().From("channels").Eq("server_id", std::to_string(serverId)).Select("id,name").Order("position").Order("id").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             Channel c; c.id = std::atol(Field(o, "id").c_str()); c.name = Field(o, "name");
@@ -93,20 +91,19 @@ public:
     std::vector<ServerMember> Members(long serverId) {
         std::vector<ServerMember> out;
         if (serverId <= 0) return out;
-        auto r = acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId) +
-                           "&select=member,role", "GET");
+        auto r = acct_.Db().From("server_members").Eq("server_id", std::to_string(serverId)).Select("member,role").Get();
         if (!r.ok) return out;
-        std::string inList;
+        std::vector<std::string> ids;
         for (const auto& o : SplitObjects(r.body)) {
             ServerMember m; m.uid = Field(o, "member"); m.role = Field(o, "role");
             if (m.uid.empty()) continue;
             out.push_back(m);
-            if (!inList.empty()) inList += ",";
-            inList += m.uid;
+            ids.push_back(m.uid);
         }
-        if (inList.empty()) return out;
-        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen"
-                           "&id=in.(" + inList + ")");
+        if (ids.empty()) return out;
+        auto p = privacy::ProfilesGet(acct_, [&ids](Query& q) {   // the ids as they are, as always
+            q.Select("id,username,display_name,avatar_url,last_seen").In("id", ids, kAsIs);
+        });
         if (p.ok) {
             for (const auto& o : SplitObjects(p.body)) {
                 std::string id = Field(o, "id");
@@ -131,15 +128,14 @@ public:
 
     bool CreateChannel(long serverId, const std::string& name) {
         if (serverId <= 0 || name.empty()) return false;
-        return acct_.Api("/rest/v1/channels", "POST",
-                         "{\"server_id\":" + std::to_string(serverId) + ",\"name\":" + JStr(name) + "}").ok;
+        return acct_.Db().From("channels").Insert("{\"server_id\":" + std::to_string(serverId) + ",\"name\":" + JStr(name) + "}").ok;
     }
 
     std::vector<ChannelMessage> Messages(long channelId, int limit = 60) {
         std::vector<ChannelMessage> out;
         if (channelId <= 0) return out;
-        auto r = acct_.Api("/rest/v1/channel_messages?channel_id=eq." + std::to_string(channelId) +
-                           "&select=id,author_name,body,created_at,edited&order=created_at.asc&limit=" + std::to_string(limit), "GET");
+        auto r = acct_.Db().From("channel_messages").Eq("channel_id", std::to_string(channelId))
+                     .Select("id,author_name,body,created_at,edited").Order("created_at").Limit(limit).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             ChannelMessage m; m.id = std::atol(Field(o, "id").c_str());
@@ -153,31 +149,26 @@ public:
 
     bool Post(long channelId, const std::string& body) {
         if (!acct_.IsLoggedIn() || channelId <= 0 || body.empty()) return false;
-        return acct_.Api("/rest/v1/channel_messages", "POST",
-                         "{\"channel_id\":" + std::to_string(channelId) +
-                         ",\"body\":" + JStr(body) +
-                         ",\"author_name\":" + JStr(acct_.CurrentSession().username) + "}").ok;
+        return acct_.Db().From("channel_messages")
+            .Insert("{\"channel_id\":" + std::to_string(channelId) + ",\"body\":" + JStr(body) + ",\"author_name\":" + JStr(acct_.CurrentSession().username) + "}").ok;
     }
 
     // Edit one of my own channel messages (RLS blocks editing others').
     bool EditMessage(long messageId, const std::string& body) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
-        return acct_.Api("/rest/v1/channel_messages?id=eq." + std::to_string(messageId), "PATCH",
-                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+        return acct_.Db().From("channel_messages").Eq("id", std::to_string(messageId)).Update("{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
     }
     // ---- Reactions ("likes") on channel messages ---------------------------
     bool Like(long messageId, bool on) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
         if (on)
-            return acct_.Api("/rest/v1/message_reactions", "POST",
-                             "{\"scope\":\"channel\",\"target_id\":" + std::to_string(messageId) +
-                             ",\"emoji\":\"heart\"}", "Prefer: resolution=ignore-duplicates").ok;
-        return acct_.Api("/rest/v1/message_reactions?scope=eq.channel&target_id=eq." +
-                         std::to_string(messageId) + "&emoji=eq.heart", "DELETE").ok;
+            return acct_.Db().From("message_reactions").Prefer("resolution=ignore-duplicates")
+                .Insert("{\"scope\":\"channel\",\"target_id\":" + std::to_string(messageId) + ",\"emoji\":\"heart\"}").ok;
+        return acct_.Db().From("message_reactions").Eq("scope", "channel").Eq("target_id", std::to_string(messageId)).Eq("emoji", "heart").Delete().ok;
     }
     std::map<long,long> Likes() {
         std::map<long,long> out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.channel&emoji=eq.heart", "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id").Eq("scope", "channel").Eq("emoji", "heart").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] += 1;
         return out;
@@ -186,7 +177,7 @@ public:
         std::map<long,bool> out;
         std::string mine = MyUid();
         if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.channel&emoji=eq.heart&reactor=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id").Eq("scope", "channel").Eq("emoji", "heart").Eq("reactor", mine, kAsIs).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] = true;
         return out;
@@ -197,32 +188,32 @@ public:
     bool Leave(long serverId) {
         if (serverId <= 0) return false;
         const std::string me = MyUid(); if (me.empty()) return false;
-        return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId) + "&member=eq." + me, "DELETE").ok;
+        return acct_.Db().From("server_members").Eq("server_id", std::to_string(serverId)).Eq("member", me, kAsIs).Delete().ok;
     }
 
     // ---- owner management (RLS restricts these to the server's owner) ------
     bool RenameChannel(long channelId, const std::string& name) {
         if (channelId <= 0 || name.empty()) return false;
-        return acct_.Api("/rest/v1/channels?id=eq." + std::to_string(channelId), "PATCH",
-                         "{\"name\":" + JStr(name) + "}").ok;
+        return acct_.Db().From("channels").Eq("id", std::to_string(channelId)).Update("{\"name\":" + JStr(name) + "}").ok;
     }
     bool DeleteChannel(long channelId) {   // cascades its messages
         if (channelId <= 0) return false;
-        return acct_.Api("/rest/v1/channels?id=eq." + std::to_string(channelId), "DELETE").ok;
+        return acct_.Db().From("channels").Eq("id", std::to_string(channelId)).Delete().ok;
     }
     bool RenameServer(long serverId, const std::string& name) {
         if (serverId <= 0 || name.empty()) return false;
-        return acct_.Api("/rest/v1/servers?id=eq." + std::to_string(serverId), "PATCH",
-                         "{\"name\":" + JStr(name) + "}").ok;
+        return acct_.Db().From("servers").Eq("id", std::to_string(serverId)).Update("{\"name\":" + JStr(name) + "}").ok;
     }
     bool DeleteServer(long serverId) {     // cascades members, channels, messages
         if (serverId <= 0) return false;
-        return acct_.Api("/rest/v1/servers?id=eq." + std::to_string(serverId), "DELETE").ok;
+        return acct_.Db().From("servers").Eq("id", std::to_string(serverId)).Delete().ok;
     }
 
 private:
     okay::account::AccountService& acct_;
     std::string myUid_;
+    /// Values sent unchanged in the address (ids from the server, my own id), as these requests always sent them.
+    static constexpr okay::backend::ValueText kAsIs = okay::backend::ValueText::AsIs;
 
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;

@@ -177,6 +177,8 @@ int ListOpenPopups(PopupSlotInfo* out, int cap);
 bool ClosePopup(const char* name);
 bool ClosePopupById(unsigned id);
 /// How many popup bodies are being built right now (0 outside any popup): Dear ImGui's popup level (`g.BeginPopupStack.Size`).
+/// The dock space host window's draw list (WindowRef::DrawList of its HostWindow): what is drawn on it, whenever, lies under the floating windows.
+const DrawListHandle& GetDockHostDrawList();
 int CurrentPopupDepth();
 unsigned WindowIdOfTitle(const char* title);          // the id a window of this title has (GetID with no PushID in force)
 /// Set the default width of the value column for the rest of the current window (PushItemWidth, undone when the window ends). Nothing outside a window.

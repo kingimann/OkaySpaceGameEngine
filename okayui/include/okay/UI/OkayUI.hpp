@@ -961,8 +961,9 @@ bool IsDragging();
 ///     Button("slot"); if (BeginDragDropTarget()) { if (const DragPayload* p = AcceptDragDropPayload("ITEM")) use(*(int*)p->data); EndDragDropTarget(); }
 /// The source starts a drag once the pointer has moved a few pixels while pressed on the item before it (call it right after that
 /// item); it returns true every frame of the drag, and the payload (a copy of up to 256 bytes with a type name of up to 32
-/// characters) must be set during it. The target returns true while a drag with a payload is over the item before it and outlines
-/// it; AcceptDragDropPayload returns the payload on the frame the button is released over it (delivery = true), or earlier on every
+/// characters) must be set during it. The target returns true while a drag with a payload is over the item before it;
+/// AcceptDragDropPayload outlines it when the payload is of the asked-for type (Dear ImGui's rule; DragDrop_AcceptNoDrawDefaultRect
+/// leaves the outline out) and returns the payload on the frame the button is released over it (delivery = true), or earlier on every
 /// hover frame with DragDrop_AcceptBeforeDelivery (delivery = false). A null or empty `type` accepts any type. Widgets drawn inside
 /// the source block are drawn in the window, not in a floating box; use SetDragDropPreview(text) for what follows the pointer.
 /// The older int-payload DragSource / DropTarget keep working next to this and share IsDragging().
@@ -1199,6 +1200,9 @@ struct ImDrawCmd {
 };
 struct DrawList {
     bool overlay;
+    /// The dock space host's list (WindowRef::DrawList of a dock node's HostWindow): what is drawn on it goes UNDER the floating windows,
+    /// whenever it is drawn (the editor draws its tab icons on it after every window has ended; they showed through floating windows).
+    bool bottomHost = false;
     void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
     /// `rounding` is the corner radius in pixels (0 = square; clamped to half the shorter side).
     void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f, float thickness = 1.0f) const;
@@ -1300,7 +1304,7 @@ Vec2 GetFontTexUvWhitePixel();
 /// There is one handle per list, living for the whole program.
 struct DrawListHandle : DrawList {
     bool isNull = false;
-    DrawListHandle(bool isOverlay) { overlay = isOverlay; }
+    DrawListHandle(bool isOverlay, bool isDockHost = false) { overlay = isOverlay; bottomHost = isDockHost; }
     /// So `cond ? GetWindowDrawList() : nullptr` compiles: a handle that converts to a null pointer.
     DrawListHandle(std::nullptr_t) { overlay = false; isNull = true; }
     const DrawListHandle* operator->() const { return this; }
@@ -1471,7 +1475,7 @@ struct IO {
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
     // Host-side fields of Dear ImGui's IO, see docs/ui/own_ui_toolkit.md 6.22.
     int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
-    bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
+    bool KeySuper = false;                       // the Windows / Command key: down while KeyId_LeftSuper, KeyId_RightSuper or KeyId_ModSuper is (a platform feed reports them)
     float FontGlobalScale = 1.0f;                // text drawn this much larger: Style().textScale follows it at the next frame start (0.25 to 4)
     bool ConfigViewportsNoTaskBarIcon = false, ConfigDebugHighlightIdConflicts = true;   // accepted, unused
     struct FontAtlasRef* Fonts = nullptr;        // GetIO() points it at the one atlas (below): font requests are recorded, nothing is loaded

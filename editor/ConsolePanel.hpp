@@ -20,10 +20,6 @@ void ConsoleClear();
 void ConsoleSetMirror(void (*fn)(const std::string&, int));
 // The Console window: severity filters with counts, category, search, collapse, details.
 void DrawConsole();
-#ifdef OKAY_HAVE_OKAYUI
-// The panel's OkayUI port (the opt-in backend): called by DrawConsole in place of the ImGui body.
-void DrawConsoleOkayUI(const char* windowTitle);
-#endif
 // The console commands behind the panel's command line: the standard cvars and commands (okay/Core/ConsoleHost.hpp),
 // the Play loop's time.* commands, and `--cvar NAME=VALUE` from the command line (a bad one is a warning here).
 // Keep the result alive while `loop` lives (it removes the time.* commands when destroyed).

@@ -3,7 +3,7 @@
 // Spot light, a camera, a Rigidbody 3D, a Box Collider 3D, a script's variables, the rest of a Mesh Renderer and a component drawn from
 // the property registry, and the rows the editor's builders make of them (editor/main.cpp DrawLightWithOkayUI and the others,
 // editor/InspectorPanel.cpp DrawFallbackOkayUI): the same kinds, labels, ranges, formats and layout. Used by the OkayUI test
-// (okayui/tests/test_okayui_inspector.cpp) and the comparison with Dear ImGui (tests/test_okayui_inspector_imgui.cpp). Std and the
+// (okayui/tests/test_okayui_inspector.cpp). Std and the
 // model only; the hooks answer from small tables and count what they were asked.
 #include "EditorPanelModels.hpp"
 

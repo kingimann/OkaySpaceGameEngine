@@ -2087,126 +2087,18 @@ target_link_libraries(test_vs_inventory PRIVATE okay::engine)
 target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
-# The Visual Script editor's graph model (save / load / paste), without drawing:
-# it needs the Dear ImGui headers the editor header includes, nothing linked.
-# With the editor in the build those come from its ImGui (nothing fetched
-# twice); only a tests-only configure fetches the same OKAY_IMGUI_TAG itself.
-# Offline, point -DFETCHCONTENT_SOURCE_DIR_IMGUI=<a local imgui checkout> at one.
-if(TARGET okay_imgui)
-    set(OKAY_VS_IMGUI_INCLUDE $<TARGET_PROPERTY:okay_imgui,INTERFACE_INCLUDE_DIRECTORIES>)
-else()
-    include(FetchContent)
-    FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG ${OKAY_IMGUI_TAG})
-    FetchContent_MakeAvailable(imgui)
-    set(OKAY_VS_IMGUI_INCLUDE ${imgui_SOURCE_DIR})
-endif()
-# The editor's Problems, Stats and History panels: the Dear ImGui bodies (editor/EditorPanelViews.cpp) against their OkayUI ports,
-# headless, through one software rasteriser: same input gives the same intent, speed and pixel difference (docs/own_ui_toolkit.md
-# section 9). Needs OkayUI (SDL2 present) and the Dear ImGui sources (the editor's, or the copy fetched just above).
-if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
-    add_executable(test_okayui_editor_panels_imgui test_okayui_editor_panels_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_editor_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_editor_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_ui_render)
-    target_include_directories(test_okayui_editor_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
-    add_test(NAME okayui_editor_panels_imgui COMMAND test_okayui_editor_panels_imgui)
-    set_tests_properties(okayui_editor_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    # The Hierarchy panel the same way (docs/own_ui_toolkit.md section 12): the village and 3,000 and 20,000 objects.
-    add_executable(test_okayui_hierarchy_imgui test_okayui_hierarchy_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_hierarchy_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_hierarchy_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_ui_render)
-    target_include_directories(test_okayui_hierarchy_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
-    add_test(NAME okayui_hierarchy_imgui COMMAND test_okayui_hierarchy_imgui)
-    set_tests_properties(okayui_hierarchy_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    # The Inspector, stage 1, the same way (docs/own_ui_toolkit.md section 14): the header card, Transform, the Mesh Renderer, the bars.
-    add_executable(test_okayui_inspector_imgui test_okayui_inspector_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_inspector_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_inspector_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_ui_render)
-    target_include_directories(test_okayui_inspector_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
-    add_test(NAME okayui_inspector_imgui COMMAND test_okayui_inspector_imgui)
-    set_tests_properties(okayui_inspector_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    # Hosted OkayUI bodies give way to Dear ImGui windows drawn in front of them (shared/OkayUIHostImGui.hpp): the History window
-    # behind Project Settings once painted its Undo/Redo row over it. Dear ImGui only, headless.
-    add_executable(test_okayui_host_layering test_okayui_host_layering.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_host_layering PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_host_layering PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_host_layering SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
-    add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
-    # Editor modals that block every click while nothing is shown (editor/ModalGuard.hpp): the two recovery questions that
-    # replaced each other every frame after an unclean exit, undrawn and off-screen modals, the clicks-land-nowhere log line.
-    add_executable(test_editor_stale_modal test_editor_stale_modal.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_editor_stale_modal PRIVATE okay_imgui)
-    else()
-        target_sources(test_editor_stale_modal PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_editor_stale_modal SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_include_directories(test_editor_stale_modal PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
-    add_test(NAME editor_stale_modal COMMAND test_editor_stale_modal)
-    # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
-    # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
-    add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_codeedit_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_codeedit_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_ui_render)
-    target_include_directories(test_okayui_codeedit_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
-    add_test(NAME okayui_codeedit_imgui COMMAND test_okayui_codeedit_imgui)
-    set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-endif()
-
-# The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
-# (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
-# reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
-if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
-    add_executable(test_okayui_panels_imgui test_okayui_panels_imgui.cpp)
-    if(TARGET okay_imgui)
-        target_link_libraries(test_okayui_panels_imgui PRIVATE okay_imgui)
-    else()
-        target_sources(test_okayui_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_include_directories(test_okayui_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
-    endif()
-    target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
-    target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher)
-    add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
-    set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-endif()
+# The Visual Script editor's graph model (save / load / paste), without drawing: the editor headers it includes take Dear ImGui's
+# names, which OkayUI's compatibility layer declares (okayui/probe first: "imgui.h" is OkayUI's). Nothing is linked, nothing fetched.
+# (Before 2026-11-27 these tests took Dear ImGui's own headers; Dear ImGui is no longer in the repository, docs/ui/own_ui_toolkit.md 33.)
+set(OKAY_UI_COMPAT_INCLUDE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/include)
+# The comparison tests okayui_editor_panels_imgui, okayui_hierarchy_imgui, okayui_inspector_imgui (Dear ImGui reference bodies against the
+# OkayUI ports), okayui_host_layering, okayui_codeedit_imgui, okayui_panels_imgui (OkayUI hosted inside Dear ImGui windows) and
+# editor_stale_modal (editor/ModalGuard.hpp over Dear ImGui's popup stack) were deleted with Dear ImGui: the OkayUI sides keep their golden
+# pictures and behaviour checks (okayui_editor_panels, okayui_hierarchy, okayui_inspector, okayui_panels, okayui_codeedit,
+# okayui_port_modalguard), and the hosting they checked is gone.
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
-target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
@@ -2215,39 +2107,21 @@ add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 # GameFiber, collapse to function (same results before and after), layout, references across graph files, bookmarks,
 # checker fixes, graph diff, and the providers for the script IDE's shared layers.
 add_executable(test_vs_ide test_vs_ide.cpp)
-target_include_directories(test_vs_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_ide PRIVATE okay::engine)
 target_compile_definitions(test_vs_ide PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_ide COMMAND test_vs_ide)
 
-# Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
-# fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
-# ImGui core files from the same source tree.
-add_executable(test_imgui_platform_feed test_imgui_platform_feed.cpp)
-target_include_directories(test_imgui_platform_feed PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
-if(TARGET okay_imgui)
-    target_link_libraries(test_imgui_platform_feed PRIVATE okay_imgui okay::engine)
-else()
-    target_sources(test_imgui_platform_feed PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-    target_link_libraries(test_imgui_platform_feed PRIVATE okay::engine)
-endif()
-target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
-add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
-
-# Our own Dear ImGui renderer over okay::platform::Painter (shared/ImGuiPainterRenderer.hpp), headless on both painters.
-if(TARGET okay_ui_soft)
-    add_executable(test_imgui_painter_render test_imgui_painter_render.cpp)
-    target_include_directories(test_imgui_painter_render PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
-    if(TARGET okay_imgui)
-        target_link_libraries(test_imgui_painter_render PRIVATE okay_imgui okay_ui_soft okay::engine)
-    else()
-        target_sources(test_imgui_painter_render PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
-            ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-        target_link_libraries(test_imgui_painter_render PRIVATE okay_ui_soft okay::engine)
-    endif()
-    target_compile_features(test_imgui_painter_render PRIVATE cxx_std_17)
-    add_test(NAME imgui_painter_render COMMAND test_imgui_painter_render)
+# The platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real OkayUI context fed through a fake host (no window,
+# no SDL), compiled the way the editor and launcher are (okayui/probe first). The test of the Dear ImGui painter renderer
+# (imgui_painter_render, shared/ImGuiPainterRenderer.hpp) was deleted with it: OkayUI's frame drawer has its own tests (okayui_soft*).
+if(TARGET okay_ui)
+    add_executable(test_imgui_platform_feed test_imgui_platform_feed.cpp)
+    target_include_directories(test_imgui_platform_feed BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
+    target_include_directories(test_imgui_platform_feed PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay_ui okay::engine)
+    target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
+    add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
 endif()
 
 # Scripted input for headless app runs (shared/TestHooks.hpp): parser, events, runner on a real backend queue.
@@ -2276,59 +2150,59 @@ if(NOT EMSCRIPTEN AND NOT WIN32)   # (the test sleeps with nanosleep; the header
 endif()
 
 add_executable(test_vs_names test_vs_names.cpp)
-target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_names PRIVATE okay::engine)
 add_test(NAME vs_names COMMAND test_vs_names)
 
 add_executable(test_vs_palette_categories test_vs_palette_categories.cpp)
-target_include_directories(test_vs_palette_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_palette_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
 
 # Where every node sits in the Add Node menu: one place each, no catch-all, no oversized topic, old topic names still search.
 add_executable(test_vs_categories test_vs_categories.cpp)
-target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_categories COMMAND test_vs_categories)
 
 add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
-target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_palette_levels PRIVATE okay::engine)
 add_test(NAME vs_palette_levels COMMAND test_vs_palette_levels)
 
 add_executable(test_vs_templates test_vs_templates.cpp)
-target_include_directories(test_vs_templates PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_templates PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_templates PRIVATE okay::engine)
 target_compile_definitions(test_vs_templates PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_templates COMMAND test_vs_templates)
 
 add_executable(test_vs_flow_behaviour test_vs_flow_behaviour.cpp)
-target_include_directories(test_vs_flow_behaviour PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_flow_behaviour PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_flow_behaviour PRIVATE okay::engine)
 target_compile_definitions(test_vs_flow_behaviour PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_flow_behaviour COMMAND test_vs_flow_behaviour)
 
 add_executable(test_vs_node_docs test_vs_node_docs.cpp)
-target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
 
 # The simple clip player is shown as "Clip Player", the state graph as "Animator" (#422 finding 8); saved scenes unchanged.
 add_executable(test_anim_component_names test_anim_component_names.cpp)
-target_include_directories(test_anim_component_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_anim_component_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_anim_component_names PRIVATE okay::engine)
 target_compile_definitions(test_anim_component_names PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME anim_component_names COMMAND test_anim_component_names)
 
 add_executable(test_vs_guide test_vs_guide.cpp)
-target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_guide PRIVATE okay::engine)
 add_test(NAME vs_guide COMMAND test_vs_guide)
 
 add_executable(test_vs_clarity test_vs_clarity.cpp)
-target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_clarity PRIVATE okay::engine)
 add_test(NAME vs_clarity COMMAND test_vs_clarity)
 
@@ -2394,7 +2268,7 @@ target_link_libraries(test_vs_refs PRIVATE okay::engine)
 add_test(NAME vs_refs COMMAND test_vs_refs)
 
 add_executable(test_vs_choices test_vs_choices.cpp)
-target_include_directories(test_vs_choices PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_choices PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_choices PRIVATE okay::engine)
 add_test(NAME vs_choices COMMAND test_vs_choices)
 
@@ -2540,13 +2414,13 @@ target_compile_definitions(test_vs_flow_playground PRIVATE OKAY_SOURCE_DIR="${PR
 add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 
 add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
-target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
 target_compile_definitions(test_vs_registry_effect PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
 
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)
-target_include_directories(test_vs_node_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_node_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_node_effect PRIVATE okay::engine)
 add_test(NAME vs_node_effect COMMAND test_vs_node_effect)
 
@@ -4524,7 +4398,7 @@ target_compile_features(test_launcher_page_layout PRIVATE cxx_std_17)
 if(TARGET okay_ui)
     target_include_directories(test_launcher_page_layout BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's, as in the launcher
     target_link_libraries(test_launcher_page_layout PRIVATE okay_ui)
-    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1 OKAY_ON_OKAYUI=1)
+    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
 set_tests_properties(launcher_page_layout PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
@@ -4535,7 +4409,7 @@ if(TARGET okay_ui)
     target_include_directories(test_launcher_theme BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
     target_include_directories(test_launcher_theme PRIVATE ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(test_launcher_theme PRIVATE okay_ui)   # (the palettes come from OkayUI's designs, okay/UI/OkayUIDesign.hpp)
-    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_ON_OKAYUI=1)
+    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     target_compile_features(test_launcher_theme PRIVATE cxx_std_17)
     add_test(NAME launcher_theme COMMAND test_launcher_theme)
 endif()
@@ -5341,30 +5215,30 @@ target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor
 add_test(NAME vs_search_nav COMMAND test_vs_search_nav)
 
 add_executable(test_vs_plain_names test_vs_plain_names.cpp)
-target_include_directories(test_vs_plain_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_plain_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_plain_names PRIVATE okay::engine)
 add_test(NAME vs_plain_names COMMAND test_vs_plain_names)
 
 add_executable(test_vs_recipes test_vs_recipes.cpp)
-target_include_directories(test_vs_recipes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_recipes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_recipes PRIVATE okay::engine)
 target_compile_definitions(test_vs_recipes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_recipes COMMAND test_vs_recipes)
 
 # The Visual Script panel's per-frame work: the graph checker is not run in every frame of a node drag (editor perf, 2026-11-25).
 add_executable(test_vs_check_cost test_vs_check_cost.cpp)
-target_include_directories(test_vs_check_cost PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_check_cost PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_check_cost PRIVATE okay::engine)
 add_test(NAME vs_check_cost COMMAND test_vs_check_cost)
 
 add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
-target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
 target_compile_definitions(test_vs_saved_graphs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_saved_graphs COMMAND test_vs_saved_graphs)
 
 add_executable(test_vs_search_connect test_vs_search_connect.cpp)
-target_include_directories(test_vs_search_connect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_search_connect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
 add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
 
@@ -5411,7 +5285,7 @@ add_test(NAME vs_pan COMMAND test_vs_pan)
 foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happened)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_${vs_usage_test}.cpp)
         add_executable(test_${vs_usage_test} test_${vs_usage_test}.cpp)
-        target_include_directories(test_${vs_usage_test} PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+        target_include_directories(test_${vs_usage_test} PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
         target_link_libraries(test_${vs_usage_test} PRIVATE okay::engine)
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
@@ -5655,7 +5529,7 @@ target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PRO
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(test_vs_editor_bugs test_vs_editor_bugs.cpp)
-target_include_directories(test_vs_editor_bugs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_editor_bugs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_editor_bugs PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_bugs COMMAND test_vs_editor_bugs)
@@ -5669,7 +5543,7 @@ set_tests_properties(own_readers_sweep PROPERTIES TIMEOUT 900)
 
 # Table-driven right-answer checks for Visual Script nodes that had only an "it does something" test.
 add_executable(test_vs_node_values test_vs_node_values.cpp)
-target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
 target_link_libraries(test_vs_node_values PRIVATE okay::engine)
 target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_node_values COMMAND test_vs_node_values)

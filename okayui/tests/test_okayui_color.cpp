@@ -324,14 +324,14 @@ void TestWidgetsUseColours() {
         CHECK(CountEq(b, Rgba(14, 207, 208)) > 100);
         CHECK(CountEq(b, Rgba(209, 14, 210)) > 5);
     }
-    {   // the drop target outline while a typed drag is over an item
+    {   // the drop target outline while a typed drag of the accepted type is over an item (drawn by AcceptDragDropPayload, Dear ImGui's rule)
         Rig r; UI::Rect rt, rs;
         auto ui = [&] {
             if (UI::Begin("W", 10, 10, 380, 200)) {
                 UI::Button("source"); rs = UI::GetItemRect();
                 if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("T", "x", 1); UI::EndDragDropSource(); }
                 UI::Button("target"); rt = UI::GetItemRect();
-                if (UI::BeginDragDropTarget()) UI::EndDragDropTarget();
+                if (UI::BeginDragDropTarget()) { (void)UI::AcceptDragDropPayload("T"); UI::EndDragDropTarget(); }
             }
             UI::End();
         };

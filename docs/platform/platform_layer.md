@@ -373,9 +373,10 @@ code were not read or followed.
   `FeedHost` hides the window and backend, so the tests use a fake one.
 * Seam additions: `CursorShape` and `Backend::SetCursorShape` (SDL2 backend: system cursors; own Linux / Windows backends: not written,
   they return false), `TranslateSdl2Event()` (SDL event -> platform event with no side effects, temporary).
-* Wired into `editor/main.cpp` and `launcher/main.cpp` (main window and chat window) behind `OKAY_PLATFORM_EVENTS=own`. Default
-  stays `imgui_impl_sdl2`. Both apps log which one is active. In own mode the editor's multi-viewport pop-out panels are off (the feed
-  does not set `PlatformHasViewports`) and there is no gamepad navigation.
+* Wired into `editor/main.cpp` and `launcher/main.cpp` (main window and chat window). Since 2026-11-27 it is the only input path of
+  both (Dear ImGui and its `imgui_impl_sdl2` are gone; the programs are compiled against OkayUI, `docs/ui/own_ui_toolkit.md` sections 31
+  and 33); `OKAY_PLATFORM_EVENTS` is no longer read. It also sends the input method's caret (`OkayUI::GetImeRect`) to the window. No
+  multi-window panels (one OS window) and no gamepad navigation.
 * **Not moved yet:** the two `SDL_PollEvent` loops themselves. They still poll SDL because dozens of other consumers in them (`g_okayInput.Feed`,
   controller add/remove, drop files, render reset, chat window routing) read `SDL_Event`; the own feed gets each event translated.
   Moving the loops to `Backend::PollEvent` is the next step. Also not done: `SDL_CaptureMouse` (drag that leaves the window), IME
@@ -410,8 +411,8 @@ Call sites moved:
 * **Launcher** (`launcher/main.cpp`): the main loop, `ChatHostEvent` (routes events to the chat window by window id; the kinds the seam has
   no type for are routed by the id inside `native`), quit / close / focus gained, file drops (main window and chat window), and the verify-wait
   `SDL_PumpEvents`.
-* **Dear ImGui**: `FeedImGuiEvent` in both apps takes a platform event. Default: `ImGui_ImplSDL2_ProcessEvent(event.native)`. With
-  `OKAY_PLATFORM_EVENTS=own`: `Feed::ProcessEvent(event)` directly (no more `TranslateSdl2Event` in the apps; the function stays for tests).
+* **The UI's input**: `FeedImGuiEvent` in both apps takes a platform event and calls `Feed::ProcessEvent(event)` (no more
+  `TranslateSdl2Event` in the apps; the function stays for tests).
 * `shared/OkayUIHost.hpp`: `InputCollector::Feed(const okay::platform::Event&, char layoutChar)` next to the SDL overload. A test feeds both
   with the same events and compares every field of `OkayUI::Input`.
 
@@ -514,7 +515,8 @@ SDL, imgui_impl_sdlrenderer2 or other project code was read or followed.
   as before; the editor keeps its three-step fallback with the driver hint). The table is never destroyed on purpose (a renderer still open at exit
   must not be freed by a static destructor after SDL is gone). The Windows-only Direct3D 11 interop in `editor/main.cpp` was converted the same way
   and **could not be compiled here** (no Windows or MinGW SDL headers).
-* **Our own Dear ImGui renderer (step 4), OFF by default.** `shared/ImGuiPainterRenderer.hpp`: honours the `ImTextureData` requests (create,
+* **Our own Dear ImGui renderer (step 4; deleted 2026-11-27 with Dear ImGui: the editor and launcher draw OkayUI's frame through
+  `okayui/probe/ImGuiPainterRenderer.hpp` and the toolkit's frame drawer).** It was OFF by default. `shared/ImGuiPainterRenderer.hpp`: honours the `ImTextureData` requests (create,
   update rectangles, destroy; RGBA32 and Alpha8), draws every command with its clip rectangle and texture through `Painter::GeometryRaw`, uses
   `VtxOffset`, restores scale and clip. Switch: environment variable `OKAY_IMGUI_RENDER=own` (editor, launcher main window and chat window);
   without it `imgui_impl_sdlrenderer2` runs as before. Both apps print which one runs at start-up. In multi-window mode the editor's secondary
@@ -680,9 +682,8 @@ documentation (`EnumDisplaySettingsW`, `GetSystemInfo`, `GlobalMemoryStatusEx`, 
   layout; one `SDL_Renderer*` cast for OkayUI's SDL end-of-frame on the sdl2 painter remains). `shared/Splash.hpp` uses the plain types too.
   The player ran 12 s on Xvfb on both backends with the obstacle-course scene: `2D painter: software` on own, `sdl2` with
   `OKAY_PLATFORM_BACKEND=sdl2`; the two pictures differ in 3,724 of 1,024,000 pixels by more than 3% (animation timing).
-* **Launcher:** our own Dear ImGui feed and renderer are the default on every backend (`OKAY_PLATFORM_EVENTS=sdl2` /
-  `OKAY_IMGUI_RENDER=sdl2` go back to imgui_impl_sdl2 / sdlrenderer2 on the sdl2 backend). The editor keeps imgui_impl_sdl2 by
-  default: its multi-window panels need that backend's platform windows. Voice clips use `okay::platform::AudioSpec`
+* **Launcher and editor:** the platform feed and OkayUI's frame drawer are their only input and drawing paths since 2026-11-27 (no
+  Dear ImGui, no imgui_impl_sdl2 / sdlrenderer2). Voice clips use `okay::platform::AudioSpec`
   (`okay::wav::LoadWavClip`; the dead 8/32-bit and big-endian conversion is gone, our decoder only gives S16 or F32).
 * **Editor:** cores and RAM through `okay::platform::CpuCount()` / `SystemRamMB()`, the idle throttle through
   `Backend::HasPendingEvents()` (it called `SDL_PumpEvents` even on the own backend), mouse masks through `MouseMask`, no

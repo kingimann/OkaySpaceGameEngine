@@ -2,8 +2,8 @@
 // The Modeling window's page list, drawn (ModelingSidebarUi.cpp). Open: one row per page with its icon, name and hint under
 // job headings, as wide as the longest text needs, so nothing is cut. Folded: a strip of page icons with the names as
 // tooltips. The fold button at the top switches between the two. Sizes and fold rules: ModelingSidebar.hpp (tested);
-// pages and icons: ModelingToolIndex.hpp. main.cpp's DrawModeling calls this; tests/modeling_advanced_shot.cpp draws it
-// headless for pictures. Written from scratch for this engine.
+// pages and icons: ModelingToolIndex.hpp. main.cpp's DrawModeling calls this.
+// Written from scratch for this engine.
 #include "ModelingSidebar.hpp"
 #include <functional>
 

@@ -1,6 +1,6 @@
 #pragma once
-// The frame loop of an OkayUI window that OkayUI owns outright ("window mode", OKAY_UI_HOST=okayui): events come from an okay::platform::Backend,
-// the frame goes out through an okay::platform::Painter, and no Dear ImGui is involved. Own code, off by default, written from what a frame has to
+// The frame loop of an OkayUI window that OkayUI owns outright (the browser, Script Editor and Visual Script programs): events come from an
+// okay::platform::Backend, the frame goes out through an okay::platform::Painter. Own code, written from what a frame has to
 // do (docs/ui/own_ui_toolkit.md 6.23, step 1). Needs OKAYUI_HOST_PLATFORM like the host it builds on. No <mutex>/<thread> (Windows build rule).
 //
 //     okayuihost::platform::FrameLoop loop(*backend, *painter);
@@ -22,7 +22,7 @@
 namespace okayuihost {
 namespace platform {
 
-/// The window and painter of a window that OkayUI owns (the editor's window mode, the browser program). False with `error` (and
+/// The window and painter of a window that OkayUI owns (the browser program and the other OkayUI programs). False with `error` (and
 /// nothing kept) when the backend cannot make either.
 inline bool OpenWindow(okay::platform::Backend& backend, const okay::platform::WindowDesc& desc, std::unique_ptr<okay::platform::Window>& window,
                        std::unique_ptr<okay::platform::Painter>& painter, std::string& error) {

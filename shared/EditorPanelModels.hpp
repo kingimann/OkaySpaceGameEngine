@@ -1,6 +1,6 @@
 #pragma once
-// The data six editor panels show, taken out of the editor so that both of their versions can run without the editor:
-// the Dear ImGui version (editor/EditorPanelViews.cpp) and the OkayUI port (okayui/screens/OkayUIEditorPanels.cpp).
+// The data six editor panels show, taken out of the editor so that they can run without the editor:
+// the OkayUI bodies (okayui/screens/OkayUIEditorPanels.cpp).
 //
 //   Problems        everything wrong in the open scene, grouped by object, asset or script (editor/ProblemsPanel.cpp builds it)
 //   Stats           frame rate, its history and the scene census, plus the culling and batching switches (editor/main.cpp)

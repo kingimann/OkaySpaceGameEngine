@@ -3,6 +3,7 @@
 // ProgressBar with a size and an indeterminate bar. Headless: synthetic input through the test kit Sim, pixels through the software backend.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // GetStyle, GetTreeNodeToLabelSpacing
 
 #include <cmath>
 #include <cstring>
@@ -517,11 +518,200 @@ void TestFuzz() {
 
 } // namespace
 
+// Dear ImGui's look (StyleVar_FramedWidgets with StyleVar_TextRowHeight -1, how the editor and launcher on OkayUI draw every frame):
+// an unframed tree node is one text line tall (the editor's Hierarchy rows were a whole frame tall), its label starts
+// GetTreeNodeToLabelSpacing() from its left edge (the editor draws each row's type icon at that spacing's arrow part: the icon covered
+// the name), children indent by the style's IndentSpacing; the plain SliderFloat / SliderInt / DragFloat calls draw the framed widgets
+// with the value inside (they used to stay OkayUI's thin sliders, unlike the calls with a format).
+void TestImGuiLookTree() {
+    RUN_SUITE("Dear ImGui's look: tree node rows, label spacing, indent; plain sliders are framed");
+    Rig r; UI::Rect n1, c1, n2, sl; float lines = 0.0f, spacing = 0.0f, fontH = 0.0f; bool open = false; float v = 0.5f; int iv = 3;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::GetStyle().IndentSpacing = 30.0f;
+        spacing = UI::GetTreeNodeToLabelSpacing(); fontH = UI::GetFontSize();
+        UI::SetNextItemOpen(true);
+        open = UI::TreeNodeEx("parent", 0); n1 = UI::GetItemRect();
+        if (open) { UI::TreeNodeEx("child", UI::TreeNode_Leaf | UI::TreeNode_NoTreePushOnOpen); c1 = UI::GetItemRect(); UI::TreePop(); }
+        UI::TreeNodeEx("leaf", UI::TreeNode_Leaf | UI::TreeNode_NoTreePushOnOpen); n2 = UI::GetItemRect();
+        UI::SliderFloat("slide", &v, 0.0f, 1.0f); sl = UI::GetItemRect();
+        UI::SliderInt("count", &iv, 0, 10);
+        const float y0 = UI::GetCursorScreenPos().y; UI::Text("first line\nsecond line"); lines = UI::GetCursorScreenPos().y - y0;   // a line break: two lines
+        UI::GetWindowDrawList().AddText(UI::Vec2{300.0f, 300.0f}, UI::RGBA(201, 31, 77, 255), "top\nbottom");   // the draw list's text breaks lines too
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    CHECK(open);
+    CHECK(std::fabs(n1.h - fontH) <= 1.0f);                            // a text line tall, not a frame
+    CHECK(std::fabs(spacing - (fontH + 2.0f * UI::GetStyle().FramePadding.x)) <= 0.5f);   // the font size and twice FramePadding.x
+    CHECK(std::fabs((c1.x - n1.x) - 30.0f) <= 0.5f);                   // the style's IndentSpacing
+    CHECK(std::fabs(n2.x - n1.x) <= 0.5f);                             // TreePop took the same 30 back
+    CHECK(sl.h > fontH + 2.0f);
+    CHECK(lines >= 2.0f * fontH - 0.5f);
+    {   // "top\nbottom" on the draw list: pixels of its colour on two lines, a text line apart
+        const Bitmap b = r.sim.Draw(12, 14, 20);
+        int top = 0, bottom = 0;
+        for (int y = 300; y < 300 + (int)fontH; ++y) for (int x = 300; x < 360; ++x) if (PixelAt(b, x, y) == Rgba(201, 31, 77)) ++top;
+        for (int y = 300 + (int)fontH; y < 300 + 2 * (int)fontH; ++y) for (int x = 300; x < 360; ++x) if (PixelAt(b, x, y) == Rgba(201, 31, 77)) ++bottom;
+        CHECK(top > 0 && bottom > 0);
+    }                               // "first\nsecond": two text lines (it was one line with a '?' glyph)                                       // a framed slider: a frame tall
+    // the framed slider puts its value in the frame (pixels of the text colour inside it); a click sets the value from the pointer
+    r.Click(sl.x + 4.0f, CenterY(sl));
+    CHECK(v < 0.1f);
+}
+
+// Dear ImGui's ColorEdit4 in its look: a drag cell per channel (0..255) with a colour marker on its left edge, the swatch after the
+// cells, then the label; dragging a cell changes that channel by one step a pixel (the editor's Inspector Color field showed sliders).
+void TestImGuiLookColorEdit() {
+    RUN_SUITE("Dear ImGui's look: ColorEdit4 is channel cells, markers, swatch, label");
+    Rig r; float c[4] = {0.2f, 0.6f, 1.0f, 1.0f}; UI::Rect rc;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::SetNextItemWidth(440); UI::ColorEdit4("Color", c); rc = UI::GetItemRect();
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    const Bitmap b = r.sim.Draw(12, 14, 20);
+    int swatch = 0, marker = 0, swatchX = 100000;
+    for (int y = (int)rc.y; y < (int)(rc.y + rc.h); ++y)
+        for (int x = (int)rc.x; x < (int)(rc.x + rc.w); ++x) {
+            const unsigned p = PixelAt(b, x, y);
+            if (p == Rgba(51, 153, 255)) { ++swatch; swatchX = std::min(swatchX, x); }
+            if (p == Rgba(230, 70, 70) && x < rc.x + 10) ++marker;
+        }
+    CHECK(swatch > (int)(rc.h * rc.h * 0.4f));                         // the swatch in the colour
+    CHECK(swatchX > rc.x + rc.w * 0.5f);                               // after the cells
+    CHECK(marker > 4);                                                 // the red marker on the first cell's left edge
+    // drag the first cell 20 pixels to the right: red goes up about 20 steps of 255
+    const float cx = rc.x + 30.0f, cy = CenterY(rc);
+    r.Frames(20); r.sim.Move(cx, cy); r.Frame(); r.sim.Down(); r.Frame();
+    r.sim.Move(cx + 20.0f, cy); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(c[0] > 0.2f + 10.0f / 255.0f && c[0] < 0.2f + 30.0f / 255.0f);
+    CHECK(c[1] == 0.6f && c[2] == 1.0f && c[3] == 1.0f);
+}
+
+// A tab bar inside a tab item of another (the editor's Dialogue window: Node / Graph / Problems / Test inside its Dialogue tab). The inner
+// BeginTabBar used to return false while the outer bar was open, so the side panel was empty.
+void TestNestedTabBars() {
+    RUN_SUITE("tab bars nest");
+    Rig r; bool innerShown = false, xBody = false, bShown = false; UI::Rect bTab{};
+    r.body = [&] {
+        innerShown = xBody = bShown = false;
+        if (UI::BeginTabBar("outer")) {
+            if (UI::BeginTabItem("A")) {
+                if (UI::BeginTabBar("inner")) {
+                    innerShown = true;
+                    if (UI::BeginTabItem("X")) { xBody = true; UI::EndTabItem(); }
+                    if (UI::BeginTabItem("Y")) { UI::EndTabItem(); }
+                    UI::EndTabBar();
+                }
+                UI::EndTabItem();
+            }
+            if (UI::BeginTabItem("B")) { bShown = true; UI::EndTabItem(); }
+            bTab = UI::GetItemRect();
+            UI::EndTabBar();
+        }
+    };
+    r.Frames(3);
+    CHECK(innerShown && xBody);
+    CHECK(!bShown);
+    r.Click(CenterX(bTab), CenterY(bTab));   // the outer bar still works after the inner one ended
+    r.Frames(2);
+    CHECK(bShown && !innerShown);
+}
+
+// Dear ImGui's Selectable in its look: a text line tall, the highlight and hit box reach half the item spacing past it, so rows touch (the
+// Behavior Tree palette's rows were a whole frame tall each, with dead gaps between them).
+void TestImGuiLookSelectable() {
+    RUN_SUITE("Dear ImGui's look: Selectable rows are a text line tall and touch");
+    Rig r; UI::Rect a{}, b{}; int ca = 0, cb = 0; float fontH = 0.0f;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        fontH = UI::GetFontSize();
+        if (UI::Selectable("first")) ++ca;
+        a = UI::GetItemRect();
+        if (UI::Selectable("second")) ++cb;
+        b = UI::GetItemRect();
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    CHECK(std::fabs(a.h - fontH) <= 1.0f);                    // the item: one text line
+    const float gapMid = (a.y + a.h + b.y) * 0.5f;            // between the two items: inside one of the hit boxes
+    r.Click(a.x + 20.0f, gapMid - 0.6f);
+    CHECK(ca + cb == 1);
+}
+
+// What a drag source draws (its preview) is a tooltip at the pointer: the rows under the source keep their places while a row is dragged, so
+// the row under the pointer is the one that takes the drop (the editor's Hierarchy dropped Cube onto Sphere, the row above Sun, because the
+// preview text was laid out in the list).
+void TestDragPreviewIsTooltip() {
+    RUN_SUITE("a drag source's preview is a tooltip, not a row of the window");
+    Rig r; UI::Rect a{}, c{}; std::string dropped; float cYIdle = 0.0f;
+    r.body = [&] {
+        UI::Button("source row", V(200, 0)); a = UI::GetItemRect();
+        if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("ROW", "a", 2); UI::Text("source row (dragged)"); UI::EndDragDropSource(); }
+        UI::Button("middle row", V(200, 0));
+        UI::Button("target row", V(200, 0)); c = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) { if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ROW")) dropped = (const char*)p->Data; UI::EndDragDropTarget(); }
+    };
+    r.Frames(3); cYIdle = c.y;
+    r.sim.Move(CenterX(a), CenterY(a)); r.Frame(); r.sim.Down(); r.Frame();
+    r.sim.Move(CenterX(a), CenterY(a) + 20.0f); r.Frame();
+    r.sim.Move(CenterX(c), CenterY(c)); r.Frame(); r.Frame();
+    CHECK(std::fabs(c.y - cYIdle) < 0.5f);                   // the rows did not move while dragging
+    r.sim.Up(); r.Frame();
+    CHECK(dropped == "a");
+}
+
+// Groups lock the horizontal start (Dear ImGui's documented BeginGroup / EndGroup): the editor's Project panel draws each tile as a group
+// (the icon button, then its name on the next line) and puts the next tile beside it with SameLine. The name of the second tile must be
+// under the second icon, not under the first tile's name at the window's left edge (seen in the editor on OkayUI, round 3). After the
+// groups the next line starts below the taller one, at the left edge.
+void TestGroupLocksStartX() {
+    RUN_SUITE("BeginGroup locks the start x; the line after the groups is below the tallest");
+    Rig r; UI::Rect i1{}, t1{}, i2{}, t2{}, g2{}, i3{}, t3{}, after{};
+    r.body = [&] {
+        UI::BeginGroup(); UI::Button("##icon1", V(100, 100)); i1 = UI::GetItemRect(); UI::Text("Audio"); t1 = UI::GetItemRect(); UI::EndGroup();
+        UI::SameLine();
+        UI::BeginGroup(); UI::Button("##icon2", V(100, 100)); i2 = UI::GetItemRect(); UI::Text("Materials"); t2 = UI::GetItemRect(); UI::Text("2 files"); UI::EndGroup();
+        g2 = UI::GetItemRect();
+        UI::SameLine();
+        UI::BeginGroup(); UI::Button("##icon3", V(60, 60)); i3 = UI::GetItemRect(); UI::Text("x"); t3 = UI::GetItemRect(); UI::EndGroup();
+        UI::Button("next row"); after = UI::GetItemRect();
+    };
+    r.Frames(2);
+    CHECK(std::fabs(i2.y - i1.y) < 0.5f && i2.x > i1.x + i1.w);       // the second tile sits beside the first
+    CHECK(std::fabs(t1.x - i1.x) < 0.5f);
+    CHECK(std::fabs(t2.x - i2.x) < 0.5f);                             // its name under its own icon
+    CHECK(t2.y > i2.y + i2.h - 0.5f && t2.y < t1.y + t1.h);           // right under the icon, on the first name's row
+    CHECK(std::fabs(t3.x - i3.x) < 0.5f && t3.y < i3.y + i3.h + 20.0f);
+    CHECK(std::fabs(g2.x - i2.x) < 0.5f && g2.y + g2.h > t2.y + t2.h - 0.5f);   // the group is one item around both
+    CHECK(after.x < i1.x + 0.5f && after.y > g2.y + g2.h);               // the next line: left edge, below the tallest group
+    // The Project panel's details strip: a picture (Dummy), SameLine, then a group of text lines (a heading and the facts). The lines stack
+    // from the picture's top, one under the other; the first is not centred on the picture (it overlapped the second in round 3).
+    UI::Rect pic{}, l1{}, l2{};
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_TextRowHeight, V(-1.0f, 0.0f));
+        UI::Dummy(V(90, 90)); pic = UI::GetItemRect(); UI::SameLine();
+        UI::BeginGroup(); UI::Text("Wood.png"); l1 = UI::GetItemRect(); UI::TextDisabled("Texture 179 B"); l2 = UI::GetItemRect(); UI::EndGroup();
+        UI::PopStyleVar();
+    };
+    r.Frames(2);
+    CHECK(std::fabs(l1.y - pic.y) < 0.5f);
+    CHECK(l2.y >= l1.y + l1.h - 0.5f && std::fabs(l2.x - l1.x) < 0.5f);
+}
+
 int main() {
     TestMultiline();
     TestHintArrowProgress();
     TestSelectable();
     TestTreeFlags();
+    TestImGuiLookTree();
+    TestImGuiLookColorEdit();
+    TestNestedTabBars();
+    TestImGuiLookSelectable();
+    TestDragPreviewIsTooltip();
+    TestGroupLocksStartX();
     TestPlots();
     TestFuzz();
     TEST_MAIN_RESULT();

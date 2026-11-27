@@ -328,6 +328,13 @@ if(NOT EMSCRIPTEN)
     add_subdirectory(tools/sitecheck)   # Site check (okay-sitecheck): real sites through our own browser, failures ranked
 endif()
 
+# ---- Script Editor program --------------------------------------------
+# The script editor in a window of its own (system "Script Editor", shared/ScriptIdeApp: the editor shows the same one). On
+# whenever OkayUI is built (it returns quietly otherwise).
+if(NOT EMSCRIPTEN)
+    add_subdirectory(scripteditor)
+endif()
+
 # ---- Standalone game player ------------------------------------------
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)

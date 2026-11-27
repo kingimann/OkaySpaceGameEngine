@@ -60,8 +60,7 @@
 #include "imgui_internal.h"   // ClearActiveID: Esc leaves the name field
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
-#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
-#include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
+#include "EmbeddedFonts.hpp" // embedded Roboto Medium (Apache 2.0, shared with the editor) and JetBrains Mono (OFL, `code` in chat)
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
 // Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
@@ -10853,10 +10852,10 @@ static bool ChatHostCreate() {
     {   // same fonts as the launcher (each renderer needs its own atlas texture)
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
+        if (!okf::AddToAtlas(ImGui::GetIO().Fonts, okf::RobotoMediumTtf(), 17.0f, fc))
             ImGui::GetIO().Fonts->AddFontDefault();
         MergeEmojiFallback(17.0f);
-        g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
+        g_chatHost.mono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
     if (g_imguiOwnFeed) {
         okay::platform::Window* feedWin = g_chatHostOwner;
@@ -13593,13 +13592,11 @@ int main(int argc, char** argv) {
     {
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 17.0f, &fc))
+        if (!okf::AddToAtlas(ImGui::GetIO().Fonts, okf::RobotoMediumTtf(), 17.0f, fc))
             ImGui::GetIO().Fonts->AddFontDefault();
         MergeEmojiFallback(17.0f);
         // JetBrains Mono (same as the editor's script editor) for `code` in chat.
-        g_fontMono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
-            JetBrainsMono_compressed_data_base85, 16.0f, &fc);
+        g_fontMono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     // Which Dear ImGui input path runs: our own okay::platform feed (the default on every backend, rule 17) or imgui_impl_sdl2

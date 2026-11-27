@@ -157,7 +157,7 @@ Include lines from one top folder into another (tests left out of the "bad" colu
 | launcher | shared 48, engine 26, okayui 6 | yes; never includes `editor/` |
 | player | engine 33, shared 13, okayui 1 | yes |
 | shared | engine 38, okayui 20 | yes; never includes a program folder |
-| **engine** | **shared 7** | no: `Net/NetworkManager.cpp`, `Net/DedicatedServer.cpp`, `AntiCheat/ClockCheck.cpp`, `Net/RelayServer.cpp` include `shared/AntiCheat*.hpp` and `shared/OfficialGame.hpp`; `Graphics/EmbeddedFont.cpp` includes `shared/OkfDecode.hpp` and `shared/RobotoFontOwn.h`. The engine includes no `editor/`, `launcher/` or `player/` file. |
+| **engine** | **shared 7** | no: `Net/NetworkManager.cpp`, `Net/DedicatedServer.cpp`, `AntiCheat/ClockCheck.cpp`, `Net/RelayServer.cpp` include `okay/AntiCheat/` headers that need `shared/OfficialGame.hpp`; `Graphics/EmbeddedFont.cpp` includes `shared/EmbeddedFonts.hpp` (with `OkfDecode.hpp` and `RobotoFont.h`). The engine includes no `editor/`, `launcher/` or `player/` file. |
 | **okayui** (library part) | engine 23, shared 22 (tests), editor 24 (tests), launcher 1 (test) | partly: `okayui/src`, `render`, `soft` include `Platform/Painter.hpp`, `Platform/Platform.hpp`, `Graphics/TtfFont.hpp`, `Graphics/Font.hpp` (base layers, fine) and `UI/UIPainterSDL.hpp` (the engine's in-game UI: one layer too high); `okayui/screens` includes `Debug/ConsoleModel.hpp` and `shared/` (it is program-level code living in the library folder) |
 | tools | engine 20, editor 3, shared 1 | tools may include anything |
 

@@ -61,8 +61,10 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
     canvas = {X, Y, X + W, Y + H};
     vsed::VsEditState& s = st();
     vsed::VsEditGraph& g = s.g;
-    if (s.frameAll) { s.frameAll = false; frameAll(false); }
-    if (s.frameSel) { s.frameSel = false; frameAll(true); }
+    // Frame All / Frame Selection: fitted with the blocks' drawn sizes, so a graph never seen yet is fitted again once it is drawn
+    static const int kRefit = 2;
+    if (s.frameAll || s.frameSel) { frameAll(s.frameSel && !s.frameAll); refit = s.frameSel && !s.frameAll ? -kRefit : kRefit; s.frameAll = s.frameSel = false; }
+    else if (refit != 0) { frameAll(refit < 0); refit += refit < 0 ? 1 : -1; }
     if (s.focusNode >= 0) {
         if (const vsed::VsEditNode* n = g.find(s.focusNode))
             s.pan = vsed::VsPoint(W * 0.45f - n->x * scale(), H * 0.4f - n->y * scale());

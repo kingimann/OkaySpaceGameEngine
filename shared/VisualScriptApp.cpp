@@ -988,8 +988,8 @@ bool VisualScriptApp::CommentSelection() {
     s.renameComment = -1;
     return true;
 }
-void VisualScriptApp::FrameAll() { m->frameAll(false); }
-void VisualScriptApp::FrameSelection() { m->frameAll(true); }
+void VisualScriptApp::FrameAll() { m->st().frameAll = true; }         // done in the next frame, when the canvas's size is known
+void VisualScriptApp::FrameSelection() { m->st().frameSel = true; }
 bool VisualScriptApp::PlugOnScreen(int node, bool exec, bool output, int pin, float& x, float& y) const {
     for (const auto& p : m->plugs)
         if (p.node == node && p.exec == exec && p.output == output && p.pin == pin) { x = p.x; y = p.y; return true; }

@@ -132,14 +132,16 @@ int main() {
         CHECK(!rows.empty());
         CHECK(!rows.empty() && rows.front().find("Wait") != std::string::npos);
         Golden(sim, "visual_script_app_palette");
+        const std::string added = app.PaletteTypes().empty() ? std::string() : app.PaletteTypes().front();   // the starter "Wait Then Continue"
+        CHECK(added == "Delay");
         sim.Press(Key_Enter);
         Tap(sim, UI::KeyId_Enter, ui);
         CHECK(!app.PaletteOpen());
-        CHECK(CountType(app.Active().g, "Wait") == 1);
+        CHECK(CountType(app.Active().g, added.c_str()) == 1);
         CHECK(app.Active().g.dirty);
         CHECK(app.WindowTitle().rfind("*Player.okayvs", 0) == 0);
         int wait = -1;
-        for (const auto& n : app.Active().g.nodes) if (n.type == "Wait") wait = n.id;
+        for (const auto& n : app.Active().g.nodes) if (n.type == added) wait = n.id;
         CHECK(app.Active().selected == wait);
 
         // ---- wiring: drag from Print's flow output to the Wait block's flow input ----
@@ -163,10 +165,13 @@ int main() {
         CHECK(app.Active().refuseMsg == vsed::VsPlainFlowToValue());
 
         // ---- a wire dropped on empty space: the list shows only blocks that take a flow wire, and the pick is wired ----
+        app.FrameAll();   // the block may sit near the edge: everything in view first
+        sim.Frames(2, ui);
         CHECK(app.PlugOnScreen(wait, true, true, 0, ax, ay));
         CHECK(EmptySpot(app, app.Active().g, 40, 90, W * 0.6f, H - 80, ex, ey));
         Drag(sim, ax, ay, ex, ey, ui);
         CHECK(app.PaletteOpen());
+
         const std::vector<std::string> types = app.PaletteTypes();
         CHECK(!types.empty());
         bool allTakeFlow = true;
@@ -184,7 +189,9 @@ int main() {
         // ---- moving a block: a drag by its header, then snapped to the 20-unit grid ----
         sim.Frames(2, ui);
         CHECK(app.BlockOnScreen(wait, bx0, by0, bx1, by1));
-        const float oldX = app.Active().g.find(wait)->x;
+        const vsed::VsEditNode* wb = app.Active().g.find(wait);
+        if (!wb) { std::cerr << "  the added block is gone\n"; return 1; }
+        const float oldX = wb->x;
         Drag(sim, bx0 + 12, by0 + 6, bx0 + 12 + 90, by0 + 6 + 40, ui);
         const vsed::VsEditNode* wn = app.Active().g.find(wait);
         CHECK(wn && wn->x > oldX + 20);
@@ -223,7 +230,7 @@ int main() {
         {
             vsed::VsEditGraph back;
             CHECK(back.load(player));
-            CHECK(CountType(back, "Wait") == 1 && CountType(back, "Print") == 2);
+            CHECK(CountType(back, added.c_str()) == 1 && CountType(back, "Print") == 2);
         }
 
         // ---- compare with the saved file: a new block shows as added ----
@@ -236,7 +243,8 @@ int main() {
         sim.Frames(2, ui);
 
         // ---- the OkayScript text, a breakpoint and the paused debugger's keys ----
-        CHECK(app.OkayScriptText().find("print") != std::string::npos);
+        CHECK(app.OkayScriptText().find("Debug.Log(\"Ready!") != std::string::npos);   // the starter's Print
+
         app.Active().sel = {print}; app.Active().selected = print;
         CHECK(app.ToggleBreakpoint());
         CHECK(okay::vs::VsDebugger::Get().HasBreakpoint(player, print));

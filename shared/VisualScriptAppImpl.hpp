@@ -82,6 +82,7 @@ struct VisualScriptApp::Impl {
     int nodeMenu = -1;                            // the block whose right-click menu is open
     float menuX = 0, menuY = 0;
     bool canvasFocused = false;
+    int refit = 0;                                // Frame All asked: fit again in this many next frames (negative: the selection)
     bool wantsKeys = false;
     double lastCheckAt = -1.0;
 

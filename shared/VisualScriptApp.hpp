@@ -127,7 +127,7 @@ public:
     int DeleteSelection();
     /// A comment frame around the selected blocks. False when nothing is selected.
     bool CommentSelection();
-    /// The view: fit every block / the selected ones.
+    /// The view: fit every block / the selected ones (in the next frame drawn).
     void FrameAll();
     void FrameSelection();
     /// Where a block's plug is on screen (as last drawn): `exec` flow plug, `output` its right side. False when not drawn.

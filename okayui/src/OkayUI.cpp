@@ -4100,6 +4100,8 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_hitWinId),
     OKAYUI_CTX_VAR(ui_core::g_hitWinOn),
     OKAYUI_CTX_VAR(ui_core::g_hitWinZ),
+    OKAYUI_CTX_VAR(ui_core::g_clipBase),
+    OKAYUI_CTX_VAR(ui_core::g_prevInOverlay),
     OKAYUI_CTX_VAR(ui_core::g_hot),
     OKAYUI_CTX_VAR(ui_core::g_imguiCoords),
     OKAYUI_CTX_VAR(ui_core::g_hoverFrame),

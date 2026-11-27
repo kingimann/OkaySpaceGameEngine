@@ -552,6 +552,46 @@ void TestStringId() {
     CHECK(StringId::Intern("shared_7").Name() == "shared_7" && StringId::CollisionCount() == 0);
 }
 
+// ---- the memory report ------------------------------------------------------------------
+
+void TestMemoryReport() {
+    RUN_SUITE("memory report: process memory and named counters");
+    // /proc/self/status as Linux writes it (proc(5)): keys, a colon, spaces or tabs, a number of kB.
+    const ProcessMemory m = ParseProcStatus("Name:\tOkayEngine\nVmPeak:\t  900000 kB\nVmHWM:\t  200000 kB\nVmRSS:\t  150000 kB\n"
+                                            "RssAnon:\t  120000 kB\nRssFile:\t   30000 kB\nThreads:\t12\n");
+    CHECK(m.known);
+    CHECK(m.residentBytes == 150000u * 1024u && m.privateBytes == 120000u * 1024u && m.peakResidentBytes == 200000u * 1024u);
+    CHECK(!ParseProcStatus("").known);
+    CHECK(!ParseProcStatus("VmRSSX: 5 kB\nVmRSS: kB\n").known);   // not the key / no number
+    CHECK(ParseProcStatus("VmRSS: 7 kB").residentBytes == 7 * 1024);   // no newline at the end
+#if defined(__linux__) || defined(_WIN32)
+    const ProcessMemory a = QueryProcessMemory();
+    CHECK(a.known && a.residentBytes > 0 && a.privateBytes > 0 && a.peakResidentBytes >= a.residentBytes / 2);
+    {   // 64 MB written: the private bytes go up by most of it
+        std::vector<unsigned char> big(64u << 20);
+        for (std::size_t i = 0; i < big.size(); i += 4096) big[i] = (unsigned char)i;
+        const ProcessMemory b = QueryProcessMemory();
+        CHECK(b.privateBytes > a.privateBytes + (48u << 20));
+        CHECK(big[4096] == 0);   // (keeps the writes)
+    }
+#endif
+    // Counters: added in order, replaced by name, removed; the report lists them biggest first.
+    std::size_t fonts = 3u << 20;
+    AddMemoryCounter("test: fonts", [&] { return fonts; });
+    AddMemoryCounter("test: thumbnails", [] { return (std::size_t)(1u << 20); });
+    AddMemoryCounter("test: fonts", [&] { return fonts * 2; });   // same name: replaced, not added
+    auto rows = MemoryCounters();
+    CHECK(rows.size() == 2 && rows[0].first == "test: fonts" && rows[0].second == (6u << 20) && rows[1].second == (1u << 20));
+    const std::string r = MemoryReportText("[memory] test");
+    CHECK(r.rfind("[memory] test: ", 0) == 0);
+    CHECK(r.find("test: fonts") != std::string::npos && r.find("6.0 MB") != std::string::npos);
+    CHECK(r.find("test: fonts") < r.find("test: thumbnails"));   // biggest first
+    CHECK(r.find("counted owners: 7.0 MB") != std::string::npos);
+    RemoveMemoryCounter("test: fonts");
+    RemoveMemoryCounter("test: thumbnails");
+    CHECK(MemoryCounters().empty());
+}
+
 } // namespace
 
 int main() {
@@ -564,5 +604,6 @@ int main() {
     TestSlotMap();
     TestSlotMapRandomized();
     TestStringId();
+    TestMemoryReport();
     TEST_MAIN_RESULT();
 }

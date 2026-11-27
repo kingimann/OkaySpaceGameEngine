@@ -6,6 +6,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/Memory.hpp"
+#include "okay/Graphics/TtfFont.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -628,6 +630,43 @@ int main() {
         CHECK(vc->GetVariable("coins").AsString() == "2 coins");
         CHECK(vc->GetVariable("lang").AsString() == "fr" && Localization::Language() == "fr");
         Prefs::Delete(Localization::kPrefsKey);
+    }
+
+    // ---- Fonts and memory: sized faces share the font file; probing a font file keeps nothing ----
+    {
+        // The biggest installed fallback font (a CJK one is 6 to 17 MB), else none (the RSS part is skipped).
+        std::string big;
+        std::uintmax_t bigSize = 0;
+        for (const std::string& path : SystemFallbackFonts()) {
+            std::error_code ec;
+            const std::uintmax_t n = std::filesystem::file_size(path, ec);
+            if (!ec && n > bigSize) { big = path; bigSize = n; }
+        }
+        TtfFont own;
+        if (!big.empty() && own.LoadFromFile(big, 16.0f)) {
+            // 29 sized faces, what OkayUI asks for while the zoom is dragged (quarter-pixel steps up to 16 px). Each used to copy
+            // the whole file: 29 x the file. Now they share it, so the growth is their atlases (256 x 256 RGBA each) and change.
+            const ProcessMemory before = QueryProcessMemory();
+            std::size_t atlases = 0;
+            int faces = 0;
+            for (float h = 8.0f; h < 15.2f; h += 0.25f) {
+                TtfFont* f = own.ForDeviceSize(h, false);
+                CHECK(f != nullptr && f != &own && f->Valid());
+                ++faces;
+            }
+            for (float h = 8.0f; h < 15.2f; h += 0.25f) {
+                const TtfFont* f = own.ForDeviceSize(h, false);
+                atlases += (std::size_t)f->Atlas().Width() * (std::size_t)f->Atlas().Height() * 4;
+            }
+            const ProcessMemory after = QueryProcessMemory();
+            CHECK(faces == 29);
+            if (before.known && after.known) {
+                const std::size_t grew = after.privateBytes > before.privateBytes ? after.privateBytes - before.privateBytes : 0;
+                std::printf("[test_localization] 29 sized faces of %s (%.1f MB): private memory grew %.1f MB (atlases %.1f MB)\n", big.c_str(),
+                            (double)bigSize / 1048576.0, (double)grew / 1048576.0, (double)atlases / 1048576.0);
+                CHECK(grew < atlases + (std::size_t)bigSize * 4 + (std::size_t)(4u << 20));   // was atlases + 29 x the file
+            }
+        }
     }
 
     // ---- Fonts: a font with the glyphs stands in, and new characters are baked on demand ----

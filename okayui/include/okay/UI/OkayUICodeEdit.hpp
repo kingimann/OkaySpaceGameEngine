@@ -272,6 +272,7 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    float LineSpacing() const { return lineSpacing_; }
     /// Empty space between the gutter and the first column of text, in pixels (4 by default, 0 to 200). A click in it is column 0.
     void SetTextMargin(float px) { textMargin_ = px > 0.0f ? (px < 200.0f ? px : 200.0f) : 0.0f; }
     float TextMargin() const { return textMargin_; }

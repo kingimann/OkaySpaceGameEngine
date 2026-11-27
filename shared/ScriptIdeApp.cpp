@@ -936,5 +936,6 @@ const std::vector<Diagnostic>& ScriptIdeApp::ActiveProblems() const {
 void ScriptIdeApp::CheckActiveNow() { if (Impl::Doc* d = m->activeDoc()) m->check(*d); }
 const std::string& ScriptIdeApp::Notice() const { return m->notice; }
 AppSettings& ScriptIdeApp::Settings() { return m->settings; }
+void ScriptIdeApp::ApplySettings() { for (auto& doc : m->docs) m->applyView(*doc); }
 
 } // namespace scriptide

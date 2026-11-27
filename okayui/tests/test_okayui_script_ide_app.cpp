@@ -209,6 +209,20 @@ int main() {
             }
         }
 
+        // ---- a host changes the settings (the editor's shared Density): ApplySettings puts them on the open tabs at once ----
+        if (UI::CodeEdit* se = app.ActiveEdit()) {
+            const float was = se->LineSpacing();
+            app.Settings().density = 2;
+            CHECK(se->LineSpacing() == was);   // not before ApplySettings
+            app.ApplySettings();
+            CHECK(se->LineSpacing() > was);    // Spacious: more room between the lines than Comfortable
+            app.Settings().density = 1;
+            app.ApplySettings();
+            CHECK(se->LineSpacing() == was);
+        } else {
+            CHECK(false);
+        }
+
         // ---- Ctrl+W closes the tab; Ctrl+Q asks the program to quit ----
         const std::size_t before = app.OpenFiles().size();
         sim.ctrl = true; sim.Hold(UI::KeyId_W, true); sim.Frame(ui); sim.Hold(UI::KeyId_W, false); sim.Frame(ui); sim.ctrl = false;

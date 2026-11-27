@@ -11,7 +11,8 @@
 // The voice session's net thread publishes a failure ("the voice server isn't
 // answering") while the launcher reads Error() / StateNow() every frame. Run it
 // under ThreadSanitizer: it reports the race; the checks alone can pass by luck.
-// Uses SDL's dummy audio driver and a local UDP port nobody answers on.
+// Uses a sound device that needs no sound card (SDL's dummy driver, or ALSA's "null" device on our own Linux
+// backend, the default there since #1341) and a local UDP port nobody answers on.
 int main() {
     RUN_SUITE("voice_races");
     // ---- the codec and cipher are the engine's shared ones (provenance audit N1) ----
@@ -47,6 +48,7 @@ int main() {
     _putenv_s("SDL_AUDIODRIVER", "dummy");
 #else
     setenv("SDL_AUDIODRIVER", "dummy", 1);
+    setenv("OKAY_ALSA_DEVICE", "null", 1);   // our own Linux backend: ALSA's null device (CI runners have no sound card)
 #endif
     using okay::voice::Session;
     Session s;

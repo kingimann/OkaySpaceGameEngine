@@ -3524,6 +3524,13 @@ has the window; pictures outside the repository). works = opens and acts as the 
 | Typing with an input method (IME) | not tried |
 | Windows (MinGW build and run) | unverified: changed files syntax-checked only |
 
+**Round 2 results.** All 79 `okayui_*` ctest tests (with `okayui_visual_script_app` from main), `editor` and `editor_okayui` self-tests, the ten
+`editor_*` test programs and the eleven `launcher_*` tests pass (99 in one run). The `editor_*` programs do not link a UI (they test the
+editor's logic), except `editor_stale_modal`, which links Dear ImGui; its OkayUI twin is `okayui_port_modalguard`. The launcher's pages were
+shot again and compared with the round-1 pictures: the Multiplayer page's Refresh button is back on screen (Dear ImGui's `SameLine(x)`) and
+the Forums tags and the Versions page fit their text; nothing else moved. Tests that failed first by a run: the menu body, Dear ImGui's tree
+rows, ColorEdit cells and framed sliders (1 and 6 failures on the old code); the others are new calls or by reading.
+
 Also found: `okayui/tests/InspectorBodiesFixtures.hpp` gave the curves body pointers to locals that the rows read after the function
 returned (the `inspector_curves` golden changed when unrelated code moved the stack); they are statics now.
 

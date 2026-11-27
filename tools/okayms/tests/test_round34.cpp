@@ -382,6 +382,102 @@ void frame(GLuint tex) {
     CHECK(tally, okayms_test::has_symbol(compiled.value.object, "__imp_glGetString"));
 }
 
+// Our own <list> ([list]; ThumbnailCache.cpp's LRU list with splice, SceneMerge.cpp's list with insert, erase and
+// std::next; before "cannot open include list"): a doubly linked list whose iterators stay valid while other elements
+// are added, moved (splice) or erased.
+static void r34_list(Tally& tally) {
+    std::printf("r34_list\n");
+    okayms_test::run_both(kRun, tally, "list", std::string(kAlloc) + R"OKMS(
+#include <list>
+#include <string>
+#include <vector>
+#include <map>
+#include <iterator>
+struct Entry { int key; std::string name; };
+int entry(void) {
+  std::list<Entry> lru;
+  std::map<int, std::list<Entry>::iterator> index;
+  for (int i = 0; i < 4; ++i) { lru.push_front(Entry{i, std::string(1, (char)('a' + i))}); index[i] = lru.begin(); }
+  CK(1, lru.size() == 4 && lru.front().key == 3 && lru.back().key == 0);
+  lru.splice(lru.begin(), lru, index[1]);
+  CK(2, lru.front().key == 1 && index[1]->name == "b" && lru.size() == 4);
+  lru.pop_back();
+  CK(3, lru.back().key == 2 && lru.size() == 3);
+  int sum = 0;
+  for (auto it = lru.begin(); it != lru.end();) { if (it->key == 3) it = lru.erase(it); else { sum = sum * 10 + it->key; ++it; } }
+  CK(4, sum == 12 && lru.size() == 2);
+  std::vector<std::string> bs = {"x", "y", "z"};
+  std::list<std::string> r(bs.begin(), bs.end());
+  auto it = std::next(r.begin());
+  auto ni = r.insert(it, "q");
+  CK(5, *ni == "q" && r.size() == 4);
+  std::string all;
+  for (const std::string& s : r) all += s;
+  CK(6, all == "xqyz");
+  r.erase(ni);
+  CK(7, r.size() == 3 && *std::next(r.begin()) == "y");
+  std::list<int> nums = {5, 6, 5, 7};
+  nums.remove(5);
+  CK(8, nums.size() == 2 && nums.front() == 6);
+  lru.clear();
+  CK(9, lru.empty());
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Our own <winsock2.h> and <ws2tcpip.h> (Net/UdpSocket.cpp and Net/ServerQuery.cpp; before "cannot open include
+// winsock2.h"): the documented record sizes (MinGW's headers agree), byte order, fd_set, and a UDP datagram sent to
+// itself over the loopback address through ws2_32.dll under Wine.
+static void r34_winsock(Tally& tally) {
+    std::printf("r34_winsock\n");
+    const okayms_test::ProgramRun run{"r34", {"ws2_32.dll:WSAStartup", "ws2_32.dll:WSACleanup", "ws2_32.dll:socket",
+                                              "ws2_32.dll:bind", "ws2_32.dll:getsockname", "ws2_32.dll:sendto",
+                                              "ws2_32.dll:recvfrom", "ws2_32.dll:closesocket", "ws2_32.dll:htons",
+                                              "ws2_32.dll:htonl", "ws2_32.dll:ntohs", "ws2_32.dll:ntohl",
+                                              "ws2_32.dll:select", "ws2_32.dll:ioctlsocket"}};
+    okayms_test::run_both(run, tally, "winsock", R"OKMS(
+#include <winsock2.h>
+#include <ws2tcpip.h>
+int entry(void) {
+  CK(1, sizeof(sockaddr_in) == 16 && sizeof(in_addr) == 4 && sizeof(WSADATA) == 408 && sizeof(fd_set) == 520);
+  CK(2, sizeof(addrinfo) == 48 && sizeof(timeval) == 8 && sizeof(SOCKET) == 8);
+  CK(3, htons(0x1234) == 0x3412 && htonl(0x01020304u) == 0x04030201u && ntohs(htons(77)) == 77);
+  WSADATA d;
+  CK(4, WSAStartup(MAKEWORD(2, 2), &d) == 0);
+  SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  CK(5, s != INVALID_SOCKET);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  CK(6, bind(s, (sockaddr*)&addr, sizeof(addr)) == 0);
+  int len = sizeof(addr);
+  CK(7, getsockname(s, (sockaddr*)&addr, &len) == 0 && ntohs(addr.sin_port) != 0);
+  const char msg[4] = {'o', 'k', 'm', 's'};
+  CK(8, sendto(s, msg, 4, 0, (sockaddr*)&addr, sizeof(addr)) == 4);
+  fd_set set;
+  FD_ZERO(&set);
+  FD_SET(s, &set);
+  FD_SET(s, &set);
+  CK(9, set.fd_count == 1);
+  timeval tv{};
+  tv.tv_sec = 2;
+  CK(10, select(0, &set, nullptr, nullptr, &tv) == 1);
+  char got[8] = {};
+  sockaddr_in from{};
+  int from_len = sizeof(from);
+  CK(11, recvfrom(s, got, 8, 0, (sockaddr*)&from, &from_len) == 4 && got[3] == 's');
+  CK(12, ntohl(from.sin_addr.s_addr) == INADDR_LOOPBACK);
+  u_long on = 1;
+  CK(13, ioctlsocket(s, FIONBIO, &on) == 0);
+  closesocket(s);
+  WSACleanup();
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -395,5 +491,7 @@ int main(int argc, char** argv) {
     r34_loop_registers(tally);
     r34_names(tally);
     r34_gl_header(tally);
-    return tally.finish(9);
+    r34_list(tally);
+    r34_winsock(tally);
+    return tally.finish(11);
 }

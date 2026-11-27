@@ -16,10 +16,11 @@ then this file gets updated. Keep this file short and true.
    - **The coordinator session and its agents (`claude/*`)** work on unfinished features (`docs/status/UNFINISHED.md` and its
      audits), the Xbox UWP port and our own replacements for third-party libraries (`docs/status/own_code_roadmap.md`;
      handed over from Claude 2 on 2026-11-22), and on coordinating: reviews, releases, CI, and checking on the other Claudes.
-   - **Claude 2 (`claude2/*`, issue #422)** works on bug fixes, physics (own physics engine, ragdolls), removing duplicate
-     code and the duplicate guard, and splitting `editor/main.cpp`.
-   - **Claude 3 (`claude3/*`, issue #422)** works on the Build window and game export, streaming and LOD, the Steam/Epic
-     Store Kit, and C# and Lua scripting. It starts from `docs/process/claude3_start.md`.
+   - **Claude 2 and Claude 3 are out since 2026-11-27** (owner: "They are out, finish there job"). The coordinator took
+     over both lanes: bug fixes (Grok's reports on #888), physics and ragdolls, duplicate code and the duplicate guard,
+     the `editor/main.cpp` split (was Claude 2); the Build window and game export, streaming and LOD, the Steam/Epic Store
+     Kit, C# and Lua (was Claude 3). No `Agree:` from them is needed; their entries stay in `docs/lanes.json` so old
+     branch names still check. Rules 2a, 25 and the hand-over parts of 26 apply again only if the owner brings them back.
    - **No duplicate features, in either lane.** Before building anything, search the feature map and the code
      (`python3 scripts/find_existing.py <keywords>`), then extend and finish what already exists instead of writing a
      second copy, and say in every claim what exists and what the gap is. (Owner, 2026-11-15: "make sure Claude 2 is

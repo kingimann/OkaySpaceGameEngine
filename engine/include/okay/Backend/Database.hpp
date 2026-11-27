@@ -12,7 +12,8 @@
 // every moved request to the exact bytes it had before.
 //
 // Written from PostgREST's publicly documented URL interface (horizontal filtering with "column=operator.value", the
-// operators eq, neq, gt, gte, lt, lte, like, ilike, in, is; "select", "order" with ".asc"/".desc", "limit", "offset",
+// operators eq, neq, gt, gte, lt, lte, like, ilike, in, is; the logical operators "or=(...)" and "and(...)"; "select",
+// "order" with ".asc"/".desc", "limit", "offset",
 // "on_conflict"; the "Prefer" header's return= and resolution= options; "Accept: application/vnd.pgrst.object+json" for one
 // row; functions under "rpc/") and RFC 3986 (percent-encoding). That interface is something we call; no PostgREST or
 // Supabase code is used. Header-only and free of <mutex> / <thread> (CLAUDE.md rule 21a).
@@ -37,10 +38,12 @@ struct DbRequest {
 };
 
 /// How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
-/// unreserved set (A-Z a-z 0-9 - _ . ~), so a value can never add a part to the query. AsIs writes it unchanged: only for
-/// values the program made itself (a timestamp) or for the moved sites that always sent their value unchanged (section 16
-/// of docs/platform/okay_backend.md lists them).
-enum class ValueText { Encoded, AsIs };
+/// unreserved set (A-Z a-z 0-9 - _ . ~), so a value can never add a part to the query; an item of a list (In, Cond inside
+/// Or / And) that holds one of PostgREST's reserved characters is first put in double quotes. AsIs writes it unchanged: only
+/// for values the program made itself (a timestamp) or for the moved sites that always sent their value unchanged (sections
+/// 16 and 18 of docs/platform/okay_backend.md list them). EncodedUnquoted percent-encodes but never quotes a list item: only
+/// for the moved sites that always sent list items that way (section 18); outside a list it is the same as Encoded.
+enum class ValueText { Encoded, AsIs, EncodedUnquoted };
 
 /// What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
 enum class Return { Unset, Minimal, Representation };
@@ -72,17 +75,30 @@ public:
     /// Pattern match ("*" is the wildcard in an address, as PostgREST documents; the value is encoded like any other).
     Query& Like(const std::string& column, const std::string& pattern) { return Filter(column, "like", pattern, ValueText::Encoded); }
     Query& Ilike(const std::string& column, const std::string& pattern) { return Filter(column, "ilike", pattern, ValueText::Encoded); }
-    /// The column is one of `values`: "in.(a,b,c)". A value holding a comma, a bracket, a quote, a backslash or an outer
-    /// space is written in double quotes with \" and \\ escaped (PostgREST's reserved-character rule), then encoded.
-    Query& In(const std::string& column, const std::vector<std::string>& values) {
+    /// The column is one of `values`: "in.(a,b,c)". With ValueText::Encoded a value holding a comma, a bracket, a quote, a
+    /// backslash or an outer space is written in double quotes with \" and \\ escaped (PostgREST's reserved-character rule),
+    /// then encoded; see ValueText for the other two.
+    Query& In(const std::string& column, const std::vector<std::string>& values, ValueText t = ValueText::Encoded) {
         std::string list = "in.(";
         for (std::size_t i = 0; i < values.size(); ++i) {
             if (i) list += ',';
-            list += okay::account::detail::PercentEncode(InItem(values[i]));
+            list += ListItem(values[i], t);
         }
         parts_.emplace_back(Name(column), list + ")");
         return *this;
     }
+    /// Rows that match any of `conditions` (each made by Cond or And): "or=(a,b)".
+    Query& Or(const std::vector<std::string>& conditions) {
+        parts_.emplace_back("or", "(" + Joined(conditions) + ")");
+        return *this;
+    }
+    /// One condition inside Or / And: "column.op.value" (`op` one of PostgREST's operators: eq, neq, gt, gte, lt, lte, like,
+    /// ilike, is). The value is written like an item of In.
+    static std::string Cond(const std::string& column, const std::string& op, const std::string& value, ValueText t = ValueText::Encoded) {
+        return Name(column) + "." + Name(op) + "." + ListItem(value, t);
+    }
+    /// Conditions that must all hold, inside Or: "and(a,b)".
+    static std::string And(const std::vector<std::string>& conditions) { return "and(" + Joined(conditions) + ")"; }
     Query& Is(const std::string& column, IsValue v) {
         static const char* const words[] = {"null", "true", "false", "unknown"};
         parts_.emplace_back(Name(column), std::string("is.") + words[(int)v]);
@@ -171,6 +187,15 @@ private:
         parts_.emplace_back(Name(column), std::string(op) + "." +
                                               (t == ValueText::AsIs ? value : okay::account::detail::PercentEncode(value)));
         return *this;
+    }
+    static std::string ListItem(const std::string& v, ValueText t) {
+        if (t == ValueText::AsIs) return v;
+        return okay::account::detail::PercentEncode(t == ValueText::EncodedUnquoted ? v : InItem(v));
+    }
+    static std::string Joined(const std::vector<std::string>& items) {
+        std::string s;
+        for (std::size_t i = 0; i < items.size(); ++i) s += (i ? "," : "") + items[i];
+        return s;
     }
     static std::string InItem(const std::string& v) {
         bool quote = v.empty() || v.front() == ' ' || v.back() == ' ';

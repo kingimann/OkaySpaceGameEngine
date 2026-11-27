@@ -3,7 +3,11 @@
 // group of friends that plays together. One party at a time; the leader's game
 // session is stored on the party so members' launchers can follow it. Creating,
 // joining, leaving, kicking and promoting go through SECURITY DEFINER functions.
-// Drives an okay::account::AccountService; no-ops when signed out / offline.
+// Drives an okay::account::AccountService; no-ops when signed out / offline. Every
+// request goes through OkayBackend's Database (acct_.Db(); round 5), byte for byte
+// what it always sent (tests/test_okay_backend_golden_community1.cpp). The party id
+// and the user ids are sent unencoded, as they always were (docs/platform/
+// okay_backend.md section 18).
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
 
@@ -50,31 +54,33 @@ public:
         if (!acct_.IsLoggedIn()) return false;
         const std::string me = MyId();
         if (me.empty()) return false;
-        auto r = acct_.Api("/rest/v1/party_members?select=party_id&member=eq." + me, "GET");
+        const auto asIs = okay::backend::ValueText::AsIs;
+        auto r = acct_.Db().From("party_members").Select("party_id").Eq("member", me, asIs).Get();
         if (!r.ok) return false;
         auto rows = SplitObjects(r.body);
         if (rows.empty()) return true;   // not in a party
         const std::string pid = Field(rows[0], "party_id");
-        auto pr = acct_.Api("/rest/v1/parties?select=id,leader,game,join_link,max_size&id=eq." + pid, "GET");
+        auto pr = acct_.Db().From("parties").Select("id,leader,game,join_link,max_size").Eq("id", pid, asIs).Get();
         if (!pr.ok) return false;
         auto ps = SplitObjects(pr.body);
         if (ps.empty()) return true;
         out.id = Field(ps[0], "id"); out.leader = Field(ps[0], "leader");
         out.game = Field(ps[0], "game"); out.joinLink = Field(ps[0], "join_link");
         out.maxSize = std::max(1, std::atoi(Field(ps[0], "max_size").c_str()));
-        auto mr = acct_.Api("/rest/v1/party_members?select=member,ready,joined_at&party_id=eq." + pid + "&order=joined_at.asc", "GET");
+        auto mr = acct_.Db().From("party_members").Select("member,ready,joined_at").Eq("party_id", pid, asIs).Order("joined_at").Get();
         if (!mr.ok) return false;
-        std::string inList;
+        std::vector<std::string> ids;
         for (const auto& o : SplitObjects(mr.body)) {
             PartyMember m; m.uid = Field(o, "member"); m.ready = Field(o, "ready") == "true";
             m.joinedAt = ParseIso(Field(o, "joined_at"));
             if (m.uid.empty()) continue;
-            if (!inList.empty()) inList += ",";
-            inList += m.uid;
+            ids.push_back(m.uid);
             out.members.push_back(m);
         }
-        if (!inList.empty()) {
-            auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen,playing&id=in.(" + inList + ")");
+        if (!ids.empty()) {
+            auto p = privacy::ProfilesGet(acct_, [&ids, asIs](okay::backend::Query& q) {
+                q.Select("id,username,display_name,avatar_url,last_seen,playing").In("id", ids, asIs);
+            });
             if (p.ok)
                 for (const auto& o : SplitObjects(p.body)) {
                     const std::string id = Field(o, "id");
@@ -104,24 +110,20 @@ public:
     bool SetReady(const std::string& partyId, bool ready) {
         const std::string me = MyId();
         if (me.empty() || partyId.empty()) return false;
-        return acct_.Api("/rest/v1/party_members?party_id=eq." + partyId + "&member=eq." + me, "PATCH",
-                         std::string("{\"ready\":") + (ready ? "true" : "false") + "}").ok;
+        const auto asIs = okay::backend::ValueText::AsIs;
+        return acct_.Db().From("party_members").Eq("party_id", partyId, asIs).Eq("member", me, asIs)
+            .Update(std::string("{\"ready\":") + (ready ? "true" : "false") + "}").ok;
     }
     /// Leader only: the session members should follow ("" = not in a match).
     bool SetSession(const std::string& partyId, const std::string& game, const std::string& joinLink) {
         if (partyId.empty()) return false;
-        return acct_.Api("/rest/v1/parties?id=eq." + partyId, "PATCH",
-                         "{\"game\":" + JStr(game) + ",\"join_link\":" + JStr(joinLink) + "}").ok;
+        return acct_.Db().From("parties").Eq("id", partyId, okay::backend::ValueText::AsIs)
+            .Update("{\"game\":" + JStr(game) + ",\"join_link\":" + JStr(joinLink) + "}").ok;
     }
 
     std::string MyId() {
         if (myId_.empty() && acct_.IsLoggedIn()) {
-            std::string enc;
-            for (char c : acct_.CurrentSession().username) {
-                if (std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') enc += c;
-                else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", (unsigned char)c); enc += b; }
-            }
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", acct_.CurrentSession().username).Get();
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
         }
         return myId_;
@@ -146,7 +148,7 @@ private:
 
     bool Rpc(const char* fn, const std::string& body, std::string* err) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
-        auto r = acct_.Api(std::string("/rest/v1/rpc/") + fn, "POST", body);
+        auto r = acct_.Db().Rpc(fn, body);
         if (r.ok) return true;
         if (err) {
             std::string m = Field(r.body, "message");

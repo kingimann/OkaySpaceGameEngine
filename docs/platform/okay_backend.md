@@ -35,6 +35,7 @@
 - [15. Round 2: what was built](#15-round-2-what-was-built)
 - [16. Round 3: what was built](#16-round-3-what-was-built)
 - [17. Round 4: what was built](#17-round-4-what-was-built)
+- [18. Round 5: what was built](#18-round-5-what-was-built)
 
 ## 1. The short version
 
@@ -105,7 +106,7 @@ can run in the program (that is what on-device accounts become) or as `okay-back
 
 Sketch (C++17, header-only; no `<mutex>` or `<thread>` in anything the launcher, editor or player can include, rule 21a).
 Round 2 settled the transport and Auth parts, round 3 the Database part and round 4 the Storage and Functions parts; what was
-built differs from this sketch in small ways, listed in sections 15 to 17. The rest of the sketch (Realtime, Backend, Get) is
+built differs from this sketch in small ways, listed in sections 15 to 18. The rest of the sketch (Realtime, Backend, Get) is
 still the plan.
 
 ```cpp
@@ -464,7 +465,7 @@ the claim format of rule 26.
    `TicketClient.hpp`, `UserReports.hpp`, `CrashUpload.hpp`, `MemberModeration.hpp`, `AntiCheatAdminTools.hpp`,
    `VersionsManager.cpp` / `editor/Updater.cpp` (public URL only). Tests: golden tests per file, plus the existing
    `anticheat_backend`, `ticket_client`, `account_data`, `crash_upload`, `member_moderation`, `user_reports`, `launcher_versions`.
-5. **Community, part 1.** Files: `Profiles.hpp`, `Friends.hpp`, `BlockList.hpp`, `Privacy.hpp`, `Invites.hpp`, `Parties.hpp`.
+5. **Community, part 1 (done 2026-11-26, section 18).** Files: `Profiles.hpp`, `Friends.hpp`, `BlockList.hpp`, `Privacy.hpp`, `Invites.hpp`, `Parties.hpp`.
    Gap: `Profiles` has no request test (write it first). Tests: golden tests per file.
 6. **Community, part 2.** Files: `Messages.hpp` (tables), `Servers.hpp`. Tests: golden tests (55 + 19 sites).
 7. **Community, part 3, and the lock.** Files: `Forums.hpp`, `Admin.hpp` (no test today: write it first), `Workshop.hpp`
@@ -625,7 +626,7 @@ covers the builder itself: every operator, the order of parts, ranges, headers, 
 wire form, and `AccountService::Db()` sending nothing when signed out.
 
 **Not built in round 3:** the other Database sites (rounds 4 to 7), the Local provider's query parser (round 10), `Or` and
-`Not` filters (no program uses them yet). Unverified: nothing ran on Windows (MinGW `-fsyntax-only` only) or against a real
+`Not` filters (no program used them then; `Or` was added in round 5, section 18). Unverified: nothing ran on Windows (MinGW `-fsyntax-only` only) or against a real
 Supabase project.
 
 ## 17. Round 4: what was built
@@ -710,3 +711,89 @@ because their build flags include the host's SDL2 headers) or against a real Sup
 publicly documented Storage object routes and Edge Functions route (behaviour only) and from what the programs already sent;
 `launcher/OfficialAdmin.hpp` is our own launcher code moved out of `launcher/main.cpp`; the JSON escaping is the engine's own
 `okay::json::Escape` (RFC 8259). No Supabase client library or Supabase source was read or used.
+
+## 18. Round 5: what was built
+
+Branch `claude/okay-backend-5` (on top of round 4). Nothing was sent to the live Supabase project; every test uses a fake
+server with made-up addresses, keys and tokens.
+
+**What moved (every request byte-identical, checked by the golden test).** Every table request and database function call of
+the community headers, part 1, now goes through `acct_.Db()` (`okay::backend::Database`) instead of a hand-written
+`/rest/v1/...` route:
+- `Profiles.hpp`: the profile page (`Load`: the row with its two fallbacks, achievements with and without points, workshop games,
+  badges, playtime, `profile_friend_count`, `follow_counts`, whether we follow each other, the friendship, recent activity), the
+  showcase, achievements and playtime upserts, social links, follows (follow, unfollow, remove a follower, the two lists, follow
+  by name, followers see my activity), friend requests (add, accept, remove), and the user-id lookup.
+- `Friends.hpp`: the profile upsert and friend code, every "set my ..." update (now one helper, `PatchMyRow`), requests by name
+  and by code, accept and remove, the friend list and the pending count, presence, going offline, posting to and reading the
+  activity feed (with the names looked up in one `in.(...)` request), and the user-id lookup.
+- `BlockList.hpp`: the block list, block (`resolution=ignore-duplicates`), unblock, the privacy settings read and upsert, and the
+  user-id lookup.
+- `Privacy.hpp`: `ProfilesGet` (through `profiles_visible`, else `profiles`) now takes a function that shapes the request
+  (`[&](Query& q) { q.Select(...).Eq("id", uid); }`); Profiles, Friends and Parties use it. The old form that takes the query
+  as text stays only for `Messages`, `Servers` and `Admin`, which move in rounds 6 and 7; then it goes.
+- `Invites.hpp`: sending (`return=representation`), the incoming, sent and one-invite lists, and `respond_invite` /
+  `cancel_invite`.
+- `Parties.hpp`: my party, its members and their profiles, ready and session updates, the five party functions, and the
+  user-id lookup.
+
+The four hand-written URL encoders these files had (`Profiles::Url`, `Friends::Url` and the loops in `BlockList::MyId` and
+`Parties::MyId`) are gone: `Eq` encodes the same byte set (RFC 3986's unreserved characters kept; no program sets a locale, so
+their `isalnum` was the same set).
+
+**Builder additions, because a call site needed them.**
+- `Query::Or({...})`, `Query::And({...})` and `Query::Cond(column, op, value)`: PostgREST's logical operators, for the profile
+  page's "do we follow each other" (`or=(and(...),and(...))`) and "our friendship" (`or=(a.eq.x,b.eq.x)`). By default a value is
+  quoted when it holds one of PostgREST's reserved characters, then percent-encoded, like an item of `In`.
+- `In(column, values, ValueText)` and `ValueText::EncodedUnquoted`: an item is percent-encoded but never quoted. With
+  `ValueText::AsIs` it is written unchanged.
+
+**Kept as it was (behaviour preserved, flagged for the owner).** These odd parts are sent exactly as before:
+- Unencoded values (`ValueText::AsIs`): `BlockList::Fetch` sends my user id unencoded and `BlockList::Unblock` the user id it is
+  given; `Parties` sends the party id and the user ids unencoded (`Mine`, `SetReady`, `SetSession`), and its member list as
+  `in.(a,b)` with the ids unchanged. A value with "&" or a space reaches the server as written (`Unblock("u 5&x")` and
+  `SetReady("p 1&x")` are in the golden texts).
+- List items encoded but not quoted (`ValueText::EncodedUnquoted`): the profile page's `or=(...)`, `Profiles::FollowList` and
+  `Friends`' feed name lookup (`in.(...)`). PostgREST decodes the address before it reads the list, so an id holding a comma
+  or a bracket would split into two items. User ids are UUIDs and never hold one; the test `reserved_characters_in_lists` pins
+  the bytes anyway.
+- `Invites::Sent(limit)` with a negative limit still sends `limit=-2`; `Friends::Remove(-3)` still sends `id=eq.-3` (it never
+  checked); `Profiles::Accept` / `Remove` still check for a row above 0.
+- Found on the way, not changed: `Invites` treats a send refused for another reason as "not set up" once a missing table was
+  seen in the same session (its `Support` is sticky), so the reason is not shown; `Friends::Request` shows the raw server
+  answer when it is not one of the known rule words.
+
+**The scan.** `scripts/provenance_scan.py backend` now also counts `Db().Rpc(name)` with the function name in a variable as a
+"(dynamic)" RPC through OkayBackend (Invites' and Parties' own helpers). The six files wrote 64 routes by hand before (60
+Database, 4 RPC). After: 2 (the text form of `ProfilesGet`, kept for rounds 6 and 7), and 58 sites go through OkayBackend
+(54 Database, 4 RPC; the seven "set my ..." patches in `Friends` are now one helper). Totals over the whole repository: Database
+written by hand 221 to 163, through OkayBackend 16 to 70; RPC by hand 23 to 19, through OkayBackend 8 to 12. Storage, Auth and
+Functions unchanged.
+
+**Proof that nothing changed for Supabase.** `tests/test_okay_backend_golden_community1.cpp` runs 17 scenarios through the six
+headers' public functions against a fake server (profile pages found by name, by id, through every fallback, for myself and
+for missing players; every profile write and follow call; the follow lists and follow by name; the Friends profile setters and
+the friend code; requests by name and code, refused two ways; the friend list and pending count; presence, going offline and the
+feed; `ProfilesGet` with the view working, failing and missing; the block list and privacy settings with every kind of answer;
+invites sent, refused, listed and answered; my party and every party action; everything signed out; and ids holding reserved
+characters). The requests (method, URL with its query in order, header lines in order, body) and what the program made of each
+answer must equal texts recorded from the headers at commit `b2f943ed7`, before the move
+(`tests/test_okay_backend_golden_community1.inc`, recorded twice with the same result and committed before any call site
+changed; the last text, for reserved characters, was added after the move but recorded from the same old headers put first on
+the include path, twice with the same result). Three parts change with the clock: the presence time, an invite's expiry and a
+new friend code; the test writes them as `<NOW>`, `<NOW+3600>` and `<CODE>` and checks them itself. Then 10 flows send the
+same requests through `supabase::Database` directly over a `RecordingTransport`, built only with the builder, and must be the
+same bytes. Run failing first: with the call sites moved and `supabase::Database`'s `Send` and `Rpc` as a skeleton that sends
+nothing, 13 scenarios and 10 flows did not match (35 of 77 checks failed); with the real provider all 77 pass (79 with the
+reserved-characters text). Quoting the "encoded only" items on purpose turns `reserved_characters_in_lists` red.
+`tests/test_okay_backend.cpp` covers the new builder parts: `Or`, `And`, `Cond`, the three ways of writing list items, hostile
+values and names. The existing `blocks_privacy`, `friends_json`, `public_name` and `chat_invites` tests pass unchanged.
+
+**Not built in round 5:** `Not` filters (no program uses them), the Local provider's community tables (round 12), moving the
+text form of `ProfilesGet` (rounds 6 and 7). Unverified: nothing ran on Windows (MinGW `-fsyntax-only` of the changed headers
+only) or against a real Supabase project.
+
+**Where the code comes from (IP).** The new builder parts were written from PostgREST's publicly documented URL interface
+(the logical operators `or=(...)` and `and(...)`, and its rule for quoting reserved characters in lists) and RFC 3986
+(percent-encoding); the moved call sites are our own code, changed only in how they build the same text. No PostgREST, Supabase
+or other project's code was read or used, and no outside tool or library was used to make or check the golden texts.

@@ -2774,7 +2774,9 @@ static bool InputText_raw(const char* label, char* buf, int cap, unsigned flags)
     const VisLabel vis(label);
     const float h = rowH();
     const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
-    const float w = availW();
+    // A field with no visible label honours a negative width (SetNextItemWidth(-n): end n pixels before the right edge, Dear ImGui's rule, as
+    // CalcItemWidth does): the Project panel's name prompt leaves room for the file type after the field (".okaymat" ran past the dialog)
+    const float w = lw == 0.0f ? CalcItemWidth() : availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap, flags);

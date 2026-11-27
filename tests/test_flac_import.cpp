@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,55 @@ std::vector<float> ReadStream(const std::string& path) {
     return out;
 }
 
+
+// The fixtures are ours: written by scripts/gen_flac_fixtures.py (our own encoder, from the FLAC format description),
+// whose VORBIS_COMMENT vendor string says so. Also lists the header and first-subframe forms the frames use, so a
+// regenerated set cannot silently stop covering one. Frame headers are found by their sync code and checked with
+// the header CRC-8 (polynomial 0x07).
+struct FlacForms {
+    std::string vendor;
+    std::set<int> blockCodes, rateCodes, chanCodes, bpsCodes, strategies, subTypes;   // subTypes: 0 constant, 1 verbatim, 8+n fixed n, 32 LPC
+    int wastedFrames = 0, frames = 0;
+};
+
+unsigned char FlacCrc8(const unsigned char* p, std::size_t n) {
+    unsigned c = 0;
+    for (std::size_t i = 0; i < n; ++i) { c ^= p[i]; for (int b = 0; b < 8; ++b) c = (c & 0x80) ? ((c << 1) ^ 0x07) & 0xFF : (c << 1) & 0xFF; }
+    return static_cast<unsigned char>(c);
+}
+
+FlacForms ScanFlac(const std::vector<unsigned char>& d) {
+    FlacForms f;
+    std::size_t pos = 4;
+    for (bool last = false; !last && pos + 4 <= d.size();) {
+        last = (d[pos] & 0x80) != 0;
+        const int type = d[pos] & 0x7F;
+        const std::size_t len = (std::size_t(d[pos + 1]) << 16) | (std::size_t(d[pos + 2]) << 8) | d[pos + 3];
+        if (type == 4 && pos + 8 <= d.size()) {
+            const std::size_t vl = d[pos + 4] | (d[pos + 5] << 8) | (d[pos + 6] << 16) | (std::size_t(d[pos + 7]) << 24);
+            if (pos + 8 + vl <= d.size()) f.vendor.assign(d.begin() + static_cast<std::ptrdiff_t>(pos + 8), d.begin() + static_cast<std::ptrdiff_t>(pos + 8 + vl));
+        }
+        pos += 4 + len;
+    }
+    for (std::size_t i = pos; i + 6 < d.size(); ++i) {
+        if (d[i] != 0xFF || (d[i + 1] & 0xFE) != 0xF8) continue;
+        std::size_t L = 0;
+        for (std::size_t n = 5; n <= 16 && i + n < d.size(); ++n) if (FlacCrc8(&d[i], n - 1) == d[i + n - 1]) { L = n; break; }
+        if (!L || i + L >= d.size()) continue;
+        ++f.frames;
+        f.strategies.insert(d[i + 1] & 1);
+        f.blockCodes.insert(d[i + 2] >> 4);
+        f.rateCodes.insert(d[i + 2] & 15);
+        f.chanCodes.insert(d[i + 3] >> 4);
+        f.bpsCodes.insert((d[i + 3] >> 1) & 7);
+        const int sub = (d[i + L] >> 1) & 0x3F;
+        f.subTypes.insert(sub >= 32 ? 32 : sub);
+        if (d[i + L] & 1) ++f.wastedFrames;
+        i += L - 1;
+    }
+    return f;
+}
+
 } // namespace
 
 int main() {
@@ -130,6 +180,33 @@ int main() {
                 seekErr = std::max(seekErr, std::fabs(tail[i] - clip.samples[off + i]));
             CHECK(seekErr < 1.0e-6f);
         }
+    }
+
+    // The fixtures are our own encoder's output and, between them, use every header form and subframe type.
+    {
+        FlacForms all;
+        for (const Fx& fx : files) {
+            std::vector<unsigned char> b;
+            CHECK(ReadAll(kDir + fx.name, b));
+            const FlacForms f = ScanFlac(b);
+            CHECK(f.vendor == "OkaySpace scripts/gen_flac_fixtures.py");
+            if (f.vendor != "OkaySpace scripts/gen_flac_fixtures.py") std::cout << "  " << fx.name << " was written by: " << f.vendor << "\n";
+            CHECK(f.frames >= 2);
+            all.blockCodes.insert(f.blockCodes.begin(), f.blockCodes.end());
+            all.rateCodes.insert(f.rateCodes.begin(), f.rateCodes.end());
+            all.chanCodes.insert(f.chanCodes.begin(), f.chanCodes.end());
+            all.bpsCodes.insert(f.bpsCodes.begin(), f.bpsCodes.end());
+            all.strategies.insert(f.strategies.begin(), f.strategies.end());
+            all.subTypes.insert(f.subTypes.begin(), f.subTypes.end());
+            all.wastedFrames += f.wastedFrames;
+        }
+        CHECK((all.blockCodes == std::set<int>{1, 2, 3, 4, 5, 6, 7, 10}));
+        CHECK((all.rateCodes == std::set<int>{0, 4, 5, 6, 9, 12, 13, 14}));
+        CHECK((all.chanCodes == std::set<int>{0, 1, 8, 9, 10}));
+        CHECK((all.bpsCodes == std::set<int>{0, 4, 6}));
+        CHECK((all.strategies == std::set<int>{0, 1}));                       // fixed and variable blocking
+        CHECK((all.subTypes == std::set<int>{0, 1, 8, 9, 10, 11, 12, 32}));    // constant, verbatim, fixed 0-4, LPC
+        CHECK(all.wastedFrames >= 1);
     }
 
     CHECK(AudioClip::IsAudioFile("song.FLAC"));

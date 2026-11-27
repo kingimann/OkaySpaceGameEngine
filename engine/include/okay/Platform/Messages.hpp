@@ -732,7 +732,7 @@ public:
         return out;
     }
 
-    // ---- Attachments (Supabase Storage bucket "chat"; docs/sql/chat_media.sql) --
+    // ---- Attachments (OkayBackend Storage, bucket "chat"; docs/sql/chat_media.sql) --
     // Upload a local file to chat/<my uuid>/<random>-<name> and return its
     // public URL ("" on failure; `err` gets the reason). Images are then sent as
     // the bare URL (rendered inline); other files via FileMessageBody().
@@ -746,16 +746,14 @@ public:
         if (safe.empty()) safe = "file";
         char rnd[24]; std::snprintf(rnd, sizeof(rnd), "%08x%08x", (unsigned)std::rand(), (unsigned)std::time(nullptr));
         std::string obj = mine + "/" + rnd + "-" + safe;
-        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(safe), "x-upsert: true");
+        auto r = acct_.Storage().Upload("chat", obj, localPath, MimeFor(safe), Replace());
         if (!r.ok) {
             if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
                 ? "Attachments aren't set up on the server yet (run docs/sql/chat_media.sql)."
                 : (r.body.empty() ? std::string("Upload failed.") : r.body);
             return "";
         }
-        std::string base = acct_.ServerUrl();
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        return base + "/storage/v1/object/public/chat/" + obj;
+        return PublicChatUrl(obj);
     }
 
     // ---- Personal media library (custom emoji + stickers) --------------------
@@ -781,7 +779,7 @@ public:
             return "";
         }
         std::string obj = mine + "/" + folder + "/" + safe + ext;
-        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(obj), "x-upsert: true");
+        auto r = acct_.Storage().Upload("chat", obj, localPath, MimeFor(obj), Replace());
         if (!r.ok) {
             if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
                 ? "Media isn't set up on the server yet (run docs/sql/chat_media.sql)."
@@ -796,9 +794,10 @@ public:
         std::vector<LibraryItem> out;
         std::string mine = MyId();
         if (mine.empty()) return out;
-        std::string body = "{\"prefix\":" + JStr(mine + "/" + folder + "/") +
-                           ",\"limit\":500,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}";
-        auto r = acct_.Api("/storage/v1/object/list/chat", "POST", body);
+        okay::backend::ListOptions page;
+        page.prefix = mine + "/" + folder + "/";
+        page.limit = 500;
+        auto r = acct_.Storage().List("chat", page);
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             std::string file = Field(o, "name");
@@ -815,14 +814,12 @@ public:
     bool DeleteFromLibrary(const std::string& folder, const std::string& file) {
         std::string mine = MyId();
         if (mine.empty() || file.empty()) return false;
-        return acct_.Api("/storage/v1/object/chat/" + mine + "/" + folder + "/" + file, "DELETE").ok;
+        return acct_.Storage().RemoveObject("chat", mine + "/" + folder + "/" + file).ok;
     }
 
-    std::string PublicChatUrl(const std::string& obj) const {
-        std::string base = acct_.ServerUrl();
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        return base + "/storage/v1/object/public/chat/" + obj;
-    }
+    std::string PublicChatUrl(const std::string& obj) const { return acct_.Storage().PublicUrl("chat", obj); }
+    /// An upload that replaces an object of the same name (a retry, or a library item uploaded again).
+    static okay::backend::UploadOptions Replace() { okay::backend::UploadOptions o; o.upsert = true; return o; }
 
     // A file message: "[File] <name> (<size>) <url>". Reads as plain text + a
     // link on older clients; newer ones render it as a file card.

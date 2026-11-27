@@ -128,7 +128,7 @@ public:
     void SetAutoClose(bool on) { ed_.SetAutoClose(on); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
 
-    /// Draw the code in the embedded JetBrains Mono (shared/JetBrainsMonoFontOwn.h, OFL; the font the Dear ImGui script editor
+    /// Draw the code in the embedded JetBrains Mono (shared/JetBrainsMonoFont.h, OFL; the font the Dear ImGui script editor
     /// uses) with a line of text `px` pixels tall. The font is decoded and made once for the whole program. False when it could
     /// not be made (the editor then keeps the UI font).
     bool UseCodeFont(float px);

@@ -562,7 +562,8 @@ if(NOT MSVC)
     set_source_files_properties(src/Graphics/Image.cpp
         PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 endif()
-# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
+# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h, in our own OKF1 container (shared/OkfDecode.hpp,
+# read through shared/EmbeddedFonts.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.

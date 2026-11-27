@@ -132,6 +132,9 @@ public:
                                                               const std::vector<std::string>&, const std::string&)> t) {
         transport_.SetHook(std::move(t));
     }
+    /// Tests only: `o` sees every whole request just before it is sent (also the body file of an upload and the time limit,
+    /// which SetTransportForTest's function does not get). It changes nothing that is sent. Empty = no observer.
+    void ObserveRequestsForTest(std::function<void(const okay::backend::Request&)> o) { transport_.SetObserver(std::move(o)); }
 
     /// True when configured to talk to a real (non-local) backend.
     bool IsOnline() const { return provider_ != Provider::Local; }
@@ -385,6 +388,28 @@ public:
         return okay::backend::supabase::Database(
             [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
                 return ApiAnon(path, method, body, extra);
+            });
+    }
+    /// The Storage calls (OkayBackend, okay/Backend/Storage.hpp) through this account: requests go through Api and uploads
+    /// through ApiUpload, so they carry the signed-in token and send nothing when offline or signed out. Public addresses
+    /// are built from this account's server address.
+    okay::backend::supabase::Storage Storage() const {
+        return okay::backend::supabase::Storage(
+            serverUrl_,
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+                return Api(path, method, body, extra);
+            },
+            [this](const std::string& path, const std::string& file, const std::string& type, const std::string& extra) {
+                return ApiUpload(path, file, type, extra);
+            });
+    }
+    /// The Functions calls (OkayBackend, okay/Backend/Functions.hpp) through this account: through ApiTimed, so a call carries
+    /// the signed-in token, sends nothing when offline or signed out, re-reads a newer saved token after a 401, and keeps its
+    /// time limit.
+    okay::backend::supabase::Functions Functions() const {
+        return okay::backend::supabase::Functions(
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra, int timeoutSec) {
+                return ApiTimed(path, method, body, extra, timeoutSec);
             });
     }
 

@@ -4,12 +4,11 @@
 // cross-checked there with an independent decoder; the engine's former stb routine produced the same SHA-256 for Roboto).
 // Also: the decoder on hand-made streams (every token form), and on damaged input (no crash, no wrong answer).
 #include "test_framework.hpp"
-#include "OkfDecode.hpp"
-#include "RobotoFontOwn.h"
-#include "JetBrainsMonoFontOwn.h"
+#include "EmbeddedFonts.hpp"   // OkfDecode.hpp, RobotoFont.h, JetBrainsMonoFont.h and the accessors every program uses
 #include <okay/Crypto/Crypto.hpp>
 #include <okay/Graphics/TtfFont.hpp>
 #include <cstdio>
+#include <iterator>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -95,6 +94,27 @@ int main() {
         std::vector<unsigned char> engine;
         CHECK(okay::EmbeddedUIFontData(engine));
         CHECK(engine.size() == decoded[0].size() && std::memcmp(engine.data(), decoded[0].data(), engine.size()) == 0);
+    }
+
+    RUN_SUITE("every program reads the OKF1 data (no Dear ImGui base-85 + stb_decompress array is left)");
+    {
+        // The accessors the editor, launcher, script editor and engine use give the pinned bytes.
+        CHECK(okf::RobotoMediumTtf() == decoded[0]);
+        CHECK(okf::JetBrainsMonoTtf() == decoded[1]);
+        CHECK(&okf::RobotoMediumTtf() == &okf::RobotoMediumTtf());   // decoded once, same storage (an atlas keeps the pointer)
+        // No source that a program is built from still carries or loads the old compressed base-85 arrays.
+        int found = 0;
+        for (const char* rel : {"shared/RobotoFont.h", "shared/JetBrainsMonoFont.h", "editor/main.cpp", "launcher/main.cpp",
+                                "tests/okayui_compare_rig.hpp", "tests/test_launcher_page_layout.cpp"}) {
+            std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/" + rel, std::ios::binary);
+            CHECK(in.good());
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (text.find("_compressed_data_base85") != std::string::npos || text.find("AddFontFromMemoryCompressedBase85TTF") != std::string::npos) {
+                std::printf("  still uses a base-85 font array: %s\n", rel);
+                ++found;
+            }
+        }
+        CHECK(found == 0);
     }
 
     RUN_SUITE("OKF1 decoder: every token form");

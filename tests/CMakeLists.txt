@@ -1504,6 +1504,21 @@ add_test(NAME okay_backend_golden_auth COMMAND test_okay_backend_golden_auth)
 add_executable(test_okay_backend_golden_db test_okay_backend_golden_db.cpp)
 target_link_libraries(test_okay_backend_golden_db PRIVATE okay::engine)
 add_test(NAME okay_backend_golden_db COMMAND test_okay_backend_golden_db)
+# OkayBackend round 4: every Storage and Functions request (chat attachments and media library, workshop uploads, the
+# launcher's Official game admin tab, "Delete my account", the session ticket) must send byte-identical requests, file bodies
+# and time limits included, to the golden texts recorded before the move, and the Supabase provider called directly the
+# same; the updater's releases address must keep its exact text and never follow the backend setting. Fake server only.
+# Small on purpose: the shared account (Account.cpp) and the version list reader are compiled in, not the whole engine.
+add_executable(test_okay_backend_golden_storage test_okay_backend_golden_storage.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Platform/Account/Account.cpp)
+target_compile_features(test_okay_backend_golden_storage PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_storage PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared
+    ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_okay_backend_golden_storage PRIVATE Threads::Threads ${CMAKE_DL_LIBS} okay::crypto)
+if(WIN32)
+    target_link_libraries(test_okay_backend_golden_storage PRIVATE shell32)
+endif()
+add_test(NAME okay_backend_golden_storage COMMAND test_okay_backend_golden_storage)
 # OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
 # header order, the transports, reading token claims. Header-only, no network.
 add_executable(test_okay_backend test_okay_backend.cpp)
@@ -4487,7 +4502,7 @@ add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)
 # The launcher's page layouts (launcher/PageLayout.hpp): Marketplace, Community and Notifications at three window sizes and
 # UI scale 1.0 / 1.5, with the launcher's own font when its Dear ImGui is in the build (launcher_imgui), else a stand-in width.
 add_executable(test_launcher_page_layout test_launcher_page_layout.cpp)
-target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)   # engine/include: shared/EmbeddedFonts.hpp reads okay/Core/Base64.hpp
 target_compile_features(test_launcher_page_layout PRIVATE cxx_std_17)
 if(TARGET launcher_imgui)
     target_link_libraries(test_launcher_page_layout PRIVATE launcher_imgui)

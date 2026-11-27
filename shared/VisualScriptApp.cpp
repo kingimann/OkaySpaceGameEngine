@@ -748,7 +748,7 @@ void VisualScriptApp::Impl::drawRenameBox(float X, float Y, float W, float H) {
     UI::End();
 }
 
-// ---- keys -------------------------------------------------------------------------------------------------------------------
+// ---- shortcuts ---------------------------------------------------------------------------------------------------------------
 
 void VisualScriptApp::Impl::shortcuts(bool modal) {
     const UI::Input& in = UI::GetFrameInput();

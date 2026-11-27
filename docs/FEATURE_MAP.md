@@ -869,7 +869,8 @@ paths or tampered files. It pulls together the anti-cheat in the network layer (
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
 safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/online/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
-hardening items are merged. The opt-in detection engine (39.12) was added afterwards.
+hardening items are merged. The opt-in detection engine (39.12) was added afterwards. On 2026-11-26 the owner asked for all of it as one module, OkayAntiCheat: the audit and the plan in rounds are
+`docs/online/okay_anticheat.md`.
 
 Details for every sub-area and numbered part: [docs/feature_map/39-security-anticheat.md](feature_map/39-security-anticheat.md).
 

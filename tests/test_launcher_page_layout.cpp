@@ -12,7 +12,7 @@
 
 #ifdef OKAY_LAYOUT_REAL_FONT
 #include "imgui.h"
-#include "RobotoFont.h"
+#include "EmbeddedFonts.hpp"
 #endif
 
 namespace L = okay::launcherlayout;
@@ -477,7 +477,7 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     ImFontConfig fc; fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-    CHECK(io.Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc) != nullptr);
+    CHECK(okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 17.0f, fc) != nullptr);
     { unsigned char* px = nullptr; int fw = 0, fh = 0; io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh); }   // build the atlas (no renderer here)
 #endif
     for (float scale : {1.0f, 1.5f}) {

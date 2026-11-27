@@ -5,6 +5,9 @@
 > **Status:** combined on 2026-11-20 from 3 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
 >
 > **Last checked:** 2026-11-20, paths and links against main.
+>
+> **OkayAntiCheat:** on 2026-11-26 the owner asked for all of this as one module, OkayAntiCheat. The audit of what is
+> here and the plan in rounds are [okay_anticheat.md](okay_anticheat.md). This page stays the reference for what exists.
 
 ## Contents
 

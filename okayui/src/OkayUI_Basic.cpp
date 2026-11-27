@@ -87,12 +87,16 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
 
     if (g_framedWidgets) {   // Dear ImGui's box: a rounded frame in the field colours (the accent at 45% once ticked, 55% under the
                              // pointer) and the tick in Col_CheckMark
-        unsigned char tint[4];
-        const unsigned char* fb = *value ? withAlpha(g_theme.accent, inside ? 0.55f : 0.45f, tint)
-                                         : (g_active == id && inside) ? pick(Col_FrameBgActive, g_theme.bgDown)
-                                         : inside ? pick(Col_FrameBgHovered, g_theme.bgHover) : pick(Col_FrameBg, g_theme.field);
-        rrect(x, y, size, size, rnd(), fb);
-        if (*value) framedTick(x, y, size, pick(Col_CheckMark, g_theme.accent));
+        // the design's box at the frame's size: a light ring round the field colour; ticked, an accent fill with the tick in the
+        // on-accent colour (not a heavy filled square)
+        unsigned char ring[4];
+        const unsigned char* fb = (g_active == id && inside) ? pick(Col_FrameBgActive, g_theme.bgDown)
+                                : inside ? pick(Col_FrameBgHovered, g_theme.bgHover) : pick(Col_FrameBg, g_theme.field);
+        const float bs = std::min(size, std::max(16.0f, textH() + 4.0f)), bx = x + (size - bs) * 0.5f, by = y + (size - bs) * 0.5f;
+        const float rd = std::min(g_theme.radiusSmall, bs * 0.3f);
+        rrect(bx, by, bs, bs, rd, *value ? pick(Col_CheckMark, g_theme.accent) : fb);
+        if (!*value) ringRect(bx, by, bs, bs, rd, 1.5f, withAlpha(g_theme.ink, inside ? 0.55f : 0.30f, ring));
+        else tickMark(bx, by, bs, g_theme.onAccent);
         if (label && *label) drawText(x + size + 8.0f, y + (size - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
         return changed;
     }
@@ -180,6 +184,7 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
     const float t = clamp01((*value - minV) / (maxV - minV));
     const float gh = std::max(4.0f, std::floor(h * 0.18f)), gy = y + (h - gh) * 0.5f;
     rrect(x, gy, w, gh, gh * 0.5f, g_theme.track);
+    if (g_theme.controlBorders) ringRect(x, gy, w, gh, gh * 0.5f, 1.0f, g_theme.border);   // a groove that must show on any surface
     if (w * t > 0.0f) rrect(x, gy, w * t, gh, gh * 0.5f, g_theme.accent);
     const float over = anim(id, 0, inside || g_active == id);
     const float kr = h * 0.30f + over * h * 0.04f;
@@ -202,6 +207,7 @@ void ProgressBar(float x, float y, float w, float h, float t) {
     // A pill: the sunken groove and the accent fill, at most 10 pixels tall, centred in the box.
     const float bh = h > 10.0f ? 10.0f : h, by = y + (h - bh) * 0.5f;
     rrect(x, by, w, bh, bh * 0.5f, g_theme.track);
+    if (g_theme.controlBorders) ringRect(x, by, w, bh, bh * 0.5f, 1.0f, g_theme.border);
     if (w * t > 0.0f) rrect(x, by, std::max(w * t, std::min(bh, w)), bh, bh * 0.5f, g_theme.accent);
 }
 
@@ -225,10 +231,12 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     const float on = anim(id, 2, chosen);
     fillCircle(cx, cy, rr, withAlpha(g_theme.ink, inside ? 0.55f : 0.32f, ring), 28);
     fillCircle(cx, cy, rr - std::max(1.5f, g_theme.borderPx), bg, 28);
-    if (on > 0.0f) {
-        unsigned char acc[4], dot[4];
-        fillCircle(cx, cy, rr, withAlpha(pick(Col_CheckMark, g_theme.accent), on, acc), 28);
-        fillCircle(cx, cy, size * (0.30f - 0.08f * on), withAlpha(g_theme.onAccent, on, dot), 20);
+    if (on > 0.0f) {   // the chosen one: an accent ring and an accent dot with a gap of the field colour between
+        unsigned char acc[4];
+        const unsigned char* mark = withAlpha(pick(Col_CheckMark, g_theme.accent), on, acc);
+        fillCircle(cx, cy, rr, mark, 28);
+        fillCircle(cx, cy, rr * 0.66f, bg, 24);
+        fillCircle(cx, cy, rr * (0.20f + 0.18f * on), mark, 20);
     }
     if (label && *label) {
         const float s  = g_theme.textScale;
@@ -257,6 +265,11 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
     const float s = g_theme.textScale, tw = visW(label), th = fH() * s;
     unsigned char tmp[4], tc[4];
     const unsigned char* txt = g_theme.text;
+    // A tab colour a program set (PushStyleColor / SetStyleColor: Col_Tab, Col_TabHovered, Col_TabActive) fills the whole tab, as asked.
+    {
+        const int set = selected ? (colorIsSet(Col_TabActive) ? Col_TabActive : 0) : (inside && colorIsSet(Col_TabHovered)) ? Col_TabHovered : (colorIsSet(Col_Tab) ? Col_Tab : 0);
+        if (set) rrect(x, y, w, h, g_theme.tabShape == 1 ? h * 0.5f : g_theme.radiusSmall, g_theme.colors[set]);
+    }
     switch (g_theme.tabShape) {
         case 1: {   // pill
             if (selected) rrect(x, y, w, h, h * 0.5f, pick(Col_TabActive, g_theme.accent));

@@ -771,10 +771,16 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
 
 // ---- Launcher-look shapes (drawn instead of text glyphs for icons) ----
 // A small chevron pointing right (open=false) or down (open=true), centred on (cx, cy).
-void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]) {
+void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]) { chevronDir(cx, cy, sz, down ? 1 : 0, c); }
+// A chevron in any of four directions (0 right, 1 down, 2 left, 3 up): two strokes meeting at the point.
+void chevronDir(float cx, float cy, float sz, int dir, const unsigned char c[4]) {
     const float h = sz * 0.5f, t = sz < 12.0f ? 1.6f : 2.0f;
-    if (down) { line(cx - h, cy - h * 0.5f, cx, cy + h * 0.5f, t, c); line(cx, cy + h * 0.5f, cx + h, cy - h * 0.5f, t, c); }
-    else      { line(cx - h * 0.5f, cy - h, cx + h * 0.5f, cy, t, c); line(cx + h * 0.5f, cy, cx - h * 0.5f, cy + h, t, c); }
+    switch (dir & 3) {
+        case 1: line(cx - h, cy - h * 0.5f, cx, cy + h * 0.5f, t, c); line(cx, cy + h * 0.5f, cx + h, cy - h * 0.5f, t, c); break;
+        case 3: line(cx - h, cy + h * 0.5f, cx, cy - h * 0.5f, t, c); line(cx, cy - h * 0.5f, cx + h, cy + h * 0.5f, t, c); break;
+        case 2: line(cx + h * 0.5f, cy - h, cx - h * 0.5f, cy, t, c); line(cx - h * 0.5f, cy, cx + h * 0.5f, cy + h, t, c); break;
+        default: line(cx - h * 0.5f, cy - h, cx + h * 0.5f, cy, t, c); line(cx + h * 0.5f, cy, cx - h * 0.5f, cy + h, t, c); break;
+    }
 }
 // An "x" mark centred on (cx, cy).
 void xMark(float cx, float cy, float sz, const unsigned char c[4]) {
@@ -806,7 +812,7 @@ void elevation(float x, float y, float w, float h, float rad, int depth) {
     if (depth <= 0) return;
     if (depth > 3) depth = 3;
     const int layers = 2 + depth;
-    const float spread = 1.5f + 1.0f * depth, drop = 1.0f + 2.0f * depth;
+    const float spread = 1.0f + 1.0f * depth, drop = 1.0f + 2.0f * depth;   // whole pixels: the same edges at every scale
     const float base = g_theme.lightScheme ? 7.0f : 15.0f;
     for (int i = layers; i >= 1; --i) {
         const float g = spread * i;
@@ -2768,16 +2774,12 @@ namespace ui_core {
 void framedComboBox(float x, float y, float w, float h, bool hovered, const char* text) {
     const float rd = std::min(rnd(), h * 0.5f);
     rrect(x, y, w, h, rd, hovered ? pick(Col_FrameBgHovered, g_theme.bgHover) : pick(Col_FrameBg, g_theme.field));
-    const float bw = std::min(h, w), bx = x + w - bw;
-    const unsigned char* bc = hovered ? pick(Col_ButtonHovered, g_theme.bgHover) : pick(Col_Button, g_theme.bg);
-    rrect(bx, y, bw, h, rd, bc);
-    if (rd > 0.0f) quad(bx, y, rd, h, bc);   // square on its left, where it meets the field
+    const float bw = std::min(h, w), bx = x + w - bw;   // the arrow's room (the text stops before it); a chevron, no block
     const float padX = g_framePadX >= 0.0f ? g_framePadX : 6.0f;
     PushClipRect(x, y, std::max(1.0f, w - bw), h);   // to the arrow, as Dear ImGui clips it (the editor fits a long text with "...")
     drawText(x + padX, y + (h - textH()) * 0.5f, text ? text : "", g_theme.textScale, g_theme.text);
     PopClipRect();
-    const float fs = textH(), cx = bx + bw * 0.5f, cy = y + h * 0.5f, r = fs * 0.37f;
-    tri(cx - r, cy - fs * 0.34f, cx + r, cy - fs * 0.34f, cx, cy + fs * 0.22f, g_theme.text);
+    chevronDir(bx + bw * 0.5f, y + h * 0.5f, std::min(9.0f, h * 0.36f), 1, hovered ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
 }
 } // namespace
 // The design's combo box (Combo and BeginCombo): a control box with the current choice, clipped before a chevron at the right
@@ -3124,16 +3126,12 @@ bool ArrowButton(const char* id, int dir) {
     const float h = rowH();
     float x, y; place(h, h, x, y);
     const bool clicked = Button(hashLabel(id), x, y, h, h, "");
-    // a filled triangle, its bounding box centred on the button (0 left, 1 right, 2 up, 3 down; anything else is left)
-    const float cx = x + h * 0.5f, cy = y + h * 0.5f, r = h * 0.22f;
+    // a chevron centred on the button (0 left, 1 right, 2 up, 3 down; anything else is left)
+    const float cx = x + h * 0.5f, cy = y + h * 0.5f;
     const bool hot = hit(x, y, h, h);
     const unsigned char* col = hot ? g_theme.text : g_theme.textDim;
-    switch ((unsigned)dir < 4u ? dir : 0) {
-        case 0: tri(cx - r, cy, cx + r, cy - r * 1.2f, cx + r, cy + r * 1.2f, col); break;
-        case 1: tri(cx + r, cy, cx - r, cy - r * 1.2f, cx - r, cy + r * 1.2f, col); break;
-        case 2: tri(cx, cy - r, cx - r * 1.2f, cy + r, cx + r * 1.2f, cy + r, col); break;
-        default: tri(cx, cy + r, cx - r * 1.2f, cy - r, cx + r * 1.2f, cy - r, col); break;
-    }
+    static const int kDir[4] = {2, 0, 3, 1};   // ArrowButton's directions to chevronDir's
+    chevronDir(cx, cy, h * 0.36f, kDir[(unsigned)dir < 4u ? dir : 0], col);
     return clicked;
 }
 
@@ -3770,10 +3768,17 @@ bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, boo
         frameField(x, y, ctrlW, h, inside, g_active == id);
         const float t = logScale ? (float)std::min(1.0, std::max(0.0, std::log(std::max(*v, minV) / minV) / std::log(maxV / minV)))
                                  : (float)std::min(1.0, std::max(0.0, (*v - minV) / range));
-        const float gx = x + pad + t * (track - grab);
-        rrect(gx, y + pad, grab, h - 2.0f * pad, std::max(0.0f, rnd() - pad), g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
+        // The design's framed slider: the part up to the value tinted with the accent, a slim rounded thumb, and the value on the
+        // side away from the thumb (it never sits under it). The thumb's hit area is the same as before (the whole box).
+        const float gx = x + pad + t * (track - grab), thumbW = 4.0f, tx = gx + grab * 0.5f - thumbW * 0.5f;
+        unsigned char tint[4];
+        if (tx > x + pad) rrect(x + pad, y + pad, tx - x - pad + thumbW * 0.5f, h - 2.0f * pad, std::max(0.0f, rnd() - pad), withAlpha(g_theme.accent, 0.22f, tint));
+        rrect(tx, y + pad + 1.0f, thumbW, h - 2.0f * pad - 2.0f, thumbW * 0.5f, g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
         char buf[64]; formatValue(buf, sizeof buf, format, *v, isInt);
-        centredText(x, y, ctrlW, h, buf, g_theme.text);
+        const float vw = labelW(buf), ty = y + (h - textH()) * 0.5f;
+        const float vx = t > 0.5f ? x + 8.0f : x + ctrlW - 8.0f - vw;
+        if (vw + 16.0f < ctrlW * 0.5f) drawText(vx, ty, buf, g_theme.textScale, g_theme.text);
+        else centredText(x, y, ctrlW, h, buf, g_theme.text);
     }
     return changed;
 }

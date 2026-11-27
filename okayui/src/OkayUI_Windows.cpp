@@ -179,10 +179,14 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
             if (!*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
             const float s0 = g_theme.textScale;
             const bool focusedWin = g_focusWin == id;
-            if (!noCollapse && (overCaret || *collapsed))
-                chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 8.0f, !*collapsed, overCaret ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+            // The title starts at the header's padding (no gap for a fold arrow). The fold chevron shows on the right, before the
+            // close cross, while the pointer is over the header or the window is folded; the fold still answers a click on the
+            // header's left corner as before (behaviour unchanged).
+            const bool overHeader = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, titleH);
+            if (!noCollapse && (overHeader || *collapsed))
+                chevron(wx + w - (p_open ? btn : 0.0f) - btn * 0.5f, wy + titleH * 0.5f, 8.0f, !*collapsed, overHeader ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
             if (title && *title)
-                drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, focusedWin ? g_theme.text : g_theme.textDim);
+                drawText(wx + 12.0f, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, focusedWin ? g_theme.text : g_theme.textDim);
             if (p_open) {
                 unsigned char tmp[4];
                 const float cr = std::min(btn, titleH) * 0.5f - 5.0f, ccx = closeX + btn * 0.5f, ccy = wy + titleH * 0.5f;
@@ -246,7 +250,7 @@ void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, f
                                       : (over ? pick(Col_ScrollbarGrabHovered, withAlpha(g_theme.ink, 0.34f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(g_theme.ink, 0.18f, tmp)));
     if (g_sbSize > 0.0f) { const float gw = std::max(1.0f, bw - 4.0f); rrect(sbx + 2.0f, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2); return; }
     const float gw = (over || active) ? kScrollbarW - 3.0f : 4.0f;
-    rrect(sbx + kScrollbarW - 1.5f - gw, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2);
+    rrect(sbx + kScrollbarW - 2.0f - gw, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2);
 }
 
 bool ui_core::g_dockAware = false, ui_core::g_dockRouted = false;   // SetDockAwareBegin: Begin runs a window of the dock layout as DockBegin; the End that closes it as DockEnd

@@ -309,6 +309,7 @@ extern int g_childTop;
 void panelColored(float x, float y, float w, float h, const unsigned char* fill);
 void framedComboBox(float x, float y, float w, float h, bool hovered, const char* text);
 void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]);
+void chevronDir(float cx, float cy, float sz, int dir, const unsigned char c[4]);   // 0 right, 1 down, 2 left, 3 up
 void xMark(float cx, float cy, float sz, const unsigned char c[4]);
 void softShadow(float x, float y, float w, float h, float rad);
 // Design shapes (OkayUI.cpp): a shadow of a given depth, an outline ring, the keyboard focus ring, a control's box (outline when

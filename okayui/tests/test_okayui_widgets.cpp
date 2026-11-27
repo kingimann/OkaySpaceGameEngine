@@ -181,16 +181,20 @@ void TestHintArrowProgress() {
         for (int i = 0; i < 4; ++i) { CHECK(rr[i].w == rr[i].h && rr[i].w > 10); }
         const Bitmap b = r.sim.Draw(12, 14, 20);
         // the arrow glyphs differ: left vs right are mirrored, up vs down are mirrored
+        // a chevron's point is on the button's middle line: on the middle row a left-pointing one's ink is left of centre
         auto cen = [&](const UI::Rect& q, bool xAxis) {
-            const unsigned bg = P(b, q.x + 3, q.y + 3); double sum = 0; int n = 0;
-            for (int y = (int)q.y + 5; y < (int)(q.y + q.h) - 5; ++y) for (int x = (int)q.x + 5; x < (int)(q.x + q.w) - 5; ++x)
+            const unsigned bg = P(b, q.x + 4, q.y + q.h * 0.5f); double sum = 0; int n = 0;   // the button's own fill
+            const int mx = (int)(q.x + q.w * 0.5f), my = (int)(q.y + q.h * 0.5f);
+            for (int y = (int)q.y + 5; y < (int)(q.y + q.h) - 5; ++y) for (int x = (int)q.x + 5; x < (int)(q.x + q.w) - 5; ++x) {
+                if (xAxis ? std::abs(y - my) > 1 : std::abs(x - mx) > 1) continue;
                 if (PixelAt(b, x, y) != bg) { sum += xAxis ? x - (q.x + q.w * 0.5) : y - (q.y + q.h * 0.5); ++n; }
+            }
             return n ? sum / n : 0.0;
         };
         auto sumX = [&](const UI::Rect& q) { return cen(q, true); };
         auto sumY = [&](const UI::Rect& q) { return cen(q, false); };
-        CHECK(sumX(rr[0]) > 0.5 && sumX(rr[1]) < -0.5);   // a triangle's mass is on its base side: left-pointing is right of centre
-        CHECK(sumY(rr[2]) > 0.5 && sumY(rr[3]) < -0.5);
+        CHECK(sumX(rr[0]) < -0.5 && sumX(rr[1]) > 0.5);
+        CHECK(sumY(rr[2]) < -0.5 && sumY(rr[3]) > 0.5);
         for (int i = 0; i < 4; ++i) r.Click(CenterX(rr[i]), CenterY(rr[i]));
         CHECK(clicks[0] == 1 && clicks[1] == 1 && clicks[2] == 1 && clicks[3] == 1);
     }
@@ -315,7 +319,7 @@ void TestTreeFlags() {
         r.Frames(2);
         const Bitmap b = r.sim.Draw(12, 14, 20);
         // the arrow glyph is a ">" (narrow, left-aligned in 4..20 px); the bullet is a round dot centred a little right of it: compare the two
-        auto ink = [&](const UI::Rect& q) { int n = 0; for (int y = (int)q.y + 2; y < (int)(q.y + q.h) - 2; ++y) for (int x = (int)q.x; x < (int)q.x + 22; ++x) if (PixelAt(b, x, y) == ThemeRgba(UI::Style().text)) ++n; return n; };
+        auto ink = [&](const UI::Rect& q) { int n = 0; for (int y = (int)q.y + 2; y < (int)(q.y + q.h) - 2; ++y) for (int x = (int)q.x; x < (int)q.x + 22; ++x) if (PixelAt(b, x, y) == ThemeRgba(UI::Style().textDim)) ++n; return n; };   // the chevron and the dot are in the dim text colour
         CHECK(ink(rb) > 5 && ink(ra) > 5);
         bool diff = false;
         for (int y = 0; y < (int)rb.h && !diff; ++y) for (int x = 0; x < 22; ++x) if (PixelAt(b, (int)rb.x + x, (int)rb.y + y) != PixelAt(b, (int)ra.x + x, (int)ra.y + y)) { diff = true; break; }
@@ -338,10 +342,11 @@ void TestTreeFlags() {
         // the highlight on hover spans from the content edge
         r.Move(rs.x + 2, CenterY(rs));
         const Bitmap b = r.sim.Draw(12, 14, 20);
-        CHECK(P(b, rs.x + 2, CenterY(rs)) == ThemeRgba(UI::Style().bgHover));
+        const unsigned panel = ThemeRgba(UI::Style().panel);
+        CHECK(P(b, rs.x + 2, CenterY(rs)) != panel);   // the hover wash
         r.Move(rn.x + rn.w * 0.5f, CenterY(rn));
         const Bitmap b2 = r.sim.Draw(12, 14, 20);
-        CHECK(P(b2, rs.x + 2, CenterY(rn)) != ThemeRgba(UI::Style().bgHover));  // the narrow row's highlight starts at its own (indented) left edge
+        CHECK(P(b2, rs.x + 2, CenterY(rn)) == panel);  // the narrow row's highlight starts at its own (indented) left edge
     }
     {   // NoTreePushOnOpen: no indent, no TreePop; Framed draws a header background
         Rig r; UI::Rect rn, rc; bool o = false;

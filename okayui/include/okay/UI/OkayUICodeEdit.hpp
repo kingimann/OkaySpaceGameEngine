@@ -100,6 +100,9 @@ struct CodePalette {
 };
 /// The Darcula-flavoured palette the script editor uses.
 CodePalette DefaultCodePalette();
+/// The code palette of the design in force (Style()): its surfaces, text, selection and accent; on a light scheme a light syntax
+/// palette of our own (every token colour 4.5:1 or better on the field colour), on a dark one the default syntax colours.
+CodePalette DesignCodePalette();
 
 /// An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
 /// columns [colStart, colEnd) (colEnd < 0: from colStart or the first non-blank to the last non-blank). `message` shows as a tooltip.

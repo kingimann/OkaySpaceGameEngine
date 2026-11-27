@@ -38,7 +38,7 @@ Design MakeGraphite() {
     l.field = C(240, 240, 243); l.control = C(232, 232, 236);
     l.text = C(22, 22, 26); l.textDim = C(86, 88, 98); l.textFaint = C(130, 132, 142);
     l.hairline = C(0, 0, 0, 26); l.accent = C(92, 76, 228);
-    l.success = C(22, 128, 70); l.warning = C(150, 96, 0); l.danger = C(196, 40, 48); l.info = C(24, 96, 200);
+    l.success = C(14, 106, 56); l.warning = C(128, 80, 0); l.danger = C(178, 30, 40); l.info = C(24, 90, 190);
     l.onAccent = C(255, 255, 255); l.ink = C(0, 0, 0); l.tooltipBg = C(28, 28, 32, 245); l.tooltipText = C(244, 244, 247);
     Shape& s = d.shape;
     s.radius = 7; s.radiusSmall = 5; s.radiusLarge = 12; s.borderPx = 1; s.controlBorders = false; s.shadow = 2;
@@ -119,7 +119,7 @@ Design MakePaper() {
     l.field = C(255, 253, 248); l.control = C(236, 231, 220);
     l.text = C(40, 34, 28); l.textDim = C(98, 88, 76); l.textFaint = C(136, 124, 110);
     l.hairline = C(60, 40, 20, 44); l.accent = C(186, 82, 46);
-    l.success = C(40, 120, 60); l.warning = C(140, 88, 8); l.danger = C(180, 40, 40); l.info = C(40, 90, 160);
+    l.success = C(28, 100, 46); l.warning = C(122, 74, 4); l.danger = C(170, 36, 36); l.info = C(36, 82, 150);
     l.onAccent = C(255, 255, 255); l.ink = C(60, 40, 20); l.tooltipBg = C(52, 44, 36, 245); l.tooltipText = C(250, 246, 238);
     Palette& k = d.dark;
     k.deep = C(20, 18, 16); k.sunken = C(26, 23, 20); k.base = C(32, 29, 25); k.raised = C(40, 36, 31); k.overlay = C(46, 41, 35);

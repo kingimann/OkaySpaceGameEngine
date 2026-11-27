@@ -181,8 +181,8 @@ bool BeginMenu(const char* label) {
             menuRowBg(x, y, w, h, ih || *open || ksel);
             drawText(x + g_curMenu.textInset, ty, label, s, g_theme.text);
             if (g_curMenu.fromPopup) {   // Dear ImGui's arrow, as on the popup's own sub-menu rows
-                const float th = textH(), r = th * 0.40f, cx = x + w - g_curMenu.textInset - th * 0.5f, cy = ty + th * 0.5f;
-                tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, g_theme.text);
+                const float th = textH(), cx = x + w - g_curMenu.textInset - th * 0.5f, cy = ty + th * 0.5f;
+                chevronDir(cx, cy, std::min(8.0f, th * 0.5f), 0, pick(Col_TextDisabled, g_theme.textDim));
             } else chevron(x + w - 16.0f, y + h * 0.5f, 7.0f, false, pick(Col_TextDisabled, g_theme.textDim));
             g_toOverlay = wasOverlay;
         }
@@ -253,8 +253,8 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
         line(cx - a * 0.3f, cy + a * 0.9f, cx + a * 1.3f, cy - a * 0.9f, 2.0f, col);
     }
     if (arrow) {      // a right-pointing triangle a text line tall at the right end, as Dear ImGui's sub-menu rows have
-        const float r = th * 0.40f, cx = right - th * 0.5f, cy = iy + th * 0.5f;
-        tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, col);
+        const float cx = right - th * 0.5f, cy = iy + th * 0.5f;
+        chevronDir(cx, cy, std::min(8.0f, th * 0.5f), 0, col);
     }
     return ih;
 }

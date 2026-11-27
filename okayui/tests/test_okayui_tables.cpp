@@ -267,8 +267,10 @@ void TestScrollY() {
     const unsigned txt = ThemeRgba(UI::Style().text);
     CHECK(CountEq(b0, txt, (int)s.box.x, (int)(s.box.y + s.box.h + 1), (int)(s.box.x + s.box.w), (int)(s.box.y + s.box.h + 5)) == 0);
     // the scroll bar is drawn along the right edge
-    const unsigned acc = ThemeRgba(UI::Style().accent);
-    CHECK(CountEq(b0, acc, (int)(s.box.x + s.box.w - 10), (int)s.box.y, (int)(s.box.x + s.box.w), (int)(s.box.y + s.box.h)) > 20);
+    int barPx = 0;   // the thumb: pixels of the right strip that differ from the row just left of it
+    for (int y = (int)s.box.y; y < (int)(s.box.y + s.box.h); ++y)
+        for (int x = (int)(s.box.x + s.box.w - 10); x < (int)(s.box.x + s.box.w); ++x) if (PixelAt(b0, x, y) != PixelAt(b0, (int)(s.box.x + s.box.w - 14), y)) ++barPx;
+    CHECK(barPx > 20);
     const float firstY = s.firstCell.y;
     // wheel over the box scrolls it
     s.r.Wheel(s.box.x + 100, s.box.y + 100, -2.0f, 5);

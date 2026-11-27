@@ -917,6 +917,10 @@ void BeginCard(const char* id);
 void EndCard();
 /// The fill colour BeginCard uses in the launcher look, from the current theme (RGBA). One rule for the drawing and its tests.
 void CardFillColor(unsigned char out[4]);
+/// The design's chevron (the arrow of trees, headers, combo boxes and menus): two strokes meeting at a point, `size` across, centred
+/// on `c`, pointing right (0), down (1), left (2) or up (3). `thickness` 0: the design's stroke for that size.
+struct DrawList;
+void DrawChevron(const DrawList& dl, Vec2 c, float size, int dir, Color32 col, float thickness = 0.0f);
 /// A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
 bool ListItem(const char* title, const char* subtitle = nullptr, const char* right = nullptr, bool selected = false);
 /// A dim label on the left and its value on the right (stats, settings summaries).

@@ -32,6 +32,13 @@ void flushTooltip() {
     g_theme.textScale = was;
 }
 void dropTooltip() { g_pendingTip.on = false; }
+// A tooltip: a small card in the design's tooltip colours on a light shadow, an outline when the design draws strong outlines.
+void tooltipCard(float bx, float by, float bw, float bh) {
+    const float rd = std::min(g_theme.radiusSmall + 2.0f, bh * 0.5f);
+    elevation(bx, by, bw, bh, rd, g_theme.shadowDepth > 1 ? 1 : g_theme.shadowDepth);
+    rrect(bx, by, bw, bh, rd, g_theme.tooltipBg);
+    if (g_theme.borderPx >= 2.0f) ringRect(bx, by, bw, bh, rd, 1.0f, g_theme.border);
+}
 void paintTooltipBox(const char* text) {
     if (!text || !*text) return;
     const float s = g_theme.textScale, th = textH(), lineGap = 2.0f;
@@ -52,12 +59,7 @@ void paintTooltipBox(const char* text) {
     if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
     if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
     g_toOverlay = true;
-    {   // a small card in the design's tooltip colours, on a light shadow; an outline when the design draws strong outlines
-        const float rd = std::min(g_theme.radiusSmall + 2.0f, bh * 0.5f);
-        elevation(bx, by, bw, bh, rd, g_theme.shadowDepth > 1 ? 1 : g_theme.shadowDepth);
-        rrect(bx, by, bw, bh, rd, g_theme.tooltipBg);
-        if (g_theme.borderPx >= 2.0f) ringRect(bx, by, bw, bh, rd, 1.0f, g_theme.border);
-    }
+    tooltipCard(bx, by, bw, bh);
     char line[256]; int n = 0; float ly = by + pad;
     for (const char* c = text;; ++c) {
         if (*c == '\n' || *c == 0) {
@@ -98,6 +100,7 @@ struct TipScope {
     int grpTop = 0, lastId = 0; bool blocked = false, posOverride = false, toOverlay = false, discard = false;
     float nextItemW = -1.0f;
     int startV = 0, startI = 0, spanBase = 0;
+    unsigned char text[4] = {0, 0, 0, 0};   // the theme's text colour: inside the card the text is the tooltip text colour
 };
 TipScope g_tip;
 } // namespace
@@ -114,6 +117,7 @@ bool BeginTooltip() {
     bindTexture(g_defTex);               // the box (drawn last, placed first) is flat: a flat span at the start of the tooltip
     t.startV = g_onv; t.startI = g_oni;
     g_in.blocked = true; g_posOverride = false; g_nextItemW = -1.0f;
+    for (int k = 0; k < 4; ++k) { t.text[k] = g_theme.text[k]; g_theme.text[k] = g_theme.tooltipText[k]; }
     const float pad = g_look ? 8.0f : 6.0f;
     const float maxW = g_in.displayW > 0.0f ? std::max(120.0f, std::min(480.0f, g_in.displayW - 40.0f)) : 480.0f;
     g_lay.winClip = false;
@@ -145,8 +149,7 @@ void EndTooltip() {
         for (int i = t.startV; i < g_onv; ++i) { g_ovVerts[i].position.x += dx; g_ovVerts[i].position.y += dy; }
         const int contentEndI = g_oni, spansBefore = g_novSpans;
         g_toOverlay = true;
-        // A tooltip with widgets in it is a popover (its widgets draw in the page's text colours).
-        { const unsigned char bgc[4] = {g_theme.overlay[0], g_theme.overlay[1], g_theme.overlay[2], 250}; popoverBox(bx, by, bw, bh, bgc); }
+        tooltipCard(bx, by, bw, bh);   // the same card as SetTooltip (its text was drawn in the tooltip text colour)
         const int boxN = g_oni - contentEndI;
         g_novSpans = spansBefore;        // the box takes the flat span at the start of the tooltip
         if (boxN > 0 && contentEndI > t.startI) {
@@ -161,6 +164,7 @@ void EndTooltip() {
             }
         }
     }
+    for (int k = 0; k < 4; ++k) g_theme.text[k] = t.text[k];
     g_lay = t.lay; g_grpTop = t.grpTop; g_lastId = t.lastId; g_in.blocked = t.blocked; g_posOverride = t.posOverride;
     g_nextItemW = t.nextItemW; g_toOverlay = t.toOverlay;
     { const bool keep = g_toOverlay; g_toOverlay = true; bindTexture(g_defTex); g_toOverlay = keep; }   // whatever the overlay draws next starts flat again

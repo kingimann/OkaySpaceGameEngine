@@ -31,10 +31,20 @@ std::string EngineLanguageOf(const std::string& path);   // ScriptIdeApp.cpp
 
 namespace appdetail {
 inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The Script Editor's own colours: a plain dark scheme.
-inline const UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
-                  kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
-                  kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
+// The Script Editor's chrome colours: the design in force (okay/UI/OkayUIDesign.hpp), taken from OkayUI's theme at the start of
+// every frame (FollowDesignColours), so the app matches the launcher and the editor in every design and scheme.
+inline UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
+                   kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
+                   kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
+inline void FollowDesignColours() {
+    const UI::Theme& t = UI::Style();
+    auto c = [](const unsigned char* v) { return Rgb(v[0], v[1], v[2]); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) {
+        return Rgb((int)(a[0] + (b[0] - a[0]) * k + 0.5f), (int)(a[1] + (b[1] - a[1]) * k + 0.5f), (int)(a[2] + (b[2] - a[2]) * k + 0.5f)); };
+    kBack = c(t.panel); kPanel = c(t.raised); kStrip = c(t.track); kLine = mix(t.panel, t.text, 0.14f);
+    kText = c(t.text); kDim = c(t.textDim); kAccent = c(t.accent); kTabOn = c(t.bg); kHover = c(t.bgHover);
+    kError = c(t.danger); kWarn = c(t.warning); kAdd = c(t.success);
+}
 
 inline std::string FileText(const std::string& path, bool& ok, std::string* why = nullptr) {
     ok = false;
@@ -380,6 +390,7 @@ struct ScriptIdeApp::Impl {
         d->crlf = text.find("\r\n") != std::string::npos;
         d->code.SetLanguage(wordsFor(d->language));
         if (cfg.palette) d->code.SetPalette(*cfg.palette);
+        else d->code.Edit().SetPalette(UI::DesignCodePalette());   // the design in force (frame() follows a change)
         d->code.Edit().SetFolding(true);
         applyView(*d);
         d->code.SetText(text);

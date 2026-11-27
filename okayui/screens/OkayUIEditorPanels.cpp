@@ -46,17 +46,20 @@ UI::Color32 C32(const float c[3], float a = 1.0f) { return UI::RGBA(B(c[0]), B(c
 // text rows (a text line is one line tall, not a frame tall), its framed children (16 and 12 pixels of padding), its 14-pixel scroll
 // bars with a faint grab, its dim text colour, and its check boxes and combos (a frame with a tick; a field with a square arrow button),
 // for as long as the panel draws.
+void FollowDesign();   // below: the editor colours from the design in force
 struct EditorRows {
     EditorRows() {
+        FollowDesign();
         UI::PushStyleVar(UI::StyleVar_ItemSpacing, g_metrics.itemSpacing);
         UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());
         UI::PushStyleVar(UI::StyleVar_FramePadding, g_metrics.framePadding);
         UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
         UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 14.0f);
         UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
-        UI::PushStyleColor(UI::Col_ScrollbarGrab, UI::RGBA(255, 255, 255, 31));          // white at 0.12
-        UI::PushStyleColor(UI::Col_ScrollbarGrabHovered, UI::RGBA(255, 255, 255, 61));   // white at 0.24
-        UI::PushStyleColor(UI::Col_TextDisabled, UI::RGBA(179, 189, 209));               // the editor's brighter dim text (0.70, 0.74, 0.82)
+        const UI::Theme& t = UI::Style();
+        UI::PushStyleColor(UI::Col_ScrollbarGrab, UI::RGBA(t.ink[0], t.ink[1], t.ink[2], 31));          // the ink at 0.12
+        UI::PushStyleColor(UI::Col_ScrollbarGrabHovered, UI::RGBA(t.ink[0], t.ink[1], t.ink[2], 61));   // the ink at 0.24
+        UI::PushStyleColor(UI::Col_TextDisabled, UI::RGBA(t.textDim[0], t.textDim[1], t.textDim[2]));   // the design's dim text
     }
     ~EditorRows() { UI::PopStyleColor(3); UI::PopStyleVar(6); }
     EditorRows(const EditorRows&) = delete;
@@ -77,16 +80,33 @@ bool LineButton(const char* label) {
     return UI::Button(label, UI::Vec2{UI::CalcTextWidth(label) + 24.0f, UI::GetFontSize()});
 }
 
-// The editor's Slate theme values (shared/OkayTheme.hpp) that OkayUI's launcher look does not have, as bytes.
-const UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 255);         // Mix(kRaised, kBase, 0.35), opaque (what lies under a menu must not show through)
-const UI::Color32 kHeader = UI::RGBA(53, 68, 95);               // Mix(kControl, accent, 0.18): a selected row
-const UI::Color32 kHeaderHovered = UI::RGBA(65, 70, 84);        // Mix(kControl, white, 0.07)
-const UI::Color32 kHeaderActive = UI::RGBA(55, 85, 131);        // Mix(kControl, accent, 0.45)
-const UI::Color32 kFieldBg = UI::RGBA(41, 46, 59);              // kField
-const UI::Color32 kFieldHovered = UI::RGBA(52, 56, 68);         // Mix(kField, white, 0.05)
-const UI::Color32 kFieldActive = UI::RGBA(60, 65, 76);          // Mix(kField, white, 0.09)
-const UI::Color32 kAccent = UI::RGBA(60, 121, 204);             // the editor's first accent (0.235, 0.475, 0.800)
-const UI::Color32 kAccentLit = UI::RGBA(115, 159, 218);         // Mix(accent, white, 0.28): slider grab held, check marks
+// The editor's Dear ImGui colours (shared/OkayTheme.hpp ApplyColors) that OkayUI's theme has no field for, worked out from the design
+// in force by the same formulas, so a panel drawn by OkayUI matches the editor's Dear ImGui panels in every design (FollowDesign,
+// at the start of every panel). The values below are the Slate design's, before the first panel.
+UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 255);         // Mix(kRaised, kBase, 0.35), opaque (what lies under a menu must not show through)
+UI::Color32 kHeader = UI::RGBA(53, 68, 95);               // Mix(kControl, accent, 0.18): a selected row
+UI::Color32 kHeaderHovered = UI::RGBA(65, 70, 84);        // Mix(kControl, ink, 0.07)
+UI::Color32 kHeaderActive = UI::RGBA(55, 85, 131);        // Mix(kControl, accent, 0.45)
+UI::Color32 kFieldBg = UI::RGBA(41, 46, 59);              // kField
+UI::Color32 kFieldHovered = UI::RGBA(52, 56, 68);         // Mix(kField, ink, 0.05)
+UI::Color32 kFieldActive = UI::RGBA(60, 65, 76);          // Mix(kField, ink, 0.09)
+UI::Color32 kAccent = UI::RGBA(60, 121, 204);             // the accent
+UI::Color32 kAccentLit = UI::RGBA(115, 159, 218);         // Mix(accent, white, 0.28) (light schemes: toward black): slider grab held, check marks
+UI::Color32 kCardBg = UI::RGBA(41, 43, 51);               // the object header card: the raised surface
+void FollowDesign() {
+    const UI::Theme& t = UI::Style();
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k, int alpha = 255) {
+        auto m = [&](int i) { return (unsigned)std::lround(a[i] + (b[i] - a[i]) * k); };
+        return UI::RGBA(m(0), m(1), m(2), (unsigned)alpha); };
+    const unsigned char white[4] = {255, 255, 255, 255}, black[4] = {0, 0, 0, 255};
+    const unsigned char* ink = t.ink;
+    kPopupBg = UI::RGBA(t.overlay[0], t.overlay[1], t.overlay[2], 255);
+    kHeader = mix(t.bg, t.accent, 0.18f); kHeaderHovered = mix(t.bg, ink, 0.07f); kHeaderActive = mix(t.bg, t.accent, 0.45f);
+    kFieldBg = UI::RGBA(t.field[0], t.field[1], t.field[2]); kFieldHovered = mix(t.field, ink, 0.05f); kFieldActive = mix(t.field, ink, 0.09f);
+    kAccent = UI::RGBA(t.accent[0], t.accent[1], t.accent[2]);
+    kAccentLit = t.lightScheme ? mix(t.accent, black, 0.18f) : mix(t.accent, white, 0.28f);
+    kCardBg = UI::RGBA(t.raised[0], t.raised[1], t.raised[2]);
+}
 
 // Dear ImGui's menus and rows for as long as it lives: a context menu's look (the popup colour, 16 and 12 pixels of padding less
 // the half spacing the rows reach past their text, the width its longest entry needs) and the header colours of menu rows and
@@ -1395,8 +1415,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
                 const UI::Color32 hc = row.headerMain ? kHeaderMain : kHeaderOther;
                 dl.AddText(UI::Vec2{origin.x + spaceW * 0.8f, ry}, hc, row.name.c_str());
                 const float cy = ry + fs * 0.52f;
-                dl.AddTriangleFilled(UI::Vec2{origin.x + 2.0f, cy - fs * 0.14f}, UI::Vec2{origin.x + 2.0f + fs * 0.42f, cy - fs * 0.14f},
-                                     UI::Vec2{origin.x + 2.0f + fs * 0.21f, cy + fs * 0.22f}, hc);
+                UI::DrawChevron(dl, UI::Vec2{origin.x + 2.0f + fs * 0.21f, cy}, fs * 0.42f, 1, hc);
                 dl.AddLine(UI::Vec2{origin.x, ry + fs + 1.0f}, UI::Vec2{origin.x + listW, ry + fs + 1.0f}, UI::GetColorU32(UI::Col_Separator), 1.0f);
                 continue;
             }
@@ -1427,9 +1446,8 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             if (m.searching) { iconX = rx + 2.0f; textX = rx; }
             else {
                 if (row.childCount > 0) {   // Dear ImGui's arrow: 0.7 of a text line, 12 pixels in
-                    const float r = fs * 0.40f * 0.70f, acx = rx + 12.0f + fs * 0.5f, acy = ry + fs * 0.15f + fs * 0.5f * 0.70f;
-                    if (row.open) dl.AddTriangleFilled(UI::Vec2{acx, acy + 0.750f * r}, UI::Vec2{acx - 0.866f * r, acy - 0.750f * r}, UI::Vec2{acx + 0.866f * r, acy - 0.750f * r}, tc);
-                    else dl.AddTriangleFilled(UI::Vec2{acx + 0.750f * r, acy}, UI::Vec2{acx - 0.750f * r, acy + 0.866f * r}, UI::Vec2{acx - 0.750f * r, acy - 0.866f * r}, tc);
+                    const float acx = rx + 12.0f + fs * 0.5f, acy = ry + fs * 0.15f + fs * 0.5f * 0.70f;
+                    UI::DrawChevron(dl, UI::Vec2{acx, acy}, fs * 0.45f, row.open ? 1 : 0, tc);
                 }
                 iconX = rx + fs + 24.0f; textX = iconX;
             }
@@ -1637,7 +1655,6 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
 
 namespace {
 
-const UI::Color32 kCardBg = UI::RGBA(41, 43, 51);                // ImVec4(0.16, 0.17, 0.20): the object header card
 const UI::Color32 kOffText = UI::RGBA(153, 158, 168);            // ImVec4(0.60, 0.62, 0.66): a component that is off
 const UI::Color32 kOffBar = UI::RGBA(115, 120, 130, 204);        // ImVec4(0.45, 0.47, 0.51, 0.8): its left bar
 const UI::Color32 kPrefabBar = UI::RGBA(77, 158, 255);           // ImVec4(0.30, 0.62, 1.0): changed from its prefab
@@ -1665,9 +1682,7 @@ bool InspSameLineOrWrap(const UI::Rect& last, float right, float nextW) {
 
 // Dear ImGui's tree arrow at (x, y) in a `size` square: down when open, right when closed.
 void InspArrow(const UI::DrawList& dl, float x, float y, float size, bool open, UI::Color32 col) {
-    const float r = size * 0.40f, cx = x + size * 0.5f, cy = y + size * 0.5f;
-    if (open) dl.AddTriangleFilled(UI::Vec2{cx, cy + 0.75f * r}, UI::Vec2{cx + 0.866f * r, cy - 0.75f * r}, UI::Vec2{cx - 0.866f * r, cy - 0.75f * r}, col);
-    else dl.AddTriangleFilled(UI::Vec2{cx + 0.75f * r, cy}, UI::Vec2{cx - 0.75f * r, cy + 0.866f * r}, UI::Vec2{cx - 0.75f * r, cy - 0.866f * r}, col);
+    UI::DrawChevron(dl, UI::Vec2{x + size * 0.5f, y + size * 0.5f}, std::min(9.0f, size * 0.5f), open ? 1 : 0, col);
 }
 
 // The frame of Dear ImGui's collapsing header at (x, y), w by h: the header colours (held, hovered, or plain), the frame rounding.
@@ -2892,8 +2907,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     const bool boxHot = UI::IsMouseHoveringRect(UI::Vec2{b.x, b.y}, UI::Vec2{bx1, b.y + b.h});
                     const bool over = boxHot && UI::IsMouseHoveringRect(UI::Vec2{bx1 - 22.0f, b.y}, UI::Vec2{bx1, b.y + b.h});
                     const float cx = bx1 - 12.0f, cy = b.y + b.h * 0.5f;
-                    UI::GetWindowDrawList().AddTriangleFilled(UI::Vec2{cx - 4.0f, cy - 2.0f}, UI::Vec2{cx + 4.0f, cy - 2.0f}, UI::Vec2{cx, cy + 3.0f},
-                                                              UI::GetColorU32(over ? UI::Col_Text : UI::Col_TextDisabled));
+                    UI::DrawChevron(UI::GetWindowDrawList(), UI::Vec2{cx, cy}, 8.0f, 1, UI::GetColorU32(over ? UI::Col_Text : UI::Col_TextDisabled));
                     if (over && !UI::IsPopupOpen("##pathmenu")) UI::SetTooltip("Choose a file from the project (or right-click)");
                     if (boxHot && (UI::IsMouseClicked(1) || (over && UI::IsMouseClicked(0)))) { UI::SetKeyboardFocusId(0); UI::OpenPopup("##pathmenu"); }
                     if (UI::IsPopupOpen("##pathmenu")) {

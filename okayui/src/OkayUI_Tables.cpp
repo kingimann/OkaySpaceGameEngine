@@ -223,6 +223,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
     const bool frozen = g_tbl.rowsDone < g_tbl.freezeRows || !g_tbl.scrollY;
     if (tblScrolls()) tblSetClip(true, 2);
     const float fullL = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, fullW2 = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
+    if (colorIsSet(Col_TableHeaderBg)) quad(fullL, rowY, fullW2, hh, g_theme.colors[Col_TableHeaderBg]);   // a header colour the program set
     quad(fullL, rowY + hh - 1.0f, fullW2, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
     const Font* prevF = g_font; g_font = &kFontBold;
     for (int i = 0; i < g_tbl.count; ++i) {
@@ -246,8 +247,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
             const TblStore& t = *g_tbl.store;
             for (int k = 0; k < t.sortN; ++k) if (t.sortCol[k] == i) {
                 const float ax = cx + cw - 14.0f, ay = rowY + hh * 0.5f, r = 4.0f;
-                if (t.sortDesc[k]) tri(ax - r, ay - r * 0.6f, ax + r, ay - r * 0.6f, ax, ay + r * 0.8f, g_theme.text);
-                else tri(ax, ay - r * 0.8f, ax - r, ay + r * 0.6f, ax + r, ay + r * 0.6f, g_theme.text);
+                chevronDir(ax, ay, r * 2.0f, t.sortDesc[k] ? 1 : 3, g_theme.text);
                 if (t.sortN > 1) { char d[4]; std::snprintf(d, sizeof d, "%d", k + 1); drawText(ax - r - 12.0f, rowY + (hh - textH()) * 0.5f, d, g_theme.textScale * 0.7f, g_theme.text); }
             }
         }
@@ -303,6 +303,7 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     // Optional header row: a bar with bold column labels.
     if (headers) {
         const float hh = rowH();
+        if (colorIsSet(Col_TableHeaderBg)) quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.colors[Col_TableHeaderBg]);
         quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
         const Font* prevF = g_font; g_font = &kFontBold;
         for (int i = 0; i < columns; ++i) {

@@ -3659,3 +3659,47 @@ Unverified: Windows (the changed files and `editor/main.cpp` were syntax-checked
 real GPU or window manager. Still to do: the Inspector bodies that exist twice (a Dear ImGui-API body and an OkayUI-screen body, both
 OkayUI now: feature map 40.10) and the UI backend switch that chooses between them; `Event::native` in the platform seam (its only
 consumer, `imgui_impl_sdl2`, is gone).
+
+## 34. Round 4: right-click on tabs, the menu bar, tab drag and dock, hover, dialogs, the Project panel (2026-11-27)
+
+Owner, 2026-11-27: "Okay ui needs a ton of more work", "I can't right click on tabs, the top bar where file is, I gotta click, hovering
+over them doesn't anything", "Dragging tabs and placing them needs more work", "project tab needs work". Each fix is in OkayUI where it
+could be (every program gets it) and has a headless test; the ones marked "failed first" were run against the code before the fix.
+
+| Problem a person saw | Cause | Fix | Test |
+|---|---|---|---|
+| Right-click on a dock tab opened nothing | the editor's dock space sits in a full-window host; that host was `g.HoveredWindow` over the strips, so the editor's tab menu (it needs `node->HostWindow`) never opened | over the dock area the dock host is hovered (`OkayUIDockNodes.cpp`) | `okayui_docknodes` (failed first) |
+| ... and on a tab that was never the chosen one the menu closed at once; Close Other Tabs was greyed | `FindWindowByName` / `FindWindowByID` did not know a docked window whose `Begin` never ran | they fall back to the window table for docked windows | `okayui_docknodes` (failed first) |
+| Closable tabs (`BeginTabItem` with an open flag) had no menu | none existed | Close, Close Others, Close Tabs to the Right, Close All, unless the program opens its own menu | `okayui_widgets` (failed first) |
+| The menu bar needed a click per menu | no menu-bar state across buttons | while a menu of a bar is open, the pointer on another button opens it; Left / Right go to the neighbour; a tap of Alt alone opens the first menu (not Alt in a chord) | `okayui_windows` (failed first) |
+| Hover was hard to see | hover tints were 1.05-1.10:1 from rest | at least 1.18:1 (fields 1.10:1) in every design and scheme | `launcher_theme` (failed first: 29 weak pairs) |
+| Tab drag floated the window at once, no cancel, unclear target | the old drag floated on leaving the strip | the window stays docked until release; a ghost tab follows the pointer; guide tiles (five over the leaf, four at the dock area's edges) and the exact drop area are shown; a release away from every target floats it; Escape or the right button cancels; its own single-tab leaf is no target | `okayui_dock` (new behaviour test; the old test changed with it) |
+| Inspector labels cut off ("Pos", "Rot", "Sca") | `PushItemWidth(-labelColumn)` was ignored by `CalcItemWidth` | negative widths are "that far before the right edge" | `okayui_calls` (failed first) |
+| "Close OkaySpace?" was 820 x 680 around one line | a closed modal did not use up `SetNextWindowSize`; auto-resize modals had a 320 floor; modals had 6 px padding | closed popups use up the next-window data; `AlwaysAutoResize` fits; modals take the window padding | `okayui_windows` (failed first) |
+| "You're up to date": the logo covered the text | a group begun at `SetCursorScreenPos` did not lock its left edge | it does | `okayui_widgets` (failed first) |
+| Tree and list rows looked like Dear ImGui (square fills, filled triangles) | Dear ImGui's look drew them | same places and sizes, drawn rounded with chevrons, eased hover, an accent bar on the selection | `okayui_widgets` (`TestHoverEverywhere`), goldens |
+| Data tables: the eye lost the row | no row hover | striped or sortable tables light the row under the pointer | `okayui_tables` (failed first) |
+| Long popup rows touched the edge ("Find References in Scene") | popup rows did not report their width | they do; the popup grows to fit | goldens |
+
+**Editor (not OkayUI):** the Project panel's toolbar is one row (back / forward, Assets with a list of Favourites and Recent, the breadcrumb;
+then +, Import, the type filter sized to its longest choice, the view toggle, "..." with Layout (one or two columns), Search in (folder or
+project), Sort, tile size; then search); the list view's rows are taller (a readable icon or thumbnail), the Type, Size and Date columns
+follow the name column (about half the row), their borders are dragged to resize (kept for the session), the sorted column has a chevron
+(up for A to Z, down for biggest or newest first); every model format the build imports is a "Model" with a cube icon (an .fbx was a
+"File"); every docked tab has its panel icon, chosen or not; the tab menu has Close All Tabs in Group; the Game view's size and "Edit mode"
+labels are quiet chips. These were checked by running the editor headless (below), not by a unit test.
+
+**How it was checked.** Linux, Xvfb, the own platform backend, `-O1`, the editor and the launcher built with test hooks; scripted runs:
+hover and click the menu bar and move across it, right-click the chosen and unchosen tabs of each strip, drag Problems onto the Scene group
+(guides, drop), drag Scene and press Escape (nothing moved), import an .fbx, a .glb and three textures by file drops and look at the
+Project panel in grid and list view, the launcher's close dialog and its Software Update dialog (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`).
+Pictures are outside the repository. All 65 `okayui_*`, `launcher_theme` and `launcher_page_layout` tests pass.
+
+**Unverified:** Windows (changed OkayUI files syntax-checked with MinGW, using a stand-in SDL config header; never built or run there), a
+real GPU, 125% / 150% scale. "Remy_tex1000..." textures that showed as flat purple squares were not reproduced (no such files here; they
+may be normal maps, which are lavender at a glance).
+
+**Left (ranked):** the two copies of the Inspector bodies and the switch in `shared/OkayUIBackend.hpp` (rule 19d; about 117 call sites);
+labels on the left of Inspector fields; Tab-key focus through every control with the focus ring; sticky table headers; text that runs past
+fixed-width dialogs (the Project panel's Delete dialog); multi-OS-window panels; Project Settings opens floating rather than docked (a
+decision, unchanged); list-view column widths are not saved.

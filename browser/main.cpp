@@ -17,6 +17,7 @@
 // launcher's Browser page draws (sidebar > Browser); this file is only the program's window around it.
 #define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
+#include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"
 #include "BrowserApp.hpp"
 #include "Process.hpp"   // tools/okay-cli: SelfPath (where this program is, to find the player beside it)
@@ -99,6 +100,7 @@ int main(int argc, char** argv) {
             if (app->OpenTyped(s, app->TabCount() == 0) < 0) app->OpenUrl("about:newtab", app->TabCount() == 0);
         if (app->TabCount() == 0) app->OpenTyped(std::string());
         app->SetAutoplay(autoplay);
+        OkayUI::design::FollowUserFile();   // the person's design (appearance.json), shared with the launcher and the editor
         UI::UseLauncherLook(true);
         return true;
     };

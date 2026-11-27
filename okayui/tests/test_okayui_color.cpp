@@ -72,7 +72,7 @@ void TestStyleColors() {
     UI::PopStyleColor(2);
     CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), 1 / 255.0f, 2 / 255.0f, 3 / 255.0f, 4 / 255.0f));
     UI::PopStyleColor();
-    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.track[0] / 255.0f, t.track[1] / 255.0f, t.track[2] / 255.0f, t.track[3] / 255.0f));
+    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.raised[0] / 255.0f, t.raised[1] / 255.0f, t.raised[2] / 255.0f, t.raised[3] / 255.0f));
     UI::PopStyleColor(5);                                                  // popping an empty stack is harmless
     // packed and float overloads
     UI::PushStyleColor(UI::Col_Separator, UI::RGBA(10, 20, 30, 40));
@@ -103,7 +103,7 @@ void TestStyleColors() {
     Sim sim(100, 100);
     UI::PushStyleColor(UI::Col_Header, 1, 2, 3, 4);
     sim.Frame([] {});
-    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.track[0] / 255.0f, t.track[1] / 255.0f, t.track[2] / 255.0f, t.track[3] / 255.0f));
+    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.raised[0] / 255.0f, t.raised[1] / 255.0f, t.raised[2] / 255.0f, t.raised[3] / 255.0f));
     // the launcher look swaps the base theme and clears what was set
     UI::SetStyleColor(UI::Col_Tab, 1, 2, 3, 4);
     UI::UseLauncherLook(true);

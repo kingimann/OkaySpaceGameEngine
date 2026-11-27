@@ -26,7 +26,6 @@ static void Check(const char* name, const Bitmap& b) {
 }
 template <class R> static float CX(const R& r) { return r.x + r.w * 0.5f; }
 template <class R> static float CY(const R& r) { return r.y + r.h * 0.5f; }
-static const int kBg[3] = {30, 33, 41};
 static bool HasLog(const hierfix::Scene& s, const std::string& line) {
     for (const std::string& l : s.log) if (l == line) return true;
     return false;
@@ -85,7 +84,7 @@ struct HRig {
         for (std::size_t i = 0; i < res.menuIds.size(); ++i) if (res.menuIds[i] == id) return res.menuRows[i];
         return UI::Rect{};
     }
-    const Bitmap& Draw() { return sim.Draw((std::uint8_t)kBg[0], (std::uint8_t)kBg[1], (std::uint8_t)kBg[2]); }
+    const Bitmap& Draw() { const unsigned char* p = UI::Style().panel; return sim.Draw(p[0], p[1], p[2]); }   // on the design's panel colour, as the host draws it
 };
 
 int main() {
@@ -556,7 +555,8 @@ int main() {
         {   // opaque: on a white canvas the list's background is exactly the menu colour
             const Bitmap& b = r.sim.Draw(255, 255, 255);
             const unsigned px = PixelAt(b, (int)(list.x + list.w - 4.0f), (int)(list.y + copy.h * 0.5f));
-            CHECK((px >> 8) == ((35u << 16) | (39u << 8) | 48u));
+            const unsigned char* ov = UI::Style().overlay;   // the design's popover surface
+            CHECK((px >> 8) == (((unsigned)ov[0] << 16) | ((unsigned)ov[1] << 8) | (unsigned)ov[2]));
         }
         // rows as tall as the popup's: the fourth row is where four popup rows would put it
         r.Click(list.x + 40.0f, list.y + copy.h * 3.5f);

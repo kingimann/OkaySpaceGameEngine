@@ -197,9 +197,9 @@ inline okay::account::ApiResponse ProfilesGet(const okay::account::AccountServic
     return table.Get();
 }
 
-// The same with the query written by hand ("select=...&id=eq...."). Only Messages,
-// Servers and Admin still use it; they move onto the form above in rounds 6 and 7,
-// and then this one goes.
+// The same with the query written by hand ("select=...&id=eq...."). Only Admin
+// still uses it (Messages and Servers moved onto the form above in round 6); it
+// moves in round 7, and then this one goes.
 inline okay::account::ApiResponse ProfilesGet(const okay::account::AccountService& acct, const std::string& query) {
     if (ProfilesViewState().load() != 2) {
         okay::account::ApiResponse r = acct.Api("/rest/v1/profiles_visible?" + query, "GET");

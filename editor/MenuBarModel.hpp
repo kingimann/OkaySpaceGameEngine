@@ -304,6 +304,7 @@ inline std::vector<Entry> EditMenu(const State& s) {
     m.push_back(Sep());
     m.push_back(OnlyIf(Item("edit.darkmode", "Dark Mode", "", "Dark editor colours."), !s.darkMode, "The editor is already in dark mode."));
     m.push_back(OnlyIf(Item("edit.lightmode", "Light Mode", "", "Light editor colours."), s.darkMode, "The editor is already in light mode."));
+    m.push_back(SlotMenu("edit.appearance", "Appearance", "The design (eleven, Graphite the default) and your options: accent, density, roundness, text size, shadows, motion. Shared with the launcher."));
     m.push_back(Item("edit.projectsettings", "Project Settings..."));
     return m;
 }

@@ -132,6 +132,19 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul) {
 }
 
 // ---- DrawList ---------------------------------------------------------------------------------
+void DrawChevron(const DrawList& dl, Vec2 c, float size, int dir, Color32 col, float thickness) {
+    const float h = size * 0.5f, t = thickness > 0.0f ? thickness : (size < 12.0f ? 1.6f : 2.0f);
+    Vec2 a, m, b;
+    switch (dir & 3) {
+        case 1: a = Vec2{c.x - h, c.y - h * 0.5f}; m = Vec2{c.x, c.y + h * 0.5f}; b = Vec2{c.x + h, c.y - h * 0.5f}; break;
+        case 3: a = Vec2{c.x - h, c.y + h * 0.5f}; m = Vec2{c.x, c.y - h * 0.5f}; b = Vec2{c.x + h, c.y + h * 0.5f}; break;
+        case 2: a = Vec2{c.x + h * 0.5f, c.y - h}; m = Vec2{c.x - h * 0.5f, c.y}; b = Vec2{c.x + h * 0.5f, c.y + h}; break;
+        default: a = Vec2{c.x - h * 0.5f, c.y - h}; m = Vec2{c.x + h * 0.5f, c.y}; b = Vec2{c.x - h * 0.5f, c.y + h}; break;
+    }
+    dl.AddLine(a, m, col, t);
+    dl.AddLine(m, b, col, t);
+}
+
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);

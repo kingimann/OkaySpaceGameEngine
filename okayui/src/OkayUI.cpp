@@ -10,6 +10,7 @@
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
+#include "okay/UI/OkayUIDesign.hpp"   // the design in force (DefaultTheme)
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
 #include <SDL.h>
@@ -176,31 +177,33 @@ unsigned g_hoverKey = 0; unsigned long long g_hoverFrame = 0; double g_hoverStar
 bool g_inTip = false;
                           // the menus a nested BeginMenu came from (outermost first)
 int g_menuDepth = 0;
-Theme g_theme;
+Theme g_theme = design::DefaultTheme();
 
 // Scoped color-override stack: each entry remembers a theme color slot and its prior
 // value, so PopStyleColor can restore it. Reset every BeginFrame to survive imbalance.
 ColorSave g_colStack[64];
 int       g_colTop = 0;
-// The base-theme value of a colour that was never set (what GetStyleColorVec4 answers; the classic look's default).
+// The base-theme value of a colour that was never set (what GetStyleColorVec4 answers): the design's tokens.
 void deriveColor(int id, unsigned char out[4]) {
     auto cp = [&](const unsigned char* c) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3]; };
     auto rgba = [&](int r, int g, int b, int a) { out[0] = (unsigned char)r; out[1] = (unsigned char)g; out[2] = (unsigned char)b; out[3] = (unsigned char)a; };
     auto tint = [&](const unsigned char* c, int a) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = (unsigned char)a; };
     switch (id) {
         case Col_TextDisabled: cp(g_theme.textDim); break;
-        case Col_WindowBg: case Col_ChildBg: case Col_PopupBg: cp(g_theme.panel); break;
+        case Col_WindowBg: case Col_ChildBg: cp(g_theme.panel); break;
+        case Col_PopupBg: cp(g_theme.overlay); break;
         case Col_BorderShadow: rgba(0, 0, 0, 0); break;
         case Col_FrameBg: case Col_FrameBgHovered: case Col_FrameBgActive: cp(g_theme.field); break;
         case Col_TitleBg: case Col_TitleBgActive: case Col_TitleBgCollapsed: cp(g_theme.titleBg); break;
-        case Col_MenuBarBg: cp(g_theme.bgDown); break;
+        case Col_MenuBarBg: cp(g_theme.track); break;
         case Col_ScrollbarBg: cp(g_theme.track); break;
-        case Col_ScrollbarGrab: cp(g_theme.accent); break;
-        case Col_ScrollbarGrabHovered: case Col_ScrollbarGrabActive: cp(g_theme.text); break;
+        case Col_ScrollbarGrab: tint(g_theme.ink, 46); break;
+        case Col_ScrollbarGrabHovered: tint(g_theme.ink, 90); break;
+        case Col_ScrollbarGrabActive: cp(g_theme.accent); break;
         case Col_CheckMark: cp(g_theme.accent); break;
         case Col_SliderGrab: cp(g_theme.accent); break;
         case Col_SliderGrabActive: cp(g_theme.text); break;
-        case Col_Header: cp(g_theme.track); break;
+        case Col_Header: cp(g_theme.raised); break;
         case Col_HeaderHovered: cp(g_theme.bgHover); break;
         case Col_HeaderActive: cp(g_theme.bgDown); break;
         case Col_Separator: case Col_SeparatorHovered: case Col_SeparatorActive: cp(g_theme.border); break;
@@ -215,16 +218,16 @@ void deriveColor(int id, unsigned char out[4]) {
         case Col_PlotLinesHovered: cp(g_theme.text); break;
         case Col_PlotHistogram: cp(g_theme.accent); break;
         case Col_PlotHistogramHovered: cp(g_theme.text); break;
-        case Col_TableHeaderBg: cp(g_theme.bgDown); break;
+        case Col_TableHeaderBg: cp(g_theme.raised); break;
         case Col_TableBorderStrong: case Col_TableBorderLight: cp(g_theme.border); break;
         case Col_TableRowBg: rgba(0, 0, 0, 0); break;
-        case Col_TableRowBgAlt: rgba(255, 255, 255, 11); break;
-        case Col_TextSelectedBg: tint(g_theme.accent, 110); break;
+        case Col_TableRowBgAlt: tint(g_theme.ink, 9); break;
+        case Col_TextSelectedBg: cp(g_theme.selection); break;
         case Col_DragDropTarget: cp(g_theme.accent); break;
-        case Col_NavHighlight: cp(g_theme.accent); break;
+        case Col_NavHighlight: cp(g_theme.focusRing); break;
         case Col_NavWindowingHighlight: rgba(255, 255, 255, 178); break;
         case Col_NavWindowingDimBg: rgba(204, 204, 204, 51); break;
-        case Col_ModalWindowDimBg: rgba(0, 0, 0, 140); break;
+        case Col_ModalWindowDimBg: rgba(0, 0, 0, g_theme.lightScheme ? 90 : 150); break;
         default: rgba(0, 0, 0, 0); break;
     }
 }
@@ -771,10 +774,16 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
 
 // ---- Launcher-look shapes (drawn instead of text glyphs for icons) ----
 // A small chevron pointing right (open=false) or down (open=true), centred on (cx, cy).
-void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]) {
+void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]) { chevronDir(cx, cy, sz, down ? 1 : 0, c); }
+// A chevron in any of four directions (0 right, 1 down, 2 left, 3 up): two strokes meeting at the point.
+void chevronDir(float cx, float cy, float sz, int dir, const unsigned char c[4]) {
     const float h = sz * 0.5f, t = sz < 12.0f ? 1.6f : 2.0f;
-    if (down) { line(cx - h, cy - h * 0.5f, cx, cy + h * 0.5f, t, c); line(cx, cy + h * 0.5f, cx + h, cy - h * 0.5f, t, c); }
-    else      { line(cx - h * 0.5f, cy - h, cx + h * 0.5f, cy, t, c); line(cx + h * 0.5f, cy, cx - h * 0.5f, cy + h, t, c); }
+    switch (dir & 3) {
+        case 1: line(cx - h, cy - h * 0.5f, cx, cy + h * 0.5f, t, c); line(cx, cy + h * 0.5f, cx + h, cy - h * 0.5f, t, c); break;
+        case 3: line(cx - h, cy + h * 0.5f, cx, cy - h * 0.5f, t, c); line(cx, cy - h * 0.5f, cx + h, cy + h * 0.5f, t, c); break;
+        case 2: line(cx + h * 0.5f, cy - h, cx - h * 0.5f, cy, t, c); line(cx - h * 0.5f, cy, cx + h * 0.5f, cy + h, t, c); break;
+        default: line(cx - h * 0.5f, cy - h, cx + h * 0.5f, cy, t, c); line(cx + h * 0.5f, cy, cx - h * 0.5f, cy + h, t, c); break;
+    }
 }
 // An "x" mark centred on (cx, cy).
 void xMark(float cx, float cy, float sz, const unsigned char c[4]) {
@@ -798,13 +807,99 @@ void framedTick(float x, float y, float sz, const unsigned char c[4]) {
     line(ax, ay, bx + (bx - ax) * e, by + (by - ay) * e, t, c);
     line(bx, by, cx, cy, t, c);
 }
-// Soft drop shadow under a rounded rect (a few widening translucent layers).
-void softShadow(float x, float y, float w, float h, float rad) {
-    for (int i = 4; i >= 1; --i) {
-        const float g = 3.0f * i;
-        const unsigned char c[4] = {0, 0, 0, (unsigned char)(26 - i * 4)};
-        rrect(x - g, y - g + 5.0f, w + 2.0f * g, h + 2.0f * g, rad + g, c);
+// Soft drop shadow under a rounded rect, as deep as the design asks (Theme::shadowDepth).
+void softShadow(float x, float y, float w, float h, float rad) { elevation(x, y, w, h, rad, g_theme.shadowDepth); }
+// The shadow of a raised surface: `depth` 0 (none) to 3 (deep). Widening translucent layers, offset downwards (light from
+// above), lighter on light schemes. The alphas were picked by eye at 1x and 2x.
+void elevation(float x, float y, float w, float h, float rad, int depth) {
+    if (depth <= 0) return;
+    if (depth > 3) depth = 3;
+    const int layers = 2 + depth;
+    const float spread = 1.0f + 1.0f * depth, drop = 1.0f + 2.0f * depth;   // whole pixels: the same edges at every scale
+    const float base = g_theme.lightScheme ? 7.0f : 15.0f;
+    for (int i = layers; i >= 1; --i) {
+        const float g = spread * i;
+        const float a = base * (1.0f + 0.35f * depth) * (float)(layers + 1 - i) / (float)layers;
+        const unsigned char c[4] = {0, 0, 0, (unsigned char)(a > 255.0f ? 255.0f : a)};
+        rrect(x - g, y - g + drop, w + 2.0f * g, h + 2.0f * g, rad + g, c);
     }
+}
+// An outline of thickness `t` around a rounded rectangle (four bars and the corner arcs), drawn outside nothing: it covers the
+// rectangle's own edge band, so call it after the fill. Corners as short lines along the arc.
+void ringRect(float x, float y, float w, float h, float rad, float t, const unsigned char c[4]) {
+    if (w <= 0.0f || h <= 0.0f || t <= 0.0f || c[3] == 0) return;
+    if (rad > w * 0.5f) rad = w * 0.5f;
+    if (rad > h * 0.5f) rad = h * 0.5f;
+    if (rad < t) rad = 0.0f;
+    quad(x + rad, y, w - 2.0f * rad, t, c);
+    quad(x + rad, y + h - t, w - 2.0f * rad, t, c);
+    quad(x, y + rad, t, h - 2.0f * rad, c);
+    quad(x + w - t, y + rad, t, h - 2.0f * rad, c);
+    if (rad <= 0.0f) return;
+    const float r = rad - t * 0.5f;
+    const float cx[4] = {x + rad, x + w - rad, x + w - rad, x + rad}, cy[4] = {y + rad, y + rad, y + h - rad, y + h - rad};
+    const float a0[4] = {3.14159265f, 4.71238898f, 0.0f, 1.57079633f};
+    const int n = rad > 8.0f ? 6 : 4;
+    for (int q = 0; q < 4; ++q)
+        for (int i = 0; i < n; ++i) {
+            const float t0 = a0[q] + 1.57079633f * i / n, t1 = a0[q] + 1.57079633f * (i + 1) / n;
+            line(cx[q] + r * std::cos(t0), cy[q] + r * std::sin(t0), cx[q] + r * std::cos(t1), cy[q] + r * std::sin(t1), t, c);
+        }
+}
+// The keyboard focus ring: the design's ring colour, Theme::focusRingPx thick, 2 pixels outside the control's edge.
+void focusRing(float x, float y, float w, float h, float rad) {
+    const float t = g_theme.focusRingPx, gap = 2.0f;
+    ringRect(x - gap - t, y - gap - t, w + 2.0f * (gap + t), h + 2.0f * (gap + t), rad > 0.0f ? rad + gap + t : 0.0f, t, g_theme.focusRing);
+}
+// A control's box: the design's outline when it has one (Theme::controlBorders), then the fill.
+void controlBox(float x, float y, float w, float h, float rad, const unsigned char* fill) {
+    const float b = g_theme.borderPx;
+    if (g_theme.controlBorders && w > 2.0f * b && h > 2.0f * b) {
+        rrect(x, y, w, h, rad, g_theme.border);
+        rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rad > b ? rad - b : 0.0f, fill);
+        return;
+    }
+    rrect(x, y, w, h, rad, fill);
+}
+// `a` blended toward `b` by t (0..1), into `out`.
+const unsigned char* mixColor(const unsigned char a[4], const unsigned char b[4], float t, unsigned char out[4]) {
+    t = clamp01(t);
+    for (int i = 0; i < 4; ++i) out[i] = (unsigned char)(a[i] + (b[i] - a[i]) * t + 0.5f);
+    return out;
+}
+// ---- Motion: short, time-based transitions per widget --------------------------------------------------------------------------
+// A widget asks anim(id, channel, on) every frame and gets 0..1 that eases toward 1 while `on` (hover, press, open) and back
+// to 0 after. The time comes from Input::time: a host with no clock (time 0, as in the headless tests) and Theme::motionMs <= 0
+// (the person's "reduce motion") get the end state at once, so pictures in tests never depend on timing.
+namespace {
+struct AnimSlot { int key = 0; float v = 0.0f; unsigned long long seen = 0; };
+AnimSlot g_anims[96];
+double g_animPrevT = 0.0, g_animDt = 0.0;
+}
+void animFrame(double now) {
+    g_animDt = (now > 0.0 && g_animPrevT > 0.0 && now > g_animPrevT) ? now - g_animPrevT : 0.0;
+    if (g_animDt > 0.25) g_animDt = 0.25;
+    g_animPrevT = now > 0.0 ? now : 0.0;
+}
+float anim(int id, int channel, bool on) {
+    if (g_theme.motionMs <= 0.0f || g_in.time <= 0.0) return on ? 1.0f : 0.0f;
+    const int key = (id * 31 + channel) | 1;
+    AnimSlot* s = nullptr; AnimSlot* freeS = nullptr;
+    for (AnimSlot& a : g_anims) {
+        if (a.key == key) { s = &a; break; }
+        if (!freeS && (a.key == 0 || a.seen + 2 < g_frameCount)) freeS = &a;
+    }
+    if (!s) {
+        if (!on) return 0.0f;                 // at rest and not asked to move: no slot needed
+        if (!freeS) return 1.0f;
+        s = freeS; s->key = key; s->v = 0.0f;
+    }
+    s->seen = g_frameCount;
+    const float step = (float)(g_animDt * 1000.0 / g_theme.motionMs);
+    s->v = on ? (s->v + step > 1.0f ? 1.0f : s->v + step) : (s->v - step < 0.0f ? 0.0f : s->v - step);
+    const float v = s->v;
+    if (!on && v <= 0.0f) s->key = 0;         // back at rest: free the slot
+    return v * v * (3.0f - 2.0f * v);         // smooth start and end
 }
 // `c` with its alpha scaled (0..1), into `out`.
 const unsigned char* withAlpha(const unsigned char c[4], float a, unsigned char out[4]) {
@@ -948,6 +1043,8 @@ void BeginFrame(const Input& in) {
         g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
         g_io.deltaTime = (g_frameCount > 1 && g_clock > prev) ? (float)(g_clock - prev) : 1.0f / 60.0f;
     }
+    animFrame(in.time);
+    treeGuidesReset();
     g_io.mousePos = Vec2{in.mouseX, in.mouseY}; g_io.mouseDelta = Vec2{0, 0}; g_io.mouseWheel = in.wheel;
     g_io.displaySize = Vec2{in.displayW, in.displayH};
     g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
@@ -1239,9 +1336,18 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     const float rd = rnd();
     if (g_framedWidgets) rrect(x, y, w, h, rd, pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
     else {
-    rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f,
-                                            pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
+        // The design's field: the field colour (a touch lighter under the pointer), an outline when the design has them or the
+        // field has the keyboard (then in the accent), and the focus ring around it while it has the keyboard.
+        unsigned char hv[4], st[4];
+        mixColor(g_theme.field, g_theme.ink, 0.04f, hv);
+        const unsigned char* fill = stateColor(id, inside && !focused, false, pick(Col_FrameBg, g_theme.field), pick(Col_FrameBgHovered, hv), hv, st);
+        if (focused) fill = pick(Col_FrameBgActive, g_theme.field);
+        const bool edge = focused || g_theme.controlBorders;
+        if (edge && w > 2.0f * b && h > 2.0f * b) {
+            rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
+            rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, fill);
+        } else rrect(x, y, w, h, rd, fill);
+        if (focused) focusRing(x, y, w, h, rd);
     }
 
     // Password: show one '*' per byte (offsets stay equal to the real text's, so caret and selection need no mapping).
@@ -1292,7 +1398,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         caretX = px + preCaretW;
     } else {
         drawText(tx, ty, buf + ts->first, s, g_theme.text);
-        if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, pick(Col_TextDisabled, g_theme.textDim));   // the placeholder, while the field is empty
+        if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, pick(Col_TextDisabled, g_theme.textFaint));   // the placeholder, while the field is empty
     }
     // Blinking caret (steady when Theme::caretBlink is off, which tests use).
     if (focused && (!g_theme.caretBlink || (g_frame / 30u) % 2u == 0u)) quad(caretX, ty, 2.0f, th, g_theme.text);
@@ -1510,14 +1616,18 @@ void drawToasts(float screenW, float screenH) {
         const float a = clamp01(age < left ? age : left);   // fade in / out
         const float x = screenW - 24.0f - w + (1.0f - a) * 30.0f;
         y -= h;
-        const unsigned char bgc[4] = {38, 42, 51, (unsigned char)(245 * a)};
-        const unsigned char rim[4] = {255, 255, 255, (unsigned char)(28 * a)};
-        unsigned char dot[4] = {66, 150, 250, (unsigned char)(255 * a)};
-        if (t.kind == 1) { dot[0] = 67; dot[1] = 181; dot[2] = 129; }
-        if (t.kind == 2) { dot[0] = 237; dot[1] = 85; dot[2] = 85; }
+        // A raised card in the overlay colour with the design's shadow, a status bar on its left edge and a dot in the status
+        // colour (accent: information, success, danger); it slides in from the right and fades.
+        const unsigned char bgc[4] = {g_theme.overlay[0], g_theme.overlay[1], g_theme.overlay[2], (unsigned char)(250 * a)};
+        unsigned char rim[4]; withAlpha(g_theme.border, a, rim);
+        const unsigned char* sc = t.kind == 1 ? g_theme.success : t.kind == 2 ? g_theme.danger : g_theme.accent;
+        const unsigned char dot[4] = {sc[0], sc[1], sc[2], (unsigned char)(255 * a)};
         const unsigned char txt[4] = {g_theme.text[0], g_theme.text[1], g_theme.text[2], (unsigned char)(255 * a)};
-        rrect(x, y, w, h, 10.0f, rim);
-        rrect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, 9.0f, bgc);
+        const float rd = std::min(g_theme.windowRounding, 12.0f);
+        if (a > 0.5f) elevation(x, y, w, h, rd, g_theme.shadowDepth);
+        rrect(x, y, w, h, rd, rim);
+        rrect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, rd > 1.0f ? rd - 1.0f : 0.0f, bgc);
+        rrect(x + 1.0f, y + 6.0f, 3.0f, h - 12.0f, 1.5f, dot);
         fillCircle(x + pad + 4.0f, y + h * 0.5f, 4.0f, dot, 16);
         drawText(x + pad + 18.0f, y + (h - textH()) * 0.5f, t.text, s, txt);
         y -= gap;
@@ -1985,11 +2095,8 @@ void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* 
 }
 
 void TextDisabled(const char* s) {
-    if (g_look || colorIsSet(Col_TextDisabled)) { const unsigned char* d = pick(Col_TextDisabled, g_theme.textDim); TextColored(d[0], d[1], d[2], s); return; }
-    // Blend the theme text toward the panel color for a muted look.
-    const unsigned char* t = g_theme.text; const unsigned char* p = g_theme.panel;
-    TextColored((unsigned char)((t[0] + p[0]) / 2), (unsigned char)((t[1] + p[1]) / 2),
-                (unsigned char)((t[2] + p[2]) / 2), s);
+    const unsigned char* d = pick(Col_TextDisabled, g_theme.textDim);
+    TextColored(d[0], d[1], d[2], s);
 }
 
 void SeparatorText(const char* label) {
@@ -1998,7 +2105,7 @@ void SeparatorText(const char* label) {
     float x, y; place(fullW(), h, x, y);
     const float ty = y + (h - textH()) * 0.5f;
     const float lw = label && *label ? visW(label) : 0.0f;
-    if (lw > 0.0f) drawText(x, ty, VisLabel(label).b, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x, ty, VisLabel(label).b, g_theme.textScale, g_theme.textDim);   // a section label: dimmer than body text
     // A line filling the space to the right of the label.
     const float lineX = x + (lw > 0.0f ? lw + 8.0f : 0.0f);
     const float lineW = (x + fullW()) - lineX;
@@ -2559,7 +2666,7 @@ static bool InputInt_raw(const char* label, int* value, int step) {
     float fieldW = w - lw - (steppers ? btnW * 2.0f + 8.0f : 0.0f);
     if (fieldW < 24.0f) fieldW = 24.0f;
     // Value box: a click on it types a number (Enter or clicking away applies it, Escape cancels).
-    quad(x, y, fieldW, h, g_theme.track);
+    controlBox(x, y, fieldW, h, rnd(), g_theme.field);
     bool ch = false;
     double typed = 0.0;
     const int ed = numberEdit(id ^ 0x1e, x, y, fieldW, h, hit(x, y, fieldW, h), (double)*value, true, -2147483648.0, 2147483647.0, &typed, false);
@@ -2739,18 +2846,34 @@ namespace ui_core {
 void framedComboBox(float x, float y, float w, float h, bool hovered, const char* text) {
     const float rd = std::min(rnd(), h * 0.5f);
     rrect(x, y, w, h, rd, hovered ? pick(Col_FrameBgHovered, g_theme.bgHover) : pick(Col_FrameBg, g_theme.field));
-    const float bw = std::min(h, w), bx = x + w - bw;
-    const unsigned char* bc = hovered ? pick(Col_ButtonHovered, g_theme.bgHover) : pick(Col_Button, g_theme.bg);
-    rrect(bx, y, bw, h, rd, bc);
-    if (rd > 0.0f) quad(bx, y, rd, h, bc);   // square on its left, where it meets the field
+    const float bw = std::min(h, w), bx = x + w - bw;   // the arrow's room (the text stops before it); a chevron, no block
     const float padX = g_framePadX >= 0.0f ? g_framePadX : 6.0f;
     PushClipRect(x, y, std::max(1.0f, w - bw), h);   // to the arrow, as Dear ImGui clips it (the editor fits a long text with "...")
     drawText(x + padX, y + (h - textH()) * 0.5f, text ? text : "", g_theme.textScale, g_theme.text);
     PopClipRect();
-    const float fs = textH(), cx = bx + bw * 0.5f, cy = y + h * 0.5f, r = fs * 0.37f;
-    tri(cx - r, cy - fs * 0.34f, cx + r, cy - fs * 0.34f, cx, cy + fs * 0.22f, g_theme.text);
+    chevronDir(bx + bw * 0.5f, y + h * 0.5f, std::min(9.0f, h * 0.36f), 1, hovered ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
 }
 } // namespace
+// The design's combo box (Combo and BeginCombo): a control box with the current choice, clipped before a chevron at the right
+// that turns up while the list is open; the box eases to its hover colour.
+void ui_core::comboBox(int id, float x, float y, float w, float h, bool hovered, bool open, const char* text) {
+    unsigned char st[4];
+    const unsigned char* fill = stateColor(id, hovered, false, g_theme.field, g_theme.bgHover, g_theme.bgDown, st);
+    controlBox(x, y, w, h, rnd(), fill);
+    if (open) ringRect(x, y, w, h, rnd(), std::max(1.0f, g_theme.borderPx), g_theme.focusRing);
+    PushClipRect(x, y, std::max(1.0f, w - 24.0f), h);   // a long item stops before the arrow (it ran over the arrow and the label)
+    drawText(x + (g_look ? 9.0f : 6.0f), y + (h - textH()) * 0.5f, text ? text : "", g_theme.textScale, g_theme.text);
+    PopClipRect();
+    chevron(x + w - 14.0f, y + h * 0.5f, 8.0f, true, hovered ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+}
+// A popover's box (popups, menus, combo lists): the design's shadow, a hairline and the overlay surface, with the large radius.
+void ui_core::popoverBox(float x, float y, float w, float h, const unsigned char* fill) {
+    const float rd = std::min(g_theme.windowRounding, 10.0f);
+    elevation(x, y, w, h, rd, g_theme.shadowDepth > 0 ? g_theme.shadowDepth : 0);
+    rrect(x, y, w, h, rd, g_theme.border);
+    const float b = std::max(1.0f, g_theme.borderPx);
+    rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, fill);
+}
 
 static bool Combo_raw(const char* label, const char* const* items, int count, int* current) {
     if (!g_lay.active || !items || !current || count <= 0) return false;
@@ -2778,15 +2901,8 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
 
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, cur);
-    else {
-    quad(x, y, boxW, h, g_theme.border);
-    if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
-    PushClipRect(x, y, std::max(1.0f, boxW - 24.0f), h);   // a long item stops before the arrow (it ran over the arrow and the label)
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
-    PopClipRect();
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
-    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
-    }
+    else comboBox(id, x, y, boxW, h, insideBox, *open, cur);
+    (void)b;
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
 
     bool changed = false;
@@ -2794,6 +2910,10 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
         const float listY = y + h;
         registerOverlay(x, listY, boxW, (float)count * h, true);   // takes the mouse from widgets below
         g_toOverlay = true;   // the dropdown list draws on top of later widgets
+        // The list is a popover just under the box (the rows keep their places: row k at listY + k * h); the chosen row has a
+        // tick, the row under the pointer a soft rounded highlight inset from the edges.
+        const unsigned char listBg[4] = { g_theme.overlay[0], g_theme.overlay[1], g_theme.overlay[2], 255 };
+        popoverBox(x, listY + 2.0f, boxW, (float)count * h, listBg);
         for (int k = 0; k < count; ++k) {
             const float ry = listY + (float)k * h;
             const int iid = id ^ (int)(0x9e3779b9u * (unsigned)(k + 1));
@@ -2801,11 +2921,9 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
             if (ih) g_hot = iid;
             if (g_active == iid) { if (g_released) { if (ih) { *current = k; changed = true; *open = false; } g_active = 0; } }
             else if (ih && g_pressed) g_active = iid;
-            // Opaque rows: the theme's panel colour is slightly translucent, and widgets under the
-            // list showed through it.
-            const unsigned char rowBg[4] = { g_theme.panel[0], g_theme.panel[1], g_theme.panel[2], 255 };
-            quad(x, ry, boxW, h, ih ? g_theme.bgHover : rowBg);
-            drawText(x + 6.0f, ry + (h - textH()) * 0.5f, items[k], s, g_theme.text);
+            if (ih) rrect(x + 4.0f, ry + 3.0f, boxW - 8.0f, h - 4.0f, g_theme.radiusSmall, g_theme.bgHover);
+            if (k == *current) tickMark(x + boxW - h + 2.0f, ry + 2.0f, h - 4.0f, g_theme.accent);
+            drawText(x + (g_look ? 12.0f : 8.0f), ry + (h - textH()) * 0.5f, items[k], s, g_theme.text);
         }
         g_toOverlay = false;
         // A press outside both the box and the list closes the dropdown.
@@ -2828,9 +2946,11 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
     } else if (inside && g_pressed) {
         g_active = id; g_dragAccum = 0.0f;
     }
-    const float b = g_theme.borderPx;
-    quad(x, y, w, h, g_theme.border);
-    if (w > 2*b && h > 2*b) quad(x + b, y + b, w - 2*b, h - 2*b, (g_active == id || inside) ? g_theme.bgHover : g_theme.track);
+    // A drag box is a field: the field colour easing to the hover colour, an accent edge while dragged.
+    unsigned char st[4];
+    const unsigned char* fill = stateColor(id, inside || g_active == id, false, g_theme.field, g_theme.bgHover, g_theme.bgDown, st);
+    controlBox(x, y, w, h, rnd(), fill);
+    if (g_active == id) ringRect(x, y, w, h, rnd(), 1.0f, g_theme.accent);
     return dragging;
 }
 } // namespace
@@ -3078,16 +3198,12 @@ bool ArrowButton(const char* id, int dir) {
     const float h = rowH();
     float x, y; place(h, h, x, y);
     const bool clicked = Button(hashLabel(id), x, y, h, h, "");
-    // a filled triangle, its bounding box centred on the button (0 left, 1 right, 2 up, 3 down; anything else is left)
-    const float cx = x + h * 0.5f, cy = y + h * 0.5f, r = h * 0.22f;
+    // a chevron centred on the button (0 left, 1 right, 2 up, 3 down; anything else is left)
+    const float cx = x + h * 0.5f, cy = y + h * 0.5f;
     const bool hot = hit(x, y, h, h);
     const unsigned char* col = hot ? g_theme.text : g_theme.textDim;
-    switch ((unsigned)dir < 4u ? dir : 0) {
-        case 0: tri(cx - r, cy, cx + r, cy - r * 1.2f, cx + r, cy + r * 1.2f, col); break;
-        case 1: tri(cx + r, cy, cx - r, cy - r * 1.2f, cx - r, cy + r * 1.2f, col); break;
-        case 2: tri(cx, cy - r, cx - r * 1.2f, cy + r, cx + r * 1.2f, cy + r, col); break;
-        default: tri(cx, cy + r, cx - r * 1.2f, cy - r, cx + r * 1.2f, cy - r, col); break;
-    }
+    static const int kDir[4] = {2, 0, 3, 1};   // ArrowButton's directions to chevronDir's
+    chevronDir(cx, cy, h * 0.36f, kDir[(unsigned)dir < 4u ? dir : 0], col);
     return clicked;
 }
 
@@ -3472,11 +3588,13 @@ void EndDisabled() {
 bool IsDisabled() { return g_disCount > 0; }
 
 void ResetState() {
+    for (AnimSlot& a : g_anims) a = AnimSlot();
+    g_animPrevT = g_animDt = 0.0;
     g_nextNum = NextNumber(); for (auto& t : g_numText) t[0] = 0; g_numLast = 0;
     g_dockAware = false; g_dockRouted = false;
     g_split = SplitState(); g_windowList._Splitter._Count = 1; g_windowList._Splitter._Current = 0;
     UseLauncherLook(false);
-    g_theme = Theme();
+    g_theme = design::DefaultTheme();
     g_font = &kFontDefault;
     g_in = Input();
     g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
@@ -3730,10 +3848,17 @@ bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, boo
         frameField(x, y, ctrlW, h, inside, g_active == id);
         const float t = logScale ? (float)std::min(1.0, std::max(0.0, std::log(std::max(*v, minV) / minV) / std::log(maxV / minV)))
                                  : (float)std::min(1.0, std::max(0.0, (*v - minV) / range));
-        const float gx = x + pad + t * (track - grab);
-        rrect(gx, y + pad, grab, h - 2.0f * pad, std::max(0.0f, rnd() - pad), g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
+        // The design's framed slider: the part up to the value tinted with the accent, a slim rounded thumb, and the value on the
+        // side away from the thumb (it never sits under it). The thumb's hit area is the same as before (the whole box).
+        const float gx = x + pad + t * (track - grab), thumbW = 4.0f, tx = gx + grab * 0.5f - thumbW * 0.5f;
+        unsigned char tint[4];
+        if (tx > x + pad) rrect(x + pad, y + pad, tx - x - pad + thumbW * 0.5f, h - 2.0f * pad, std::max(0.0f, rnd() - pad), withAlpha(g_theme.accent, 0.22f, tint));
+        rrect(tx, y + pad + 1.0f, thumbW, h - 2.0f * pad - 2.0f, thumbW * 0.5f, g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
         char buf[64]; formatValue(buf, sizeof buf, format, *v, isInt);
-        centredText(x, y, ctrlW, h, buf, g_theme.text);
+        const float vw = labelW(buf), ty = y + (h - textH()) * 0.5f;
+        const float vx = t > 0.5f ? x + 8.0f : x + ctrlW - 8.0f - vw;
+        if (vw + 16.0f < ctrlW * 0.5f) drawText(vx, ty, buf, g_theme.textScale, g_theme.text);
+        else centredText(x, y, ctrlW, h, buf, g_theme.text);
     }
     return changed;
 }

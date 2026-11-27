@@ -184,7 +184,7 @@ int main() {
         State s;
         CHECK((Ids(EditMenu(s)) == std::vector<std::string>{
             "edit.undo", "edit.redo", "---", "edit.cut", "edit.copy", "edit.paste", "edit.duplicate", "edit.delete", "---",
-            "edit.selectall", "edit.deselect", "---", "edit.darkmode", "edit.lightmode", "edit.projectsettings"}));
+            "edit.selectall", "edit.deselect", "---", "edit.darkmode", "edit.lightmode", "edit.appearance", "edit.projectsettings"}));
         CHECK(FindId(EditMenu(s), "edit.undo")->label == "Undo");
         // One look choice: Dark Mode / Light Mode. The mode that is on is greyed with a reason; no Preferences menu is left.
         CHECK(FindId(EditMenu(s), "edit.preferences") == nullptr);

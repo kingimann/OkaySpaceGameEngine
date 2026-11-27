@@ -21,12 +21,12 @@ Back to the [code index](../code_index.md). 8 headers, 39 names.
 
 ## `engine/include/okay/Backend/Database.hpp`
 
-- `DbRequest` struct, line 32: One database request as a provider receives it: the method, the resource ("table?query", no leading "/"), the body
-- `ValueText` enum, line 43: How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
-- `Return` enum, line 46: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
-- `IsValue` enum, line 49: The values PostgREST's "is" operator accepts.
-- `Query` class, line 56: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
-- `Database` class, line 186: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
+- `DbRequest` struct, line 33: One database request as a provider receives it: the method, the resource ("table?query", no leading "/"), the body
+- `ValueText` enum, line 46: How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
+- `Return` enum, line 49: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
+- `IsValue` enum, line 52: The values PostgREST's "is" operator accepts.
+- `Query` class, line 59: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
+- `Database` class, line 211: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
 
 ## `engine/include/okay/Backend/Functions.hpp`
 

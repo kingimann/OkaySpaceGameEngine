@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 75 headers, 1133 names.
+Back to the [code index](../code_index.md). 75 headers, 1134 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -17,45 +17,46 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 ## `shared/AntiCheatBackend.hpp`
 
 - `Request` struct, line 19
-- `Send` function, line 26
-- `IsUuid` function, line 31: ---- Values ------------------------------------------------------------------
-- `IsHwHash` function, line 40
-- `Text` function, line 45: Free text for the server: trimmed, control characters dropped, capped.
-- `JStr` function, line 48
-- `JStrOrNull` function, line 49
-- `DaysFromCivil` function, line 53: Days since 1970-01-01 for a civil date, and back (Howard Hinnant's algorithms):
-- `IsoTime` function, line 61
-- `ParseTime` function, line 80: "2026-10-25T12:00:00.123456+00:00" (PostgREST), "...Z", "... 12:00:00": seconds
-- `ExpiryFor` function, line 96: The ban lengths the Admin page offers: 0 permanent, 1 a day, 2 a week, 3 30 days, 4 a year.
-- `ValidStatus` function, line 102
-- `ValidEvidence` function, line 124: True when 'json' can ride in a report's evidence column: a JSON object within the cap.
-- `RedactPaths` function, line 170: What leaves the machine in a client_check report: every absolute path cut
-- `MyBans` function, line 218: My anti-cheat bans (by account, or by this machine's hash), with each one's latest appeal.
-- `FileAppeal` function, line 226
-- `ListReports` function, line 239: ---- Admin calls ---------------------------------------------------------------
-- `SetReportStatus` function, line 248
-- `Unban` function, line 279: Lift a ban (it stays on record; the server stamps who and when).
-- `ListBans` function, line 289
-- `ListAppeals` function, line 297
-- `DecideAppeal` function, line 306: Accepting an appeal lifts its ban (a trigger on the server).
-- `UserByName` function, line 317: A player by exact username (Admin > Anti-cheat > "Ban a player").
-- `Usernames` function, line 323
-- `SessionTicket` function, line 331: A session ticket for one game server (supabase/functions/session-ticket). The
-- `IsTicketAudience` function, line 340: What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
-- `IsKeyBinding` function, line 345
-- `Report` struct, line 365: ---- Rows ----------------------------------------------------------------------
-- `Ban` struct, line 371
-- `Appeal` struct, line 378
-- `MyBan` struct, line 384: One of my bans (rpc ac_my_bans): what I'm told, and where my appeal stands.
-- `ParseReports` function, line 415
-- `ParseBans` function, line 433
-- `ParseAppeals` function, line 451
-- `ParseMyBans` function, line 468
-- `ParseUsernames` function, line 485
-- `TicketReply` struct, line 498: The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
-- `IsBannedReply` function, line 499
-- `ParseTicket` function, line 504
-- `ErrorText` function, line 517: A failed call, in words for a toast.
+- `SendTimed` function, line 29: Send through the signed-in account: a server function through its Functions, a table request through its Api. 'timeoutSec'
+- `Send` function, line 33
+- `IsUuid` function, line 36: ---- Values ------------------------------------------------------------------
+- `IsHwHash` function, line 45
+- `Text` function, line 50: Free text for the server: trimmed, control characters dropped, capped.
+- `JStr` function, line 53
+- `JStrOrNull` function, line 54
+- `DaysFromCivil` function, line 58: Days since 1970-01-01 for a civil date, and back (Howard Hinnant's algorithms):
+- `IsoTime` function, line 66
+- `ParseTime` function, line 85: "2026-10-25T12:00:00.123456+00:00" (PostgREST), "...Z", "... 12:00:00": seconds
+- `ExpiryFor` function, line 101: The ban lengths the Admin page offers: 0 permanent, 1 a day, 2 a week, 3 30 days, 4 a year.
+- `ValidStatus` function, line 107
+- `ValidEvidence` function, line 129: True when 'json' can ride in a report's evidence column: a JSON object within the cap.
+- `RedactPaths` function, line 175: What leaves the machine in a client_check report: every absolute path cut
+- `MyBans` function, line 223: My anti-cheat bans (by account, or by this machine's hash), with each one's latest appeal.
+- `FileAppeal` function, line 231
+- `ListReports` function, line 244: ---- Admin calls ---------------------------------------------------------------
+- `SetReportStatus` function, line 253
+- `Unban` function, line 284: Lift a ban (it stays on record; the server stamps who and when).
+- `ListBans` function, line 294
+- `ListAppeals` function, line 302
+- `DecideAppeal` function, line 311: Accepting an appeal lifts its ban (a trigger on the server).
+- `UserByName` function, line 322: A player by exact username (Admin > Anti-cheat > "Ban a player").
+- `Usernames` function, line 328
+- `SessionTicket` function, line 336: A session ticket for one game server (supabase/functions/session-ticket). The
+- `IsTicketAudience` function, line 344: What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
+- `IsKeyBinding` function, line 349
+- `Report` struct, line 368: ---- Rows ----------------------------------------------------------------------
+- `Ban` struct, line 374
+- `Appeal` struct, line 381
+- `MyBan` struct, line 387: One of my bans (rpc ac_my_bans): what I'm told, and where my appeal stands.
+- `ParseReports` function, line 418
+- `ParseBans` function, line 436
+- `ParseAppeals` function, line 454
+- `ParseMyBans` function, line 471
+- `ParseUsernames` function, line 488
+- `TicketReply` struct, line 501: The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
+- `IsBannedReply` function, line 502
+- `ParseTicket` function, line 507
+- `ErrorText` function, line 520: A failed call, in words for a toast.
 
 ## `shared/AntiCheatChecks.hpp`
 

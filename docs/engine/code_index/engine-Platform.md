@@ -18,14 +18,14 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `ExportResult` struct, line 90
 - `IsoUtc` function, line 98
 - `CountRows` function, line 110: Count top-level objects in a JSON array text (rows).
-- `DeleteRequest` struct, line 177
-- `BuildDeleteRequest` function, line 181: The request sent to the Edge Function. Identity is the bearer token that
-- `DeleteOutcome` struct, line 186
-- `MapDeleteResponse` function, line 196: Turn the function's response into a user message. Never claims success unless
+- `BuildDeleteRequest` function, line 182: The call made to the server function. Identity is the bearer token the
+- `SendDelete` function, line 187: Send it through the signed-in account (AccountService::Functions).
+- `DeleteOutcome` struct, line 189
+- `MapDeleteResponse` function, line 199: Turn the function's response into a user message. Never claims success unless
 
 ## `engine/include/okay/Platform/Account/AccountDetail.hpp`
 
-- `PublicName` function, line 40: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `PublicName` function, line 41: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
@@ -35,7 +35,7 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `Provider` enum, line 109: Which backend signs players in.
 - `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
 - `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 985: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `DefaultConfigDir` function, line 1010: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 

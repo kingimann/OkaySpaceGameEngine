@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 73 headers, 1111 names.
+Back to the [code index](../code_index.md). 75 headers, 1133 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -875,7 +875,11 @@ Back to the [code index](../code_index.md). 73 headers, 1111 names.
 
 ## `shared/OkayUIFrameLoop.hpp`
 
-- `FrameLoop` class, line 35
+- `FrameLoop` class, line 37
+- `ProgramHooks` struct, line 70: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
+- `ProgramDesc` struct, line 77
+- `AppHooks` function, line 85: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
+- `RunProgram` function, line 92: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
 
 ## `shared/OkayUIHost.hpp`
 
@@ -1167,6 +1171,30 @@ Back to the [code index](../code_index.md). 73 headers, 1111 names.
 - `IsInstalled` function, line 422: True when that editor is there as a file.
 - `InstalledVersions` function, line 429: The versions that have an editor under <launcher dir>/Versions, newest first (a folder whose name is not a version,
 - `KeepVersionArgs` function, line 445: The command line (after the program) that opens 'scene' and says the version was chosen on purpose:
+
+## `shared/ScriptIdeApp.hpp`
+
+- `AppSettings` struct, line 32: What the Script Editor keeps between runs (one small JSON file, read with the engine's okay::json). Shared by the program and the
+- `CheckScript` function, line 58: The checks the Script Editor runs without the editor: the engine's own checker for the language (ValidateAll; Lua and
+- `TestRunResult` struct, line 64: Run > Run without a scene: the script on a throwaway object in a scene of its own (no physics), Start and three Update frames
+- `DefaultWordsFor` function, line 70: The words the code is coloured with when the host gives none: the language's keywords and the engine's built-in names
+- `CompletionItem` struct, line 73: One suggestion of the completion list: what the list shows, what replaces the word before the caret, a short line beside it.
+- `DocumentSpec` struct, line 86: A document a host opens that is not simply a file on disk, or whose saving the host does: the editor's Script components
+- `ApiEntry` struct, line 97: One function of the scripting API for Insert > API Command: its name, signature ("move(x, y)") and what it does.
+- `AppCommand` struct, line 100: A command of the command list (Ctrl+Shift+P) and Search Everywhere: its title, its keys as text ("" = none), what it does.
+- `SceneScript` struct, line 103: One script of the host's scene (the editor: a Script component), listed in the tree's "Scene scripts" section.
+- `ScriptIdeApp` class, line 110
+
+## `shared/ScriptIdeAppImpl.hpp`
+
+- `EngineLanguageOf` function, line 30
+- `Rgb` function, line 33
+- `FileText` function, line 39
+- `WriteText` function, line 54
+- `Fit` function, line 68
+- `TimeText` function, line 75
+- `Normal` function, line 82
+- `ScriptIdeApp` struct, line 93
 
 ## `shared/SelfUpdate.hpp`
 

@@ -38,7 +38,7 @@ inline const std::vector<std::uint8_t>& TestImage() {
     return px;
 }
 /// The key the scenes pass to OkayUI::DrawTexture (never dereferenced: an opaque pointer).
-inline okay::ui2d::Tex ImageKey() { static char k; return reinterpret_cast<okay::ui2d::Tex>(&k); }
+inline OkayUI::Tex ImageKey() { static char k; return reinterpret_cast<OkayUI::Tex>(&k); }
 
 struct Scene {
     std::string name;

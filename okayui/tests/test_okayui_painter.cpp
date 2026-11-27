@@ -422,7 +422,7 @@ int main() {
         if (sw) Suite(*sw, "software (own)", true);
     }
     {   // render targets, flush, driver name and GeometryRaw, the same on both painters
-        {
+        for (int once = 0; once < 1; ++once) {
             auto p = UI::soft::CreateBitmapPainter(32, 32);
             if (!p) { CHECK(false); continue; }
             CHECK(!p->DriverName().empty());
@@ -469,7 +469,7 @@ int main() {
     }
     CHECK(UI::soft::CreateBitmapPainter(0, 10) == nullptr && UI::soft::CreateBitmapPainter(10, 100000) == nullptr);
     {   // the shared cache and font atlas upload, on both painters
-        {
+        for (int once = 0; once < 1; ++once) {
             auto p = UI::soft::CreateBitmapPainter(16, 16);
             if (!p) { CHECK(false); continue; }
             CHECK(p->LoadTexture("") == nullptr);

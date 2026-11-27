@@ -53,7 +53,7 @@ bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batc
 // carry kAtlasTex as a placeholder; the backend swaps in its own texture (DrawData::atlasTexture).
 bool g_look = false;
 const fontatlas::Atlas* g_ttf = nullptr;            // set while the look is on and the atlas built
-Tex const kAtlasTex = (Tex )(void*)&g_ttf;   // placeholder (never dereferenced)
+Tex const kAtlasTex = (Tex)(void*)&g_ttf;   // placeholder (never dereferenced)
 Tex g_defTex = nullptr;                    // texture for flat geometry (nullptr / kAtlasTex)
 float g_whiteU = 0.0f, g_whiteV = 0.0f;             // uv of an opaque texel for flat geometry
 // Engine fonts drawing text the atlas lacks (fontatlas::FallbackFont). Their spans
@@ -64,10 +64,10 @@ OverlaySpan g_ovSpans[kMaxOvSpans];
 int g_clipBase = 0;
 int         g_novSpans = 0;
 Tex fallbackTex(okay::TtfFont* f) {
-    for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (Tex )(void*)f;
+    for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (Tex)(void*)f;
     if (g_nfb == 8) return nullptr;
     g_fbFonts[g_nfb++] = f;
-    return (Tex )(void*)f;
+    return (Tex)(void*)f;
 }
 
 DrawSpan g_spans[kMaxSpans];

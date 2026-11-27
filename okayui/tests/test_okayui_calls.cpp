@@ -298,7 +298,7 @@ int main() {
     }
     {   // AddImageQuad / AddImageRounded: geometry and texture coordinates, read from the draw data
         Reset(); Sim s(200, 200);
-        static char dummy; okay::ui2d::Tex tex = reinterpret_cast<okay::ui2d::Tex>(&dummy);
+        static char dummy; OkayUI::Tex tex = reinterpret_cast<OkayUI::Tex>(&dummy);
         auto frame = [&](const std::function<void(const UI::DrawList&)>& f) {
             s.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 200, 200)) f(UI::GetWindowDrawList()); UI::End(); });
             return UI::GetDrawData();

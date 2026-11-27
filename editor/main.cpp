@@ -5097,7 +5097,7 @@ static void DrawPanelTabIcons() {
     for (ImGuiWindow* w : g.Windows) {
         ImGuiDockNode* node = w->DockNode;
         if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
-        if (node->IsHiddenTabBar() || node->IsNoTabBar() || !(w->Active || w->WasActive)) continue;
+        if (node->IsHiddenTabBar() || node->IsNoTabBar()) continue;   // every tab of a strip has its icon, chosen or not (the hidden ones had none)
         ImRect r = w->DC.DockTabItemRect;
         if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
         ImRect clip = r;
@@ -7377,6 +7377,7 @@ static bool AssetSlot(const char* id, std::string& field, const char* kind,
 // An asset's icon: a category (for the drawn glyph), a tint, and a short label.
 enum class AssetIcon { Folder, Script, Material, Scene, Prefab, Image, Audio, Mesh, Data, Visual, Generic };
 struct AssetKind { ImU32 col; const char* letter; AssetIcon icon; };
+bool IsModelExt(const std::string& extLower);   // below: every model format this build imports
 static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (isDir) return {IM_COL32(235, 200, 90, 255), "", AssetIcon::Folder};
     if (extLower == ".okayscene")  return {IM_COL32(90, 150, 240, 255), "SCN", AssetIcon::Scene};
@@ -7388,7 +7389,8 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".lua" || extLower == ".js" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
     if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
-    if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
+    if (extLower == ".obj" || IsModelExt(extLower)) return {IM_COL32(150, 175, 210, 255), "MDL", AssetIcon::Mesh};   // .fbx, .gltf, .glb ... were "File"
+    if (extLower == ".ogg" || extLower == ".mp3" || extLower == ".flac") return {IM_COL32(230, 160, 70, 255), "AUD", AssetIcon::Audio};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
     if (extLower == ".okayseq")    return {IM_COL32(200, 130, 230, 255), "SEQ", AssetIcon::Visual};
     if (extLower == ".okaydialog") return {IM_COL32(220, 170, 110, 255), "DLG", AssetIcon::Visual};
@@ -7452,7 +7454,15 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
             dl->AddTriangleFilled(ImVec2(ctr.x, ctr.y - r*0.7f), ImVec2(ctr.x, ctr.y + r*0.7f), ImVec2(ctr.x + r*0.6f, ctr.y), c);
             break;
         }
-        case AssetIcon::Mesh:   dl->AddNgon(ctr, r, c, 4, 2.5f); break;
+        case AssetIcon::Mesh: {   // a cube seen from above a corner: a light top face and two side faces
+            const float q = r * 1.05f, hq = q * 0.5f;
+            const ImVec2 top(ctr.x, ctr.y - q), lft(ctr.x - q, ctr.y - hq), rgt(ctr.x + q, ctr.y - hq), mid(ctr.x, ctr.y);
+            const ImVec2 lb(ctr.x - q, ctr.y + hq), rb(ctr.x + q, ctr.y + hq), bot(ctr.x, ctr.y + q);
+            dl->AddQuadFilled(top, rgt, mid, lft, IM_COL32(205, 220, 240, 255));
+            dl->AddQuadFilled(lft, mid, bot, lb, c);
+            dl->AddQuadFilled(mid, rgt, rb, bot, ((c >> 1) & 0x007f7f7fu) | 0xff000000u);   // the shaded side
+            break;
+        }
         default:                dl->AddRectFilled(ImVec2(ctr.x - r, ctr.y - r*1.2f), ImVec2(ctr.x + r, ctr.y + r*1.2f), c, 2.0f); break;
     }
 }
@@ -8721,6 +8731,23 @@ void DrawProject(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward");
     ImGui::SameLine();
     if (ImGui::SmallButton("Assets")) { std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1); s_smart = -1; }
+    {   // the views next to the folders (was a second toolbar row): Favourites and Recent, in a small list under the arrow
+        namespace pt = oked::projecttabs;
+        ImGui::SameLine(0, 2);
+        if (ImGui::ArrowButton("##projviews", ImGuiDir_Down)) ImGui::OpenPopup("##projviewlist");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Favourites and recent files");
+        if (ImGui::BeginPopup("##projviewlist")) {
+            const pt::Tab activeNow = pt::ActiveTab(s_smart, search);
+            const int favN = (int)g_fav.List().size();
+            for (int ti = 0; ti < 3; ++ti) {
+                const pt::Tab t = (pt::Tab)ti;
+                std::string lbl = pt::TabName(t);
+                if (t == pt::Tab::Favourites && favN > 0) lbl += " " + pt::CountBadge(favN);
+                if (ImGui::MenuItem(lbl.c_str(), nullptr, activeNow == t)) { s_smart = pt::SmartForTab(t, s_smart); search[0] = '\0'; }
+            }
+            ImGui::EndPopup();
+        }
+    }
     {   // breadcrumb of folders between root and the current dir
         fs::path rel = fs::relative(dir, root, ec);
         if (!ec && !rel.empty() && rel.native()[0] != '.') {
@@ -8745,11 +8772,13 @@ void DrawProject(EditorState& ed) {
     // row now and draw it at the end of the function.
     const float tbFh = ImGui::GetFrameHeight();
     const bool tbNarrow = ImGui::GetContentRegionAvail().x < 860.0f;   // a small dock: shorter search box, no slider (it is in "...")
-    const float tbSearchW = tbNarrow ? 130.0f : 170.0f, tbFilterW = tbNarrow ? 92.0f : 104.0f;
+    // the type filter is as wide as its longest choice and its arrow ("All types" was cut to "All type:")
+    const float tbFilterW = std::ceil(ImGui::CalcTextSize("All types").x + ImGui::CalcTextSize("W").x) + tbFh + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float tbSearchW = tbNarrow ? 130.0f : 170.0f;
     const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !oneCol && !tbNarrow) ? 78.0f : 0.0f;
-    const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbScopeW + tbSliderW +
-                           ImGui::GetStyle().ItemSpacing.x * (tbSliderW > 0.0f ? 7.0f : 6.0f);
+    const float tbSliderW = (g_projView == 0 && !oneCol && !tbNarrow) ? 78.0f : 0.0f;   // (search scope and the column layout are in "...")
+    const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbSliderW +
+                           ImGui::GetStyle().ItemSpacing.x * (tbSliderW > 0.0f ? 6.0f : 5.0f);
     {
         float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
         float wantX = ImGui::GetWindowContentRegionMax().x - tbRightW;
@@ -8757,38 +8786,9 @@ void DrawProject(EditorState& ed) {
     }
     const ImVec2 tbPos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(tbRightW, tbFh));
-    {   // Tab strip: Assets / Favourites / Recent / Search. The active tab follows the smart view and the search box.
+    {   // The view (Assets / Favourites / Recent) is chosen from the list beside "Assets" and remembered per project; the column layout
+        // and the search scope are in "..." (one toolbar row instead of two).
         namespace pt = oked::projecttabs;
-        const pt::Tab active = pt::ActiveTab(s_smart, search);
-        const int favCount = (int)g_fav.List().size();
-        for (int ti = 0; ti < 4; ++ti) {
-            const pt::Tab t = (pt::Tab)ti;
-            if (t == pt::Tab::Search && active != pt::Tab::Search) continue;   // only while a search is on screen
-            std::string lbl = pt::TabName(t);
-            if (t == pt::Tab::Favourites && favCount > 0) lbl += " " + pt::CountBadge(favCount);
-            lbl += "##projtab" + std::to_string(ti);
-            if (ti) ImGui::SameLine(0, 4);
-            if (AccentToggleButton(lbl.c_str(), active == t, ImVec2(0, ImGui::GetFrameHeight() - 6.0f)) && t != pt::Tab::Search) {
-                s_smart = pt::SmartForTab(t, s_smart); search[0] = '\0';
-            }
-        }
-        if (active == pt::Tab::Favourites) { ImGui::SameLine(0, 10); ImGui::TextDisabled("starred files and folders; right-click an item > Add to Favourites"); }
-        {   // Layout switch at the right end of this row: One column | Two columns
-            namespace pl = oked::projectlayout;
-            const float fh = ImGui::GetFrameHeight() - 6.0f;
-            const float w1 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::One)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
-            const float w2 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::Two)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
-            const float wantX = ImGui::GetWindowContentRegionMax().x - w1 - w2 - 4.0f;
-            ImGui::SameLine(wantX > ImGui::GetCursorPosX() ? wantX : 0.0f, wantX > ImGui::GetCursorPosX() ? -1.0f : 8.0f);
-            const pl::Columns now = pl::ColumnsFromInt(g_view.projectColumns);
-            pl::Columns pick = now;
-            if (AccentToggleButton("One column##projcols1", now == pl::Columns::One, ImVec2(w1, fh))) pick = pl::Columns::One;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One list: folders open in place and show what is inside them.");
-            ImGui::SameLine(0, 2);
-            if (AccentToggleButton("Two columns##projcols2", now == pl::Columns::Two, ImVec2(w2, fh))) pick = pl::Columns::Two;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folders on the left, what is inside the chosen folder on the right.");
-            if (pick != now) { g_view.projectColumns = pl::ColumnsToInt(pick); oneCol = pick == pl::Columns::One; g_treeFocused = false; SaveSettings(); }
-        }
         pt::Remembered rem;
         rem.smart = s_smart;
         {   // the folder, relative to Assets
@@ -9258,26 +9258,61 @@ void DrawProject(EditorState& ed) {
     if (cols < 1) cols = 1;
     // List-view column geometry (Type + Size + Date right-aligned), shared by the
     // header row and each entry row so they line up.
-    const float kSizeCol = 78.0f, kTypeCol = 124.0f, kDateCol = 56.0f;
-    const float typeOff = availW - kSizeCol - kTypeCol - kDateCol;   // x from a row's left edge
-    const float sizeOff = availW - kSizeCol - kDateCol;
-    const float dateOff = availW - kDateCol;
+    // The Type, Size and Date columns sit right after the name column, which is about half the row (it was everything but the three
+    // narrow columns, so Type started far to the right); each border in the header is dragged to resize (kept for the session).
+    static float s_listTypeW = 124.0f, s_listSizeW = 78.0f, s_listDateW = 76.0f, s_listNameFrac = 0.5f;
+    // In a narrow panel the three columns shrink together so Date still fits beside a name column of at least 120 pixels.
+    const float colsWant = s_listTypeW + s_listSizeW + s_listDateW, colsRoom = std::max(60.0f, availW - 120.0f);
+    const float colK = colsWant > colsRoom ? colsRoom / colsWant : 1.0f;
+    const float kTypeCol = s_listTypeW * colK, kSizeCol = s_listSizeW * colK, kDateCol = s_listDateW * colK;
+    const float nameW = std::clamp(availW * s_listNameFrac, 120.0f, std::max(120.0f, availW - kTypeCol - kSizeCol - kDateCol));
+    const float typeOff = nameW;                      // x from a row's left edge
+    const float sizeOff = typeOff + kTypeCol;
+    const float dateOff = sizeOff + kSizeCol;
 
-    // Clickable column headers for the list view — click Name / Type / Size / Date
-    // to sort by that column (a small "v" marks the active sort).
+    // Column headers for the list view: click Name / Type / Size / Date to sort by it (the sorted column is in the text colour with a
+    // small arrow); drag the line between two headers to resize.
     if (vw == 1) {
-        float hx0 = ImGui::GetCursorPosX();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
-        auto arrow = [&](int id) { return s_sort == id ? " v" : ""; };
-        if (ImGui::SmallButton((std::string("Name") + arrow(0) + "##hName").c_str())) { s_sort = 0; SaveProjectViewPrefs(); }
-        ImGui::SameLine(hx0 + typeOff);
-        if (ImGui::SmallButton((std::string("Type") + arrow(1) + "##hType").c_str())) { s_sort = 1; SaveProjectViewPrefs(); }
-        ImGui::SameLine(hx0 + sizeOff);
-        if (ImGui::SmallButton((std::string("Size") + arrow(2) + "##hSize").c_str())) { s_sort = 2; SaveProjectViewPrefs(); }
-        ImGui::SameLine(hx0 + dateOff);
-        if (ImGui::SmallButton((std::string("Date") + arrow(3) + "##hDate").c_str())) { s_sort = 3; SaveProjectViewPrefs(); }
-        ImGui::PopStyleColor(2);
+        const ImVec2 h0 = ImGui::GetCursorScreenPos();
+        const float hh = ImGui::GetTextLineHeight() + 8.0f;
+        ImDrawList* hdl = ImGui::GetWindowDrawList();
+        const char* names[4] = {"Name", "Type", "Size", "Date"};
+        const float offs[5] = {0.0f, typeOff, sizeOff, dateOff, dateOff + kDateCol};
+        for (int c = 0; c < 4; ++c) {
+            ImGui::SetCursorScreenPos(ImVec2(h0.x + offs[c], h0.y));
+            ImGui::PushID(c);
+            if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(8.0f, offs[c + 1] - offs[c] - 6.0f), hh))) { s_sort = c; SaveProjectViewPrefs(); }
+            const bool hv = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const bool on = s_sort == c;
+            const ImU32 tc = ImGui::GetColorU32(on || hv ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            const float tx = h0.x + offs[c] + (c == 0 ? 5.0f : 0.0f), ty = h0.y + (hh - ImGui::GetTextLineHeight()) * 0.5f;
+            if (hv) hdl->AddRectFilled(ImVec2(h0.x + offs[c], h0.y), ImVec2(h0.x + offs[c + 1] - 6.0f, h0.y + hh), ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+            hdl->AddText(ImVec2(tx, ty), tc, names[c]);
+            if (on) {   // a small chevron after the sorted column's name: up for A to Z (Name, Type), down for biggest / newest first
+                const float ax = tx + ImGui::CalcTextSize(names[c]).x + 9.0f, ay = h0.y + hh * 0.5f, a = 3.5f, k = (c >= 2) ? 1.0f : -1.0f;
+                hdl->AddLine(ImVec2(ax - a, ay - k * a * 0.5f), ImVec2(ax, ay + k * a * 0.5f), tc, 1.6f);
+                hdl->AddLine(ImVec2(ax, ay + k * a * 0.5f), ImVec2(ax + a, ay - k * a * 0.5f), tc, 1.6f);
+            }
+        }
+        for (int b = 1; b < 4; ++b) {   // the borders: drag to resize the column on their left
+            const float bx = h0.x + offs[b] - 4.0f;
+            ImGui::SetCursorScreenPos(ImVec2(bx - 3.0f, h0.y));
+            ImGui::PushID(100 + b);
+            ImGui::InvisibleButton("##colsz", ImVec2(6.0f, hh));
+            const bool act = ImGui::IsItemActive(), hv = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (hv || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            hdl->AddLine(ImVec2(bx, h0.y + 5.0f), ImVec2(bx, h0.y + hh - 5.0f), ImGui::GetColorU32(hv || act ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator), hv || act ? 2.0f : 1.0f);
+            if (act) {
+                const float dx = ImGui::GetIO().MouseDelta.x;
+                if (b == 1) s_listNameFrac = std::clamp((nameW + dx) / std::max(1.0f, availW), 0.2f, 0.85f);
+                else if (b == 2) s_listTypeW = std::clamp(s_listTypeW + dx, 50.0f, 400.0f);
+                else s_listSizeW = std::clamp(s_listSizeW + dx, 40.0f, 300.0f);
+            }
+        }
+        ImGui::SetCursorScreenPos(ImVec2(h0.x, h0.y + hh));
+        ImGui::Dummy(ImVec2(0, 0));
         ImGui::Separator();
     }
 
@@ -9697,7 +9732,7 @@ void DrawProject(EditorState& ed) {
             }
         } else {
             // ---- List row: icon chip + name, with right-aligned type & size ----
-            float rowH = ImGui::GetTextLineHeight() + 6.0f;
+            float rowH = ImGui::GetTextLineHeight() + 12.0f;   // room for a readable icon or thumbnail (it was 16 px)
             const int rowDepth = (oneCol && shown < (int)s_scanDepth.size()) ? s_scanDepth[shown] : 0;
             if (ImGui::Selectable("##row", isSel, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH)))
                 pickItem(full);
@@ -9740,7 +9775,7 @@ void DrawProject(EditorState& ed) {
             ImU32 tcol = ImGui::GetColorU32(isSel ? AccentCol(1.0f)
                                                   : ImGui::GetStyleColorVec4(ImGuiCol_Text));
             ImU32 dcol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            float ty = mn.y + 3.0f;
+            float ty = mn.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f;
             // Right-aligned Type and Size columns (drawn with the window draw list).
             std::string tn = AssetTypeName(k.icon);
             std::string szs;
@@ -10235,9 +10270,6 @@ void DrawProject(EditorState& ed) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show only one type of asset in this folder");
         ImGui::SameLine();
-        if (ImGui::Button(s_searchAll ? "Project##scope" : "Folder##scope", ImVec2(tbScopeW, 0))) s_searchAll = !s_searchAll;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(s_searchAll ? "Search looks in the whole project.\nClick to search only this folder." : "Search looks in this folder and the folders in it.\nClick to search the whole project.");
-        ImGui::SameLine();
         if (s_view == 0 && !oneCol && tbSliderW > 0.0f) {   // how big the tiles are
             ImGui::SetNextItemWidth(tbSliderW);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.26f, 0.28f, 0.33f, 1.0f));   // a visible track
@@ -10255,6 +10287,20 @@ void DrawProject(EditorState& ed) {
         ImGui::SameLine();
         if (IconButton("##pmore", TbIcon::More, "View options")) ImGui::OpenPopup("##projopts");
         if (ImGui::BeginPopup("##projopts")) {
+            ImGui::TextDisabled("Layout");
+            {
+                namespace pl = oked::projectlayout;
+                const pl::Columns now = pl::ColumnsFromInt(g_view.projectColumns);
+                pl::Columns pick = now;
+                if (ImGui::MenuItem(pl::ColumnsLabel(pl::Columns::One), nullptr, now == pl::Columns::One)) pick = pl::Columns::One;
+                if (ImGui::MenuItem(pl::ColumnsLabel(pl::Columns::Two), nullptr, now == pl::Columns::Two)) pick = pl::Columns::Two;
+                if (pick != now) { g_view.projectColumns = pl::ColumnsToInt(pick); oneCol = pick == pl::Columns::One; g_treeFocused = false; SaveSettings(); }
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Search in");
+            if (ImGui::MenuItem("This folder", nullptr, !s_searchAll)) s_searchAll = false;
+            if (ImGui::MenuItem("The whole project", nullptr, s_searchAll)) s_searchAll = true;
+            ImGui::Separator();
             ImGui::TextDisabled("Sort by");
             const char* sorts[] = {"Name", "Type", "Size", "Date modified"};
             for (int i = 0; i < 4; ++i) if (ImGui::MenuItem(sorts[i], nullptr, s_sort == i)) { s_sort = i; prefsChanged = true; }
@@ -48607,7 +48653,7 @@ void DrawGameView(EditorState& ed) {
     float labelShift = 0.0f;
     {
         const float lh = ImGui::GetTextLineHeight();
-        float w = ImGui::CalcTextSize("Edit mode - press Play to run").x + 6.0f;
+        float w = ImGui::CalcTextSize("Edit mode  \xc2\xb7  Play to run").x + 10.0f;
         w = std::max(w, ImGui::CalcTextSize(kFixedRes ? "0000 x 0000  (100%)" : "0000 x 0000 px").x + 6.0f);
         if (ed.isPlaying()) w = std::max(w, ImGui::CalcTextSize("PLAYING").x + lh + ImGui::CalcTextSize(ed.FpsLabel().c_str()).x + 30.0f);
         const float h = ed.isPlaying() ? 2.0f * lh + 15.0f : 2.0f * lh + 8.0f;
@@ -48628,10 +48674,11 @@ void DrawGameView(EditorState& ed) {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
         ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop + labelShift);
-        dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
-                          ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
-                          IM_COL32(0, 0, 0, 120), 3.0f);
-        dl->AddText(tp, IM_COL32(220, 220, 230, 220), resLbl);
+        // a quiet chip: a soft dark backing, rounded, and dimmed text (it read as raw debug text)
+        dl->AddRectFilled(ImVec2(tp.x - 5, tp.y - 2),
+                          ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 5, tp.y + ImGui::GetTextLineHeight() + 2),
+                          IM_COL32(0, 0, 0, 70), ImGui::GetTextLineHeight() * 0.5f + 2.0f);
+        dl->AddText(tp, IM_COL32(225, 228, 236, 165), resLbl);
         topLeftRects.push_back({ImVec2(tp.x - 3, tp.y - 2), ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2)});
     }
 
@@ -48682,11 +48729,11 @@ void DrawGameView(EditorState& ed) {
         }
     } else {
         // Below the resolution label (they used to print on top of each other).
-        const char* idle = "Edit mode - press Play to run";
+        const char* idle = "Edit mode  \xc2\xb7  Play to run";
         ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop + labelShift);
-        dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
-                          IM_COL32(0, 0, 0, 120), 3.0f);
-        dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
+        dl->AddRectFilled(ImVec2(ip.x - 5, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 5, ip.y + ImGui::GetTextLineHeight() + 2),
+                          IM_COL32(0, 0, 0, 70), ImGui::GetTextLineHeight() * 0.5f + 2.0f);
+        dl->AddText(ip, IM_COL32(225, 228, 236, 150), idle);
         topLeftRects.push_back({ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2)});
     }
     // In-view Stats overlay, drawn over the view's top-right corner: while playing, the Play loop's performance

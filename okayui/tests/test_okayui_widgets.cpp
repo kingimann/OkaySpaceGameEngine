@@ -4,8 +4,10 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // GetStyle, GetTreeNodeToLabelSpacing
+#include "okay/UI/OkayUIInternals.hpp"   // ListOpenPopups
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -620,6 +622,110 @@ void TestNestedTabBars() {
     CHECK(bShown && !innerShown);
 }
 
+// Closable tabs (BeginTabItem with an open flag) get a right-click menu when the program gives none (owner, 2026-11-27: "I can't right
+// click on tabs"): Close, Close Others, Close Tabs to the Right, Close All. A program's own BeginPopupContextItem on the tab wins.
+void TestTabRightClickMenu() {
+    RUN_SUITE("closable tabs have a right-click menu");
+    Rig r; bool open[4] = {true, true, true, true}; UI::Rect tab[4]{}; bool own = false, ownShown = false;
+    const char* names[4] = {"One", "Two", "Three", "Four"};
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+        if (UI::BeginTabBar("docs")) {
+            for (int i = 0; i < 4; ++i) {
+                if (!open[i]) continue;
+                const bool shown = UI::BeginTabItem(names[i], &open[i], 0);
+                tab[i] = UI::GetItemRect();
+                if (own && i == 0 && UI::BeginPopupContextItem("own menu")) { ownShown = true; UI::MenuItem("Rename"); UI::EndPopup(); }
+                if (shown) { UI::Text(names[i]); UI::EndTabItem(); }
+            }
+            UI::EndTabBar();
+        }
+        UI::PopStyleVar(1);
+    };
+    auto rclick = [&](const UI::Rect& t) { r.Frames(3); r.sim.Move(t.x + 8, CenterY(t)); r.Frame(); r.sim.rdown = true; r.Frame(); r.sim.rdown = false; r.Frames(2); };
+    auto pick = [&](const char* row) {   // the menu opens at the pointer: its rows are found by their text in the popup list
+        UI::PopupSlotInfo pops[4]; const int n = UI::ListOpenPopups(pops, 4);
+        CHECK(n == 1);
+        if (n != 1) return;
+        static const char* rows[4] = {"Close", "Close Others", "Close Tabs to the Right", "Close All"};
+        int k = 0; for (int i = 0; i < 4; ++i) if (std::strcmp(rows[i], row) == 0) k = i;
+        const float rowH = UI::GetTextLineHeightWithSpacing();
+        const float y = pops[0].pos.y + UI::GetStyle().WindowPadding.y + rowH * ((float)k + 0.5f);
+        r.Click(pops[0].pos.x + 30, y);
+        r.Frames(2);
+    };
+    r.Frames(3);
+    rclick(tab[1]);
+    pick("Close");
+    CHECK(open[0] && !open[1] && open[2] && open[3]);
+    open[1] = true; r.Frames(3);
+    rclick(tab[1]);
+    pick("Close Tabs to the Right");
+    CHECK(open[0] && open[1] && !open[2] && !open[3]);
+    open[2] = open[3] = true; r.Frames(3);
+    rclick(tab[2]);
+    pick("Close Others");
+    CHECK(!open[0] && !open[1] && open[2] && !open[3]);
+    open[0] = open[1] = open[3] = true; r.Frames(3);
+    rclick(tab[0]);
+    pick("Close All");
+    CHECK(!open[0] && !open[1] && !open[2] && !open[3]);
+    // a tab with the program's own context menu shows that one, not the built-in menu
+    for (bool& o : open) o = true;
+    own = true; r.Frames(3);
+    rclick(tab[0]);
+    CHECK(ownShown);
+    UI::PopupSlotInfo pops[4];
+    const int n = UI::ListOpenPopups(pops, 4);
+    CHECK(n == 1 && std::strcmp(pops[0].name, "own menu") == 0);
+}
+
+// Every interactive item reacts to the pointer, in Dear ImGui's look as the editor and launcher draw (owner, 2026-11-27: "hovering over
+// them doesn't anything"): a button, a check box, a list row, a tree row, a tab, a combo box, a collapsing header. For each, the pixels
+// of its box are compared at rest and under the pointer; at least an eighth of them must change, by a clear amount.
+void TestHoverEverywhere() {
+    RUN_SUITE("every interactive item reacts to hover (Dear ImGui's look)");
+    Rig r; UI::Rect rc[8]{}; bool chk = false; int cur = 0; const char* items[2] = {"alpha", "beta"};
+    const char* names[8] = {"button", "check box", "list row", "tree row", "tab (not chosen)", "combo", "header", "selected row"};
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::Button("Press me"); rc[0] = UI::GetItemRect();
+        UI::Checkbox("Tick", &chk); rc[1] = UI::GetItemRect();
+        UI::Selectable("A list row"); rc[2] = UI::GetItemRect();
+        if (UI::TreeNodeEx("A tree row", 0)) UI::TreePop();
+        rc[3] = UI::GetItemRect();
+        if (UI::BeginTabBar("bar")) {
+            if (UI::BeginTabItem("First")) UI::EndTabItem();
+            if (UI::BeginTabItem("Second")) UI::EndTabItem();
+            rc[4] = UI::GetItemRect();
+            UI::EndTabBar();
+        }
+        UI::Combo("Pick", &cur, items, 2); rc[5] = UI::GetItemRect();
+        UI::CollapsingHeader("A section"); rc[6] = UI::GetItemRect();
+        UI::Selectable("A chosen row", true); rc[7] = UI::GetItemRect();
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    for (int i = 0; i < 8; ++i) {
+        const UI::Rect& b = rc[i];
+        r.sim.Move(480, 380); r.Frames(2);
+        const Bitmap rest = r.sim.Draw(12, 14, 20);
+        r.sim.Move(b.x + std::min(6.0f, b.w * 0.25f), b.y + b.h * 0.5f); r.Frames(2);
+        const Bitmap hov = r.sim.Draw(12, 14, 20);
+        int total = 0, changed = 0;
+        for (int y = (int)b.y; y < (int)(b.y + b.h); ++y)
+            for (int x = (int)b.x; x < (int)(b.x + b.w); ++x) {
+                ++total;
+                const unsigned a = PixelAt(rest, x, y), c = PixelAt(hov, x, y);
+                const int d = std::abs((int)(a >> 24) - (int)(c >> 24)) + std::abs((int)((a >> 16) & 255) - (int)((c >> 16) & 255)) + std::abs((int)((a >> 8) & 255) - (int)((c >> 8) & 255));
+                if (d >= 18) ++changed;
+            }
+        const bool ok = total > 0 && changed * 8 >= total;
+        if (!ok) std::fprintf(stderr, "  no visible hover: %s (%d of %d pixels changed)\n", names[i], changed, total);
+        CHECK(ok);
+    }
+}
+
 // Dear ImGui's Selectable in its look: a text line tall, the highlight and hit box reach half the item spacing past it, so rows touch (the
 // Behavior Tree palette's rows were a whole frame tall each, with dead gaps between them).
 void TestImGuiLookSelectable() {
@@ -709,6 +815,8 @@ int main() {
     TestImGuiLookTree();
     TestImGuiLookColorEdit();
     TestNestedTabBars();
+    TestTabRightClickMenu();
+    TestHoverEverywhere();
     TestImGuiLookSelectable();
     TestDragPreviewIsTooltip();
     TestGroupLocksStartX();

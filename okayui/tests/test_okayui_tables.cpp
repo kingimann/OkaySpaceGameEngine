@@ -436,6 +436,33 @@ void TestRowBg() {
     UI::TableSetBgColor((UI::TableBgTarget)99, UI::RGBA(1, 2, 3), 99);
 }
 
+// The row under the pointer is lit across all its columns in a data table (striped or sortable); a layout table (no RowBg, not
+// sortable) is not touched.
+void TestRowHover() {
+    RUN_SUITE("tables: the row under the pointer is lit");
+    for (int kind = 0; kind < 2; ++kind) {
+        Rig r; UI::Rect rr[4];
+        r.body = [&] {
+            if (UI::BeginTable("h", 2, kind == 0 ? UI::Table_RowBg : UI::TableFlags(0))) {
+                UI::TableSetupColumn("a"); UI::TableSetupColumn("b");
+                for (int i = 0; i < 4; ++i) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("cell"); rr[i] = UI::GetItemRect(); UI::TableNextColumn(); UI::Text("x"); }
+                UI::EndTable();
+            }
+        };
+        r.Move(600, 460); r.Frames(3);
+        const Bitmap rest = r.sim.Draw(12, 14, 20);
+        r.Move(rr[2].x + 200, CenterY(rr[2])); r.Frames(2);
+        const Bitmap hov = r.sim.Draw(12, 14, 20);
+        const float farX = rr[2].x + 400;   // far from the pointer, in the second column
+        if (kind == 0) {
+            CHECK(P(hov, farX, CenterY(rr[2])) != P(rest, farX, CenterY(rr[2])));   // the whole row is lit
+            CHECK(P(hov, farX, CenterY(rr[1])) == P(rest, farX, CenterY(rr[1])));   // the row above is not
+        } else {
+            CHECK(P(hov, farX, CenterY(rr[2])) == P(rest, farX, CenterY(rr[2])));
+        }
+    }
+}
+
 // ---- hostile input and a fuzz --------------------------------------------------------------------------------------------
 
 struct Rng {
@@ -646,6 +673,7 @@ int main() {
     TestPicture();
     TestSpans();
     TestRowBg();
+    TestRowHover();
     TestFuzz();
     TestRowClipper();
     TEST_MAIN_RESULT();

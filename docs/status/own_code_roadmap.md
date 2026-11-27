@@ -42,9 +42,9 @@ A step ships only when it is finished and tested; each step is one PR with an ho
 ## One place to try our own parts at run time (2026-11-18)
 
 Launcher **Settings > Experimental** and editor **View > Rendering & Performance > Experimental: try our own code** list
-the own parts that can be chosen without a rebuild, **all ON by default since 2026-11-23** (untick one to go back): OkayUI screens
-(`OKAY_UI_BACKEND=okayui`), the OkayUI Inspector (`OKAY_UI_INSPECTOR=1`), the OkayUI own renderer (`OKAY_UI_OWN_RENDER=1`) (the own
-WAV decoder had an item too until it became the only WAV reader, and the own HTTP client until it became the only client, 2026-11-25), and on Linux the own window layer
+the own parts that can be chosen without a rebuild, **all ON by default since 2026-11-23** (untick one to go back): the OkayUI own
+renderer (`OKAY_UI_OWN_RENDER=1`) (the own WAV decoder had an item too until it became the only WAV reader, and the own HTTP client until it
+became the only client, 2026-11-25; "OkayUI screens" and "OkayUI Inspector" until OkayUI became the only toolkit, 2026-11-27), and on Linux the own window layer
 (`OKAY_PLATFORM_BACKEND=own`). The choice is saved in `own_switches.cfg` (`off=` lists what the person turned off; no file, or an
 old file from the off-by-default version that has only an `on=` line, means everything on) and applied as environment variables at
 the top of `main()`; a variable the person set wins (so `OKAY_UI_BACKEND=imgui` still opts out).

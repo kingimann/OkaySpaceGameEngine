@@ -7,22 +7,20 @@
 //     run-time switches of every own backend that can be chosen without rebuilding (kRuntimeSettings below), each only
 //     when that variable is not already set, so a developer's own OKAY_OWN_3DS=0 still wins. Then it writes ONE line
 //     to stderr saying which parts are ours and which are third-party:
-//         [okay] stack: platform=sdl2 http=own readers=own(fbx,dae,...) crypto=libsodium ui=imgui
+//         [okay] stack: platform=sdl2 http=own readers=own(fbx,dae,...) crypto=libsodium ui=okayui
 //  2. Describe(): the same line as a string (the editor's About popup shows it; the tests check its text).
 //
 // Cryptography is NEVER switched on here (owner rule: it needs an outside review first). It is chosen at build time only
 // (-DOKAY_OWN_CRYPTO=ON, or the test-only -DOKAY_OWN_STACK_CRYPTO_TEST=ON), and the line says which one this binary has.
 //
 // What the line reports is what the code would do now: it asks the real selectors (okay::platform::DefaultKind, the model
-// import table, NativeAvailable), it does not repeat the settings. One thing it cannot know at the top of main(): a UI
-// backend saved in the settings file of a developer build (OKAY_DEV); the About popup passes the resolved one.
+// import table, NativeAvailable), it does not repeat the settings.
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
 #include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
-#include "OkayUIBackend.hpp"
 #include "OwnSwitches.hpp"   // the Settings screen's switches: their ids are added to the line
 #include "okay/Platform/Platform.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -52,16 +50,15 @@ inline const std::vector<ReaderSwitch>& Readers() {
 
 struct Setting { const char* var; const char* value; };
 
-/// Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
-/// needs no switch: it is the only one on Linux). The platform backend is set on Linux only (the Win32 backend
-/// has never run on real Windows); OkayUI only where it is compiled in. Crypto is not here and never will be.
+/// Everything OKAY_OWN_STACK=1 sets (when not already set): the readers and the okay::platform backend (our HTTP client and
+/// OkayUI need no switch: each is the only one). The platform backend is set on Linux only (the Win32 backend
+/// has never run on real Windows). Crypto is not here and never will be.
 inline std::vector<Setting> RuntimeSettings() {
     std::vector<Setting> s;
     for (const ReaderSwitch& r : Readers()) s.push_back({r.var, "1"});
 #if defined(__linux__)
     s.push_back({"OKAY_PLATFORM_BACKEND", "own"});
 #endif
-    s.push_back({"OKAY_UI_BACKEND", "okayui"});
     return s;
 }
 
@@ -96,7 +93,7 @@ struct Info {
     std::string http;                   // "winhttp" / "own" / "none" (a build with no HTTP client)
     std::vector<std::string> ownReaders;   // short names of the opt-in formats read by our own reader
     std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
-    std::string ui;                     // "imgui" / "okayui" / "none"
+    std::string ui;                     // "okayui" / "none" ("imgui" in lines from before 2026-11-27)
     std::string switches;               // ids turned on from the Settings screen (OwnSwitches.hpp), "" = none
 };
 
@@ -131,8 +128,8 @@ inline bool PrintAndExitRequested() {
     return v && v[0] == '1' && v[1] == '\0';
 }
 
-/// What this process would use right now. `ui` is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-/// null works it out from OKAY_UI_BACKEND, OKAY_DEV and the build default (not the saved setting).
+/// What this process would use right now. `ui` is the UI toolkit the caller names ("okayui" / "none"); null: "okayui" where
+/// OkayUI is compiled in (it is the only toolkit since Dear ImGui left the repository), else "none".
 inline Info Gather(const char* ui = nullptr) {
     Info i;
     namespace pl = okay::platform;
@@ -162,7 +159,13 @@ inline Info Gather(const char* ui = nullptr) {
 #endif
 
     if (ui) i.ui = ui;
-    else i.ui = okayuibackend::Name(okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), std::string(), okayuibackend::DevMode(std::getenv("OKAY_DEV"))));
+    else {
+#if defined(OKAY_HAVE_OKAYUI)
+        i.ui = "okayui";
+#else
+        i.ui = "none";
+#endif
+    }
     i.switches = ownswitches::JoinIds(ownswitches::AppliedNow());
     return i;
 }

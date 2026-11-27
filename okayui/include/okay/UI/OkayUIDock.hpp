@@ -166,7 +166,9 @@ std::string DockSaveLayout();
 bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);
 /// One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
 /// screen pixels, the width it would like when the strip is not squeezed, and whether it is the chosen tab). Empty before the first DockSpace.
-struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; };
+/// `shown` is where the tab is drawn: while a tab is dragged along its strip it follows the pointer and the others slide to their new places
+/// over a few frames (`rect` is where each one belongs at once, and what clicks and hosts use).
+struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; Rect shown; };
 std::vector<DockTabInfo> GetDockTabs();
 /// The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
 Rect GetDockArea();
@@ -177,7 +179,13 @@ void SetDockTrailingReserve(int leaf, float width);
 /// The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
 Rect GetDockStripRect(int leaf);
 /// What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
-struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window; };
+// The drop a drag would make now: `active` with the node and side it docks to (`preview`: the area the window would fill), or, while a
+// docked tab is dragged away from every target, `floats` with `preview` the rectangle it would float in. `cancelled`: the drag was
+// cancelled (Escape or the right button) and waits for the left button to come up.
+struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window;
+                      bool floats = false; bool fromTab = false; };
+/// Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
+bool DockDragging();
 DockDropInfo GetDockDrop();
 
 } // namespace OkayUI

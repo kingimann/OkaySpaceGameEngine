@@ -26,6 +26,7 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     } else if (inside && g_pressed) {
         g_active = id;
     }
+    if (navItem(id, x, y, w, h, rnd())) clicked = true;   // Tab reaches it; Space or Enter presses it
 
     // The design's control: its fill eases to the hover colour and on to the pressed one (motion), an outline when the design
     // draws outlines on controls.
@@ -82,6 +83,10 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
         if (g_released) { if (inside) { *value = !*value; changed = true; } g_active = 0; }
     } else if (inside && g_pressed) {
         g_active = id;
+    }
+    {   // Tab reaches it (the ring goes round the box); Space or Enter ticks it
+        const float bs = g_framedWidgets ? std::min(size, std::max(16.0f, textH() + 4.0f)) : size;
+        if (navItem(id, x + (size - bs) * 0.5f, y + (size - bs) * 0.5f, bs, bs, std::min(g_theme.radiusSmall, bs * 0.3f))) { *value = !*value; changed = true; }
     }
 
     if (g_framedWidgets) {   // Dear ImGui's box: a rounded frame in the field colours (the accent at 45% once ticked, 55% under the

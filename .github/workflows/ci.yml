@@ -563,7 +563,7 @@ jobs:
       - name: Build the own-stack tests
         run: |
           ninja -C build-own -t targets all | grep -oE '^test_[a-z0-9_]+' | sort -u \
-            | grep -E '^test_([a-z0-9_]*(reader|hostile|fbx|3ds|bvh|collada|glb|gltf|obj_import)[a-z0-9_]*|model_(readers|readers_fuzz|corpus|import_rig)|own_[a-z0-9_]+|platform[a-z0-9_]*|net_crypto_own|net_crypto|anticheat_[a-z0-9_]+|net_anticheat[a-z0-9_]*|ui_backend|okayui[a-z0-9_]*)$' > own-stack-targets.txt
+            | grep -E '^test_([a-z0-9_]*(reader|hostile|fbx|3ds|bvh|collada|glb|gltf|obj_import)[a-z0-9_]*|model_(readers|readers_fuzz|corpus|import_rig)|own_[a-z0-9_]+|platform[a-z0-9_]*|net_crypto_own|net_crypto|anticheat_[a-z0-9_]+|net_anticheat[a-z0-9_]*|okayui[a-z0-9_]*)$' > own-stack-targets.txt
           wc -l own-stack-targets.txt
           cmake --build build-own -j 2 --target $(cat own-stack-targets.txt | tr '\n' ' ')
           echo "OWN_STACK_TESTS=^($(sed 's/^test_//' own-stack-targets.txt | tr '\n' '|' | sed 's/|$//')|release_refuses_own_crypto)" >> "$GITHUB_ENV"

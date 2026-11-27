@@ -1647,11 +1647,6 @@ if(TARGET okay_ui_soft)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
 
-# The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
-add_executable(test_ui_backend test_ui_backend.cpp)
-target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
-add_test(NAME ui_backend COMMAND test_ui_backend)
-
 # The own-stack dogfood switch (OKAY_OWN_STACK build option, OKAY_OWN_STACK=1 at run time) and the one-line startup stack report.
 # Two entries because the platform and FBX choices are cached on first use: what the build does alone, and what the variable does.
 add_executable(test_own_stack test_own_stack.cpp)

@@ -65,14 +65,6 @@ bool PanelSection(const char*, Draw draw) {
     return true;
 }
 } // namespace
-bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
-bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
-bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okaypanels::CompHeaderIntent&, bool*) { return false; }
-bool DrawTransformOkayUI(okaypanels::TransformModel&, okaypanels::TransformIntent&, int*) { return false; }
-bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel&, okaypanels::MeshRendererIntent&) { return false; }
-bool DrawAddComponentOkayUI(std::uint32_t, bool& clicked) { clicked = false; return false; }
-bool DrawFieldListOkayUI(const char*, okaypanels::InspFieldList&) { return false; }
-bool OkayUIHasKeyboard() { return false; }
 }
 
 // ---- The panels drawn by OkayUI only (docs/ui/own_ui_toolkit.md sections 24 and 25): no Dear ImGui version exists. -------------

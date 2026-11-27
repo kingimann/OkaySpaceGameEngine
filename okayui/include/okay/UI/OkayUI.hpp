@@ -129,7 +129,7 @@ struct Input {
 /// (okay/UI/OkayUIDesign.hpp: design::Set, design::ThemeFor); the initial values below are the default design (Graphite, dark).
 struct Theme {
     unsigned char bg[4]      = { 44,  44,  50, 255};   // controls (buttons, boxes)
-    unsigned char bgHover[4] = { 61,  61,  66, 255};
+    unsigned char bgHover[4] = { 74,  74,  79, 255};
     unsigned char bgDown[4]  = { 30,  30,  34, 255};
     unsigned char border[4]  = {255, 255, 255,  20};   // hairline
     unsigned char text[4]    = {237, 237, 241, 255};

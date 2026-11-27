@@ -77,12 +77,11 @@ static std::string Steady(const std::string& log) {
 }
 
 static std::unique_ptr<acc::AccountService> Make(const fs::path& dir, Fake& f) { return golden::MakeAccount<acc::AccountService>(dir, f); }
-/// A fresh account signed in as `user` (user id "u1": the token's subject), and the profiles view state back to unknown
-/// (it is one value for the whole process, so each scenario starts from the same place).
+/// A fresh account signed in as `user` (golden::SignedInAccount), with the profiles view state back to unknown (it is one
+/// value for the whole process, so each scenario starts from the same place).
 static std::unique_ptr<acc::AccountService> SignedIn(const fs::path& dir, Fake& f, const std::string& user = "alex") {
-    SaveSession(dir, user, Tok(1), "r1");
     okay::privacy::ProfilesViewState() = 0;
-    return Make(dir, f);
+    return golden::SignedInAccount<acc::AccountService>(dir, f, user);
 }
 static std::string B(bool v) { return v ? "1" : "0"; }
 static std::string L(long v) { return std::to_string(v); }

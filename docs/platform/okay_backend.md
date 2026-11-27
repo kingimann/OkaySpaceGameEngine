@@ -32,6 +32,7 @@
 - [16. Round 3: what was built](#16-round-3-what-was-built)
 - [17. Round 4: what was built](#17-round-4-what-was-built)
 - [18. Round 5: what was built](#18-round-5-what-was-built)
+- [19. Round 6: what was built](#19-round-6-what-was-built)
 
 ## 1. The short version
 
@@ -463,7 +464,7 @@ the claim format of rule 26.
    `anticheat_backend`, `ticket_client`, `account_data`, `crash_upload`, `member_moderation`, `user_reports`, `launcher_versions`.
 5. **Community, part 1 (done 2026-11-26, section 18).** Files: `Profiles.hpp`, `Friends.hpp`, `BlockList.hpp`, `Privacy.hpp`, `Invites.hpp`, `Parties.hpp`.
    Gap: `Profiles` has no request test (write it first). Tests: golden tests per file.
-6. **Community, part 2.** Files: `Messages.hpp` (tables), `Servers.hpp`. Tests: golden tests (55 + 19 sites).
+6. **Community, part 2 (done 2026-11-27, section 19).** Files: `Messages.hpp` (tables), `Servers.hpp`. Tests: golden tests (49 + 19 sites).
 7. **Community, part 3, and the lock.** Files: `Forums.hpp`, `Admin.hpp` (no test today: write it first), `Workshop.hpp`
    (tables), launcher leftovers; `scripts/provenance_scan.py backend --check` in `branch_lint.py`. Tests: golden tests; the
    check fails on a route outside `engine/src/Backend/`.
@@ -793,3 +794,90 @@ only) or against a real Supabase project.
 (the logical operators `or=(...)` and `and(...)`, and its rule for quoting reserved characters in lists) and RFC 3986
 (percent-encoding); the moved call sites are our own code, changed only in how they build the same text. No PostgREST, Supabase
 or other project's code was read or used, and no outside tool or library was used to make or check the golden texts.
+
+## 19. Round 6: what was built
+
+Branch `claude/okay-backend-6` (on top of round 5). Nothing was sent to the live Supabase project; every test uses a fake
+server with made-up addresses, keys and tokens.
+
+**What moved (every request byte-identical, checked by the golden test).** Every table request and database function call of
+the community headers, part 2, now goes through `acct_.Db()` (`okay::backend::Database`) instead of a hand-written
+`/rest/v1/...` route:
+- `Messages.hpp`: sending a direct or group message (with the client id and `on_conflict=sender,client_id`, and the fallback
+  without it when the column is missing), the conversation pages and the whole conversation, the unread rows and counts, the
+  conversation list, call signals and invites, deleting and editing, likes and emoji reactions for direct and group messages,
+  typing and read marks (`on_conflict` upserts), the peer state with its last-seen time, the group functions (`create_group`,
+  `my_groups`, `add_group_member`), group members (with the fallback without `role`) and their profiles, the group thread, edits,
+  deletes, leaving, renaming and read marks, search in both tables, edit history, pins, and the user-id lookup.
+- `Servers.hpp`: my servers, the user-id lookup, `create_server` and `join_server`, channels (two sort columns), members and their
+  profiles, creating a channel, channel messages, posting and editing, likes, leaving, and renaming and deleting channels and
+  servers.
+- Both now read profiles through the shaped `ProfilesGet` (`[&](Query& q) { q.Select(...).In("id", ids, AsIs); }`). The text form
+  stays only for `Admin`, which moves in round 7; then it goes.
+
+The three hand-written URL encoders these files had (`Messages::MyId`, `Servers::MyUid` and the loop in `Messages::Search`) are
+gone: `Eq` and `detail::PercentEncode` encode the same byte set. `Messages::PageQuery` and `SendPath` stay as pure helpers
+(`tests/test_chat_invites.cpp` uses them) but are now made from the same `Query` the calls send, by `Messages::PathOf` (a
+Supabase provider with a sender that sends nothing). `Like` (the heart) now uses `React`'s code, and `React` and `GroupReact`
+share one helper (`ReactIn`); the bytes are the same.
+
+**Builder addition, because a call site needed it.** `Like` and `Ilike` take a `ValueText` (default `Encoded`, as before): the call
+signals send `%5BCall*` and the search sends `*<encoded text>*`, written by the program itself, so `*` stays the wildcard as it
+always did.
+
+**Kept as it was (behaviour preserved, flagged for the owner).** These odd parts are sent exactly as before:
+- Unencoded values (`ValueText::AsIs`): the friend id in `With`'s `or=(sender.eq.x,recipient.eq.x)`; my own id in
+  `recipient=`, `reactor=`, `member=` and `peer=`; the peer id in `PeerTyping`, `PeerStateOf` (and its profile read) and
+  `PeerReadId`; the emoji when a reaction is taken back; the scope word in `EditHistory`, `Pin` and `Pins`; the member ids in
+  `in.(...)` (`GroupMembersInfo`, `Servers::Members`). A value with "&" or a space reaches the server as written (`With("u 2&x")`,
+  `React(7, "a&b c", false)`, `EditHistory("gr oup&x", ...)` and `Pin("a&b", ...)` are in the golden texts). My id and member ids
+  come from the server (UUIDs); the emoji and scope words come from the program.
+- `PageQuery` encodes `~` as `%7E`; every other encoded value keeps `~` (RFC 3986 allows both). `Search` drops `*` and `%` from the
+  text.
+- `Messages::JStr` and `Servers::JStr` (their own JSON string writers) drop `\r` and write other control characters raw, so such a
+  text is sent as invalid JSON and refused. Round 4 fixed `detail::JsonEscape`, not these; the golden texts pin a raw `\x01`.
+- No limit checks: `UnreadRows(-1)` sends `limit=-1`, `Servers::Messages(9, -5)` sends `limit=-5`. `Search` with a negative limit
+  would also ask `resize` for a huge size after the answer (a crash; read from the code, not run); no caller passes one, and it is not in the golden texts.
+- My user id is remembered only once found: while the lookup finds nothing, every call that needs it asks again
+  (`messages_my_id_missing`: six lookups). `CreateGroup` sends with an empty title and no members, `RenameGroup` sends an empty
+  title.
+- Found on the way, not changed: `Messages` and `Servers` each keep their own copies of `SplitObjects`, `Field`, `JStr` and
+  `ParseIso` (duplicates of each other; a dedup for Claude 2's lane). The `JStr` and `Search` limit points above are bugs for a
+  test-first fix (`Kind: bug`), not part of a move that must keep every byte.
+
+**The scan.** `scripts/provenance_scan.py backend` now also counts `db.From(name)` / `Db().From(name)` with the table name in a
+variable as a "(dynamic)" Database site through OkayBackend (Messages' sends to `messages` and `group_messages`). The two files
+wrote 68 routes by hand before (Messages 46 Database and 3 RPC, Servers 17 Database and 2 RPC). After: none, and 62 sites go
+through OkayBackend (Messages 40 Database and 3 RPC, Servers 17 Database and 2 RPC; fewer in Messages because the heart like uses
+`React`, `React` and `GroupReact` share one helper, the member fallback and the unread select are one call each). Totals over
+the whole repository: Database written by hand 163 to 100, through OkayBackend 70 to 127; RPC by hand 19 to 14, through
+OkayBackend 12 to 17. Storage, Auth and Functions unchanged. The text form of `ProfilesGet` (2 sites in `Privacy.hpp`) stays for
+`Admin`.
+
+**Proof that nothing changed for Supabase.** `tests/test_okay_backend_golden_community2.cpp` runs 16 scenarios through the two
+headers' public functions against a fake server (direct messages with and without a client id, the missing column, a privacy
+refusal and no answer; group messages the same; conversation pages with hostile ids, the whole conversation and the unread rows;
+unread counts with and without the messages, the conversation list, a user name that needs encoding; my id not found; call
+signals and invites; deletes, edits, likes and reactions; typing and read marks with the tables missing; the peer state through
+the profiles view working and missing; every group call; search, edit history and pins; servers, channels, members, channel
+messages, likes and owner calls; both headers signed out). The requests (method, URL with its query in order, header lines in
+order, body) and what the program made of each answer must equal texts recorded from the headers at commit `43b419381`, before
+the move (`tests/test_okay_backend_golden_community2.inc`, recorded twice with the same result and committed before any call site
+changed). Calls in one line are joined in a braced list (`Cat({...})`), which C++ evaluates left to right, so the requests reach
+the fake server in the same order on every compiler (with `+` the order is unspecified; a first draft got it from right to left).
+Clock times in requests (the typing and read-mark times, now - 90 s and the other oldest-message times) are written as `<NOW>` /
+`<NOW-90>`; any other time counts as a failure. Then 13 flows send the same requests through `supabase::Database` directly over a
+`RecordingTransport`, built only with the builder, and must be the same bytes. Run failing first: with the call sites moved and
+`supabase::Database`'s `Send` and `Rpc` as a skeleton that sends nothing, 13 scenarios and 13 flows did not match (42 of 87 checks
+failed); with the real provider all 87 pass. Writing `~` unencoded in `PageQuery` on purpose turns `messages_pages` red. `tests/test_okay_backend.cpp` checks the new `Like` / `Ilike` option (unchanged and encoded). The
+existing `chat_invites`, `chat_receipts`, `chat_json`, `blocks_privacy`, `member_moderation`, `launcher_theme`, `okay_backend`,
+`okay_backend_golden_community1`, `okay_backend_golden_storage` and `okay_backend_golden_auth` tests pass unchanged.
+
+**Not built in round 6:** the Local provider's message and server tables (round 13), `Admin`'s move and removing the text form of
+`ProfilesGet` (round 7). Unverified: nothing ran on Windows (MinGW `-fsyntax-only -include windows.h` of the changed headers and
+the test only) or against a real Supabase project.
+
+**Where the code comes from (IP).** The `ValueText` option on `Like` / `Ilike` was written from PostgREST's publicly documented
+URL interface (pattern operators and `*` as the wildcard) and RFC 3986 (percent-encoding); the moved call sites are our own code,
+changed only in how they build the same text. No PostgREST, Supabase or other project's code was read or used, and no outside
+tool or library was used to make or check the golden texts.

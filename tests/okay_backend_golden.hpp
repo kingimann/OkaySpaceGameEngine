@@ -86,6 +86,13 @@ inline void SaveSession(const std::filesystem::path& dir, const std::string& use
     std::ofstream f(dir / "session.txt", std::ios::trunc | std::ios::binary);
     f << user << "\n" << token << "\n" << refresh << "\n";
 }
+/// A new account service on `dir` signed in as `user` (user id "u1": the subject of Tok(1); refresh token "r1"), sending
+/// every request to `f` (rounds 5 and 6).
+template <class Account>
+std::unique_ptr<Account> SignedInAccount(const std::filesystem::path& dir, Fake& f, const std::string& user) {
+    SaveSession(dir, user, Tok(1), "r1");
+    return MakeAccount<Account>(dir, f);
+}
 
 /// Only the request blocks of a golden text, in order.
 inline std::string RequestsOf(const std::string& golden) {

@@ -18,6 +18,7 @@
 #include "okay_backend_golden.hpp"   // the fake server, made-up tokens, RunGolden
 #include "okay/Backend/Backend.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Friends.hpp"   // Friends::ParseIso
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Privacy.hpp"
 #include "okay/Platform/Servers.hpp"
@@ -56,17 +57,6 @@ static std::string IsoAt(long t) {
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
     return buf;
 }
-static long ParseIso(const std::string& s) {
-    std::tm tm{};
-    if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min, &tm.tm_sec) != 6) return 0;
-    tm.tm_year -= 1900; tm.tm_mon -= 1;
-#if defined(_WIN32)
-    return (long)_mkgmtime(&tm);
-#else
-    return (long)timegm(&tm);
-#endif
-}
-
 /// Clock times as fixed marks: a time within 10 s of now + k (k one of 0, -30, -90, -900) is <NOW> or <NOW-k>. The test's
 /// own times (2023 and 2099) are only in answers, never in requests, so any other time in a request is counted as wrong.
 static std::string Steady(const std::string& log) {
@@ -75,7 +65,7 @@ static std::string Steady(const std::string& log) {
     std::smatch m;
     while (std::regex_search(rest, m, iso)) {
         out += m.prefix().str();
-        const long t = ParseIso(m[0].str());
+        const long t = okay::Friends::ParseIso(m[0].str());   // the engine's reader of these times (round 5 uses it too)
         const long now = (long)std::time(nullptr);
         std::string mark;
         for (long k : {0L, 30L, 90L, 900L})
@@ -87,19 +77,17 @@ static std::string Steady(const std::string& log) {
     return out + rest;
 }
 
-static std::unique_ptr<acc::AccountService> Make(const fs::path& dir, Fake& f) { return golden::MakeAccount<acc::AccountService>(dir, f); }
-/// A fresh account signed in as `user` (user id "u1": the token's subject), and the profiles view state back to unknown
-/// (it is one value for the whole process, so each scenario starts from the same place).
+/// A fresh account signed in as `user` (golden::SignedInAccount), with the profiles view state back to unknown (it is one
+/// value for the whole process, so each scenario starts from the same place).
 static std::unique_ptr<acc::AccountService> SignedIn(const fs::path& dir, Fake& f, const std::string& user = "alex") {
-    SaveSession(dir, user, Tok(1), "r1");
     okay::privacy::ProfilesViewState() = 0;
-    return Make(dir, f);
+    return golden::SignedInAccount<acc::AccountService>(dir, f, user);
 }
 /// A fresh account with no session file: signed out.
 static std::unique_ptr<acc::AccountService> SignedOut(const fs::path& dir, Fake& f) {
     fs::create_directories(dir);
     okay::privacy::ProfilesViewState() = 0;
-    return Make(dir, f);
+    return golden::MakeAccount<acc::AccountService>(dir, f);
 }
 static std::string B(bool v) { return v ? "1" : "0"; }
 /// The parts joined in the order written: the items of a braced list are evaluated left to right (unlike the operands of
@@ -531,10 +519,193 @@ static std::vector<Scenario> Scenarios() {
     return v;
 }
 
-// ---- The same requests through the Supabase provider directly: added with the move (none yet) -----------------------------
-struct ProviderRun : golden::Recorder {};
+// ---- The same requests through the Supabase provider directly (okay::backend::supabase::Database, RecordingTransport) ------
+// Each flow sends, in order, the requests its scenario of the same name sent (the user-id lookups included), built only with
+// the Query builder: a builder or provider change that alters one byte fails here even when a header still matches.
+struct ProviderRun : golden::Recorder {
+    okay::backend::supabase::Database Db() { return okay::backend::supabase::Database(kUrl, kKey, rec, Tok(1)); }
+};
 using ProviderFlow = std::function<void(ProviderRun&)>;
-static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() { return {}; }
+static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
+    namespace ob = okay::backend;
+    using Q = ob::Query;
+    const auto asIs = ob::ValueText::AsIs;
+    static const std::string kPage = "id,sender,body,created_at,edited,reply_to";
+    static const std::string kIgnore = "resolution=ignore-duplicates";
+    std::vector<std::pair<const char*, ProviderFlow>> v;
+    v.push_back({"messages_send", [=](ProviderRun& p) {
+        p.Db().From("messages").OnConflict("sender,client_id").Prefer(kIgnore)
+            .Insert("{\"recipient\":\"u-2\",\"body\":\"hi \\\"there\\\"\\\\ \\nline\\ttabcr\x01 end\",\"client_id\":\"" + std::string(kCid1) + "\"}");
+        p.Db().From("messages").OnConflict("sender,client_id").Prefer(kIgnore)
+            .Insert("{\"recipient\":\"u-2\",\"body\":\"again\",\"reply_to\":5,\"client_id\":\"" + std::string(kCid2) + "\"}");
+        p.Db().From("messages").Insert("{\"recipient\":\"u-2\",\"body\":\"again\",\"reply_to\":5}");
+        p.Db().From("messages").Insert("{\"recipient\":\"u-2\",\"body\":\"third\"}");
+        p.Db().From("messages").Insert("{\"recipient\":\"u 3&x\",\"body\":\"no answer\"}");
+        p.Db().From("messages").Insert("{\"recipient\":\"u-2\",\"body\":\"plain\"}");
+    }});
+    v.push_back({"messages_send_group", [=](ProviderRun& p) {
+        p.Db().From("group_messages").OnConflict("sender,client_id").Prefer(kIgnore)
+            .Insert("{\"convo_id\":9,\"body\":\"hello \\\"all\\\"\",\"sender_name\":\"al \\\"x\\\"\",\"reply_to\":3,\"client_id\":\"" + std::string(kCid1) + "\"}");
+        p.Db().From("group_messages").Insert("{\"convo_id\":9,\"body\":\"x\",\"sender_name\":\"al \\\"x\\\"\"}");
+        p.Db().From("group_messages").OnConflict("sender,client_id").Prefer(kIgnore)
+            .Insert("{\"convo_id\":9,\"body\":\"y\",\"sender_name\":\"al \\\"x\\\"\",\"client_id\":\"" + std::string(kCid2) + "\"}");
+        p.Db().From("group_messages").Insert("{\"convo_id\":9,\"body\":\"y\",\"sender_name\":\"al \\\"x\\\"\"}");
+        p.Db().From("group_messages").Insert("{\"convo_id\":9,\"body\":\"z\",\"sender_name\":\"al \\\"x\\\"\"}");
+    }});
+    v.push_back({"messages_pages", [=](ProviderRun& p) {
+        auto page = [&](const std::string& enc, const char* before, long limitPlusOne) {
+            auto db = p.Db();   // must outlive the Query made from it
+            Q q = db.From("messages");
+            q.Select(kPage).Or({Q::Cond("sender", "eq", enc, asIs), Q::Cond("recipient", "eq", enc, asIs)});
+            if (before) q.Lt("id", before);
+            q.Order("id", true).Limit(limitPlusOne).Get();
+        };
+        page("u-2", nullptr, 51);
+        page("a%26b%20%7Ex%2F%C3%A9", "120", 3);
+        page("u-2", nullptr, 2);
+        page("u-2", nullptr, 201);
+        p.Db().From("messages").Select(kPage).Or({Q::Cond("sender", "eq", "u 2&x", asIs), Q::Cond("recipient", "eq", "u 2&x", asIs)})
+            .Order("created_at").Get();
+        p.Db().From("messages").Select("id,sender,recipient").Order("id", true).Limit(300).Get();
+        p.Db().From("messages").Select("id,sender,recipient").Order("id", true).Limit(-1).Get();
+    }});
+    v.push_back({"messages_unread_and_conversations", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "al ex+\xc3\xa9~").Get();
+        p.Db().From("messages").Select("id,recipient").Order("id", true).Limit(60).Get();
+        p.Db().From("messages").Select("id,recipient,sender,body").Order("id", true).Limit(60).Get();
+        p.Db().From("messages").Select("id,recipient").Order("id", true).Limit(60).Get();
+        p.Db().From("messages").Select("id,sender,recipient,body,created_at").Order("id", true).Limit(300).Get();
+    }});
+    v.push_back({"messages_my_id_missing", [=](ProviderRun& p) {
+        for (int i = 0; i < 6; ++i) p.Db().From("profiles").Select("id").Eq("username", "ghost").Get();
+    }});
+    v.push_back({"messages_calls_and_invites", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", "u1", asIs).Like("body", "%5BCall*", asIs)
+            .Gte("created_at", "<NOW-90>", asIs).Order("id", true).Limit(10).Get();
+        p.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", "u1", asIs)
+            .Or({Q::Cond("body", "like", "%5BInvite%5D*", asIs), Q::Cond("body", "like", "%5BParty%5D*", asIs)}).Gt("id", "7")
+            .Gte("created_at", "<NOW-900>", asIs).Order("id", true).Limit(10).Get();
+        p.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", "u1", asIs).Like("body", "%5BCall*", asIs)
+            .Gte("created_at", "<NOW-30>", asIs).Order("id", true).Limit(10).Get();
+        p.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", "u1", asIs)
+            .Or({Q::Cond("body", "like", "%5BInvite%5D*", asIs), Q::Cond("body", "like", "%5BParty%5D*", asIs)}).Gt("id", "-3")
+            .Gte("created_at", "<NOW-900>", asIs).Order("id", true).Limit(10).Get();
+    }});
+    v.push_back({"messages_edit_delete_reactions", [=](ProviderRun& p) {
+        p.Db().From("messages").Eq("id", "7").Delete();
+        p.Db().From("messages").Eq("id", "7").Update("{\"body\":\"new \\\"b\\\"\\n\",\"edited\":true}");
+        p.Db().From("message_reactions").Prefer(kIgnore).Insert("{\"scope\":\"dm\",\"target_id\":7,\"emoji\":\"heart\"}");
+        p.Db().From("message_reactions").Eq("scope", "dm").Eq("target_id", "7").Eq("emoji", "heart").Delete();
+        p.Db().From("message_reactions").Select("target_id").Eq("scope", "dm").Eq("emoji", "heart").Get();
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("message_reactions").Select("target_id").Eq("scope", "dm").Eq("emoji", "heart").Eq("reactor", "u1", asIs).Get();
+        p.Db().From("message_reactions").Prefer(kIgnore).Insert("{\"scope\":\"dm\",\"target_id\":7,\"emoji\":\"fire\"}");
+        p.Db().From("message_reactions").Eq("scope", "dm").Eq("target_id", "7").Eq("emoji", "a&b c", asIs).Delete();
+        p.Db().From("message_reactions").Prefer(kIgnore).Insert("{\"scope\":\"dm\",\"target_id\":7,\"emoji\":\"x\\\"y\"}");
+        for (int i = 0; i < 2; ++i) {
+            p.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "dm").Get();
+            p.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "dm").Eq("reactor", "u1", asIs).Get();
+        }
+    }});
+    v.push_back({"messages_typing_and_reads", [=](ProviderRun& p) {
+        p.Db().From("typing_state").OnConflict("sender").Upsert("{\"peer\":\"u-2\",\"at\":\"<NOW>\"}");
+        p.Db().From("typing_state").OnConflict("sender").Upsert("{\"peer\":\"u \\\"2\\\"\",\"at\":\"<NOW>\"}");
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("typing_state").Select("at").Eq("sender", "u 2&x", asIs).Eq("peer", "u1", asIs).Get();
+        p.Db().From("typing_state").Select("at").Eq("sender", "u-2", asIs).Eq("peer", "u1", asIs).Get();
+        p.Db().From("message_reads").OnConflict("reader,peer").Upsert("{\"peer\":\"u-2\",\"last_read_id\":42,\"updated_at\":\"<NOW>\"}");
+        p.Db().From("message_reads").OnConflict("reader,peer").Upsert("{\"peer\":\"u-3\",\"last_read_id\":43,\"updated_at\":\"<NOW>\"}");
+        p.Db().From("message_reads").Select("last_read_id,updated_at").Eq("reader", "u-2", asIs).Eq("peer", "u1", asIs).Get();
+        p.Db().From("profiles_visible").Select("last_seen").Eq("id", "u-2", asIs).Get();
+        p.Db().From("message_reads").Select("last_read_id,updated_at").Eq("reader", "u 3&x", asIs).Eq("peer", "u1", asIs).Get();
+        p.Db().From("profiles_visible").Select("last_seen").Eq("id", "u 3&x", asIs).Get();
+        p.Db().From("profiles").Select("last_seen").Eq("id", "u 3&x", asIs).Get();
+        p.Db().From("message_reads").Select("last_read_id,updated_at").Eq("reader", "u-2", asIs).Eq("peer", "u1", asIs).Get();
+        for (int i = 0; i < 2; ++i) p.Db().From("message_reads").Select("last_read_id").Eq("reader", "u-2", asIs).Eq("peer", "u1", asIs).Get();
+    }});
+    v.push_back({"messages_groups", [=](ProviderRun& p) {
+        p.Db().Rpc("create_group", "{\"p_title\":\"Team \\\"A\\\"\\n\",\"p_members\":[\"u-2\",\"u \\\"3\\\"\"]}");
+        p.Db().Rpc("create_group", "{\"p_title\":\"\",\"p_members\":[]}");
+        p.Db().Rpc("my_groups", "{}");
+        p.Db().From("group_members").Eq("convo_id", "12").Select("member").Get();
+        p.Db().From("group_members").Eq("convo_id", "12").Select("member,last_read,role").Get();
+        p.Db().From("group_members").Eq("convo_id", "12").Select("member,last_read").Get();
+        p.Db().From("profiles_visible").Select("id,username,display_name,avatar_url,last_seen").In("id", {"u1", "u-2"}, asIs).Get();
+        p.Db().From("group_members").Eq("convo_id", "13").Select("member,last_read,role").Get();
+        p.Db().From("profiles_visible").Select("id,username,display_name,avatar_url,last_seen").In("id", {"u-2"}, asIs).Get();
+        p.Db().From("profiles").Select("id,username,display_name,avatar_url,last_seen").In("id", {"u-2"}, asIs).Get();
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("group_messages").Eq("convo_id", "12").Select("id,sender,sender_name,body,created_at,edited,reply_to").Order("created_at").Get();
+        p.Db().From("group_messages").Eq("id", "40").Update("{\"body\":\"fixed \\\"t\\\"\",\"edited\":true}");
+        p.Db().From("group_messages").Eq("id", "40").Delete();
+        p.Db().Rpc("add_group_member", "{\"p_convo\":12,\"p_member\":\"u-4\"}");
+        p.Db().From("group_members").Eq("convo_id", "12").Eq("member", "u1", asIs).Delete();
+        p.Db().From("group_convos").Eq("id", "12").Update("{\"title\":\"New \\\"T\\\"\"}");
+        p.Db().From("group_convos").Eq("id", "12").Update("{\"title\":\"\"}");
+        p.Db().From("group_members").Eq("convo_id", "12").Eq("member", "u1", asIs).Update("{\"last_read\":41}");
+        p.Db().From("message_reactions").Prefer(kIgnore).Insert("{\"scope\":\"group\",\"target_id\":40,\"emoji\":\"heart\"}");
+        p.Db().From("message_reactions").Eq("scope", "group").Eq("target_id", "40").Eq("emoji", "x y&z", asIs).Delete();
+        p.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "group").Get();
+        p.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "group").Eq("reactor", "u1", asIs).Get();
+    }});
+    v.push_back({"messages_search_edits_pins", [=](ProviderRun& p) {
+        auto search = [&](const std::string& pattern, long lim) {
+            p.Db().From("messages").Select("id,sender,recipient,body,created_at").Ilike("body", pattern, asIs).Order("id", true).Limit(lim).Get();
+            p.Db().From("group_messages").Select("id,convo_id,sender,sender_name,body,created_at").Ilike("body", pattern, asIs)
+                .Order("id", true).Limit(lim).Get();
+        };
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        search("*hello%20w%C3%B6rld~%26%3Dx*", 40);
+        search("*a%20b*", 1);
+        p.Db().From("message_edits").Insert("{\"scope\":\"dm\",\"target_id\":5,\"old_body\":\"old \\\"t\\\"\\nx\"}");
+        p.Db().From("message_edits").Select("old_body,edited_at").Eq("scope", "dm", asIs).Eq("target_id", "5").Order("id").Get();
+        p.Db().From("message_edits").Select("old_body,edited_at").Eq("scope", "gr oup&x", asIs).Eq("target_id", "5").Order("id").Get();
+        p.Db().From("message_edits").Select("old_body,edited_at").Eq("scope", "group", asIs).Eq("target_id", "6").Order("id").Get();
+        p.Db().From("message_pins").Prefer(kIgnore).Insert("{\"scope\":\"dm\",\"target_id\":5}");
+        p.Db().From("message_pins").Eq("scope", "dm", asIs).Eq("target_id", "5").Delete();
+        p.Db().From("message_pins").Eq("scope", "a&b", asIs).Eq("target_id", "6").Delete();
+        p.Db().From("message_pins").Select("target_id,pinned_by,created_at").Eq("scope", "dm", asIs).Order("created_at", true).Limit(500).Get();
+        p.Db().From("message_pins").Select("target_id,pinned_by,created_at").Eq("scope", "group", asIs).Order("created_at", true).Limit(500).Get();
+    }});
+    v.push_back({"servers_list_create_join", [=](ProviderRun& p) {
+        p.Db().From("servers").Select("id,name,invite_code,owner").Order("created_at").Get();
+        p.Db().From("profiles").Select("id").Eq("username", "al ex&~").Get();
+        p.Db().Rpc("create_server", "{\"p_name\":\"Den \\\"1\\\"\\n\"}");
+        p.Db().Rpc("create_server", "{\"p_name\":\"x\"}");
+        p.Db().Rpc("create_server", "{\"p_name\":\"y\"}");
+        for (const char* body : {"{\"p_code\":\"AB12\"}", "{\"p_code\":\"ZZ\"}", "{\"p_code\":\"Q&1 \\\"\"}", "{\"p_code\":\"e\"}"}) p.Db().Rpc("join_server", body);
+        p.Db().From("servers").Select("id,name,invite_code,owner").Order("created_at").Get();
+    }});
+    v.push_back({"servers_channels_members", [=](ProviderRun& p) {
+        static const std::string kMember = "id,username,display_name,avatar_url,last_seen";
+        p.Db().From("channels").Eq("server_id", "4").Select("id,name").Order("position").Order("id").Get();
+        p.Db().From("server_members").Eq("server_id", "4").Select("member,role").Get();
+        p.Db().From("profiles_visible").Select(kMember).In("id", {"u-2", "u1", "u 3&x"}, asIs).Get();
+        p.Db().From("profiles").Select(kMember).In("id", {"u-2", "u1", "u 3&x"}, asIs).Get();
+        p.Db().From("server_members").Eq("server_id", "5").Select("member,role").Get();
+        p.Db().From("profiles").Select(kMember).In("id", {"u-2"}, asIs).Get();
+        p.Db().From("server_members").Eq("server_id", "6").Select("member,role").Get();
+        p.Db().From("channels").Insert("{\"server_id\":4,\"name\":\"general \\\"x\\\"\\n\"}");
+        p.Db().From("channel_messages").Eq("channel_id", "9").Select("id,author_name,body,created_at,edited").Order("created_at").Limit(60).Get();
+        p.Db().From("channel_messages").Eq("channel_id", "9").Select("id,author_name,body,created_at,edited").Order("created_at").Limit(-5).Get();
+        p.Db().From("channel_messages").Insert("{\"channel_id\":9,\"body\":\"hello\\n\\\"x\\\"\",\"author_name\":\"alex\"}");
+        p.Db().From("channel_messages").Eq("id", "3").Update("{\"body\":\"edited \\\"e\\\"\",\"edited\":true}");
+    }});
+    v.push_back({"servers_likes_and_owner", [=](ProviderRun& p) {
+        p.Db().From("message_reactions").Prefer(kIgnore).Insert("{\"scope\":\"channel\",\"target_id\":3,\"emoji\":\"heart\"}");
+        p.Db().From("message_reactions").Eq("scope", "channel").Eq("target_id", "3").Eq("emoji", "heart").Delete();
+        p.Db().From("message_reactions").Select("target_id").Eq("scope", "channel").Eq("emoji", "heart").Get();
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("message_reactions").Select("target_id").Eq("scope", "channel").Eq("emoji", "heart").Eq("reactor", "u1", asIs).Get();
+        p.Db().From("server_members").Eq("server_id", "4").Eq("member", "u1", asIs).Delete();
+        p.Db().From("channels").Eq("id", "9").Update("{\"name\":\"renamed \\\"c\\\"\"}");
+        p.Db().From("channels").Eq("id", "9").Delete();
+        p.Db().From("servers").Eq("id", "4").Update("{\"name\":\"S\"}");
+        p.Db().From("servers").Eq("id", "4").Delete();
+    }});
+    return v;
+}
 
 #include "test_okay_backend_golden_community2.inc"   // GOLDEN: the texts recorded from the code before the move
 
@@ -554,5 +725,6 @@ int main() {
                                            CHECK(g_badSteady == 0);
                                        }))
         return 0;
+    CHECK(flows.size() >= 13);
     TEST_MAIN_RESULT();
 }

@@ -10137,11 +10137,13 @@ struct Parser {
                     return false;
                 }
                 std::string mname = cur().text;
-                if (mname.compare(0, 14, "operator conv:") == 0)
+                if (mname.compare(0, 14, "operator conv:") == 0) {
                     // The definition of an `explicit` conversion function outside its class: the class's declaration
                     // carries the mark (lower_cxx_spellings), the definition does not repeat `explicit`.
+                    const std::string marked = "operator conv:explicit:" + mname.substr(14);
                     for (const Method& em : structs[static_cast<size_t>(sid)].methods)
-                        if (em.name == "operator conv:explicit:" + mname.substr(14)) mname = em.name;
+                        if (em.name == marked) mname = marked;
+                }
                 next();
                 if (!is(TLParen)) {
                     // int P::n = 7; the definition of a static data member.

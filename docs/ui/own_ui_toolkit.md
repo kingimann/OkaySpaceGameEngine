@@ -3538,8 +3538,18 @@ Play (the Game tab comes forward), the Edit menu and Project Settings look and a
 script, apart from rows 15b and 15c. All 76 `okayui_*` and `editor_okayui` ctest tests pass.
 
 **What is left before Dear ImGui can go from the editor** (rule 17 and 19d: then OkayUI is the editor's only UI and the Dear ImGui
-build is deleted): rows 15b to 18; then the normal editor target becomes
-the OkayUI one, and the `okay_imgui` library, the Dear ImGui FetchContent and `OKAY_IMGUI_TAG` go.
+build is deleted). After round 2 the editor was NOT switched over; this is what is left, in order:
+1. Multi-window panels (row 17): OkayUI draws into one OS window. Either OkayUI gets more than one OS window, or the owner drops the
+   feature for now (the editor already turns it off when the platform cannot do it).
+2. Not tried yet: a drag from the Project panel to the Scene or an Inspector slot, a file dropped on the window, typing with an input method.
+3. Windows: the OkayUI editor has never been built with MinGW or run on Windows (the changed files are syntax-checked only).
+4. The tests that still use Dear ImGui: 27 Visual Script tests take its headers (`OKAY_VS_IMGUI_INCLUDE`; they would take `okayui/probe`
+   instead), `editor_stale_modal` (its OkayUI twin is `okayui_port_modalguard`), `imgui_platform_feed`, `imgui_painter_render`, and the
+   comparison tests `okayui_*_imgui` and `okayui_host_layering`, whose reference is Dear ImGui (they would become goldens or be deleted).
+5. Then the switch: `okay-editor` built the way `okay-editor-okayui` is (bin/OkayEngine on OkayUI), and deleted with it: the second program
+   and `OKAY_EDITOR_ON_OKAYUI`, the editor's Dear ImGui-only paths (`imgui_impl_sdl2` / `sdlrenderer2` in `editor/main.cpp`, the OkayUI
+   hosting inside Dear ImGui: `shared/OkayUIImGuiEmbed.hpp`, the `okay_editor_wm_panels` copies, `OKAY_HAVE_OKAYUI` host code), the `okay_imgui`
+   library, the Dear ImGui FetchContent and `OKAY_IMGUI_TAG`; `docs/status/own_code_roadmap.md` and `THIRD_PARTY.md` updated.
 ## 31. The launcher on OkayUI only (no Dear ImGui in OkaySpace.exe, 2026-11-27)
 
 Owner, 2026-11-27: "move everything we need to okay UI". The launcher's pages stay written in Dear ImGui's names (about 12,000 call

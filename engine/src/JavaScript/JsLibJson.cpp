@@ -371,4 +371,229 @@ void InstallJsonLib(Runtime& rt) {
     }, 3);
 }
 
+
+// ============================================================ structuredClone
+// Written from the HTML Standard 2.7 (safe passing of structured data): 2.7.3 StructuredSerializeInternal for the
+// value kinds this engine has, 2.7.6 StructuredDeserialize, 2.7.4 StructuredSerializeWithTransfer for ArrayBuffers, and
+// 8.10 (the structuredClone method). Serialization and deserialization are one pass here (making the copy as the source
+// is read, which no script can tell apart, since deserializing runs no script code), depth first in the spec's order,
+// with an explicit stack instead of recursion so deep nesting can not overflow the native stack. The "memory" map keeps
+// shared references and cycles. A value that can not be cloned is an Error named DataCloneError (the HTML standard's
+// DOMException; this engine has no DOMException).
+namespace {
+
+[[noreturn]] void DataCloneError(Runtime& rt, const std::string& msg) {
+    Object* e = rt.NewError(ErrorType::Error, msg);
+    rt.DefineData(e, rt.atoms->name, Value::Str(rt.Intern("DataCloneError")), kHidden);
+    rt.Throw(Value::Obj(e));
+}
+
+struct Cloner {
+    Runtime& rt;
+    std::unordered_map<Object*, Object*> memory;
+    struct Frame {
+        Object* src;
+        Object* dst;
+        std::vector<GcObj*> keys;     // own enumerable keys to copy (objects, arrays, errors keep none)
+        std::vector<Value> pairs;     // Map: k0 v0 k1 v1 ...; Set: the values
+        std::size_t at = 0;
+        int kind = 0;                 // 0 properties, 1 Map, 2 Set
+    };
+    std::vector<Frame> stack;
+    Runtime::RootedVector roots;      // every source and copy, alive while cloning (getters may run collections)
+    explicit Cloner(Runtime& r) : rt(r), roots(r) {}
+
+    // a value: primitives as they are; objects through the memory or a new shell whose contents are pushed
+    Value Copy(const Value& v) {
+        rt.Charge(1);
+        if (v.IsSym()) DataCloneError(rt, "a Symbol can not be cloned");
+        if (!v.IsObj()) return v;
+        Object* o = v.O();
+        auto it = memory.find(o);
+        if (it != memory.end()) return Value::Obj(it->second);
+        Object* out = Shell(o);
+        return Value::Obj(out);
+    }
+
+    Object* Remember(Object* src, Object* dst) {
+        memory[src] = dst;
+        roots.v.push_back(Value::Obj(src));
+        roots.v.push_back(Value::Obj(dst));
+        return dst;
+    }
+
+    Object* Shell(Object* o) {
+        switch (o->cls) {
+            case Cls::BoolBox: case Cls::NumberBox: case Cls::StringBox: case Cls::BigIntBox: {
+                Object* w = rt.ToObject(static_cast<BoxObj*>(o)->prim);
+                return Remember(o, w);
+            }
+            case Cls::DateBox: {
+                BoxObj* d = rt.Alloc<BoxObj>();
+                d->cls = Cls::DateBox;
+                d->proto = rt.dateProto;
+                d->prim = static_cast<BoxObj*>(o)->prim;
+                return Remember(o, d);
+            }
+            case Cls::RegExpLike: {
+                RegExpObj* r = static_cast<RegExpObj*>(o);
+                Value c = MakeRegExpLiteral(rt, r->source, r->flags);
+                return Remember(o, c.O());
+            }
+            case Cls::ArrayBuffer: {
+                BufferObj* b = static_cast<BufferObj*>(o);
+                if (b->shared) DataCloneError(rt, "a SharedArrayBuffer can not be cloned here (no cross-origin isolation)");
+                if (b->detached) DataCloneError(rt, "a detached ArrayBuffer can not be cloned");
+                return Remember(o, NewBufferCopy(rt, b->data.data(), b->data.size()));
+            }
+            case Cls::TypedArray: {
+                TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+                if (t->OutOfBounds()) DataCloneError(rt, "a typed array whose buffer is detached can not be cloned");
+                Value buf = Copy(Value::Obj(t->buf));
+                return Remember(o, NewTypedArrayOn(rt, t->type, static_cast<BufferObj*>(buf.O()), t->offset, t->length));
+            }
+            case Cls::DataView: {
+                DataViewObj* d = static_cast<DataViewObj*>(o);
+                if (d->buf->detached) DataCloneError(rt, "a DataView whose buffer is detached can not be cloned");
+                Value buf = Copy(Value::Obj(d->buf));
+                return Remember(o, NewDataViewOn(rt, static_cast<BufferObj*>(buf.O()), d->offset, d->length));
+            }
+            case Cls::Map: case Cls::Set: {
+                MapObj* m = static_cast<MapObj*>(o);
+                MapObj* c = rt.Alloc<MapObj>();
+                c->cls = o->cls;
+                c->proto = o->cls == Cls::Map ? rt.mapProto : rt.setProto;
+                Remember(o, c);
+                Frame f{o, c, {}, {}, 0, o->cls == Cls::Map ? 1 : 2};
+                for (const MapObj::Entry& e : m->entries) {   // the entries as they are now (a copied list)
+                    if (!e.live) continue;
+                    f.pairs.push_back(e.k);
+                    if (o->cls == Cls::Map) f.pairs.push_back(e.v);
+                }
+                roots.v.insert(roots.v.end(), f.pairs.begin(), f.pairs.end());
+                stack.push_back(std::move(f));
+                return c;
+            }
+            case Cls::Error: {   // name (one of the standard ones), message; nothing else is copied
+                Value nameV = rt.Get(Value::Obj(o), rt.atoms->name);
+                std::string name = nameV.IsStr() ? Utf16To8(nameV.S()->s) : "Error";
+                static const char* const kNames[] = {"Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError"};
+                static const ErrorType kTypes[] = {ErrorType::Error, ErrorType::EvalError, ErrorType::RangeError, ErrorType::ReferenceError,
+                                                   ErrorType::SyntaxError, ErrorType::TypeError, ErrorType::URIError};
+                ErrorType type = ErrorType::Error;
+                for (int i = 0; i < 7; ++i)
+                    if (name == kNames[i]) type = kTypes[i];
+                Prop md;
+                const bool hasMsg = rt.GetOwnProperty(o, rt.atoms->message, md) && !(md.flags & kAccessor);
+                std::string msg = hasMsg ? rt.ToUtf8(md.v) : "";
+                Object* e = rt.NewError(type, msg);
+                if (!hasMsg) e->RemoveRaw(rt.atoms->message);
+                return Remember(o, e);
+            }
+            case Cls::Array: {
+                ArrayObj* a = rt.NewArray();
+                a->length = static_cast<ArrayObj*>(o)->length;
+                Remember(o, a);
+                PushProps(o, a);
+                return a;
+            }
+            case Cls::Ordinary: {
+                Object* c = rt.NewObject();
+                Remember(o, c);
+                PushProps(o, c);
+                return c;
+            }
+            default:
+                if (o->IsCallable()) DataCloneError(rt, "a function can not be cloned");
+                DataCloneError(rt, std::string("this kind of object can not be cloned"));
+        }
+    }
+
+    void PushProps(Object* src, Object* dst) {
+        Frame f{src, dst, {}, {}, 0, 0};
+        for (GcObj* k : rt.OwnKeys(src, true, false)) {   // ! EnumerableOwnProperties(value, key)
+            Prop p;
+            if (rt.GetOwnProperty(src, k, p) && (p.flags & kEnumerable)) f.keys.push_back(k);
+        }
+        for (GcObj* k : f.keys) roots.v.push_back(Value::Internal(k));
+        stack.push_back(std::move(f));
+    }
+
+    Value Run(const Value& v) {
+        Value top = Copy(v);
+        roots.v.push_back(top);
+        while (!stack.empty()) {
+            Frame& f = stack.back();
+            if (f.kind == 0) {
+                if (f.at >= f.keys.size()) { stack.pop_back(); continue; }
+                GcObj* k = f.keys[f.at++];
+                Object* src = f.src;
+                Object* dst = f.dst;
+                if (!rt.HasOwn(src, k)) continue;   // a getter before it deleted the key
+                Value in = rt.Get(Value::Obj(src), k);
+                roots.v.push_back(in);
+                Value out = Copy(in);   // may push a frame (f is not used after this)
+                rt.DefineData(dst, k, out);
+                continue;
+            }
+            const std::size_t step = f.kind == 1 ? 2 : 1;
+            if (f.at >= f.pairs.size()) { stack.pop_back(); continue; }
+            MapObj* dst = static_cast<MapObj*>(f.dst);
+            const bool isMap = f.kind == 1;
+            Value k = f.pairs[f.at], val = isMap ? f.pairs[f.at + 1] : Value();
+            f.at += step;
+            // Copy may push a frame, so f is not touched after this point
+            Value ck = Copy(k);
+            roots.v.push_back(ck);
+            Value cv = isMap ? Copy(val) : ck;
+            MapAdd(rt, dst, ck, cv);
+        }
+        return top;
+    }
+};
+
+} // namespace
+
+void InstallStructuredClone(Runtime& rt) {
+    DefNative(rt, rt.global, "structuredClone", [](Runtime& rt, CallArgs& a) {   // HTML 8.10 structuredClone(value, options)
+        std::vector<BufferObj*> transfer;
+        if (a[1].IsObj()) {
+            Value list = rt.Get(a[1], rt.Intern("transfer"));
+            if (!list.IsUndef()) {
+                IterRec* r = GetIterator(rt, list);
+                rt.Keep(r);
+                Value e;
+                while (IterStep(rt, r, e)) {
+                    if (!e.IsObj() || e.O()->cls != Cls::ArrayBuffer) DataCloneError(rt, "only ArrayBuffers can be transferred");
+                    BufferObj* b = static_cast<BufferObj*>(e.O());
+                    if (b->shared) DataCloneError(rt, "a SharedArrayBuffer can not be transferred");
+                    for (BufferObj* x : transfer)
+                        if (x == b) DataCloneError(rt, "an ArrayBuffer is in the transfer list twice");
+                    if (b->detached) DataCloneError(rt, "a detached ArrayBuffer can not be transferred");
+                    rt.Keep(b);
+                    transfer.push_back(b);
+                    if (transfer.size() > 100000) rt.ThrowRange("the transfer list is too long");
+                }
+            }
+        } else if (!a[1].IsNullish()) rt.ThrowType("structuredClone's options must be an object");
+        Cloner c(rt);
+        // 2.7.4 step 4: a transferred buffer is "cloned" by moving its bytes into the new one, then detached (step 6)
+        std::vector<BufferObj*> moved;
+        for (BufferObj* b : transfer) {
+            BufferObj* nb = NewBufferCopy(rt, nullptr, 0);
+            c.Remember(b, nb);
+            moved.push_back(nb);
+        }
+        Value out = c.Run(a[0]);
+        for (std::size_t i = 0; i < transfer.size(); ++i) {
+            if (transfer[i]->detached) DataCloneError(rt, "a transferred ArrayBuffer was detached while cloning");
+            moved[i]->data.swap(transfer[i]->data);
+            transfer[i]->data.clear();
+            transfer[i]->data.shrink_to_fit();
+            transfer[i]->detached = true;
+        }
+        return out;
+    }, 1);
+}
+
 } // namespace okay::js

@@ -65,6 +65,7 @@ enum class NK : std::uint8_t {
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
     Yield, Await, Hole, TaggedTemplate, Regex, BigInt, ImportCall,
+    PrivName,   ///< `#x` on the left of `in` (15.7, 13.10.1)
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -102,6 +103,7 @@ enum NodeFlag : std::uint32_t {
     NF_CoverInit = 128,    ///< {a = 1} seen in a literal (only valid as a pattern)
     NF_Paren = 256,        ///< written in parentheses
     NF_Await = 512,        ///< for await (...)
+    NF_Private = 1024,     ///< a #private member (o.#x, a #x class element; str is "#x")
 };
 
 enum DeclKind : int { DK_Var = 0, DK_Let = 1, DK_Const = 2 };
@@ -113,6 +115,7 @@ struct FuncInfo {
     bool arrow = false, generator = false, async = false, method = false, getter = false, setter = false;
     bool classCtor = false, derived = false, fieldInit = false;
     bool hasFields = false;      ///< class constructor: the class has instance fields
+    bool module = false;         ///< a module's top level (16.2): strict, async (top-level await), its own scope
     bool simpleParams = true;
     std::u16string name;
     int line = 0, col = 0;
@@ -125,10 +128,39 @@ struct FuncInfo {
 };
 
 struct ClassInfo {
+    std::vector<std::u16string> privNames;    ///< the #names this class declares (15.7.6 PrivateBoundIdentifiers), "#x"
+    std::vector<std::u16string> privHidden;   ///< bindings for its private methods: "#x:m", "#x:g", "#x:s"
+    int privInstMethods = 0;                  ///< instance private methods at the front of instFields' body
     Node* heritage = nullptr;
     FuncInfo* ctor = nullptr;
     FuncInfo* instFields = nullptr;
     FuncInfo* staticFields = nullptr;
+};
+
+/// What a module imports and exports (16.2.1.6.1 ParseModule's lists), in source order.
+struct ModuleInfo {
+    std::vector<std::u16string> requests;   ///< the module specifiers, each once
+    struct Import {
+        int req;
+        std::u16string importName;   ///< "*": a namespace import
+        std::u16string localName;
+        int line, col;
+    };
+    /// localName set: a local export; req >= 0 with importName: an indirect export ("*" = export * as exportName);
+    /// req >= 0 with an empty exportName: export * from.
+    struct Export {
+        std::u16string exportName, localName, importName;
+        int req = -1;
+        int line = 0, col = 0;
+    };
+    std::vector<Import> imports;
+    std::vector<Export> exports;
+    bool usesMeta = false;
+};
+/// A binding the module function gets from its loader, in OP_UpToLocal order (16.2.1.6.4 InitializeEnvironment).
+struct ModuleExtern {
+    std::u16string name;
+    std::uint8_t kind;   ///< 0 own var / function (starts undefined), 1 own let / const / class (not initialized), 2 import, 3 import.meta
 };
 
 /// Owns the nodes of one parse.
@@ -137,6 +169,7 @@ struct Ast {
     std::vector<std::unique_ptr<FuncInfo>> funcs;
     std::vector<std::unique_ptr<ClassInfo>> classes;
     FuncInfo* script = nullptr;   ///< the top level, as a function
+    std::unique_ptr<ModuleInfo> module;   ///< set when parsed as a module
     Node* NewNode(NK k, int line, int col) {
         nodes.push_back(std::make_unique<Node>());
         Node* n = nodes.back().get();
@@ -151,7 +184,7 @@ struct Ast {
     }
 };
 
-bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err);
+bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err, bool module = false);
 
 // ============================================================ bytecode
 enum Op : std::uint16_t {
@@ -180,6 +213,7 @@ enum Op : std::uint16_t {
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
     OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome, OP_ImportCall,
+    OP_NewPrivate, OP_GetPrivate, OP_SetPrivate, OP_DefPrivate, OP_HasPrivate, OP_UpToLocal,
     OP_Count
 };
 
@@ -220,6 +254,8 @@ struct Proto : GcObj {
 
 /// Compile a parsed script to its top-level function proto.
 Proto* CompileScript(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err);
+/// Compile a parsed module: its function (async, so a top-level await works) and the bindings its loader supplies.
+Proto* CompileModule(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err, std::vector<ModuleExtern>& externs);
 
 // ============================================================ internal objects
 struct Handler {
@@ -382,6 +418,115 @@ Value ToBigIntValue(Runtime& rt, const Value& v);                       ///< 7.1
 void InstallBigIntLib(Runtime& rt);
 void InstallIntlLib(Runtime& rt);
 
+// ---- binary data (25.1 ArrayBuffer, 25.2 SharedArrayBuffer, 23.2 TypedArray, 25.3 DataView; JsLibArray.cpp)
+/// The bytes of an ArrayBuffer or SharedArrayBuffer. Buffers are fixed-length; a detached one has no bytes left.
+struct BufferObj : Object {
+    std::vector<std::uint8_t> data;
+    bool detached = false;
+    bool shared = false;   ///< a SharedArrayBuffer (never detached)
+    BufferObj() : Object(Cls::ArrayBuffer) {}
+    std::size_t Bytes() const override { return Object::Bytes() + data.capacity(); }
+};
+/// The element types of 23.2 Table 71, in that order.
+enum class TAType : std::uint8_t { I8, U8, U8C, I16, U16, I32, U32, F32, F64, I64, U64, Count };   ///< Int8Array .. BigUint64Array
+constexpr int kTATypes = (int)TAType::Count;
+/// A typed array: a view of `length` elements from byte `offset` of `buf`. Every element access checks the
+/// index against the buffer's bytes as they are now (so a detached buffer is never read).
+struct TypedArrayObj : Object {
+    BufferObj* buf = nullptr;
+    TAType type = TAType::U8;
+    std::uint64_t offset = 0;   ///< in bytes
+    std::uint64_t length = 0;   ///< in elements, when made
+    TypedArrayObj() : Object(Cls::TypedArray) {}
+    void Trace(Runtime& rt) override;
+    std::uint32_t ElemSize() const;
+    bool OutOfBounds() const;          ///< 10.4.5.12 IsTypedArrayOutOfBounds (a detached buffer is)
+    std::uint64_t Length() const { return OutOfBounds() ? 0 : length; }   ///< TypedArrayLength, 0 when out of bounds
+    bool IsBigInt() const { return type == TAType::I64 || type == TAType::U64; }
+};
+struct DataViewObj : Object {
+    BufferObj* buf = nullptr;
+    std::uint64_t offset = 0, length = 0;   ///< in bytes
+    DataViewObj() : Object(Cls::DataView) {}
+    void Trace(Runtime& rt) override;
+};
+/// 7.1.21 CanonicalNumericIndexString: true when `key` is a String that names a number (n), like "1", "-0", "1.5".
+bool CanonicalNumericKey(Runtime& rt, GcObj* key, double& n);
+/// 10.4.5.14 IsValidIntegerIndex.
+bool ValidIntegerIndex(const TypedArrayObj* t, double n);
+/// 10.4.5.15 TypedArrayGetElement (undefined for an index that is not valid) and 10.4.5.16 TypedArraySetElement
+/// (the value is converted first, then written only if the index is still valid).
+Value TypedArrayGet(Runtime& rt, TypedArrayObj* t, double n);
+void TypedArraySet(Runtime& rt, TypedArrayObj* t, double n, const Value& v);
+void InstallBinaryLib(Runtime& rt);
+/// A new Uint8Array holding a copy of n bytes (the size is checked against the limits first).
+TypedArrayObj* NewUint8Array(Runtime& rt, const std::uint8_t* bytes, std::size_t n);
+/// A new ArrayBuffer holding a copy of n bytes, and a typed array over a buffer (structuredClone builds with these).
+BufferObj* NewBufferCopy(Runtime& rt, const std::uint8_t* bytes, std::size_t n);
+TypedArrayObj* NewTypedArrayOn(Runtime& rt, TAType type, BufferObj* buf, std::uint64_t offset, std::uint64_t length);
+DataViewObj* NewDataViewOn(Runtime& rt, BufferObj* buf, std::uint64_t offset, std::uint64_t length);
+/// Map.prototype.set / Set.prototype.add without the script-visible lookups (JsLibCollections.cpp).
+void MapAdd(Runtime& rt, MapObj* m, const Value& k, const Value& v);
+void InstallTextCodingLib(Runtime& rt);
+void InstallStructuredClone(Runtime& rt);
+std::string TypedArrayDisplay(Runtime& rt, Object* o, int depth);
+
+// ---- proxies (10.5, 28.2; JsLibObject.cpp). handler == nullptr: revoked.
+struct ProxyObj : Object {
+    Object* target = nullptr;
+    Object* handler = nullptr;
+    ProxyObj() : Object(Cls::Proxy) {}
+    void Trace(Runtime& rt) override;
+};
+bool ProxyGetOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, Prop& out);
+bool ProxyDefineOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, const Runtime::Descriptor& d);
+bool ProxyHas(Runtime& rt, ProxyObj* p, GcObj* key);
+Value ProxyGet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& receiver);
+bool ProxySet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& v, const Value& receiver);
+bool ProxyDelete(Runtime& rt, ProxyObj* p, GcObj* key);
+std::vector<GcObj*> ProxyOwnKeys(Runtime& rt, ProxyObj* p);
+Object* ProxyGetPrototypeOf(Runtime& rt, ProxyObj* p);
+bool ProxySetPrototypeOf(Runtime& rt, ProxyObj* p, Object* proto);
+bool ProxyIsExtensible(Runtime& rt, ProxyObj* p);
+bool ProxyPreventExtensions(Runtime& rt, ProxyObj* p);
+Value ProxyCall(Runtime& rt, ProxyObj* p, const Value& thisv, const Value* args, int argc);
+Value ProxyConstruct(Runtime& rt, ProxyObj* p, const Value* args, int argc, Object* newTarget);
+void InstallProxyLib(Runtime& rt);
+
+// ---- modules (16.2; the loader is in JsRuntime.cpp)
+struct ModuleRec;
+/// 10.4.6 a module namespace: its export names in code-unit order, each read live from a binding's cell (or, for an
+/// `export * as x`, the other module's namespace).
+struct ModuleNsObj : Object {
+    struct Entry {
+        String* name;
+        Cell* cell;          ///< nullptr: the namespace of `module`
+        ModuleRec* module;
+    };
+    std::vector<Entry> entries;
+    ModuleNsObj() : Object(Cls::ModuleNs) {}
+    void Trace(Runtime& rt) override;
+    const Entry* Find(GcObj* key) const;
+};
+/// A loaded module (16.2.1.6 Source Text Module Record), kept for the runtime's life (like compiled scripts).
+struct ModuleRec {
+    std::string key;
+    ModuleInfo info;
+    std::vector<ModuleExtern> externs;
+    std::vector<ModuleRec*> deps;                       ///< per request
+    Proto* proto = nullptr;
+    Closure* fn = nullptr;                              ///< made when linked
+    std::unordered_map<std::u16string, Cell*> cells;    ///< its own exported bindings
+    ModuleNsObj* ns = nullptr;
+    enum State : std::uint8_t { Loaded, Linked, Evaluating, Evaluated, Errored } state = Loaded;
+    Value error;
+    PromiseObj* done = nullptr;                         ///< settles when its evaluation ends
+    std::uint32_t index = 0;                            ///< in Impl::moduleList
+};
+Value ModuleNamespaceGet(Runtime& rt, const ModuleNsObj::Entry& e);
+/// import(): load, link and evaluate through Runtime::modules in a later job; the promise gets the namespace.
+void DynamicImport(Runtime& rt, PromiseObj* p, const std::string& specifier, const std::string& referrer);
+
 struct ForInObj : Object {
     Value obj;
     std::vector<GcObj*> keys;
@@ -438,12 +583,31 @@ struct Runtime::Impl {
     NativeFunc* arrayIterNext = nullptr;
     NativeFunc* stringIterator = nullptr;
     NativeFunc* stringIterNext = nullptr;
+    /// Intrinsics the newer libraries keep (the collector marks them): see the k* slots below.
+    std::vector<Object*> moreIntrinsics;
+    int proxyDepth = 0;   ///< proxy internal methods running inside each other (bounded: see kMaxProxyDepth)
+    std::vector<std::unique_ptr<ModuleRec>> moduleList;
+    std::unordered_map<std::string, ModuleRec*> moduleMap;   ///< by key
+    static constexpr int kMaxProxyDepth = 200;
     std::vector<Proto*> scripts;   ///< compiled scripts (kept while the runtime lives)
     std::vector<Object*> joinStack;   ///< arrays being joined (a cycle joins as "")
     std::unordered_map<std::u16string, std::shared_ptr<RegexProg>> regexCache;   ///< "flags/pattern" -> compiled
 };
 
+/// Slots of Impl::moreIntrinsics.
+enum IntrinsicSlot : int {
+    kTypedArrayCtor, kTypedArrayProto, kArrayBufferProto, kSharedBufferProto, kDataViewProto,
+    kTypedProtos,                         ///< kTATypes prototypes, then kTATypes constructors
+    kTypedCtors = kTypedProtos + kTATypes,
+    kIntrinsicSlots = kTypedCtors + kTATypes,
+};
+inline Object*& Intrinsic(Runtime& rt, int slot) {
+    if (rt.vm->moreIntrinsics.size() < (std::size_t)kIntrinsicSlots) rt.vm->moreIntrinsics.resize(kIntrinsicSlots, nullptr);
+    return rt.vm->moreIntrinsics[(std::size_t)slot];
+}
+
 // the machine (JsInterpreter.cpp)
+bool HostEntry(Runtime& rt, const std::function<Value()>& body, Value* result, std::string* err);
 Value Execute(Runtime& rt, int entryFrame);
 /// Push a frame for `fn` whose callee, this and args are already at sp - argc - 2 .. sp.
 /// Returns false when fn is not a closure (the caller handles natives).

@@ -2191,7 +2191,8 @@ ModuleRec* FetchModule(Runtime& rt, const std::string& key) {
 ModuleRec* LoadGraph(Runtime& rt, const std::string& key, const std::string* source) {
     auto it = rt.vm->moduleMap.find(key);
     ModuleRec* root = it != rt.vm->moduleMap.end() ? it->second : source ? ParseModuleRecord(rt, key, *source) : FetchModule(rt, key);
-    std::vector<ModuleRec*> work{root};
+    std::vector<ModuleRec*> work;   // the modules whose imports are not found yet
+    work.push_back(root);
     while (!work.empty()) {
         ModuleRec* m = work.back();
         work.pop_back();

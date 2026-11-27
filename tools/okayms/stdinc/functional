@@ -81,6 +81,8 @@ template <> struct hash<int> { size_t operator()(int v) const { return (size_t)v
 template <> struct hash<unsigned> { size_t operator()(unsigned v) const { return (size_t)v; } };
 template <> struct hash<long long> { size_t operator()(long long v) const { return (size_t)v; } };
 template <> struct hash<unsigned long long> { size_t operator()(unsigned long long v) const { return (size_t)v; } };
+// Pointers ([unord.hash] 2: hash<T*> for every T; Round 33, JsRuntime.cpp's std::hash<const void*>): the address.
+template <typename T> struct hash<T*> { size_t operator()(T* p) const { return (size_t)p; } };
 
 // less and greater are in <utility> (the ordered containers use them without the rest of this header).
 template <typename T> struct less_equal { bool operator()(const T& a, const T& b) const { return a <= b; } };

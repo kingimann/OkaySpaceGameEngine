@@ -1,6 +1,9 @@
 // okay-ms own standard header: <new>. Placement new (`new (p) T(args)`) and operator new/delete for a class are
 // built into the compiler (ISO/IEC 14882 [expr.new]); `new` calls the global `malloc` and `delete` calls `free`.
 #pragma once
+// dynamic_cast calls std::__okay_dynamic_cast of <typeinfo>; MSVC's headers reach <typeinfo> from <new> as well, and
+// engine files use dynamic_cast without including it (JsLibString.cpp; Round 33).
+#include <typeinfo>
 // A new-expression calls these, so they are declared here too (the same declarations as <cstdlib>): `new` works in a
 // file that includes only <new>.
 void *malloc(unsigned long long n);

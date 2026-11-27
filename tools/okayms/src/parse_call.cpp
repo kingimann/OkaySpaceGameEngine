@@ -233,6 +233,26 @@ bool Parser::pack_expansion_items(bool allow_bare, std::vector<Node>* items, boo
     return true;
 }
 
+// A braced list as an argument, f({1, 2}) or f({}): what it makes depends on the parameter, so its position is kept
+// and adjust_args reads it once the parameter is known. Also an item of a braced list given to a constructor
+// (pair{name, {line, col}}; Round 33).
+bool Parser::braced_arg(Node* arg) {
+    arg->kind = Node::Block;
+    arg->text = "tokbrace";
+    arg->number = at;
+    int depth = 0;
+    do {
+        if (is(TLBrace)) ++depth;
+        else if (is(TRBrace)) --depth;
+        else if (is(TEnd)) {
+            error = "expected '}'";
+            return false;
+        }
+        next();
+    } while (depth > 0);
+    return true;
+}
+
 bool Parser::parse_call_args(std::vector<Node>* args) {
     if (accept(TRParen)) return true;
     do {
@@ -244,21 +264,7 @@ bool Parser::parse_call_args(std::vector<Node>* args) {
         }
         Node arg;
         if (is(TLBrace)) {
-            // A braced list as an argument, f({1, 2}) or f({}): what it makes depends on the parameter, so its
-            // position is kept and adjust_args reads it once the parameter is known.
-            arg.kind = Node::Block;
-            arg.text = "tokbrace";
-            arg.number = at;
-            int depth = 0;
-            do {
-                if (is(TLBrace)) ++depth;
-                else if (is(TRBrace)) --depth;
-                else if (is(TEnd)) {
-                    error = "expected '}'";
-                    return false;
-                }
-                next();
-            } while (depth > 0);
+            if (!braced_arg(&arg)) return false;
             args->push_back(std::move(arg));
             continue;
         }

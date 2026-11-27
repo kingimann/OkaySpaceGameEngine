@@ -4,6 +4,7 @@
 // (unordered_set<Guid, GuidHash>) it is an open-addressing hash table over a dense array, elements compared with ==,
 // and an erase moves the last element into the hole (linear time; erase(it) returns the place of the next one).
 #pragma once
+#include <type_traits>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +14,11 @@ class unordered_set {
     vector<T> items_;
     vector<long long> slots_;  // index into items_, or -1 for an empty slot; the size is a power of two
 
+    // The key-equality argument when one is given, else == (Round 33).
+    static bool key_eq(const T& a, const T& b) {
+        if constexpr (is_same<E, void>::value) return a == b;
+        else return E()(a, b);
+    }
     long long slot_of(const T& value) const {
         if (slots_.empty()) return -1;
         const size_t mask = slots_.size() - 1;
@@ -20,7 +26,7 @@ class unordered_set {
         for (size_t probe = 0; probe < slots_.size(); ++probe) {
             const long long idx = slots_[at];
             if (idx < 0) return -1;
-            if (items_[(size_t)idx] == value) return idx;
+            if (key_eq(items_[(size_t)idx], value)) return idx;
             at = (at + 1) & mask;
         }
         return -1;
@@ -47,6 +53,11 @@ public:
     unordered_set() {}
     unordered_set(initializer_list<T> list) {
         for (const T* p = list.begin(); p != list.end(); ++p) insert(*p);
+    }
+    // The elements of [first, last) ([unord.set.cnstr] 3; Round 33).
+    template <typename It>
+    unordered_set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
     }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
@@ -114,6 +125,8 @@ public:
     typedef const T* const_iterator;
     unordered_set() {}
     unordered_set(initializer_list<T> list) : items_(list) {}
+    template <typename It>
+    unordered_set(It first, It last) : items_(first, last) {}  // [unord.set.cnstr] 3 (JsLibObject.cpp; Round 33)
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.begin(); }

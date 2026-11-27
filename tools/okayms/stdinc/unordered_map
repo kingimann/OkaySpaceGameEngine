@@ -7,11 +7,12 @@
 //   open-addressing hash table over a dense array of the entries: the hasher picks the first slot, equal keys are found
 //   with ==, and an erase moves the last entry into the hole and builds the slots again (so it is linear time, and
 //   erase(it) returns the place of the next entry to visit).
-// Iterators are pointers to the entries in both forms. A key-equality argument (the fourth template argument) is not
-// used: keys are compared with ==. The differences from the standard listed in <map> hold here too.
+// Iterators are pointers to the entries in both forms. Keys are compared with the key-equality argument (the fourth
+// template argument) when one is given, else with == (Round 33; before, the argument was not used). The differences from the standard listed in <map> hold here too.
 #pragma once
 #include <map>
 #include <vector>
+#include <type_traits>
 namespace std {
 // The "no hasher given" marker: the default third argument, which selects the ordered form below.
 struct __okay_ordered_keys {};
@@ -21,6 +22,12 @@ class unordered_map {
     vector<pair<K, V> > items_;
     vector<long long> slots_;  // index into items_, or -1 for an empty slot; the size is a power of two
 
+    // Keys are equal by the fourth argument when one is given (JsInternal.hpp's KeyEq, SameValueZero; Round 33),
+    // else by ==.
+    static bool key_eq(const K& a, const K& b) {
+        if constexpr (is_same<E, void>::value) return a == b;
+        else return E()(a, b);
+    }
     long long slot_of(const K& key) const {
         if (slots_.empty()) return -1;
         const size_t mask = slots_.size() - 1;
@@ -28,7 +35,7 @@ class unordered_map {
         for (size_t probe = 0; probe < slots_.size(); ++probe) {
             const long long idx = slots_[at];
             if (idx < 0) return -1;
-            if (items_[(size_t)idx].first == key) return idx;
+            if (key_eq(items_[(size_t)idx].first, key)) return idx;
             at = (at + 1) & mask;
         }
         return -1;
@@ -185,4 +192,8 @@ public:
     bool operator==(const unordered_map& o) const { return items_ == o.items_; }
     bool operator!=(const unordered_map& o) const { return !(*this == o); }
 };
+// std::unordered_multimap ([unord.multimap]; Round 33, JsRuntime.cpp): okay-ms's multimap, so the key needs operator<
+// (as the default form of unordered_map above); the hasher and key-equality arguments are accepted and not used.
+template <typename K, typename V, typename H = __okay_ordered_keys, typename E = void>
+class unordered_multimap : public multimap<K, V> {};
 }

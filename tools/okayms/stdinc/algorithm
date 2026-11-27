@@ -273,6 +273,14 @@ template <typename It> It rotate(It first, It middle, It last) {
     reverse(first, last);
     return first + (last - middle);
 }
+// mismatch ([mismatch]; Round 33, JsLibNumber.cpp over reverse iterators): the first place where the two ranges differ.
+template <typename It1, typename It2> pair<It1, It2> mismatch(It1 first1, It1 last1, It2 first2) {
+    while (first1 != last1 && *first1 == *first2) {
+        ++first1;
+        ++first2;
+    }
+    return pair<It1, It2>(first1, first2);
+}
 template <typename It1, typename It2> bool equal(It1 first1, It1 last1, It2 first2) {
     for (; first1 != last1; ++first1, ++first2)
         if (!(*first1 == *first2)) return false;

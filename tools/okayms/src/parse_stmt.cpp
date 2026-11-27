@@ -1071,7 +1071,26 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     bool have_ctor_args = false;
     Node paren_init;
     bool have_paren_init = false;
-    if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
+    const bool init_list_copy = !is_typedef && type.pointers == 0 && is_init_list_class(type) && is(TIdent) &&
+                                at + 2 < tokens.size() && tokens[at + 1].kind == TAssign && tokens[at + 2].kind == TLBrace;
+    // static const std::initializer_list<const char*> names = {"long", "short"}; (Round 33, JsLibNumber.cpp): own
+    // simplification, the list and its array are made again each time control passes the declaration (an automatic
+    // object), which reads the same as one static list while the elements are constants; only their addresses differ
+    // from one pass to the next.
+    if (init_list_copy) is_static = false;
+    if (init_list_copy) {
+        // std::initializer_list<T> x = {a, b, c}; ([dcl.init.list] 3.10, [support.initlist]): x refers to an array of
+        // the elements. Before Round 33 the braces were read as the list's own two members (x.size() was 5 for {4, 5,
+        // 6}): the list is made as for an argument and x is copied from it.
+        decl.name = cur().text;
+        decl.type = type;
+        next();
+        next();
+        Node list;
+        if (!init_list_temp(type, &list)) return false;
+        ctor_args.push_back(std::move(list));
+        have_ctor_args = true;
+    } else if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
         (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace)) {
         // C x(args); and C x{args}; the arguments go to a constructor.
         decl.name = cur().text;
@@ -1674,7 +1693,14 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         return false;
     }
     const size_t after_range = at;
-    if (!braced_range && !static_type(range, &range_type)) {
+    if (!braced_range && range.kind == Node::StringLit) {
+        // for (char16_t c : u"dgimsuy") ([stmt.ranged], [lex.string] 6; Round 33, JsRegExp.cpp): a string literal is an
+        // array of its code units and the zero after them.
+        range_type = range.type;
+        range_type.pointers = 0;
+        const int unit = range_type.base == 2 ? 1 : range_type.base == 4 ? 2 : 4;
+        range_type.array_len = static_cast<int>((range.text.size() + 1) / static_cast<size_t>(unit));
+    } else if (!braced_range && !static_type(range, &range_type)) {
         error = "a range for needs an array of known length";
         return false;
     }

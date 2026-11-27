@@ -165,7 +165,8 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             str_prefix = 8;
             i += 2;
         }
-        const bool wide_char = (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
+        // Not after a string prefix: in u"'..." i is at the '"' and the next character is the string's own (Round 33).
+        const bool wide_char = str_prefix == 0 && (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
         if (str_prefix == 0 && !wide_char && (std::isalpha(c) || c == '_')) {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
@@ -301,7 +302,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'') {
+        if (wide_char) {
             // L'x', u'x', U'x' ([lex.ccon]): one code point, given as UTF-8 in the source, as an escape, or as \u / \U /
             // \x with any number of hex digits. Own simplification: its value is an int here (wchar_t, char16_t and
             // char32_t are not types of their own in okay-ms either).

@@ -39,6 +39,140 @@ struct Parser {
         ns_mangled.clear();
         for (size_t i = 0; i < ns_parts.size(); ++i) current_ns += (i == 0 ? "" : "::") + ns_parts[i];
         for (size_t i = ns_parts.size(); i-- > 0;) ns_mangled += (ns_mangled.empty() ? "" : "@") + ns_parts[i];
+        rebind_ns_types();
+    }
+    // Round 33: a type name declared at namespace scope in more than one namespace ([basic.lookup.unqual] 1 and 4,
+    // [namespace.qual], [namespace.udecl]). `typedefs` is one flat table, so okay::script's `using Value = variant<...>`
+    // replaced okay::js's class `Value` everywhere after it (JavaScriptVM.cpp's `using js::Value; Value::Obj(h)` and the
+    // js class's own member functions). For a name declared by a typedef (or alias) at namespace scope, each declaration
+    // is kept here with its namespace, and so is each class of that name at namespace scope. When the namespace being
+    // read changes, the table gets the declaration that namespace sees: the one in the innermost enclosing namespace,
+    // else one in a namespace named by a using-directive (or a using-declaration, which okay-ms reads as a directive),
+    // else (no declaration in sight) the last typedef as before. A class wins by leaving the name out of the table (the
+    // class lookup then finds it). A typedef of the same name in a class, a template parameter or a local, written into
+    // the table over a namespace one, is never replaced: the table is changed only while it still holds what this code
+    // put there.
+    struct NsTypeDecl {
+        std::string ns;
+        bool is_class = false;
+        int struct_id = -1;
+        Type type{};
+    };
+    std::map<std::string, std::vector<NsTypeDecl>> ns_types_{};
+    std::map<std::string, int> ns_types_installed_{};  // name -> index of the declaration the table holds
+    size_t ns_types_scanned_ = 0;                       // classes looked at so far for those names
+    static bool same_type_(const Type& a, const Type& b) {
+        return a.pointers == b.pointers && a.base == b.base && a.array_len == b.array_len && a.more == b.more &&
+               a.struct_id == b.struct_id && a.func_id == b.func_id && a.is_unsigned == b.is_unsigned &&
+               a.is_const == b.is_const && a.is_ref == b.is_ref && a.rref == b.rref && a.is_bool == b.is_bool &&
+               a.wide == b.wide && a.enum_id == b.enum_id && a.memptr == b.memptr && a.memfn == b.memfn && a.tpat == b.tpat;
+    }
+    void add_ns_type_class(std::vector<NsTypeDecl>& decls, int sid) {
+        for (const NsTypeDecl& d : decls)
+            if (d.is_class && d.struct_id == sid) return;
+        NsTypeDecl d;
+        d.ns = structs[static_cast<size_t>(sid)].ns;
+        d.is_class = true;
+        d.struct_id = sid;
+        decls.push_back(d);
+    }
+    // A typedef (or `using N = T;`) read at namespace scope: into the table, and remembered with its namespace.
+    void declare_ns_typedef(const std::string& name, const Type& type) {
+        typedefs[name] = type;
+        const bool fresh = ns_types_.find(name) == ns_types_.end();
+        std::vector<NsTypeDecl>& decls = ns_types_[name];
+        int idx = -1;
+        for (size_t i = 0; i < decls.size(); ++i)
+            if (!decls[i].is_class && decls[i].ns == current_ns) idx = static_cast<int>(i);
+        if (idx < 0) {
+            NsTypeDecl d;
+            d.ns = current_ns;
+            decls.push_back(d);
+            idx = static_cast<int>(decls.size()) - 1;
+        }
+        decls[static_cast<size_t>(idx)].type = type;
+        if (fresh)
+            for (size_t i = 0; i < structs.size(); ++i)
+                if (structs[i].name == name && structs[i].parent < 0) add_ns_type_class(decls, static_cast<int>(i));
+        ns_types_installed_[name] = idx;
+        install_ns_type(name);
+    }
+    int pick_ns_type(const std::vector<NsTypeDecl>& decls) const {
+        int best = -1;
+        size_t best_len = 0;
+        for (size_t i = 0; i < decls.size(); ++i) {
+            if (!ns_encloses(decls[i].ns, current_ns)) continue;
+            const size_t len = decls[i].ns.size();
+            if (best < 0 || len > best_len || (len == best_len && decls[static_cast<size_t>(best)].is_class && !decls[i].is_class)) {
+                best = static_cast<int>(i);
+                best_len = len;
+            }
+        }
+        if (best >= 0) return best;
+        for (size_t u = using_namespaces.size(); u-- > 0 && best < 0;)
+            for (size_t i = 0; i < decls.size(); ++i)
+                if (ns_names(decls[i].ns, using_namespaces[u]) &&
+                    (best < 0 || (decls[static_cast<size_t>(best)].is_class && !decls[i].is_class)))
+                    best = static_cast<int>(i);
+        if (best >= 0) return best;
+        for (size_t i = decls.size(); i-- > 0;)
+            if (!decls[i].is_class) return static_cast<int>(i);
+        return -1;
+    }
+    void install_ns_type(const std::string& name) {
+        const auto it = ns_types_.find(name);
+        if (it == ns_types_.end() || it->second.size() < 2) return;
+        const std::vector<NsTypeDecl>& decls = it->second;
+        const int pick = pick_ns_type(decls);
+        if (pick < 0) return;
+        const auto inst = ns_types_installed_.find(name);
+        if (inst != ns_types_installed_.end()) {
+            if (inst->second == pick) return;
+            const NsTypeDecl& was = decls[static_cast<size_t>(inst->second)];
+            const auto td = typedefs.find(name);
+            if (was.is_class ? td != typedefs.end() : (td == typedefs.end() || !same_type_(td->second, was.type))) return;
+        }
+        const NsTypeDecl& now = decls[static_cast<size_t>(pick)];
+        if (now.is_class) typedefs.erase(name);
+        else typedefs[name] = now.type;
+        ns_types_installed_[name] = pick;
+    }
+    void rebind_ns_types() {
+        if (ns_types_.empty()) return;
+        for (; ns_types_scanned_ < structs.size(); ++ns_types_scanned_) {
+            const StructDef& sd = structs[ns_types_scanned_];
+            if (sd.parent >= 0) continue;
+            const auto it = ns_types_.find(sd.name);
+            if (it != ns_types_.end()) add_ns_type_class(it->second, static_cast<int>(ns_types_scanned_));
+        }
+        for (const auto& entry : ns_types_)
+            if (entry.second.size() >= 2) install_ns_type(entry.first);
+    }
+    // The type named by the qualified token k (`sc::Value` in an expression), when it is one of those names: true and the
+    // type (a class as base 3 and its id).
+    bool qualified_ns_type_at(size_t k, Type* out) {
+        if (k >= tokens.size() || !tokens[k].nsq) return false;
+        const int q = qualified_ns_type(tokens[k].text, tokens[k].qual);
+        if (q < 0) return false;
+        const NsTypeDecl& d = ns_types_[tokens[k].text][static_cast<size_t>(q)];
+        if (d.is_class) {
+            *out = Type{};
+            out->base = 3;
+            out->struct_id = d.struct_id;
+        } else {
+            *out = d.type;
+        }
+        return true;
+    }
+    // `ns::Name` where Name is one of those type names: the declaration in the namespace written (or -1).
+    int qualified_ns_type(const std::string& name, const std::string& qual) const {
+        const auto it = ns_types_.find(name);
+        if (it == ns_types_.end() || it->second.size() < 2 || qual.empty()) return -1;
+        int best = -1;
+        for (size_t i = 0; i < it->second.size(); ++i)
+            if (ns_names(it->second[i].ns, qual) && (best < 0 || (it->second[static_cast<size_t>(best)].is_class && !it->second[i].is_class)))
+                best = static_cast<int>(i);
+        return best;
     }
     // Spellings that only restate what the compiler already does are rewritten before parsing, each from
     // its rule in ISO/IEC 14882:
@@ -1081,6 +1215,22 @@ struct Parser {
                 fn.op = TArrow;
                 fn.text = f.name;
                 fn.kids.push_back(self);
+                if (sd.ref_members.count(f.name) > 0) {
+                    // A reference member is bound to its item: the field keeps the item's address ([dcl.init.aggr] 4.2,
+                    // [dcl.init.ref]). Before Round 33 the item was stored through the unset reference (JsLibJson.cpp's
+                    // `Reader r{rt, text};`, a class with default member initializers).
+                    Node bind;
+                    bind.kind = Node::Assign;
+                    bind.op = TAssign;
+                    bind.kids.push_back(std::move(fn));
+                    bind.kids.push_back(node_addr(std::move(args[k])));
+                    ++k;
+                    Node st;
+                    st.kind = Node::ExprStmt;
+                    st.kids.push_back(std::move(bind));
+                    steps.push_back(std::move(st));
+                    continue;
+                }
                 if (dflt == nullptr && f.type.base == 3 && f.type.pointers == 0 && !f.type.is_ref && !f.type.is_array() &&
                     f.type.struct_id >= 0 && obj_needs_ctor(f.type)) {
                     // No default constructor ran (the class has none: a member has no default constructor), so a
@@ -1600,6 +1750,13 @@ struct Parser {
         *value = static_cast<uint64_t>(it->second.cval);
         return true;
     }
+    // The class around class ctx for name lookup: the class it is nested in, or for a lambda's closure class the class of
+    // the member function the lambda is written in ([expr.prim.lambda.closure] 13, [basic.lookup.unqual]; Round 33,
+    // JsRegExp.cpp's `Entry e = stack.back();` in a lambda found another class's Entry).
+    int scope_around(int ctx) const {
+        const StructDef& sd = structs[static_cast<size_t>(ctx)];
+        return sd.parent >= 0 ? sd.parent : sd.lam_scope;
+    }
     // A class of this name nested in a class being read or in the class whose member function is being compiled (or a
     // class around those), or -1.
     int nested_class_in_scope(const std::string& name) const {
@@ -1607,7 +1764,7 @@ struct Parser {
             for (int depth = 0; ctx >= 0 && static_cast<size_t>(ctx) < structs.size() && depth < 64; ++depth) {
                 for (size_t i = 0; i < structs.size(); ++i)
                     if (structs[i].name == name && structs[i].parent == ctx) return static_cast<int>(i);
-                ctx = structs[static_cast<size_t>(ctx)].parent;
+                ctx = scope_around(ctx);
             }
             return -1;
         };
@@ -1678,7 +1835,7 @@ struct Parser {
             for (int depth = 0; ctx >= 0 && static_cast<size_t>(ctx) < structs.size() && depth < 64; ++depth) {
                 const int hit = nested_in(ctx);
                 if (hit >= 0) return hit;
-                ctx = structs[static_cast<size_t>(ctx)].parent;
+                ctx = scope_around(ctx);
             }
             return -1;
         };
@@ -1707,6 +1864,11 @@ struct Parser {
             }
         }
         if (best >= 0) return best;
+        // A namespace named by a using-directive (or a using-declaration, read as one): `using js::Value;` (Round 33).
+        for (size_t u = using_namespaces.size(); u-- > 0;)
+            for (size_t i = 0; i < structs.size(); ++i)
+                if (structs[i].name == name && structs[i].parent < 0 && ns_names(structs[i].ns, using_namespaces[u]))
+                    return static_cast<int>(i);
         const int top = nested_in(-1);
         return top >= 0 ? top : first;
     }
@@ -2082,6 +2244,7 @@ struct Parser {
                 fwd.is_union = as_union;
                 structs.push_back(fwd);
                 id = static_cast<int>(structs.size()) - 1;
+                if (fwd.parent < 0) rebind_ns_types();
             }
             type->base = 3;
             type->struct_id = id;
@@ -2165,6 +2328,21 @@ struct Parser {
             }
             if (!instantiate_class(tname, targs, type)) return false;
             return qualify(type, had_typename);
+        }
+        if (is(TIdent) && cur().nsq && nested_class_in_scope(cur().text) < 0) {
+            // script::Value beside js::Value (Round 33): the declaration in the namespace written.
+            const int q = qualified_ns_type(cur().text, cur().qual);
+            if (q >= 0) {
+                const NsTypeDecl& d = ns_types_[cur().text][static_cast<size_t>(q)];
+                if (d.is_class) {
+                    type->base = 3;
+                    type->struct_id = d.struct_id;
+                } else {
+                    *type = d.type;
+                }
+                next();
+                return qualify(type, had_typename);
+            }
         }
         if (is(TIdent) && typedefs.find(cur().text) != typedefs.end() && nested_class_in_scope(cur().text) < 0) {
             const int cls = enum_name_loses(cur().text);
@@ -3002,7 +3180,13 @@ struct Parser {
             return -1;
         }
         const int id = find_struct(text);
-        return id >= 0 && structs[static_cast<size_t>(id)].cxx ? id : -1;
+        if (id < 0) return -1;
+        if (structs[static_cast<size_t>(id)].cxx) return id;
+        // A plain struct (no base, no member functions) is a scope too when a class is nested in it ([class.nest];
+        // Round 33, JsInternal.hpp's MapObj::Entry{k, v, true}).
+        for (const StructDef& sd : structs)
+            if (sd.parent == id) return id;
+        return -1;
     }
     // A static data member or class constant used as an expression: a constant is its value, a
     // data member names its global.
@@ -3266,6 +3450,7 @@ struct Parser {
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_lambda(Node* out);
     bool braced_temp(int bsid, Node* out);
+    bool braced_arg(Node* arg);
     // At a '{': is there another '{' inside it, before its matching '}'?
     bool has_nested_braces_ahead() const {
         int depth = 0;
@@ -4629,6 +4814,7 @@ struct Parser {
             structs.push_back(def);
             self = static_cast<int>(structs.size()) - 1;
         }
+        if (def.parent < 0) rebind_ns_types();  // a class beside a typedef of its name in another namespace (Round 33)
         struct OpenGuard {
             std::vector<int>& open;
             int id;
@@ -5720,6 +5906,13 @@ struct Parser {
                     if (candidate.name == field.name) init = &candidate;
                 if (def.ref_members.count(field.name) > 0) {
                     // r(x) for a reference member: the field is bound to x, it keeps x's address.
+                    if (init == nullptr && implicit) {
+                        // The implicit default constructor of an aggregate with a reference member and default member
+                        // initializers (JsLibJson.cpp's `struct Reader { Runtime& rt; ... int depth = 0; }`; Round 33): it
+                        // is deleted ([class.default.ctor] 2.3), but okay-ms runs it to store the other members' defaults
+                        // before `Reader r{rt, text};` binds the reference (special_call). The reference is left unset.
+                        continue;
+                    }
                     if (init == nullptr || init->args.size() != 1) {
                         error = "the reference member " + field.name + " needs a member initializer";
                         return false;
@@ -8025,6 +8218,7 @@ struct Parser {
         const size_t saved_at = at;
         const std::string saved_ns = current_ns;
         current_ns = td.ns;
+        rebind_ns_types();
         // An explicit specialization is an ordinary function: no parameters are bound.
         const auto spec = func_specs.find(key);
         const auto saved = bind_params(td, spec != func_specs.end() ? std::vector<TArg>() : args);
@@ -8078,6 +8272,7 @@ struct Parser {
         unbind_params(saved);
         at = saved_at;
         current_ns = saved_ns;
+        rebind_ns_types();
         in_instance.erase(key);
         return ok;
     }
@@ -9316,13 +9511,13 @@ struct Parser {
             }
             if (is_typedef) {
                 decl.type.is_const = is_const;
-                typedefs[decl.name] = decl.type;
+                declare_ns_typedef(decl.name, decl.type);
                 // typedef struct _X { ... } X, *PX, *LPX; ([dcl.typedef]): every declarator names the type read first.
                 while (accept(TComma)) {
                     Declarator more;
                     if (!parse_declarator(type, &more)) return false;
                     more.type.is_const = is_const;
-                    typedefs[more.name] = more.type;
+                    declare_ns_typedef(more.name, more.type);
                 }
                 if (!expect(TSemi, "';'")) return false;
                 continue;

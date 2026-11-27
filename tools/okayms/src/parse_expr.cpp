@@ -240,7 +240,8 @@ bool Parser::braced_temp(int bsid, Node* out) {
             if (!is(TRBrace)) {
                 do {
                     Node a;
-                    if (!parse_expr(1, &a)) return false;
+                    // A nested list is an argument for the constructor's parameter (pair{name, {line, col}}).
+                    if (is(TLBrace) ? !braced_arg(&a) : !parse_expr(1, &a)) return false;
                     bargs.push_back(std::move(a));
                 } while (accept(TComma));
             }
@@ -1348,7 +1349,21 @@ bool Parser::parse_unary(Node* out) {
         const bool sizeof_paren = is(TLParen);
         if (sizeof_paren) next();
         int bytes = 0;
-        if (sizeof_paren && is_decl_start() && !is(TStatic)) {
+        bool nested_type = false;
+        if (sizeof_paren && is(TIdent) && at + 2 < tokens.size() && tokens[at + 1].kind == TColonColon &&
+            tokens[at + 2].kind == TIdent && find_struct(cur().text) >= 0 && !local_visible(cur().text)) {
+            // sizeof(Outer::Inner) ([expr.sizeof], [class.nest]; Round 33, JsLibCollections.cpp's sizeof(MapObj::Entry)):
+            // a class qualifier followed by a nested type is a type; Outer::member stays an expression.
+            const size_t saved_at = at;
+            Type probe;
+            bool imp = false;
+            bool exp = false;
+            const std::string saved_error = error;
+            nested_type = parse_type(&probe, &imp, &exp) && (is(TRParen) || is(TStar) || is(TAmp) || is(TLBrack));
+            at = saved_at;
+            error = saved_error;
+        }
+        if (sizeof_paren && (nested_type || is_decl_start()) && !is(TStatic)) {
             Type ty;
             bool imp = false;
             bool exp = false;
@@ -2002,10 +2017,14 @@ bool Parser::parse_unary(Node* out) {
             // C{args}: a temporary object of a class made from a braced list ([expr.type.conv], [dcl.init.list]):
             // by a constructor, or member by member for an aggregate.
             int bsid = -1;
-            auto btd = typedefs.find(name);
-            if (btd != typedefs.end()) {
-                if (btd->second.base == 3 && btd->second.pointers == 0 && btd->second.struct_id >= 0)
-                    bsid = btd->second.struct_id;
+            // sc::Value{...} beside another Value (Round 33): the type of the namespace written.
+            Type qtd;
+            const bool qualified = at > 0 && tokens[at - 1].text == name && qualified_ns_type_at(at - 1, &qtd);
+            const auto btd_it = typedefs.find(name);
+            const Type* btd = qualified ? &qtd : (btd_it != typedefs.end() ? &btd_it->second : nullptr);
+            if (btd != nullptr) {
+                if (btd->base == 3 && btd->pointers == 0 && btd->struct_id >= 0)
+                    bsid = btd->struct_id;
             } else if (class_name_text(name) || find_struct(name) >= 0) {
                 bsid = find_struct(name);
             }
@@ -2016,9 +2035,9 @@ bool Parser::parse_unary(Node* out) {
                 if (!braced_temp(bsid, out)) return false;
                 return parse_postfix(out);
             }
-            if (btd != typedefs.end() && !named_function && btd->second.base != 3 && !btd->second.is_array()) {
+            if (btd != nullptr && !named_function && btd->base != 3 && !btd->is_array()) {
                 // T{} and T{v} for a scalar or enumeration type: zero, or v converted ([expr.type.conv] 2, [dcl.init.list]).
-                const Type st = btd->second;
+                const Type st = *btd;
                 next();
                 Node value;
                 if (accept(TRBrace)) {
@@ -2039,10 +2058,13 @@ bool Parser::parse_unary(Node* out) {
             // C(args): a temporary object of a class built by a constructor ([expr.type.conv]). It is
             // made before the statement that uses it and destroyed after it.
             int csid = -1;
-            auto td = typedefs.find(name);
-            if (td != typedefs.end()) {
-                if (td->second.base == 3 && td->second.pointers == 0 && td->second.struct_id >= 0)
-                    csid = td->second.struct_id;
+            Type qtd;
+            const bool qualified = at > 0 && tokens[at - 1].text == name && qualified_ns_type_at(at - 1, &qtd);
+            const auto td_it = typedefs.find(name);
+            const Type* td = qualified ? &qtd : (td_it != typedefs.end() ? &td_it->second : nullptr);
+            if (td != nullptr) {
+                if (td->base == 3 && td->pointers == 0 && td->struct_id >= 0)
+                    csid = td->struct_id;
             } else if (class_name_text(name) || find_struct(name) >= 0) {
                 csid = find_struct(name);
             }
@@ -2093,6 +2115,42 @@ bool Parser::parse_unary(Node* out) {
         if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen)) && !local_visible(name) && !plain_beats_template) {
             std::vector<TArg> targs;
             if (is(TLt) && !parse_func_template_args(name, &targs)) return false;
+            if (!is(TLParen) && !targs.empty()) {
+                // Add<0> and ErrorCtor<ErrorType::Error> without a call ([temp.arg.explicit] 4, [over.over], [conv.func];
+                // Round 33, JsLibArray.cpp's table of TACtor<0> ... TACtor<10>): the instance made from the arguments
+                // written, as a pointer to it (the same node as a pointer to a static member function).
+                std::string inst;
+                if (!instantiate_function(name, std::move(targs), {}, &inst)) return false;
+                const FuncDecl* known = nullptr;
+                for (const FuncDecl& fd : funcs)
+                    if (fd.name == inst) known = &fd;
+                if (known == nullptr) {
+                    error = "no instance " + inst;
+                    return false;
+                }
+                FuncType ft;
+                ft.ret = known->ret;
+                ft.params = known->params;
+                for (size_t i = 0; i < ft.params.size() && i < known->param_ref.size(); ++i)
+                    if (known->param_ref[i]) {
+                        ft.params[i].pointers -= 1;
+                        ft.params[i].is_ref = true;
+                    }
+                Type fp;
+                fp.base = 1;
+                fp.pointers = 1;
+                fp.func_id = static_cast<int>(func_types.size());
+                func_types.push_back(ft);
+                Node fn_name;
+                fn_name.kind = Node::Name;
+                fn_name.text = inst;
+                *out = Node{};
+                out->kind = Node::Unary;
+                out->type = fp;
+                out->text = "<static-fn>";
+                out->kids.push_back(std::move(fn_name));
+                return parse_postfix(out);
+            }
             if (!expect(TLParen, "'('")) return false;
             std::vector<Node> cargs;
             if (!parse_call_args(&cargs)) return false;

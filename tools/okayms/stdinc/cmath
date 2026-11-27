@@ -285,6 +285,32 @@ inline float tanh(float x) {
     const double e2 = okay_math::exp_d(2.0 * xd);
     return (float)((e2 - 1.0) / (e2 + 1.0));
 }
+// Round 33, written from ISO/IEC 9899 7.12.3 and the IEEE-754 binary64 layout: the classification functions for double.
+// Before, std::isinf(1e300) and std::isfinite(1e300) went through the float versions (the double was converted to float,
+// which overflows to infinity): a wrong answer. signbit reads the sign bit, so signbit(-0.0) is true (JsLibArray.cpp).
+namespace okay_math {
+union Bits64 { double d; unsigned long long u; };
+}
+inline bool isnan(double x) { return x != x; }
+inline bool isfinite(double x) { return x <= 1.7976931348623157e+308 && x >= -1.7976931348623157e+308; }
+inline bool isinf(double x) { return x > 1.7976931348623157e+308 || x < -1.7976931348623157e+308; }
+inline bool signbit(double x) {
+    okay_math::Bits64 b;
+    b.d = x;
+    return (b.u >> 63) != 0;
+}
+inline bool signbit(float x) {
+    okay_math::Bits32 b;
+    b.f = x;
+    return (b.u >> 31) != 0;
+}
+inline double copysign(double x, double y) {
+    okay_math::Bits64 a, b;
+    a.d = x;
+    b.d = y;
+    a.u = (a.u & 0x7FFFFFFFFFFFFFFFull) | (b.u & 0x8000000000000000ull);
+    return a.d;
+}
 }
 // INFINITY, NAN, HUGE_VAL and HUGE_VALF (ISO/IEC 9899 7.12 3-5): built from the bit patterns above. Own difference: they
 // are values computed at run time, not constant expressions (a static initializer cannot use them).

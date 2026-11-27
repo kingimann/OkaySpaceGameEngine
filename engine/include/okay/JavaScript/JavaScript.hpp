@@ -415,6 +415,8 @@ public:
         bool writable = false, enumerable = false, configurable = false;
     };
     bool DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d);
+    /// DefinePropertyOrThrow with every field given (value and the three flags).
+    void DefineFullData(Object* o, GcObj* key, const Value& v, std::uint8_t flags);
     /// [[OwnPropertyKeys]] in spec order: indices ascending, then strings, then symbols.
     std::vector<GcObj*> OwnKeys(Object* o, bool strings = true, bool symbols = false);
     bool SetPrototype(Object* o, Object* proto);

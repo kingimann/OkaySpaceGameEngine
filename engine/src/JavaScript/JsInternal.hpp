@@ -607,6 +607,7 @@ inline Object*& Intrinsic(Runtime& rt, int slot) {
 }
 
 // the machine (JsInterpreter.cpp)
+bool HostEntry(Runtime& rt, const std::function<Value()>& body, Value* result, std::string* err);
 Value Execute(Runtime& rt, int entryFrame);
 /// Push a frame for `fn` whose callee, this and args are already at sp - argc - 2 .. sp.
 /// Returns false when fn is not a closure (the caller handles natives).

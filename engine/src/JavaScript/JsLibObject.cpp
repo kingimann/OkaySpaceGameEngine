@@ -1251,7 +1251,7 @@ Value ProxyConstruct(Runtime& rt, ProxyObj* p, const Value* args, int argc, Obje
 
 namespace {
 // 10.5.14 ProxyCreate
-ProxyObj* NewProxy(Runtime& rt, const Value& target, const Value& handler) {
+ProxyObj* ProxyCreate(Runtime& rt, const Value& target, const Value& handler) {
     if (!target.IsObj() || !handler.IsObj()) rt.ThrowType("a Proxy needs an object as its target and its handler");
     ProxyObj* p = rt.Alloc<ProxyObj>();
     p->proto = nullptr;
@@ -1266,12 +1266,12 @@ ProxyObj* NewProxy(Runtime& rt, const Value& target, const Value& handler) {
 void InstallProxyLib(Runtime& rt) {
     NativeFunc* pc = rt.NewNative([](Runtime& rt, CallArgs& a) {
         if (!a.newTarget) rt.ThrowType("Proxy must be called with 'new'");
-        return Value::Obj(NewProxy(rt, a[0], a[1]));
+        return Value::Obj(ProxyCreate(rt, a[0], a[1]));
     }, "Proxy", 2);
     pc->ctor = true;   // 28.2.1: no "prototype" property
     rt.global->AddRaw(rt.Intern("Proxy"), Value::Obj(pc), kHidden);
     DefNative(rt, pc, "revocable", [](Runtime& rt, CallArgs& a) {   // 28.2.2.1
-        ProxyObj* p = NewProxy(rt, a[0], a[1]);
+        ProxyObj* p = ProxyCreate(rt, a[0], a[1]);
         NativeFunc* revoke = rt.NewNative([](Runtime&, CallArgs& a) {
             NativeFunc* self = a.callee;
             if (!self->slots.empty() && self->slots[0].IsObj()) {

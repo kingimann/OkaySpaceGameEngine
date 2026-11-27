@@ -503,38 +503,15 @@ struct Parser {
             return N(NK::Empty, t);
         }
         if (EatWord("default")) {
-            Node* n = N(NK::ExportDefault, t);
-            if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
-                bool isAsync = EatWord("async");
-                n->a = FunctionExpr(isAsync, true);
-                if (!n->a->fn->name.empty()) {
-                    Node* d = N(NK::FuncDecl, t);
-                    d->a = n->a;
-                    n->b = d;
-                    AddExport(u"default", n->a->fn->name, t);
-                } else {
-                    NameAnon(n->a, u"default");
-                    AddExport(u"default", u"*default*", t);
-                }
-                return n;
+            Node* n = ExportDefault(t);
+            // 16.2.3.7: a named function or class is its own binding; anything else is the hidden "*default*" one,
+            // and an anonymous function or class is named "default" (NamedEvaluation)
+            const std::u16string local = n->b ? (n->b->k == NK::FuncDecl ? n->a->fn->name : n->a->str) : u"*default*";
+            if (!n->b) {
+                if (n->a->k == NK::Func) NameAnon(n->a, u"default");
+                else if (n->a->k == NK::Class) NameAnonClass(n->a, u"default");
             }
-            if (IsWord("class")) {
-                n->a = ClassExpr(true);
-                if (!n->a->str.empty()) {
-                    n->b = n->a;
-                    AddExport(u"default", n->a->str, t);
-                } else {
-                    NameAnonClass(n->a, u"default");
-                    AddExport(u"default", u"*default*", t);
-                }
-                return n;
-            }
-            n->a = Assignment();
-            if (n->a->k == NK::Func) NameAnon(n->a, u"default");
-            else if (n->a->k == NK::Class) NameAnonClass(n->a, u"default");
-            Semicolon();
-            CheckCover();
-            AddExport(u"default", u"*default*", t);
+            AddExport(u"default", local, t);
             return n;
         }
         if (IsWord("var") || IsWord("let") || IsWord("const") || IsWord("function") || IsWord("class") ||
@@ -566,34 +543,38 @@ struct Parser {
         PopFunc();
     }
 
+    // `export default` (after the word default): a function or class declaration (named ones are also declared:
+    // n->b) or an expression. Scripts and modules share it.
+    Node* ExportDefault(const Token& t) {
+        Node* n = N(NK::ExportDefault, t);
+        if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
+            bool isAsync = EatWord("async");
+            n->a = FunctionExpr(isAsync, true);
+            if (!n->a->fn->name.empty()) {   // export default function name() {}: also a declaration
+                Node* d = N(NK::FuncDecl, t);
+                d->a = n->a;
+                n->b = d;
+            }
+            return n;
+        }
+        if (IsWord("class")) {
+            n->a = ClassExpr(true);
+            if (!n->a->str.empty()) n->b = n->a;   // a named class is also declared
+            return n;
+        }
+        n->a = Assignment();
+        Semicolon();
+        CheckCover();
+        return n;
+    }
+
     Node* TopLevelItem() {
         if (IsWord("import") && !IsPAt(pos + 1, P_LParen) && !IsPAt(pos + 1, P_Dot))
             Fail("import declarations are not supported (game scripts are one file)");
         if (IsWord("export")) {
             const Token& t = Cur();
             Next();
-            if (EatWord("default")) {
-                Node* n = N(NK::ExportDefault, t);
-                if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
-                    bool isAsync = EatWord("async");
-                    n->a = FunctionExpr(isAsync, true);
-                    if (!n->a->fn->name.empty()) {   // export default function name() {}: also a declaration
-                        Node* d = N(NK::FuncDecl, t);
-                        d->a = n->a;
-                        n->b = d;
-                    }
-                    return n;
-                }
-                if (IsWord("class")) {
-                    n->a = ClassExpr(true);
-                    if (!n->a->str.empty()) n->b = n->a;   // a named class is also declared
-                    return n;
-                }
-                n->a = Assignment();
-                Semicolon();
-                CheckCover();
-                return n;
-            }
+            if (EatWord("default")) return ExportDefault(t);
             if (IsWord("var") || IsWord("let") || IsWord("const") || IsWord("function") || IsWord("class") ||
                 (IsWord("async") && IsWordAt(pos + 1, "function")))
                 return StatementListItem();
@@ -1834,8 +1815,9 @@ struct Parser {
     }
 
     // The static fields' initializer function (made on first use): static fields and static blocks run in it, in order.
-    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) {
-        FuncInfo*& init = ci->staticFields;
+    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) { return FieldInit(ci->staticFields, at); }
+    // A class's instance or static field initializer function, made on first use.
+    FuncInfo* FieldInit(FuncInfo*& init, const Token& at) {
         if (!init) {
             init = ast.NewFunc();
             init->method = true;
@@ -1879,16 +1861,7 @@ struct Parser {
         const std::u16string hidden = m->str + (accessor == 1 ? u":g" : accessor == 2 ? u":s" : u":m");
         ci->privHidden.push_back(hidden);
         if (isStatic) return;
-        FuncInfo*& init = ci->instFields;
-        if (!init) {
-            init = ast.NewFunc();
-            init->method = true;
-            init->fieldInit = true;
-            init->line = kt.line;
-            init->col = kt.col;
-            init->name = u"<fields>";
-            init->body = ast.NewNode(NK::Block, kt.line, kt.col);
-        }
+        FuncInfo* init = FieldInit(ci->instFields, kt);
         Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
         f->str = m->str;
         f->flags |= NF_Private | NF_Method;
@@ -1986,16 +1959,7 @@ struct Parser {
             if (isCtorName) FailAt(kt, "a class field can not be named 'constructor'");
             if (isStatic && Eq(m->str, "prototype")) FailAt(kt, "a class can not have a static member named 'prototype'");
             if (isStatic) StaticInit(ci, kt);
-            FuncInfo*& init = isStatic ? ci->staticFields : ci->instFields;
-            if (!init) {
-                init = ast.NewFunc();
-                init->method = true;
-                init->fieldInit = true;
-                init->line = kt.line;
-                init->col = kt.col;
-                init->name = u"<fields>";
-                init->body = ast.NewNode(NK::Block, kt.line, kt.col);
-            }
+            FuncInfo* init = FieldInit(isStatic ? ci->staticFields : ci->instFields, kt);
             Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
             f->str = m->str;
             if (m->flags & NF_Private) {

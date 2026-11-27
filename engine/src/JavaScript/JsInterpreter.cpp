@@ -433,8 +433,10 @@ Value Runtime::Construct(const Value& fn, const Value* args, int argc, Object* n
     return r;
 }
 
-bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Value>& args, Value* result, std::string* err) {
-    M_t& M = *vm;
+// A call into the engine from the host (CallHost, ConstructHost, RunModule): run `body`, then the promise jobs; a thrown
+// error or a stop comes back as false with its text, and the machine is put back as it was.
+bool HostEntry(Runtime& rt, const std::function<Value()>& body, Value* result, std::string* err) {
+    M_t& M = *rt.vm;
     Value* sp0 = M.sp;
     int nf = M.nframes;
     std::size_t nh = M.handlers.size();
@@ -443,18 +445,18 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
     const bool top = M.nativeDepth == 0 && M.nframes == 0;
     try {
-        Value r = Call(fn, thisv, args.data(), (int)args.size());
-        Keep(r);
-        RunJobs();
+        Value r = body();
+        rt.Keep(r);
+        rt.RunJobs();
         if (top) {
-            scratch_.clear();
-            Keep(r);   // the host reads it before its next call
+            rt.Scratch().clear();
+            rt.Keep(r);   // the host reads it before its next call
         }
         if (result) *result = r;
         return true;
     } catch (const JsThrow&) {
-        if (err) *err = ExceptionText(exception);
-        exception = Value();
+        if (err) *err = rt.ExceptionText(rt.exception);
+        rt.exception = Value();
     } catch (const JsTerminate& t) {
         if (err) *err = t.why;
         M.jobs.clear();
@@ -463,42 +465,16 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     M.nframes = nf;
     M.handlers.resize(nh);
     M.nativeDepth = nd;
-    if (top) scratch_.clear();
+    if (top) rt.Scratch().clear();
     return false;
 }
 
+bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Value>& args, Value* result, std::string* err) {
+    return HostEntry(*this, [&]() { return Call(fn, thisv, args.data(), (int)args.size()); }, result, err);
+}
+
 bool Runtime::ConstructHost(const Value& fn, const std::vector<Value>& args, Value* result, std::string* err) {
-    M_t& M = *vm;
-    Value* sp0 = M.sp;
-    int nf = M.nframes;
-    std::size_t nh = M.handlers.size();
-    int nd = M.nativeDepth;
-    // At the top level nothing else holds scratch values: what the host made since the last call (keys,
-    // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
-    const bool top = M.nativeDepth == 0 && M.nframes == 0;
-    try {
-        Value r = Construct(fn, args.data(), (int)args.size());
-        Keep(r);
-        RunJobs();
-        if (top) {
-            scratch_.clear();
-            Keep(r);   // the host reads it before its next call
-        }
-        if (result) *result = r;
-        return true;
-    } catch (const JsThrow&) {
-        if (err) *err = ExceptionText(exception);
-        exception = Value();
-    } catch (const JsTerminate& t) {
-        if (err) *err = t.why;
-        M.jobs.clear();
-    }
-    M.sp = sp0;
-    M.nframes = nf;
-    M.handlers.resize(nh);
-    M.nativeDepth = nd;
-    if (top) scratch_.clear();
-    return false;
+    return HostEntry(*this, [&]() { return Construct(fn, args.data(), (int)args.size()); }, result, err);
 }
 
 void Runtime::RunJobs() {

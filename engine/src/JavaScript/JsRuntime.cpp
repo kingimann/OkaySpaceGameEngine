@@ -1301,6 +1301,17 @@ bool Runtime::Delete(Object* o, GcObj* key) {
     return true;
 }
 
+// DefinePropertyOrThrow with a complete data descriptor, through the object's [[DefineOwnProperty]]
+void Runtime::DefineFullData(Object* o, GcObj* key, const Value& v, std::uint8_t flags) {
+    Descriptor d;
+    d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+    d.value = v;
+    d.writable = flags & kWritable;
+    d.enumerable = flags & kEnumerable;
+    d.configurable = flags & kConfigurable;
+    if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+}
+
 void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t flags) {
     if (o->cls == Cls::Array || o->cls == Cls::Arguments) {
         std::int64_t i = KeyIndex(key);
@@ -1310,13 +1321,7 @@ void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t fla
             return;
         }
         if (i >= 0 || key == atoms->length) {
-            Descriptor d;
-            d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
-            d.value = v;
-            d.writable = flags & kWritable;
-            d.enumerable = flags & kEnumerable;
-            d.configurable = flags & kConfigurable;
-            if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+            DefineFullData(o, key, v, flags);
             return;
         }
     }
@@ -1326,13 +1331,7 @@ void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t fla
     }
     double tn;
     if (o->cls == Cls::Proxy || (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn))) {
-        Descriptor d;   // the exotic [[DefineOwnProperty]] decides (a proxy's trap, a typed array's index rules)
-        d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
-        d.value = v;
-        d.writable = flags & kWritable;
-        d.enumerable = flags & kEnumerable;
-        d.configurable = flags & kConfigurable;
-        if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+        DefineFullData(o, key, v, flags);   // the exotic [[DefineOwnProperty]] decides (a proxy's trap, a typed array's rules)
         return;
     }
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
@@ -2142,7 +2141,7 @@ constexpr int kMaxResolveDepth = 1000;
 
 [[noreturn]] void ModuleSyntaxError(Runtime& rt, const std::string& msg) { rt.ThrowError(ErrorType::SyntaxError, msg); }
 
-ModuleRec* NewModuleRec(Runtime& rt, const std::string& key, const std::string& source) {
+ModuleRec* ParseModuleRecord(Runtime& rt, const std::string& key, const std::string& source) {
     Runtime::Impl& M = *rt.vm;
     if (M.moduleList.size() >= kMaxModules) rt.ThrowRange("too many modules (" + std::to_string(kMaxModules) + ")");
     rt.Charge(64 + source.size() / 64);
@@ -2185,13 +2184,13 @@ ModuleRec* FetchModule(Runtime& rt, const std::string& key) {
     if (it != rt.vm->moduleMap.end()) return it->second;
     std::string source, why;
     if (!rt.modules.fetch || !rt.modules.fetch(key, source, why)) rt.ThrowType("can not load the module '" + key + "': " + why);
-    return NewModuleRec(rt, key, source);
+    return ParseModuleRecord(rt, key, source);
 }
 
 // 16.2.1.5.1 LoadRequestedModules, as a work list: every module of the graph is loaded once
 ModuleRec* LoadGraph(Runtime& rt, const std::string& key, const std::string* source) {
     auto it = rt.vm->moduleMap.find(key);
-    ModuleRec* root = it != rt.vm->moduleMap.end() ? it->second : source ? NewModuleRec(rt, key, *source) : FetchModule(rt, key);
+    ModuleRec* root = it != rt.vm->moduleMap.end() ? it->second : source ? ParseModuleRecord(rt, key, *source) : FetchModule(rt, key);
     std::vector<ModuleRec*> work{root};
     while (!work.empty()) {
         ModuleRec* m = work.back();
@@ -2542,13 +2541,8 @@ void DynamicImport(Runtime& rt, PromiseObj* p, const std::string& specifier, con
 }
 
 bool Runtime::RunModule(const std::string& source, const std::string& key, std::string* err, Value* ns) {
-    Impl& M = *vm;
-    Value* sp0 = M.sp;
-    int nf = M.nframes;
-    std::size_t nh = M.handlers.size();
-    int nd = M.nativeDepth;
-    const bool top = M.nativeDepth == 0 && M.nframes == 0;
-    try {
+    Value out;
+    const bool ok = HostEntry(*this, [&]() {
         ModuleRec* root = LoadGraph(*this, key, &source);
         Link(*this, root);
         PromiseObj* result = NewPromise(*this);
@@ -2556,29 +2550,11 @@ bool Runtime::RunModule(const std::string& source, const std::string& key, std::
         Keep(result);
         StartEval(*this, root, result);
         RunJobs();
-        if (result->state == 2) {
-            if (err) *err = ExceptionText(result->result);
-        } else {
-            if (ns && result->state == 1) *ns = result->result;
-            if (top) {
-                scratch_.clear();
-                if (ns) Keep(*ns);
-            }
-            return true;
-        }
-    } catch (const JsThrow&) {
-        if (err) *err = ExceptionText(exception);
-        exception = Value();
-    } catch (const JsTerminate& t) {
-        if (err) *err = t.why;
-        M.jobs.clear();
-    }
-    M.sp = sp0;
-    M.nframes = nf;
-    M.handlers.resize(nh);
-    M.nativeDepth = nd;
-    if (top) scratch_.clear();
-    return false;
+        if (result->state == 2) Throw(result->result);   // the module (or one it imports) failed
+        return result->state == 1 ? result->result : Value();   // pending: still waiting on a top-level await
+    }, &out, err);
+    if (ok && ns) *ns = out;
+    return ok;
 }
 
 } // namespace okay::js

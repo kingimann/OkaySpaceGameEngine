@@ -34,8 +34,6 @@ void OkayScriptVM::Impl::RegisterFriendlyAliasBuiltins(BuiltinCtx& c) {
         alias("get_y", "pos_y");
         alias("get_z", "pos_z");
         alias("velocity", "set_velocity");
-        alias("screen_width", "screen_w");
-        alias("screen_height", "screen_h");
         alias("debug", "debug_log");
 
 }

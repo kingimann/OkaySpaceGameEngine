@@ -89,6 +89,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     WorkerCall.cpp                                                     # one call on its own thread, collected on a later frame (update check, Problems pass)
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
+    DeviceEmulator.cpp DeviceEmulatorModel.cpp                         # the Game view's device emulator: drawing (ImGui) + model (devices, touch, keyboard, settings)
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors

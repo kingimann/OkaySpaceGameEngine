@@ -37,6 +37,7 @@ float Input::s_mouseWheelX = 0.0f;
 std::vector<Input::Touch> Input::s_touches;
 bool Input::s_uiCaptured = false;
 bool Input::s_touchScreen = false;
+float Input::s_accel[3] = {0.0f, 0.0f, 0.0f};
 
 #if defined(__unix__) || defined(__APPLE__)
 namespace {

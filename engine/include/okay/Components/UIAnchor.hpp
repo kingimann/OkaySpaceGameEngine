@@ -33,10 +33,23 @@ inline bool AnchorIsStretch(UIAnchor a) {
 
 /// Current UI canvas (render-target) size in pixels. The runtime sets this each
 /// frame so anchored widgets and their hit-tests agree on where things sit.
+/// This is also the state behind the scripts' Screen API (Screen.width, Screen.dpi, Screen.orientation...): the
+/// host fills the extra facts below (the editor's device emulator from the emulated phone; a desktop leaves the
+/// defaults).
 struct UICanvas {
     static float& Width()  { static float w = 1280.0f; return w; }
     static float& Height() { static float h = 720.0f;  return h; }
     static void Set(float w, float h) { Width() = w; Height() = h; }
+    /// Dots per inch of the canvas as drawn: a length of Dpi() canvas pixels is one inch on the screen. 96 on a desktop.
+    static float& Dpi() { static float d = 96.0f; return d; }
+    /// 0 portrait, 1 landscape left (the device's top edge on the left), 2 portrait upside down, 3 landscape right;
+    /// -1 = no device says: landscape when the canvas is wider than tall (OrientationNow).
+    static int& Orientation() { static int o = -1; return o; }
+    static int OrientationNow() { return Orientation() >= 0 ? Orientation() : (Width() >= Height() ? 1 : 0); }
+    /// The system's dark appearance (a phone's dark mode); false on a desktop.
+    static bool& DarkTheme() { static bool d = false; return d; }
+    /// Height in canvas pixels of the on-screen keyboard covering the bottom of the screen (0 = not shown).
+    static float& KeyboardHeight() { static float k = 0.0f; return k; }
 };
 
 /// Extra scale applied to Constant-Pixel-Size UI so the editor's Game view can preview

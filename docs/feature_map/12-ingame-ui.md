@@ -216,21 +216,21 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 
 ### 12.9 Mobile scaling
 - **System:** Game UI
-- **What:** Making UI fit phones and tablets: screen-shape matching, safe area, touch scrolling and the Game view's device emulator.
+- **What:** Making UI fit phones and tablets: screen-shape matching, safe area, touch scrolling and the Game view's device emulator (43 phones, foldables and tablets plus a custom device; real resolution and density, touch with two fingers, keyboard, tilt, slow-device and network conditions, several devices side by side).
 - **Parts:**
   - 12.9.1 Screen match modes - `Components/Canvas` - Expand keeps a landscape layout whole on a portrait phone
   - 12.9.2 Safe area insets - `Components/UISafeArea` - the host sets `UISafeInsets()` (the editor from the emulated device, a mobile build from the OS); the per-frame layout pass in `UI/UILayoutUpdate` is shared by player and editor
   - 12.9.3 Touch scrolling - `Components/UITouchScroll` - finger drag and fling in scroll and list views
-  - 12.9.4 Device emulator - `editor/main.cpp` (Mobile emulator ~41427-41507, `DrawDeviceBody`, `DrawDeviceScreenOverlay`) - phone and tablet presets with notch, corners, home bar; Rotate and Safe-area tint
-- **Code:** `Components/Canvas`, `Components/UISafeArea`, `Components/UITouchScroll`, `UI/UILayoutUpdate`, `editor/main.cpp`
-- **API:** `UISafeInsets()`, `Canvas::screenMatch`, `UITouchScroll::Step`
-- **Editor:** Game view resolution/device menu, Portrait/Landscape, Safe area toggle; Canvas "Add Safe Area"
+  - 12.9.4 Device emulator - `editor/DeviceEmulatorModel.hpp` (device table, safe areas per orientation, placement and mouse-to-touch maths, touch emulation, keyboard, tilt, conditions, settings; no UI library) and `editor/DeviceEmulator.cpp` (drawing and frame-loop feed; main.cpp only calls `DevEmu*`) - 43 devices (iPhone, Android, foldables, iPad, Android tablets) with pixels, ppi, corner radius, cut-out (notch, island, punch hole, home button), status and home/nav bars, insets for all four turns; a Custom device saved in the project; Fit / 100% / zoom with pan; 3D rendered at the device's pixels; the Screen API reports the device (`Screen.dpi`, `orientation`, `safeArea*`, `darkMode`, `keyboardHeight`); animated rotate and auto-rotate from the tilt; the mouse is a finger (touch events, Alt = second finger for pinch / rotate, Alt+Shift = two-finger pan, touch points shown); an on-screen keyboard for game text fields that shrinks the safe area; status bar (time, signal, battery), light / dark theme, Android Back = Escape; tilt pad feeding `Input.acceleration`; frame-rate cap and Slow / Offline network (through the net simulator) while playing; up to 3 more devices side by side; screenshots to `Logs/Screenshots`. Settings per project in `ProjectSettings/device_emulator.cfg`; the old okay_settings.txt keys (`gamedevice2`, `gamedeviceland`, `gamesafearea`, `gamedevice`) are still read and written
+- **Code:** `Components/Canvas`, `Components/UISafeArea`, `Components/UITouchScroll`, `UI/UILayoutUpdate`, `editor/DeviceEmulatorModel.hpp`, `editor/DeviceEmulator.cpp`
+- **API:** `UISafeInsets()`, `Canvas::screenMatch`, `UITouchScroll::Step`, `UICanvas::Dpi/Orientation/DarkTheme/KeyboardHeight` (scripts: `Screen.width/height/dpi/orientation/safeAreaX/Y/Width/Height/darkMode/keyboardHeight`), `Input::FeedAcceleration` (scripts: `Input.acceleration`, OkayScript `device_acceleration()`)
+- **Editor:** Game view Device menu (grouped), Rotate (right-click: the other way), Zoom, Back (Android), "..." device options (turn, auto-rotate, safe area, status bar, dark theme, device resolution, battery, touch, keyboard, tilt pad, frame rate, network, more devices, screenshot, custom device); Canvas "Add Safe Area"
 - **Docs:** `docs/ui/in_game_ui.md` (Phones and tablets), `docs/platform/web_mobile.md`
-- **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
+- **Tests:** `device_emulator`, `ui_nav_touch`, `ui_frame`, `ui_input_guard`, `script_camera` (screen_w / screen_h)
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
-- **Open:** `UITouchScroll` is covered by `ui_touch_scroll`. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/engine/input.md`)
+- **Open:** device emulator: no gyroscope rate (only gravity), the slow-device setting caps the frame rate only (no CPU slow-down), the network condition reaches the game's sockets but not web requests; extra devices are a display only (input goes to the main one) and use the main device's UI layout pass. `UITouchScroll` is covered by `ui_touch_scroll`. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/engine/input.md`)
 - **Related:** 12.1, 8.4, 18.2
-- **Words:** mobile, phone, tablet, safe area, notch, portrait, landscape, touch, emulator, device frame, resolution
+- **Words:** mobile, phone, tablet, foldable, safe area, notch, punch hole, dynamic island, portrait, landscape, touch, pinch, emulator, simulator, device frame, resolution, dpi, on-screen keyboard, accelerometer, tilt, dark mode, status bar
 - **Seen as:** UI is tiny or cropped on a phone; buttons sit under the notch; finger scrolling does not work; the device preview shows the wrong insets
 - **Ask me like:** "work on 12.9.4, add more phone presets"; "add a virtual joystick for mobile"
 

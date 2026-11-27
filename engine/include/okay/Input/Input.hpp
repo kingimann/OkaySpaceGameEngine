@@ -311,6 +311,15 @@ public:
     static bool TouchScreen();
     static void SetTouchScreen(bool present);
 
+    // ---- Motion sensor (a phone's accelerometer) ----
+    /// Gravity as the device feels it, in g, in the device's own axes: x to the right of the screen held upright,
+    /// y up the screen, z out of the screen towards the player. Upright (0, -1, 0); flat on a table face up (0, 0, -1).
+    /// (0, 0, 0) on a machine with no sensor. Fed by the host (the editor's device emulator, a mobile runtime).
+    static Vec2 AccelerationXY() { return Vec2{s_accel[0], s_accel[1]}; }
+    static float AccelerationZ() { return s_accel[2]; }
+    static void FeedAcceleration(float x, float y, float z) { s_accel[0] = x; s_accel[1] = y; s_accel[2] = z; }
+    static bool HasAccelerometer() { return s_accel[0] != 0.0f || s_accel[1] != 0.0f || s_accel[2] != 0.0f; }
+
     // ---- The device the player used last (for button pictures) ----
     enum class Device { Keyboard, Mouse, Gamepad, Touch };
     /// The device that produced input most recently. Drives "Press [E]" versus "Press [X]".
@@ -412,6 +421,7 @@ private:
     static std::vector<Touch> s_touches;
     static bool        s_uiCaptured;
     static bool        s_touchScreen;
+    static float       s_accel[3];
 };
 
 } // namespace okay

@@ -209,9 +209,7 @@ void OkayScriptVM::Impl::RegisterCameraRigBuiltins(BuiltinCtx& c) {
             return Value{};
         };
 
-        // Screen size in pixels (HUD layout, clamping, spawn-at-edge).
-        b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
-        b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };
+        // Screen size in pixels (screen_w / screen_h): in the shared table (Scripting/ScriptApiCore.cpp, Screen.width / height).
         // Tag queries: count active objects with a tag, or find the nearest one
         // to this object (returns its name, "" if none) — enemy targeting, "all
         // coins collected?", proximity doors.

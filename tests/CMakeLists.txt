@@ -4505,6 +4505,13 @@ target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_S
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+# The Game view's device emulator model (editor/DeviceEmulatorModel.hpp, no UI library): the device table and safe areas in all four
+# orientations, screen placement and mouse-to-touch mapping, touch emulation with a second finger, rotation, the on-screen keyboard,
+# the motion sensor, conditions, multi-device layout, screenshots, settings with the old keys, and the Screen API values.
+add_executable(test_device_emulator test_device_emulator.cpp ${CMAKE_SOURCE_DIR}/editor/DeviceEmulatorModel.cpp)
+target_include_directories(test_device_emulator PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_device_emulator PRIVATE cxx_std_17)
+add_test(NAME device_emulator COMMAND test_device_emulator)
 add_executable(test_launcher_nav_layout test_launcher_nav_layout.cpp)
 target_include_directories(test_launcher_nav_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)

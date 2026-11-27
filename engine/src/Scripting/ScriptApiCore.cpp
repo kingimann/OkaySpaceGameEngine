@@ -5,6 +5,8 @@
 // the two copies it replaces (OkayScriptVM's builtins and Script/EngineApi); no outside code.
 #include "okay/Scripting/ScriptApiRegistry.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Components/UIAnchor.hpp"     // UICanvas: the Screen facts
+#include "okay/Components/UISafeArea.hpp"   // UISafeInsets
 #include "okay/Core/Log.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
@@ -216,6 +218,45 @@ void RegisterCoreScriptApis(std::vector<ScriptApiEntry>& out) {
         "Seconds since the game started."));
     add(Prop("frame_count", "Time", "frameCount", T::Int, [](GameObject*, Args&) { return V((float)Time::FrameCount()); },
         "Frames since the game started."));
+    // ---- Screen (UICanvas holds the facts; the editor's device emulator reports the emulated phone) ----
+    {
+        ScriptApiEntry w = Prop("screen_w", "Screen", "width", T::Float, [](GameObject*, Args&) { return V(UICanvas::Width()); },
+            "The screen's width in pixels.");
+        w.aliases = {"screen_width"};
+        add(w);
+        ScriptApiEntry h = Prop("screen_h", "Screen", "height", T::Float, [](GameObject*, Args&) { return V(UICanvas::Height()); },
+            "The screen's height in pixels.");
+        h.aliases = {"screen_height"};
+        add(h);
+    }
+    add(Prop("screen_dpi", "Screen", "dpi", T::Float, [](GameObject*, Args&) { return V(UICanvas::Dpi()); },
+        "Screen pixels per inch (96 on a desktop): a button of dpi / 2.54 pixels is one centimetre wide."));
+    add(Prop("screen_orientation", "Screen", "orientation", T::String, [](GameObject*, Args&) {
+            static const char* kNames[] = {"portrait", "landscape_left", "portrait_upside_down", "landscape_right"};
+            const int o = UICanvas::OrientationNow();
+            return V(std::string(kNames[o >= 0 && o < 4 ? o : 0]));
+        }, "\"portrait\", \"landscape_left\", \"portrait_upside_down\" or \"landscape_right\"."));
+    add(Prop("safe_area_x", "Screen", "safeAreaX", T::Float, [](GameObject*, Args&) { return V(UISafeInsets().left * UICanvas::Width()); },
+        "Left edge of the safe area (the part no notch, rounded corner or home bar covers), in pixels."));
+    add(Prop("safe_area_y", "Screen", "safeAreaY", T::Float, [](GameObject*, Args&) { return V(UISafeInsets().top * UICanvas::Height()); },
+        "Top edge of the safe area, in pixels from the top."));
+    add(Prop("safe_area_w", "Screen", "safeAreaWidth", T::Float, [](GameObject*, Args&) {
+            const UISafeInsetFractions& f = UISafeInsets();
+            return V(std::fmax(0.0f, (1.0f - f.left - f.right) * UICanvas::Width()));
+        }, "Width of the safe area in pixels."));
+    add(Prop("safe_area_h", "Screen", "safeAreaHeight", T::Float, [](GameObject*, Args&) {
+            const UISafeInsetFractions& f = UISafeInsets();
+            return V(std::fmax(0.0f, (1.0f - f.top - f.bottom) * UICanvas::Height()));
+        }, "Height of the safe area in pixels (the on-screen keyboard, when shown, is outside it)."));
+    add(Prop("screen_dark_mode", "Screen", "darkMode", T::Bool, [](GameObject*, Args&) { return V(UICanvas::DarkTheme()); },
+        "True when the device is set to its dark appearance."));
+    add(Prop("keyboard_height", "Screen", "keyboardHeight", T::Float, [](GameObject*, Args&) { return V(UICanvas::KeyboardHeight()); },
+        "Height in pixels of the on-screen keyboard covering the bottom of the screen (0 when hidden)."));
+    // ---- Input: motion sensor ----
+    add(Prop("device_acceleration", "Input", "acceleration", T::Vector3, [](GameObject*, Args&) {
+            const Vec2 xy = Input::AccelerationXY();
+            return V(Vec3{xy.x, xy.y, Input::AccelerationZ()});
+        }, "Gravity as the device feels it, in g (upright: 0, -1, 0; flat face up: 0, 0, -1; no sensor: 0, 0, 0)."));
 }
 
 } // namespace okay::detail

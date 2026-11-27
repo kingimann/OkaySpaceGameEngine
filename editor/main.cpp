@@ -990,6 +990,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "okay/Graphics/Image.hpp"
 #include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
 #include "NetSimPanel.hpp"         // net simulator + per-object traffic
+#include "DeviceEmulator.hpp"      // the Game view's device emulator (phones and tablets)
 #include "AntiCheatSetupUi.hpp"    // easy anti-cheat: presets, Add Anti-Cheat, checklist (logic: AntiCheatSetup.hpp)
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
@@ -1110,7 +1111,7 @@ bool          g_okayUIBack = false;      // Backspace pressed this frame (for Ok
 // time — if the Scene and Game views shared one texture, whichever drew last
 // would overwrite it and BOTH panels would show that content (the flicker seen
 // when splitting Scene + Game). A texture per slot keeps them independent.
-static const int kView3DSlots = 4;   // 0=Scene view, 1=Game view, 2=Camera preview, 3=Animation preview
+static const int kView3DSlots = 7;   // 0=Scene view, 1=Game view, 2=Camera preview, 3=Animation preview, 4-6=more emulated devices in the Game view
 SDL_Texture* g_view3DTex[kView3DSlots] = {};
 bool g_view3DIsTarget[kView3DSlots] = {};   // created as a render target (direct GPU path)
 bool g_d3dDirect = false;                   // D3D11 renderer shares SDL's device: render into the view textures
@@ -2167,9 +2168,7 @@ static void ApplyPhysicsDebug() {
 }
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
-int  g_gameDevice = 0;           // Game-view mobile emulator device (0 = off; persisted)
-bool g_gameDeviceLandscape = false;   // emulator orientation (persisted)
-bool g_gameSafeArea = true;      // emulator: shade the notch / home-indicator areas (persisted)
+// The Game view's device emulator (picked device, turn, safe area...) lives in DeviceEmulator.cpp, saved per project.
 bool g_showUIOverlay = true;     // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene, clickable + draggable (Scene "..." menu toggles it). The UI button on the Scene toolbar switches to the flat UI editing view.
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
@@ -2651,13 +2650,7 @@ void LoadSettings() {
         else if (k == "physdebugrays") g_physDebugRays = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
-        else if (k == "gamedevice") {   // the old, shorter device list: map to the new one
-            static const int kOld[] = {0, 3, 4, 5, 7, 8, 10, 16, 20, 21, 22};
-            g_gameDevice = (v >= 0 && v < (int)(sizeof(kOld) / sizeof(kOld[0]))) ? kOld[v] : 0;
-        }
-        else if (k == "gamedevice2") g_gameDevice = (v < 0 ? 0 : v);
-        else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
-        else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
+        else if (DevEmuLoadLegacySetting(k, v)) {}   // gamedevice, gamedevice2, gamedeviceland, gamesafearea (frozen names)
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -2720,9 +2713,7 @@ void SaveSettings() {
       << "physdebugrays " << (g_physDebugRays ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
-      << "gamedevice2 " << g_gameDevice << "\n"
-      << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
-      << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
+      << DevEmuLegacySettingLines()
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
@@ -3042,6 +3033,7 @@ void LoadProjectSettingsFrom(const std::string& dir) {
         if (std::filesystem::is_directory(dir, ec)) SaveProjectSettingsTo(dir);
     }
     okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
+    DevEmuLoadProject(dir);   // the Game view's device emulator: <project>/ProjectSettings/device_emulator.cfg
 }
 // Give a layer a name (empty = back to the default), save the project file, or say why not in `err`. Shared by the
 // right-click rename in the layer lists and the Tags and Layers section of Project Settings.
@@ -25138,7 +25130,7 @@ static bool DrawCanvasWithOkayUI(EditorState& ed, Canvas* cv, okay::Component*& 
         std::snprintf(line, sizeof line, "Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
         L.Note(line, true);
     }
-    if (g_gameDevice <= 0) L.Note("Pick a phone in the Game view to preview it.");
+    if (!DevEmuActive()) L.Note("Pick a phone in the Game view to preview it.");
     char live[96];
     std::snprintf(live, sizeof live, "Current scale: %.2fx  (canvas %.0f x %.0f)", cv->ScaleFactor(UICanvas::Width(), UICanvas::Height()), UICanvas::Width(), UICanvas::Height());
     L.Note(live, true);
@@ -39038,7 +39030,7 @@ void DrawInspector(EditorState& ed) {
                 } else {
                     ImGui::TextDisabled("Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
                 }
-                if (g_gameDevice <= 0) ImGui::TextDisabled("Pick a phone in the Game view to preview it.");
+                if (!DevEmuActive()) ImGui::TextDisabled("Pick a phone in the Game view to preview it.");
             }
 
             // Live readout of the resulting scale for the current view.
@@ -45035,16 +45027,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         okay::visibility::RenderViewFovY() = g_editorFov;
     }
     SDL_Texture* stackTex = nullptr;
+    // An emulated device renders the game at its own resolution (scaled to the view), into its own texture slot.
+    int devW = 0, devH = 0;
+    const bool devRes = gameView && DevEmuRenderSize(canvasSize.x, canvasSize.y, dpi, devW, devH);
+    const int gameSlot = gameView ? DevEmuRenderSlot() : 0;
     if (gameView) {
-        const int fw = std::max(1, (int)(canvasSize.x * dpi));
-        const int fh = std::max(1, (int)(canvasSize.y * dpi));
-        stackTex = RenderCameraStackView(ed.scene(), fw, fh, 1, viewIgnore);
+        const int fw = devRes ? devW : std::max(1, (int)(canvasSize.x * dpi));
+        const int fh = devRes ? devH : std::max(1, (int)(canvasSize.y * dpi));
+        stackTex = RenderCameraStackView(ed.scene(), fw, fh, gameSlot, viewIgnore);
     }
     if (stackTex)
         dl->AddImage((ImTextureID)stackTex, canvasPos, canvasEnd);
     else if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
-                                           (int)(v3w * dpi), (int)(v3h * dpi),
-                                           gameView ? 1 : 0, viewIgnore))
+                                           devRes ? devW : (int)(v3w * dpi), devRes ? devH : (int)(v3h * dpi),
+                                           gameSlot, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
     for (GameObject* g : isoHidden) g->active = true;
     // Reference images (blueprint planes): each one a flat picture in the world (front, side or top), drawn over the view
@@ -47425,59 +47421,11 @@ static const GameResPreset kGameResPresets[] = {
 static constexpr int kGameResCount     = (int)(sizeof(kGameResPresets) / sizeof(kGameResPresets[0]));
 static constexpr int kGameResCustomIdx = kGameResCount - 1;
 
-// ---- Mobile emulator ----------------------------------------------------------
-// Real phone / tablet screens (portrait pixels) with what eats into them: rounded
-// corners, the notch / Dynamic Island / punch-hole camera, and the home indicator.
-// Picking one in the Game view makes it the game screen (the UI editor too),
-// drawn inside the device's frame; Rotate flips it to landscape.
-enum class DevCutout { None, Notch, Island, PunchHole, HomeButton };
-struct MobileDevice {
-    const char* name; int w, h;
-    float corner;        // screen corner radius, fraction of the short side
-    DevCutout cutout;
-    float safeTop, safeBottom;   // unsafe insets in portrait, fraction of the long side
-    bool tablet;
-};
-static const MobileDevice kMobileDevices[] = {
-    {"Off (no device)",          0,    0,    0.00f, DevCutout::None,       0.000f, 0.000f, false},
-    {"iPhone 16 Pro",            1206, 2622, 0.14f, DevCutout::Island,     0.047f, 0.013f, false},
-    {"iPhone 16 Pro Max",        1320, 2868, 0.14f, DevCutout::Island,     0.045f, 0.012f, false},
-    {"iPhone 15 / 15 Pro / 16",  1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
-    {"iPhone 15 Pro Max",        1290, 2796, 0.14f, DevCutout::Island,     0.044f, 0.012f, false},
-    {"iPhone 13 / 14",           1170, 2532, 0.13f, DevCutout::Notch,      0.047f, 0.013f, false},
-    {"iPhone 13 mini",           1080, 2340, 0.13f, DevCutout::Notch,      0.050f, 0.014f, false},
-    {"iPhone SE",                750,  1334, 0.00f, DevCutout::HomeButton, 0.030f, 0.000f, false},
-    {"Pixel 8",                  1080, 2400, 0.10f, DevCutout::PunchHole,  0.035f, 0.010f, false},
-    {"Pixel 8 Pro",              1344, 2992, 0.10f, DevCutout::PunchHole,  0.032f, 0.009f, false},
-    {"Galaxy S24",               1080, 2340, 0.09f, DevCutout::PunchHole,  0.033f, 0.010f, false},
-    {"Galaxy S24 Ultra",         1440, 3120, 0.05f, DevCutout::PunchHole,  0.030f, 0.009f, false},
-    {"Galaxy A54 / A-series",    1080, 2340, 0.08f, DevCutout::PunchHole,  0.034f, 0.010f, false},
-    {"Galaxy Z Flip (open)",     1080, 2640, 0.08f, DevCutout::PunchHole,  0.033f, 0.010f, false},
-    {"OnePlus 12",               1440, 3168, 0.09f, DevCutout::PunchHole,  0.031f, 0.009f, false},
-    {"Xiaomi 14",                1200, 2670, 0.09f, DevCutout::PunchHole,  0.032f, 0.009f, false},
-    {"Small Android (720p)",     720,  1600, 0.07f, DevCutout::PunchHole,  0.035f, 0.010f, false},
-    {"Old Android (16:9)",       720,  1280, 0.00f, DevCutout::None,       0.025f, 0.000f, false},
-    {"iPad Pro 12.9\"",          2048, 2732, 0.05f, DevCutout::None,       0.018f, 0.010f, true},
-    {"iPad Pro 11\"",            1668, 2388, 0.06f, DevCutout::None,       0.019f, 0.010f, true},
-    {"iPad Air / iPad 10",       1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
-    {"iPad mini",                1488, 2266, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
-    {"Galaxy Tab S9",            1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
-    {"Pixel Fold (open)",        1840, 2208, 0.05f, DevCutout::PunchHole,  0.020f, 0.008f, true},
-    {"Amazon Fire HD 10",        1200, 1920, 0.02f, DevCutout::None,       0.018f, 0.000f, true},
-};
-static constexpr int kMobileDeviceCount = (int)(sizeof(kMobileDevices) / sizeof(kMobileDevices[0]));
-static const MobileDevice* ActiveDevice() {
-    return (g_gameDevice > 0 && g_gameDevice < kMobileDeviceCount) ? &kMobileDevices[g_gameDevice] : nullptr;
-}
-
 // Resolve the current selection to aspect + pixel size. Pure-aspect presets report
 // w=h=0 (aspect only); fixed and Custom presets carry real pixel dimensions.
 static void CurrentGameRes(float& aspect, int& w, int& h) {
-    if (const MobileDevice* d = ActiveDevice()) {   // the emulated device's screen wins
-        w = g_gameDeviceLandscape ? d->h : d->w; h = g_gameDeviceLandscape ? d->w : d->h;
-        aspect = (float)w / (float)h;
-        return;
-    }
+    DevEmuScreenPixels(w, h);   // the emulated device's screen wins (DeviceEmulator.cpp)
+    if (w > 0 && h > 0) { aspect = (float)w / (float)h; return; }
     int i = g_gameResPreset; if (i < 0 || i >= kGameResCount) i = 0;
     w = kGameResPresets[i].w; h = kGameResPresets[i].h;
     if (i == kGameResCustomIdx) { w = g_gameCustomW; h = g_gameCustomH; }
@@ -47488,13 +47436,12 @@ static void CurrentGameRes(float& aspect, int& w, int& h) {
 // aspect fills the region. Also returns the CanvasScaler resolution-scale a fixed-
 // resolution HUD previews at (UIResolutionScale = on-screen height / target
 // height) so a Constant-Pixel-Size canvas looks identical in the editor and the game.
+// With an emulated device it is the device's screen, fitted with room for its frame (`fitOnly`: the UI editor; the
+// Game view passes false for the device's zoom).
 static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
-                                ImVec2& outPos, ImVec2& outSize, float& outResScale) {
+                                ImVec2& outPos, ImVec2& outSize, float& outResScale, bool fitOnly = true) {
+    if (DevEmuPlace(origin, avail, fitOnly, outPos, outSize, outResScale)) return;
     float aspect; int w, h; CurrentGameRes(aspect, w, h);
-    if (ActiveDevice()) {   // leave room for the device frame around the screen
-        const float m = std::min(avail.x, avail.y) * 0.06f + 10.0f;
-        origin.x += m; origin.y += m; avail.x = std::max(40.0f, avail.x - 2 * m); avail.y = std::max(40.0f, avail.y - 2 * m);
-    }
     ImVec2 size = avail, pos = origin;
     if (aspect > 0.0f) {
         float boxW = avail.x, boxH = avail.x / aspect;
@@ -48629,88 +48576,6 @@ void DrawProfiler(EditorState& ed) {
     if (in.copyCsv) ConsoleLog("Profiler frame copied as CSV.");
 }
 
-// The phone / tablet body behind the emulated screen (drawn before the game).
-static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land) {
-    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh);
-    const float bezel = std::max(6.0f, shortSide * (d.tablet ? 0.045f : 0.035f));
-    float bt = bezel, bb = bezel, bl = bezel, br = bezel;
-    if (d.cutout == DevCutout::HomeButton) {   // old-style phone: tall forehead + chin
-        if (land) { bl = br = shortSide * 0.20f; } else { bt = bb = shortSide * 0.20f; }
-    }
-    const ImVec2 b0(sp.x - bl, sp.y - bt), b1(se.x + br, se.y + bb);
-    const float bodyR = shortSide * d.corner + bezel;
-    dl->AddRectFilled(ImVec2(b0.x + 3, b0.y + 6), ImVec2(b1.x + 3, b1.y + 6), IM_COL32(0, 0, 0, 90), bodyR + 4);   // shadow
-    dl->AddRectFilled(b0, b1, IM_COL32(28, 29, 34, 255), bodyR + 2);
-    dl->AddRect(b0, b1, IM_COL32(92, 96, 108, 255), bodyR + 2, 0, 2.0f);       // metal rim
-    // Side buttons (volume / power), on the long edges.
-    const ImU32 btn = IM_COL32(70, 73, 82, 255);
-    if (!land) {
-        const float x0 = b0.x - 3, x1 = b1.x;
-        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.22f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.30f), btn, 1.5f);
-        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.32f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.40f), btn, 1.5f);
-        dl->AddRectFilled(ImVec2(x1, b0.y + (b1.y - b0.y) * 0.27f), ImVec2(x1 + 3, b0.y + (b1.y - b0.y) * 0.37f), btn, 1.5f);
-    } else {
-        const float y0 = b0.y - 3, y1 = b1.y;
-        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.70f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.78f, y0 + 3), btn, 1.5f);
-        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.60f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.68f, y0 + 3), btn, 1.5f);
-        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.63f, y1), ImVec2(b0.x + (b1.x - b0.x) * 0.73f, y1 + 3), btn, 1.5f);
-    }
-    if (d.cutout == DevCutout::HomeButton) {   // the round home button in the chin
-        const ImVec2 c = land ? ImVec2(se.x + br * 0.5f, (sp.y + se.y) * 0.5f) : ImVec2((sp.x + se.x) * 0.5f, se.y + bb * 0.5f);
-        const float r = shortSide * 0.075f;
-        dl->AddCircle(c, r, IM_COL32(90, 94, 104, 255), 40, 2.0f);
-    }
-}
-
-// What sits ON the screen (drawn after the game): rounded screen corners, the
-// notch / island / punch-hole, the home indicator and, optionally, the unsafe
-// areas a game's UI should keep clear of.
-static void DrawDeviceScreenOverlay(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land, bool safeArea) {
-    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh), longSide = std::max(sw, sh);
-    const ImU32 body = IM_COL32(28, 29, 34, 255), black = IM_COL32(0, 0, 0, 255);
-    const float r = shortSide * d.corner;
-    if (safeArea) {   // unsafe insets, tinted + outlined
-        const float top = longSide * d.safeTop, bot = longSide * d.safeBottom;
-        const ImU32 tint = IM_COL32(255, 80, 80, 40), line = IM_COL32(255, 110, 110, 150);
-        if (!land) {
-            if (top > 0) { dl->AddRectFilled(sp, ImVec2(se.x, sp.y + top), tint); dl->AddLine(ImVec2(sp.x, sp.y + top), ImVec2(se.x, sp.y + top), line, 1.0f); }
-            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
-        } else {   // landscape: the cutout side is on the left, the home indicator at the bottom
-            if (top > 0) { dl->AddRectFilled(sp, ImVec2(sp.x + top, se.y), tint); dl->AddLine(ImVec2(sp.x + top, sp.y), ImVec2(sp.x + top, se.y), line, 1.0f);
-                           dl->AddRectFilled(ImVec2(se.x - top, sp.y), se, tint); dl->AddLine(ImVec2(se.x - top, sp.y), ImVec2(se.x - top, se.y), line, 1.0f); }
-            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
-        }
-    }
-    if (r > 1.0f) {   // (after the tint) mask the square corners outside the rounded screen
-        const float t = r * 0.75f + 2.0f;
-        dl->AddRect(ImVec2(sp.x - t * 0.5f, sp.y - t * 0.5f), ImVec2(se.x + t * 0.5f, se.y + t * 0.5f), body, r + t * 0.5f, 0, t);
-    }
-    // Camera cutout.
-    const ImVec2 mid((sp.x + se.x) * 0.5f, (sp.y + se.y) * 0.5f);
-    switch (d.cutout) {
-        case DevCutout::Island: {
-            const float L = shortSide * 0.31f, W = shortSide * 0.095f, off = shortSide * 0.035f;
-            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y + off), ImVec2(mid.x + L / 2, sp.y + off + W), black, W / 2);
-            else       dl->AddRectFilled(ImVec2(sp.x + off, mid.y - L / 2), ImVec2(sp.x + off + W, mid.y + L / 2), black, W / 2);
-        } break;
-        case DevCutout::Notch: {
-            const float L = shortSide * 0.42f, W = shortSide * 0.085f;
-            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y - 1), ImVec2(mid.x + L / 2, sp.y + W), body, W * 0.6f, ImDrawFlags_RoundCornersBottom);
-            else       dl->AddRectFilled(ImVec2(sp.x - 1, mid.y - L / 2), ImVec2(sp.x + W, mid.y + L / 2), body, W * 0.6f, ImDrawFlags_RoundCornersRight);
-        } break;
-        case DevCutout::PunchHole: {
-            const float rr = shortSide * 0.028f, off = shortSide * 0.05f;
-            dl->AddCircleFilled(land ? ImVec2(sp.x + off, mid.y) : ImVec2(mid.x, sp.y + off), rr, black, 24);
-        } break;
-        default: break;
-    }
-    if (d.cutout != DevCutout::HomeButton) {   // home indicator bar
-        const float L = shortSide * 0.36f, W = std::max(3.0f, shortSide * 0.012f), off = shortSide * 0.025f;
-        const ImU32 bar = IM_COL32(235, 235, 240, 150);
-        dl->AddRectFilled(ImVec2(mid.x - (land ? L * 0.8f : L) / 2, se.y - off - W), ImVec2(mid.x + (land ? L * 0.8f : L) / 2, se.y - off), bar, W / 2);
-    }
-}
-
 void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
@@ -48725,30 +48590,13 @@ void DrawGameView(EditorState& ed) {
     // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
     if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
-    // Mobile emulator: test on phone / tablet screens (size, notch, safe area).
-    if (g_gameDevice < 0 || g_gameDevice >= kMobileDeviceCount) g_gameDevice = 0;
-    // The toolbar: the Device and Screen dropdowns, then on / off switches that show their state (ToggleChip); what does not
-    // fit the row moves into a "..." menu (PlanToolbar, like the Scene toolbar), so nothing runs off the right edge.
-    ImGui::SetNextItemWidth(160);
-    if (BeginDropdown("##device", g_gameDevice ? kMobileDevices[g_gameDevice].name : "Device: off")) {
-        for (int i = 0; i < kMobileDeviceCount; ++i) {
-            if (i == 1 || i == 8) ImGui::Separator();   // off / phones / tablets
-            char lbl[96];
-            if (i == 0) std::snprintf(lbl, sizeof lbl, "%s", kMobileDevices[i].name);
-            else std::snprintf(lbl, sizeof lbl, "%s   %dx%d", kMobileDevices[i].name, kMobileDevices[i].w, kMobileDevices[i].h);
-            if (ImGui::Selectable(lbl, g_gameDevice == i)) { g_gameDevice = i; SaveSettings(); }
-        }
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mobile emulator: play the game on a phone or tablet screen\n(real resolution, rounded corners, notch, safe area). The mouse acts as your finger.");
+    // The toolbar: the Device dropdown and, with a device picked, its own controls (DeviceEmulator.cpp), else the Screen
+    // dropdown; then on / off switches that show their state (ToggleChip); what does not fit the row moves into a "..."
+    // menu (PlanToolbar, like the Scene toolbar), so nothing runs off the right edge.
+    const bool devOn = DevEmuToolbar(ed.isPlaying());
     ImGui::SameLine();
     int curW = 0, curH = 0;
-    if (ActiveDevice()) {
-        if (ImGui::Button(g_gameDeviceLandscape ? "Landscape" : "Portrait")) { g_gameDeviceLandscape = !g_gameDeviceLandscape; SaveSettings(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the device");
-        ImGui::SameLine();
-        if (ToggleChip("Safe area##gamesafe", &g_gameSafeArea, "Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.")) SaveSettings();
-    } else {
+    if (!devOn) {
     char resPv[64]; std::snprintf(resPv, sizeof resPv, "Screen: %s", kGameResPresets[s_aspect].name);
     ImGui::SetNextItemWidth(std::max(150.0f, ImGui::CalcTextSize(resPv).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2));
     if (BeginDropdown("##gameres", resPv)) {
@@ -48771,7 +48619,7 @@ void DrawGameView(EditorState& ed) {
         curW = g_gameCustomW; curH = g_gameCustomH;
     }
     }   // no device
-    if (ActiveDevice()) { float da; CurrentGameRes(da, curW, curH); }
+    if (devOn) { float da; CurrentGameRes(da, curW, curH); }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     {
         const ImGuiStyle& gst = ImGui::GetStyle();
@@ -48847,13 +48695,39 @@ void DrawGameView(EditorState& ed) {
     if (avail.x < 50) avail.x = 50;
     if (avail.y < 50) avail.y = 50;
     ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Dark letterbox bars over the whole region (the device frames and the camera background go on top).
+    dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
+    // More devices beside the emulated one (DeviceEmulator.cpp, "More devices beside it"): each is drawn first, the main
+    // device last, so the screen the game reads (UICanvas, the safe area) ends as the main device's.
+    ImVec2 mainOrigin = origin, mainAvail = avail;
+    if (const int extras = DevEmuExtraCount(); extras > 0) {
+        mainOrigin = DevEmuCell(origin, avail, 0, mainAvail);
+        for (int i = 0; i < extras; ++i) {
+            ImVec2 cellSize;
+            const ImVec2 cellPos = DevEmuCell(origin, avail, i + 1, cellSize);
+            ImVec2 ep, es; float er = 1.0f;
+            if (!DevEmuBeginExtra(i, cellPos, cellSize, ep, es, er)) continue;
+            const ImVec2 ee(ep.x + es.x, ep.y + es.y);
+            DevEmuDrawBody(dl, ep, ee);
+            const Color ebg = mc ? mc->backgroundColor : Color::Black;
+            dl->AddRectFilled(ep, ee, IM_COL32((int)(ebg.r * 255), (int)(ebg.g * 255), (int)(ebg.b * 255), 255));
+            okay::UIResolutionScale() = er;
+            if (mc && persp) DrawScene3D(ed, dl, ep, es, ee, false, ImGui::GetIO(), /*gameView*/ true);
+            else if (mc) DrawScene2D(ed, dl, ep, es, ee, false, ImGui::GetIO(), /*gameView*/ true);
+            DevEmuDrawOverlay(dl, ep, ee, ed.isPlaying(), false);
+            DevEmuEndExtra(dl);
+        }
+        okay::UIResolutionScale() = 1.0f;
+    }
 
     // Letterbox the game screen centered in the available region — the SAME helper the
     // UI-Only editor uses, so the two views are pixel-identical. resScale is applied
-    // just below for fixed-resolution HUD previews.
+    // just below for fixed-resolution HUD previews. An emulated device takes its zoom (Fit, 100%, ...).
     ImVec2 canvasSize, canvasPos; float resScale = 1.0f;
-    LetterboxGameScreen(origin, avail, canvasPos, canvasSize, resScale);
+    LetterboxGameScreen(mainOrigin, mainAvail, canvasPos, canvasSize, resScale, /*fitOnly*/ false);
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+    const bool devOnView = DevEmuActive();
 
     // The Game view is the surface the running game is shown on, so feed mouse
     // input relative to it (see the main loop).
@@ -48863,11 +48737,13 @@ void DrawGameView(EditorState& ed) {
     g_gameCanvasHovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(canvasPos, canvasEnd);
     g_gameCanvasHoveredFrame = ImGui::GetFrameCount();
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    // Dark letterbox bars over the whole region, then the camera background.
-    dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
-    const MobileDevice* device = ActiveDevice();
-    if (device) DrawDeviceBody(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape);
+    // The emulated device: a zoomed screen larger than its part of the view is clipped to it; the rotate animation turns
+    // everything from the frame to the overlay.
+    if (devOnView) {
+        dl->PushClipRect(mainOrigin, ImVec2(mainOrigin.x + mainAvail.x, mainOrigin.y + mainAvail.y), true);
+        DevEmuRotateBegin(dl);
+        DevEmuDrawBody(dl, canvasPos, canvasEnd);
+    }
     Color bg = mc ? mc->backgroundColor : Color::Black;
     dl->AddRectFilled(canvasPos, canvasEnd,
                       IM_COL32((int)(bg.r * 255), (int)(bg.g * 255), (int)(bg.b * 255), 255));
@@ -48898,7 +48774,11 @@ void DrawGameView(EditorState& ed) {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
-    if (device) DrawDeviceScreenOverlay(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape, g_gameSafeArea);
+    if (devOnView) {
+        DevEmuDrawOverlay(dl, canvasPos, canvasEnd, ed.isPlaying(), g_gameCanvasHovered);
+        DevEmuRotateEnd(dl, mainOrigin, mainAvail);
+        dl->PopClipRect();
+    }
     // After the scene image, so the picture does not cover the hint.
     if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
         const char* hint = g_gameCursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
@@ -48923,11 +48803,7 @@ void DrawGameView(EditorState& ed) {
 
     // On an emulated device the labels go below the notch / rounded corner.
     float labelDrop = 0.0f, labelIn = 0.0f;
-    if (device) {
-        const float shortSide = std::min(canvasSize.x, canvasSize.y), longSide = std::max(canvasSize.x, canvasSize.y);
-        if (!g_gameDeviceLandscape) labelDrop = longSide * device->safeTop + 4.0f;
-        labelIn = shortSide * device->corner * 0.45f + (g_gameDeviceLandscape ? longSide * device->safeTop : 0.0f);
-    }
+    if (devOnView) DevEmuLabelOffsets(labelDrop, labelIn);
     // Everything drawn in the view's top-left corner (the resolution readout, the PLAYING / PAUSED pill, the FPS label,
     // the idle hint) is remembered here, so the Stats and Timers boxes at the top-right move below it instead of
     // drawing over it when the view is narrow.
@@ -51371,6 +51247,16 @@ int main(int argc, char** argv) {
 
             // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
             if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
+            {   // the device emulator's on-screen keyboard and Android Back button (DeviceEmulator.cpp): one frame each
+                if (DevEmuTakeBack()) down.push_back((char)27);   // Back is Escape, as on Android
+                if (DevEmuTakeBackspaces() > 0) { down.push_back((char)8); g_okayUIBack = true; }
+                if (DevEmuTakeEnter()) down.push_back('\r');
+                if (const std::string typed = DevEmuTakeTyped(); !typed.empty()) {
+                    Input::FeedText(typed);
+                    const size_t have = std::strlen(g_okayUITyped);
+                    std::strncat(g_okayUITyped, typed.c_str(), sizeof(g_okayUITyped) - 1 - have);
+                }
+            }
             g_pads.Feed(down);   // every controller; the first also types WASD / Space
             Input::FeedKeys(down);
 
@@ -51477,6 +51363,9 @@ int main(int argc, char** argv) {
                     if (rx > g_playCanvasSize.x) rx = g_playCanvasSize.x;
                     if (ry > g_playCanvasSize.y) ry = g_playCanvasSize.y;
                 }
+                // On an emulated phone the mouse is a finger (DeviceEmulator.cpp): touch events, no hover, the left button
+                // only while a finger is down; Alt puts a second finger down (pinch, rotate), Alt+Shift pans with two.
+                if (!confined) DevEmuFeedPointer(rx, ry, mask, io.KeyAlt, io.KeyShift);
                 s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
@@ -52567,14 +52456,10 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawSceneManager(ed); }
         { OKAY_PROFILE("UI.Net"); if (g_showNet) DrawNetPanel(&g_showNet); }
         DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
-        {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
-            auto& f = okay::UISafeInsets();
-            f = {};
-            if (const MobileDevice* d = ActiveDevice()) {
-                if (g_gameDeviceLandscape) { f.left = f.right = d->safeTop; f.bottom = d->safeBottom * (float)d->h / (float)d->w; }
-                else { f.top = d->safeTop; f.bottom = d->safeBottom; }
-            }
-        }
+        // The emulated device's screen for the next tick (DeviceEmulator.cpp): UI Safe Area containers keep clear of its
+        // notch, status bar, home bar and keyboard; scripts read its size, dpi and turn; the tilt control is the motion
+        // sensor; the network condition; the desktop's values again when the emulator is off.
+        DevEmuPublish(ed.isPlaying());
         TickTweenPreview(ed, ImGui::GetIO().DeltaTime);
 
         // Play-mode tint: a colored border around the whole window so it's
@@ -52717,6 +52602,23 @@ int main(int argc, char** argv) {
                 std::fflush(stdout);
             }
         }
+        {   // the device emulator's screenshot: the device screen cut out of the window (DeviceEmulator.cpp; Logs/Screenshots)
+            std::string devShot; int dx = 0, dy = 0, dw = 0, dh = 0;
+            if (DevEmuTakeShot(devShot, dx, dy, dw, dh)) {
+                int sw = 0, sh = 0;
+                std::vector<std::uint8_t> px;
+                int cw = 0, ch = 0;
+                std::vector<std::uint8_t> cut;
+                if (okay::pb::ReadPixels(renderer, px, sw, sh) && sw > 0 && sh > 0)
+                    cut = okay::devemu::CropRgba(px, sw, sh, dx, dy, dw, dh, cw, ch);
+                if (!cut.empty()) {
+                    okay::Image img;
+                    img.Set(cw, ch, std::move(cut));
+                    if (img.SavePNG(devShot)) ConsoleLog("Saved the device screenshot " + devShot);
+                    else ConsoleLog("Couldn't save the device screenshot " + devShot, 1);
+                } else ConsoleLog("Couldn't take the device screenshot (the screen could not be read).", 1);
+            }
+        }
 #ifdef OKAY_ENABLE_TEST_HOOKS
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
@@ -52740,7 +52642,7 @@ int main(int argc, char** argv) {
         }
 
         {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
-            const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
+            const okay::editor::perf::PacingSettings ps{DevEmuFpsCap(g_fpsCapEditor, ed.isPlaying()), g_idleThrottle, g_idleFps, 0.75};   // a slow emulated device caps Play lower
             const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();

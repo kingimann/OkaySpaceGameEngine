@@ -183,12 +183,11 @@ whenever the tab changes.
     desktop the Safe Area just fills the screen.
   - Each side can be turned off, for example a background that should run under
     the notch.
-- **Preview on a phone.** In the Game view, pick a phone or tablet: iPhone 16 Pro,
-  16 Pro Max, 15, 13 mini, SE, Pixel 8 / 8 Pro, Galaxy S24 / S24 Ultra / A-series /
-  Z Flip, OnePlus 12, Xiaomi 14, iPads, Galaxy Tab, Pixel Fold, Fire HD and more.
-  - **Portrait / Landscape** flips the screen.
-  - **Safe area** tints the unsafe parts.
-  - The Safe Area container uses the chosen phone's insets.
+- **Device emulator** (Game view, `editor/DeviceEmulator*`; record in feature map 12.9.4): 43 phones,
+  foldables and tablets plus a custom device saved in the project. The game runs at the device's
+  resolution and density; the Safe Area container and `Screen.safeArea*` use its insets for the
+  current turn (four turns), with the on-screen keyboard outside the safe area while it is open.
+  The mouse is a finger (Alt: a second finger). Settings: `ProjectSettings/device_emulator.cfg`.
 - Text in the launcher font scales down with the canvas, so small screens and
   previews keep their layout.
 

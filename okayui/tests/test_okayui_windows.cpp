@@ -828,6 +828,12 @@ void TestMenuBarHoverSwitch() {
     CHECK(fileOpen);
     sim.Tap(Key_Escape, ui); sim.Frames(2, ui);
     CHECK(!fileOpen);
+    // Alt as part of a chord (Alt+Left in a code editor, Alt+Enter) opens nothing
+    sim.Hold(UI::KeyId_Alt, true); sim.Hold(UI::KeyId_LeftArrow, true); sim.Frame(ui); sim.Hold(UI::KeyId_LeftArrow, false); sim.Frame(ui);
+    sim.Hold(UI::KeyId_Alt, false); sim.Frames(2, ui);
+    CHECK(!fileOpen && !editOpen && !viewOpen);
+    sim.Hold(UI::KeyId_Alt, true); sim.Frame(ui); sim.Press(Key_Enter); sim.Frame(ui); sim.Hold(UI::KeyId_Alt, false); sim.Frames(2, ui);
+    CHECK(!fileOpen && !editOpen && !viewOpen);
 }
 
 // IsWindowHovered under an open menu list: the list is hovered, not the window under it (Dear ImGui's rule). The editor's Scene view

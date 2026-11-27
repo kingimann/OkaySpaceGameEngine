@@ -98,11 +98,12 @@ bool BeginMenuBar() {
     barFrame();
     g_curBar = ((unsigned)(int)std::floor(x) * 73856093u) ^ ((unsigned)(int)std::floor(y) * 19349663u) ^ 0x6ba5u;
     {   // Alt tapped alone: open the first menu of the first bar (Windows' menu key); Alt again or Escape closes it
-        bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown;
-        for (int k = 1; k < KeyId_COUNT && !other; ++k) if (k != KeyId_Alt && IsKeyPressed((KeyId)k, false)) other = true;
-        if (IsKeyPressed(KeyId_Alt, false)) g_altAlone = true;
+        bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown || g_in.ctrl || g_in.shift
+                  || g_in.enter || g_in.escape || g_in.up || g_in.down || g_in.left || g_in.right || g_in.backspace || g_in.del || (g_in.text && *g_in.text);
+        for (int k = 1; k < KeyId_COUNT && !other; ++k) if (k != KeyId_Alt && k != KeyId_RightAlt && k != KeyId_ModAlt && IsKeyDown((KeyId)k)) other = true;   // any other key held with it: a chord
+        if (IsKeyPressed(KeyId_Alt, false) || IsKeyPressed(KeyId_RightAlt, false)) g_altAlone = !other;
         else if (other) g_altAlone = false;
-        if (g_altAlone && IsKeyReleased(KeyId_Alt)) {
+        if (g_altAlone && !IsKeyDown(KeyId_Alt) && !IsKeyDown(KeyId_RightAlt) && (IsKeyReleased(KeyId_Alt) || IsKeyReleased(KeyId_RightAlt))) {
             g_altAlone = false;
             const bool firstBar = g_barNow.n == 0;
             if (firstBar && g_popupTop == 0) {

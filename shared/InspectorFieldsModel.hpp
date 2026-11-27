@@ -5,8 +5,8 @@
 // The editor's component bodies are written with a small set of Dear ImGui widgets: drag and slider fields, check boxes, combos,
 // colour fields, text fields, the editor's section headings, grey notes, small buttons, swatches, file fields with a picker and a
 // thumbnail, and a fold-out. A body is described once as rows of those kinds (the host builds them every frame from the component,
-// with pointers to the values it edits), and both versions draw the same rows: the Dear ImGui one (editor/EditorPanelViews.cpp,
-// for the comparison test) and the OkayUI one (okayui/screens/OkayUIEditorPanels.cpp). A version edits the values in place and marks
+// with pointers to the values it edits), and the OkayUI body draws the rows
+// (okayui/screens/OkayUIEditorPanels.cpp). It edits the values in place and marks
 // the row (changed, clicked); the host then does what the Dear ImGui code does for that field.
 //
 // Two ways a body is built: by hand in the editor for a component with its own Inspector (Light, Camera, Rigidbody 3D, the 3D

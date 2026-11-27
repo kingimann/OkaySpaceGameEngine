@@ -143,7 +143,12 @@ struct LayoutState {
 extern LayoutState g_lay;
 extern bool g_imguiCoords;   // UseImGuiCoordinates (OkayUICompat.hpp)
 // BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
-struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
+struct GroupBox {
+    float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false;
+    // Dear ImGui's documented group rule: a group locks the horizontal start. Lines inside it start at the group's left edge (its first item's
+    // x), not the window's; EndGroup gives the indent and the line below back. Saved here by BeginGroup.
+    bool locked = false; float savedIndent = 0.0f, savedCy = 0.0f;
+};
 extern GroupBox g_grp[8];
 extern int g_grpTop;
 extern bool g_posOverride;

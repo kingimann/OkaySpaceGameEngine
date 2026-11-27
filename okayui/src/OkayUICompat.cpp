@@ -326,7 +326,7 @@ void UpdatePlatformWindows() {}
 void RenderPlatformWindowsDefault() {}
 PlatformIO& GetPlatformIO() { static PlatformIO pio; return pio; }
 bool PlatformClipboardSet(const char* text) { PlatformIO& p = GetPlatformIO(); if (!p.Platform_SetClipboardTextFn) return false; p.Platform_SetClipboardTextFn(nullptr, text); return true; }
-const char* PlatformClipboardGet() { PlatformIO& p = GetPlatformIO(); return p.Platform_GetClipboardTextFn ? p.Platform_GetClipboardTextFn(nullptr) : nullptr; }
+const char* PlatformClipboardGet(bool* installed) { PlatformIO& p = GetPlatformIO(); if (installed) *installed = p.Platform_GetClipboardTextFn != nullptr; return p.Platform_GetClipboardTextFn ? p.Platform_GetClipboardTextFn(nullptr) : nullptr; }
 bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
     if (!window || !window->Name[0]) return false;
     DockLayout& l = GetDockLayout();

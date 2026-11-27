@@ -51,9 +51,12 @@ static bool g_ddTip = false;
 bool BeginDragDropSource(int flags) {
     if (!g_lay.active) return false;
     const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    // The source is known by the last item's id (Dear ImGui's documented rule), so an item that moves while it is held (a Project tile
+    // that shrinks when the press selects it) keeps its drag. An item with no id is known by its position instead.
     // Hash the float bits (a NaN, infinity or 1e30 position must not go through a float-to-int cast: undefined).
     auto bitsOf = [](float f) { std::uint32_t u; std::memcpy(&u, &f, sizeof u); return u; };
-    const int sid = (int)((bitsOf(px) * 73856093u) ^ (bitsOf(py) * 19349663u) ^ (unsigned)g_lay.seed) | 1;
+    const int sid = g_lastId != 0 ? (int)(((unsigned)g_lastId * 2654435761u) ^ (unsigned)g_lay.seed) | 1
+                                  : (int)((bitsOf(px) * 73856093u) ^ (bitsOf(py) * 19349663u) ^ (unsigned)g_lay.seed) | 1;
     if (!g_tdd.active && !g_tdd.armed && g_pressed && hit(px, py, pw, ph)) {
         g_tdd.armed = true; g_tdd.srcId = sid; g_tdd.armX = g_in.mouseX; g_tdd.armY = g_in.mouseY;
     }
@@ -76,6 +79,16 @@ void SetDragDropPreview(const char* text) { if (g_tdd.active) std::snprintf(g_td
 void EndDragDropSource() { if (g_ddTip) { g_ddTip = false; EndTooltip(); } }
 
 static bool g_tddOver = false;   // BeginDragDropTarget said yes for the item being asked about
+// The target's rectangle, for its outline. Dear ImGui's documented rule: the outline is drawn when AcceptDragDropPayload takes a payload of the
+// asked-for type (a payload of another type over the target draws nothing), unless the accept asks for none (AcceptNoDrawDefaultRect).
+static Rect g_tddRect{};
+static bool g_tddNoRect = false, g_tddOutlined = false;
+static void outlineTarget() {
+    if (g_tddNoRect || g_tddOutlined) return;
+    g_tddOutlined = true;
+    const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
+    quad(g_tddRect.x, g_tddRect.y, g_tddRect.w, 2.0f, dc); quad(g_tddRect.x, g_tddRect.y + g_tddRect.h - 2.0f, g_tddRect.w, 2.0f, dc);   // an accent outline marks the drop spot
+}
 bool BeginDragDropTarget() { return BeginDragDropTarget(0); }
 bool BeginDragDropTarget(int flags) {
     g_tddOver = false;
@@ -85,10 +98,7 @@ bool BeginDragDropTarget(int flags) {
         if (g_disCount > 0 || !pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph) || !inClip()) return false;
         if (g_hitWinOn && coveredByHigher(g_in.mouseX, g_in.mouseY, g_hitWinZ, g_hitWinId)) return false;
     } else if (!hit(px, py, pw, ph)) return false;
-    if (!(flags & DragDrop_NoDefaultRect)) {
-        const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
-        quad(px, py, pw, 2.0f, dc); quad(px, py + ph - 2.0f, pw, 2.0f, dc);   // an accent outline marks the drop spot
-    }
+    g_tddRect = Rect{px, py, pw, ph}; g_tddNoRect = (flags & DragDrop_NoDefaultRect) != 0; g_tddOutlined = false;
     g_tddOver = true;
     return true;
 }
@@ -108,6 +118,7 @@ void CancelDragDrop() {
 const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
     if (!g_tddOver || !g_tdd.active || !g_tdd.hasPayload) return nullptr;
     if (type && *type && std::strncmp(type, g_tdd.pay.type, sizeof g_tdd.pay.type - 1) != 0) return nullptr;
+    if (!(flags & DragDrop_AcceptNoDrawDefaultRect)) outlineTarget();
     static DragPayload out;
     out = g_tdd.pay; out.Data = out.data; out.DataSize = out.size;
     if (g_tddExt ? g_tddExtReleased : g_released) { out.delivery = true; g_tdd.active = false; g_tdd.hasPayload = false; return &out; }
@@ -116,15 +127,14 @@ const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
 }
 void EndDragDropTarget() { g_tddOver = false; }
 // A drop target over a rectangle given by the caller (an item with no auto-layout slot: a node, a timeline lane). Same rules as
-// BeginDragDropTarget: true while a drag with a payload is over `bb`; the accent outline marks it; AcceptDragDropPayload works after it.
+// BeginDragDropTarget: true while a drag with a payload is over `bb`; AcceptDragDropPayload works after it (and draws the outline).
 bool BeginDragDropTargetCustom(Rect bb, unsigned id) {
     (void)id;
     g_tddOver = false;
     if (!g_lay.active || !g_tdd.active || !g_tdd.hasPayload) return false;
     if (!std::isfinite(bb.x) || !std::isfinite(bb.y) || !std::isfinite(bb.w) || !std::isfinite(bb.h) || bb.w <= 0.0f || bb.h <= 0.0f) return false;
     if (!hit(bb.x, bb.y, bb.w, bb.h)) return false;
-    const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
-    quad(bb.x, bb.y, bb.w, 2.0f, dc); quad(bb.x, bb.y + bb.h - 2.0f, bb.w, 2.0f, dc);
+    g_tddRect = bb; g_tddNoRect = false; g_tddOutlined = false;
     g_tddOver = true;
     return true;
 }
@@ -153,5 +163,8 @@ bool DropTarget(int* outPayload) {
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(g_tddOver),
+    OKAYUI_CTX_VAR(g_tddRect),
+    OKAYUI_CTX_VAR(g_tddNoRect),
+    OKAYUI_CTX_VAR(g_tddOutlined),
     OKAYUI_CTX_VAR(g_ddTip))
 } // namespace OkayUI

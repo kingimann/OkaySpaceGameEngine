@@ -1,5 +1,5 @@
 #pragma once
-// Sample scenes for the Hierarchy panel's two versions (okayui/tests/test_okayui_hierarchy.cpp, tests/test_okayui_hierarchy_imgui.cpp):
+// Sample scenes for the Hierarchy panel (okayui/tests/test_okayui_hierarchy.cpp):
 // a plain tree of named objects standing in for the editor's scene, with the editor's row rules (top-level objects open, deeper ones
 // closed, children in order) and a small host that carries out the panel's intents the way the editor does (selection, the arrow, the
 // eye and the padlock, renames, drops, Ctrl+A). Std only; it also counts how many rows the panel asked for.

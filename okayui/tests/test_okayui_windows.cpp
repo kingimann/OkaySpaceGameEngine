@@ -849,6 +849,143 @@ void TestModalFixedHeight() {
     CHECK(footer.y + footer.h <= boxBottom + 1.0f);            // the footer is inside the box
 }
 
+// Drags between windows, the editor's way (round 3 of the editor on OkayUI): a file dragged from the Project panel (a tile with a
+// drag source) dropped on the Scene view (an InvisibleButton with mouse-button flags, then BeginDragDropTarget), on an Inspector slot
+// (a button whose target accepts before delivery and acts only on IsDelivery()) and anywhere else in the Inspector (a target over the
+// whole window: BeginDragDropTargetCustom of GetCurrentWindow()->InnerClipRect). The slot takes the drop over the window-wide target
+// drawn after it. Dear ImGui's documented outline rule: the target outline is drawn only when a payload of the accepted type is over
+// it (AcceptDragDropPayload), and never with AcceptNoDrawDefaultRect; a payload of another type draws nothing.
+void TestDragAcrossWindows() {
+    RUN_SUITE("windows: drags from one window to targets in others (Project -> Scene view, Inspector slot, Inspector window)");
+    Reset();
+    Sim sim(640, 480);
+    std::string scene, slot, window; bool slotHover = false, slotPending = false;
+    const char* type = "ASSET_PATH";
+    UI::Rect src{}, view{}, slotR{}, inspR{};
+    auto ui = [&] {
+        slotHover = slotPending = false;
+        UI::PushStyleColor(UI::Col_DragDropTarget, 255, 0, 255);   // the outline in a colour nothing else uses
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Project", nullptr, 0)) {
+            UI::Button("Wood.png", V(80, 60)); src = UI::GetItemRect();
+            if (UI::BeginDragDropSource()) { UI::SetDragDropPayload(type, "Assets/Wood.png", 16); UI::Text("Wood.png"); UI::EndDragDropSource(); }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(230, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Scene", nullptr, 0)) {
+            UI::InvisibleButton("##view", V(360, 140), UI::Button_MouseButtonLeft | UI::Button_MouseButtonRight); view = UI::GetItemRect();
+            if (UI::BeginDragDropTarget()) {
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) scene = (const char*)p->Data;
+                UI::EndDragDropTarget();
+            }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(10, 230), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 230), UI::Cond_FirstUseEver);
+        if (UI::Begin("Inspector", nullptr, 0)) {
+            UI::Text("Mesh Renderer");
+            UI::Button("None###asset", V(200, 0)); slotR = UI::GetItemRect();
+            const UI::DragPayload* pl = UI::GetDragDropPayload();
+            if (pl && pl->IsDataType("ASSET_PATH") && UI::IsItemHovered(UI::Hovered_AllowWhenBlockedByActiveItem)) slotHover = true;
+            if (UI::BeginDragDropTarget()) {
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH", UI::DragDrop_AcceptBeforeDelivery | UI::DragDrop_AcceptNoDrawDefaultRect)) {
+                    if (p->IsDelivery()) slot = (const char*)p->Data; else slotPending = true;
+                }
+                UI::EndDragDropTarget();
+            }
+            UI::Dummy(10, 120);
+            const UI::CurrentWindow cw = UI::GetCurrentWindow();
+            const UI::WindowRef* w = cw;
+            if (w) { inspR = UI::Rect{w->InnerClipRect.Min.x, w->InnerClipRect.Min.y, w->InnerClipRect.Max.x - w->InnerClipRect.Min.x, w->InnerClipRect.Max.y - w->InnerClipRect.Min.y};
+                if (UI::BeginDragDropTargetCustom(w->InnerClipRect, w->ID)) {
+                    if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) window = (const char*)p->Data;
+                    UI::EndDragDropTarget();
+                } }
+        }
+        UI::End();
+        UI::PopStyleColor();
+    };
+    auto drag = [&](float tx, float ty, bool drop = true) {
+        sim.Move(CenterX(src), CenterY(src)); sim.Frame(ui); sim.Down(); sim.Frame(ui);
+        sim.Move(CenterX(src) + 12.0f, CenterY(src) + 4.0f); sim.Frame(ui);
+        sim.Move((CenterX(src) + tx) * 0.5f, (CenterY(src) + ty) * 0.5f); sim.Frame(ui);
+        sim.Move(tx, ty); sim.Frame(ui); sim.Frame(ui);
+        if (drop) { sim.Up(); sim.Frame(ui); sim.Frames(2, ui); }
+    };
+    const unsigned magenta = Rgba(255, 0, 255);
+    sim.Frames(3, ui);   // the windows lay out (and the Inspector's window table entry exists)
+    CHECK(view.w > 300 && slotR.w > 100 && inspR.w > 300);
+    // 1. onto the Scene view: the view takes it (the drag source is in another window, its button is the active item)
+    drag(CenterX(view), CenterY(view), false);
+    CHECK(CountNot(sim.Draw(1, 2, 3), (int)view.x, (int)view.y, (int)(view.x + view.w), (int)(view.y + view.h), Rgba(1, 2, 3)) > 0);
+    int outline = 0; { const Bitmap& b = sim.Draw(1, 2, 3); for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) if (PixelAt(b, x, y) == magenta) ++outline; }
+    CHECK(outline > 100);                                         // an accepted payload over the view: its outline shows
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(scene == "Assets/Wood.png" && slot.empty() && window.empty());
+    CHECK(UI::GetDragDropPayload() == nullptr);                   // the drag is over
+    // 2. onto the Inspector's slot: hovered before the release it is marked and accepted early (no delivery), then delivered;
+    //    the window-wide target behind it gets nothing
+    scene.clear();
+    drag(CenterX(slotR), CenterY(slotR), false);
+    CHECK(slotHover && slotPending && slot.empty());
+    { const Bitmap& b = sim.Draw(1, 2, 3); int n = 0;
+      for (int x = (int)slotR.x; x < (int)(slotR.x + slotR.w); ++x) if (PixelAt(b, x, (int)slotR.y) == magenta || PixelAt(b, x, (int)slotR.y + 1) == magenta) ++n;
+      CHECK(n == 0); }                                            // AcceptNoDrawDefaultRect: no outline on the slot
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(slot == "Assets/Wood.png" && window.empty() && scene.empty());
+    // 3. anywhere else in the Inspector: the window-wide target takes it
+    slot.clear();
+    drag(inspR.x + 300.0f, inspR.y + inspR.h - 30.0f);
+    CHECK(window == "Assets/Wood.png" && slot.empty() && scene.empty());
+    // 4. released over no target: nobody gets it and the drag ends
+    window.clear();
+    drag(620, 470);
+    CHECK(window.empty() && slot.empty() && scene.empty() && UI::GetDragDropPayload() == nullptr);
+    // 5. a payload of another type over the Scene view: no outline (Dear ImGui draws it only for an accepted type), no drop
+    type = "GO_PTR";
+    drag(CenterX(view), CenterY(view), false);
+    outline = 0; { const Bitmap& b = sim.Draw(1, 2, 3); for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) if (PixelAt(b, x, y) == magenta) ++outline; }
+    CHECK(outline == 0);
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(scene.empty());
+}
+
+// A drag source is the item before it, known by its id (Dear ImGui's documented rule: BeginDragDropSource uses the last item's id), so
+// a source that moves while it is held still drags. The editor's Project panel: pressing a tile selects it, the details strip appears
+// under the grid, the tiles get smaller and the second tile moves left; the drag of that tile never started (round 3).
+void TestDragSourceThatMoves() {
+    RUN_SUITE("windows: a drag source that moves while held still starts its drag");
+    Reset();
+    Sim sim(640, 480);
+    bool selected = false; std::string got; UI::Rect t2{}, target{};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Project", nullptr, 0)) {
+            const float cell = selected ? 70.0f : 100.0f;   // the grid shrinks once a tile is selected
+            UI::PushID(1); UI::Button("##cell", V(cell, cell)); UI::PopID();
+            UI::SameLine();
+            UI::PushID(2); UI::Button("##cell", V(cell, cell)); UI::PopID(); t2 = UI::GetItemRect();
+            if (UI::IsItemClicked()) selected = true;
+            if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("ASSET_PATH", "Wood.png", 9); UI::EndDragDropSource(); }
+        }
+        UI::End();
+        UI::SetNextWindowPos(V(420, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 200), UI::Cond_FirstUseEver);
+        if (UI::Begin("Target", nullptr, 0)) {
+            UI::Button("drop here", V(150, 100)); target = UI::GetItemRect();
+            if (UI::BeginDragDropTarget()) { if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) got = (const char*)p->Data; UI::EndDragDropTarget(); }
+        }
+        UI::End();
+    };
+    sim.Frames(3, ui);
+    const float px = t2.x + 20.0f, py = t2.y + 20.0f;   // inside the tile both before and after it moves
+    sim.Move(px, py); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Frame(ui);
+    CHECK(selected);
+    sim.Move(px + 30.0f, py + 10.0f); sim.Frame(ui);
+    sim.Move(CenterX(target), CenterY(target)); sim.Frame(ui); sim.Frame(ui);
+    CHECK(UI::GetDragDropPayload() != nullptr);              // the drag started though the tile moved
+    sim.Up(); sim.Frame(ui); sim.Frames(2, ui);
+    CHECK(got == "Wood.png");
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -870,5 +1007,7 @@ int main() {
     TestWindowHoveredUnderMenu();
     TestTopLevelPopupId();
     TestModalFixedHeight();
+    TestDragAcrossWindows();
+    TestDragSourceThatMoves();
     TEST_MAIN_RESULT();
 }

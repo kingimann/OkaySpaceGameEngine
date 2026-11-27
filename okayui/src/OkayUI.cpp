@@ -1078,7 +1078,10 @@ void BeginFrame(const Input& in) {
     treeGuidesReset();
     g_io.mousePos = Vec2{in.mouseX, in.mouseY}; g_io.mouseDelta = Vec2{0, 0}; g_io.mouseWheel = in.wheel;
     g_io.displaySize = Vec2{in.displayW, in.displayH};
-    g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
+    g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift];
+    // Alt and Super from either hand or the modifier flag key a platform feed sends (Dear ImGui's io.KeyAlt / io.KeySuper: ImGuiMod_Alt / ImGuiMod_Super)
+    g_io.keyAlt = in.keyDown[KeyId_Alt] || in.keyDown[KeyId_RightAlt] || in.keyDown[KeyId_ModAlt];
+    g_io.KeySuper = in.keyDown[KeyId_LeftSuper] || in.keyDown[KeyId_RightSuper] || in.keyDown[KeyId_ModSuper];
     g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown; g_io.mouseDown[2] = in.middleDown;
     g_io.wantCaptureKeyboard = g_focus != 0; g_io.wantTextInput = g_focus != 0;
     if (g_nextFrameKbd >= 0) { g_io.wantCaptureKeyboard = g_nextFrameKbd != 0; g_nextFrameKbd = -1; }   // SetNextFrameWantCaptureKeyboard
@@ -1725,7 +1728,7 @@ Font* GetFont()             { return const_cast<Font*>(g_font); }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
 
-void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
+void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= (int)MouseCursor_None && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }   // None (-1): no cursor drawn (Dear ImGui's ImGuiMouseCursor_None)
 MouseCursor GetMouseCursor() { return g_cursor; }
 namespace {
 long long g_ioQueueFrame = -1; int g_ioQueueFilled = 0;
@@ -1831,7 +1834,6 @@ IO& GetIO() {
     }
     g_io.Fonts = GetFontAtlasRef();
     g_io.MouseClickedCount[0] = IsMouseDoubleClicked(0) ? 2 : (g_pressed ? 1 : 0);
-    g_io.KeySuper = g_io.KeySuper;
     // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
     g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
     g_io.wantCaptureMouse = !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev || g_active != 0);
@@ -2123,13 +2125,37 @@ void textBlock(const char* s, const unsigned char* col) {
 
 void BeginGroup() {
     if (!g_lay.active || g_grpTop >= 8) return;
-    g_grp[g_grpTop++] = GroupBox();
+    GroupBox g;
+    if (!g_posOverride) {   // (a group started at SetCursorScreenPos keeps the old rule: its start is only known when its first item is placed)
+        // Where the group's first item goes (the same rule as place()): beside the item before it after SameLine, else at the left edge.
+        float x = leftEdge(), y = g_lay.cy;
+        if (g_lay.pendingSameLine) {
+            const float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
+            x = g_lay.sameLineAbs ? g_lay.sameLineX : g_lay.prevX + g_lay.prevW + sp;
+            y = g_lay.hasLineTop ? g_lay.lineTopY : g_lay.prevY;
+        }
+        if (std::isfinite(x) && std::isfinite(y)) {
+            g.locked = true; g.savedIndent = g_lay.indent; g.savedCy = g_lay.cy;
+            g_lay.indent = x - g_lay.ox;   // lines inside the group start at its left edge
+            g_lay.cy = y;                   // and below its own items, not below what came before it on the line
+            // its first line starts at the group's top: a text is not centred on a taller item before the group
+            g_lay.prevY = y; g_lay.prevH = 0.0f; g_lay.hasLineTop = false;
+        }
+    }
+    g_grp[g_grpTop++] = g;
 }
 
 void EndGroup() {
     if (!g_lay.active || g_grpTop <= 0) return;
     const GroupBox g = g_grp[--g_grpTop];
     g_lay.hasLineTop = false;
+    if (g.locked) {   // the indent comes back; the next line starts below the group and below everything before it on its line
+        g_lay.indent = g.savedIndent;
+        // (the cursor inside the group counts too: a table or a child moves it past the items it reported)
+        const float below = g.any ? std::max(g_lay.cy, g.y1 + g_lay.spacingY) : g_lay.cy;
+        g_lay.cy = std::max(g.savedCy, below);
+        g_lay.cx = leftEdge();
+    }
     if (g.any) {
         g_lay.prevX = g.x0; g_lay.prevY = g.y0; g_lay.prevW = g.x1 - g.x0; g_lay.prevH = g.y1 - g.y0;
     } else {   // an empty group is a zero-size item at the cursor
@@ -2665,6 +2691,7 @@ bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
     const float pad = 4.0f;
     float x, y; place(w + pad * 2.0f, h + pad * 2.0f, x, y);
     const bool inside = hit(x, y, w + pad * 2, h + pad * 2);
+    g_lastId = hid;   // an item with an id (IsItemActive, GetItemID, a drag source after it), as Dear ImGui's ImageButton
     if (inside) g_hot = hid;
     bool clicked = false;
     if (g_active == hid) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
@@ -3487,7 +3514,7 @@ void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = tr
 // The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
 static char g_clip[kClipboardMax] = {0};
 bool PlatformClipboardSet(const char* text);    // OkayUICompat.cpp: the clipboard a platform feed installed in PlatformIO (false: none)
-const char* PlatformClipboardGet();              // null: none installed
+const char* PlatformClipboardGet(bool* installed = nullptr);   // null: none installed, or it has no text (`installed` tells which)
 void SetClipboardText(const char* text) {
     if (!text) text = "";
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
@@ -3497,7 +3524,9 @@ void SetClipboardText(const char* text) {
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
 }
 const char* GetClipboardText() {
-    if (const char* pc = PlatformClipboardGet()) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
+    bool installed = false;
+    if (const char* pc = PlatformClipboardGet(&installed)) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
+    if (installed) { g_clip[0] = 0; return g_clip; }   // a platform feed owns the clipboard and it is empty (another program emptied it): paste nothing, as Dear ImGui does
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;

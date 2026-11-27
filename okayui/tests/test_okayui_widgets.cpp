@@ -663,6 +663,44 @@ void TestDragPreviewIsTooltip() {
     CHECK(dropped == "a");
 }
 
+// Groups lock the horizontal start (Dear ImGui's documented BeginGroup / EndGroup): the editor's Project panel draws each tile as a group
+// (the icon button, then its name on the next line) and puts the next tile beside it with SameLine. The name of the second tile must be
+// under the second icon, not under the first tile's name at the window's left edge (seen in the editor on OkayUI, round 3). After the
+// groups the next line starts below the taller one, at the left edge.
+void TestGroupLocksStartX() {
+    RUN_SUITE("BeginGroup locks the start x; the line after the groups is below the tallest");
+    Rig r; UI::Rect i1{}, t1{}, i2{}, t2{}, g2{}, i3{}, t3{}, after{};
+    r.body = [&] {
+        UI::BeginGroup(); UI::Button("##icon1", V(100, 100)); i1 = UI::GetItemRect(); UI::Text("Audio"); t1 = UI::GetItemRect(); UI::EndGroup();
+        UI::SameLine();
+        UI::BeginGroup(); UI::Button("##icon2", V(100, 100)); i2 = UI::GetItemRect(); UI::Text("Materials"); t2 = UI::GetItemRect(); UI::Text("2 files"); UI::EndGroup();
+        g2 = UI::GetItemRect();
+        UI::SameLine();
+        UI::BeginGroup(); UI::Button("##icon3", V(60, 60)); i3 = UI::GetItemRect(); UI::Text("x"); t3 = UI::GetItemRect(); UI::EndGroup();
+        UI::Button("next row"); after = UI::GetItemRect();
+    };
+    r.Frames(2);
+    CHECK(std::fabs(i2.y - i1.y) < 0.5f && i2.x > i1.x + i1.w);       // the second tile sits beside the first
+    CHECK(std::fabs(t1.x - i1.x) < 0.5f);
+    CHECK(std::fabs(t2.x - i2.x) < 0.5f);                             // its name under its own icon
+    CHECK(t2.y > i2.y + i2.h - 0.5f && t2.y < t1.y + t1.h);           // right under the icon, on the first name's row
+    CHECK(std::fabs(t3.x - i3.x) < 0.5f && t3.y < i3.y + i3.h + 20.0f);
+    CHECK(std::fabs(g2.x - i2.x) < 0.5f && g2.y + g2.h > t2.y + t2.h - 0.5f);   // the group is one item around both
+    CHECK(after.x < i1.x + 0.5f && after.y > g2.y + g2.h);               // the next line: left edge, below the tallest group
+    // The Project panel's details strip: a picture (Dummy), SameLine, then a group of text lines (a heading and the facts). The lines stack
+    // from the picture's top, one under the other; the first is not centred on the picture (it overlapped the second in round 3).
+    UI::Rect pic{}, l1{}, l2{};
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_TextRowHeight, V(-1.0f, 0.0f));
+        UI::Dummy(V(90, 90)); pic = UI::GetItemRect(); UI::SameLine();
+        UI::BeginGroup(); UI::Text("Wood.png"); l1 = UI::GetItemRect(); UI::TextDisabled("Texture 179 B"); l2 = UI::GetItemRect(); UI::EndGroup();
+        UI::PopStyleVar();
+    };
+    r.Frames(2);
+    CHECK(std::fabs(l1.y - pic.y) < 0.5f);
+    CHECK(l2.y >= l1.y + l1.h - 0.5f && std::fabs(l2.x - l1.x) < 0.5f);
+}
+
 int main() {
     TestMultiline();
     TestHintArrowProgress();
@@ -673,6 +711,7 @@ int main() {
     TestNestedTabBars();
     TestImGuiLookSelectable();
     TestDragPreviewIsTooltip();
+    TestGroupLocksStartX();
     TestPlots();
     TestFuzz();
     TEST_MAIN_RESULT();

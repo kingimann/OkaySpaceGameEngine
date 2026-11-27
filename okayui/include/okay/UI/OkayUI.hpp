@@ -5,27 +5,27 @@
 #include <type_traits>
 #include <cstring>
 // ---------------------------------------------------------------------------
-// OkayUI — a tiny immediate-mode UI toolkit that draws THROUGH SDL_Renderer, the
-// very same pipeline Dear ImGui uses in the editor. Because it shares that
-// pipeline it composes cleanly ON TOP of ImGui with no GL/D3D state conflicts,
-// and it is GPU-accelerated by whatever backend SDL selected: Direct3D 11 on
-// Windows, Metal on macOS, OpenGL on Linux.
+// OkayUI — a tiny immediate-mode UI toolkit. It builds each frame's geometry as plain
+// draw data (GetDrawData); a backend draws it: okay::platform::Painter through
+// OkayUI::soft::FrameDrawer (okayui/soft; the apps use okay::pb::OkayUIEndFrame), or
+// one of the render backends (okayui/render: software, OpenGL, Direct3D 11).
 //
 // "No STL": this toolkit's own code uses only fixed-capacity C arrays, C strings,
-// and integer hot/active tracking — no std::vector/std::string/exceptions. Its
-// only dependencies are SDL (for the renderer) and the engine's 8x8 bitmap font.
+// and integer hot/active tracking — no std::vector/std::string/exceptions.
 //
-// v1 scope: OkayUI::Button. Usage each frame:
+// Usage each frame:
 //     OkayUI::BeginFrame(input);                       // latch mouse, reset batch
 //     if (OkayUI::Button(id, x, y, w, h, "Play")) ...  // immediate-mode widget
-//     OkayUI::EndFrame(renderer);                       // flush — AFTER ImGui draws,
-//                                                       // so OkayUI sits on top
+//     OkayUI::EndFrameData(w, h);                       // finish the frame
+//     ... a backend draws GetDrawData() ...
 // ---------------------------------------------------------------------------
-struct SDL_Renderer;
-struct SDL_Texture;
 namespace okay { class TtfFont; }
 
 namespace OkayUI {
+
+/// A host texture: whatever the painter that draws the frame made it as (okay::ui2d::Tex). OkayUI never looks inside;
+/// it passes it through to DrawCmd::texture.
+using Tex = void*;
 
 /// A 2D point or size.
 struct Vec2 {
@@ -89,7 +89,7 @@ struct Input {
     bool        rightDown = false;     // right mouse button held this frame (context menus)
     bool        middleDown = false;    // middle mouse button held this frame (IsMouseDown(2), GetMouseDragDelta(2))
     bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
-    // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
+    // Keyboard (for TextField). The host forwards typed text and key edges
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
     const char* text      = nullptr;   // UTF-8 characters typed this frame, or null
     bool        backspace = false;     // Backspace pressed this frame (delete last char)
@@ -177,7 +177,7 @@ struct Theme {
 
 /// TrueType text (Roboto, the default in every program) and the design in force (okay/UI/OkayUIDesign.hpp). `false` goes
 /// back to the 8x8 bitmap font (the last fallback; the headless tests use it), with the same design. The name is frozen
-/// (it was the launcher's look first). Needs the SDL_Renderer path (EndFrame(SDL_Renderer*)) or a backend that reads the atlas.
+/// (it was the launcher's look first). Needs a backend that reads the atlas (DrawData::atlasTexture).
 void UseLauncherLook(bool on = true);
 bool LauncherLook();
 /// The Slate design (the launcher's look) as a Theme with TrueType metrics, e.g. to tweak and reapply. Frozen name.
@@ -250,21 +250,12 @@ enum InputTextFlags {
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
-/// Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
-/// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing
-/// else is disturbed.
-void EndFrame(SDL_Renderer* renderer);
-/// The drawing half of EndFrame(SDL_Renderer*) alone: draws the frame that EndFrameData already finished through the SDL
-/// renderer (nothing is finished or built here, so the toasts must have been built by EndFrameData(w, h)). For a host that
-/// finishes the frame first and then decides which renderer draws it (OkayUI::render::SdlHost falls back to this one).
-void DrawFinishedFrame(SDL_Renderer* renderer);
-
 // ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
 // The frame's geometry as plain data, valid after the frame's widget calls (call
 // EndFrameData first so the overlay batch is merged in) until the next BeginFrame.
-// It is the same data EndFrame(SDL_Renderer*) draws, so every backend can match it.
+// Every backend draws this same data, so they can be compared.
 //
-// Vertices are `DrawVertex` (20 bytes, identical in layout to SDL_Vertex):
+// Vertices are `DrawVertex` (20 bytes, the same layout as the toolkit's internal batch vertex):
 //   offset 0: float position[2]   offset 8: uint8 color[4] (RGBA)   offset 12: float uv[2]
 // Indices are 32-bit, three per triangle. The index buffer is split into commands
 // (`DrawCmd`): consecutive index ranges that share a clip rectangle and a texture,
@@ -282,8 +273,8 @@ struct DrawCmd {
     int         clipX = 0, clipY = 0, clipW = 0, clipH = 0;   // scissor, pixels, top-left origin
     /// nullptr: untextured (flat colour, ignore uv). DrawData::atlasTexture: the launcher
     /// look's glyph atlas (white pixels, coverage in alpha, multiplied by the vertex colour).
-    /// Anything else is a backend-owned texture (an Image, a fallback font) that only the
-    /// SDL_Renderer backend can resolve.
+    /// FallbackFontOf(texture) != null: a fallback font's atlas. Anything else is a host texture
+    /// (OkayUI::Image), a painter texture passed through as it is.
     const void* texture   = nullptr;
 };
 struct ImDrawData;
@@ -316,10 +307,10 @@ okay::TtfFont* FallbackFontOf(const void* texture);
 int DroppedGeometry();
 
 /// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
-/// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).
+/// submit GetDrawData() themselves.
 void EndFrameData();
 /// The same, for a backend that knows its output size: also builds the toast messages (Toast()), which
-/// EndFrame(SDL_Renderer*) builds with the renderer's size and EndFrameData() cannot.
+/// EndFrameData() cannot build without a size.
 void EndFrameData(int outputWidth, int outputHeight);
 
 // ---------------------------------------------------------------------------
@@ -521,16 +512,16 @@ int PlotHistogram(const char* label, float (*getter)(void* data, int index), voi
 void LabelText(const char* label, const char* value);
 
 // ---- Images (textured quads) ---------------------------------------------------
-// GPU textures drawn through the same batch. Requires the SDL_Renderer backend
-// (EndFrame); custom GetDrawData backends receive untextured geometry only.
+// Host textures drawn through the same batch: each becomes a DrawCmd whose texture is the host's handle
+// (the painter backend draws it; a backend that ignores textures draws untextured geometry).
 /// Draw a texture at explicit coordinates, tinted by (r,g,b,a) — white = as-is.
-void DrawTexture(SDL_Texture* tex, float x, float y, float w, float h,
+void DrawTexture(Tex tex, float x, float y, float w, float h,
                  unsigned char r = 255, unsigned char g = 255, unsigned char b = 255, unsigned char a = 255);
 /// Auto-layout image `w`*`h` at the cursor.
-void Image(SDL_Texture* tex, float w, float h,
+void Image(Tex tex, float w, float h,
            unsigned char r = 255, unsigned char g = 255, unsigned char b = 255, unsigned char a = 255);
 /// A clickable image button (`id` for identity). Returns true the frame it's clicked.
-bool ImageButton(const char* id, SDL_Texture* tex, float w, float h);
+bool ImageButton(const char* id, Tex tex, float w, float h);
 bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
 /// A multi-line text box editing the caller's buffer (capacity `cap`, always NUL-terminated), built on OkayUI::CodeEdit without the gutter,
 /// highlighting or auto-indent (okayui/src/OkayUIText.cpp). `size.x` <= 0 fills the width left (less the label), `size.y` <= 0 is five rows.
@@ -1163,7 +1154,7 @@ template <typename T> struct ImVector {
 // OkayUI's own draw data is DrawData / DrawCmd above. These are the same facts in the field names and layout a Dear ImGui renderer expects, built
 // from DrawData on request (`ImDrawData* dd = GetDrawData();` converts, see DrawData::operator ImDrawData*) so such a renderer can run unchanged
 // while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/ui/own_ui_toolkit.md 6.22.
-typedef SDL_Texture* ImTextureID;                    // what AddImage and Image take
+typedef Tex ImTextureID;                    // what AddImage and Image take
 typedef unsigned int ImDrawIdx;                       // 32-bit: OkayUI batches hold more than 65,535 vertices
 struct ImDrawVert { Vec2 pos; Vec2 uv; unsigned col = 0; };   // col is 0xAABBGGRR
 struct ImTextureRect { unsigned short x = 0, y = 0, w = 0, h = 0; };
@@ -1236,15 +1227,15 @@ struct DrawList {
     void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding, int flags) const;
     /// A textured rectangle. Always goes to the main batch, also on the foreground list. The software test backend
     /// skips textured commands.
-    void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
+    void AddImage(Tex tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
                   Color32 tint = 0xffffffffu) const;
     /// A textured four-corner shape (corners in order around the shape, each with its own texture coordinate); convex shapes only (drawn as a
     /// fan from corner 0). Same rules as AddImage (main batch, skipped by the software test backend).
-    void AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1 = Vec2{0.0f, 0.0f}, Vec2 uv2 = Vec2{1.0f, 0.0f},
+    void AddImageQuad(Tex tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1 = Vec2{0.0f, 0.0f}, Vec2 uv2 = Vec2{1.0f, 0.0f},
                       Vec2 uv3 = Vec2{1.0f, 1.0f}, Vec2 uv4 = Vec2{0.0f, 1.0f}, Color32 tint = 0xffffffffu) const;
     /// AddImage with rounded corners (`rounding` in pixels, clamped to half the shorter side; which corners: DrawFlags, 0 = all). The
     /// texture coordinates follow the position inside the rectangle, so the rounded shape cuts the picture.
-    void AddImageRounded(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags = 0) const;
+    void AddImageRounded(Tex tex, Vec2 min, Vec2 max, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags = 0) const;
     /// A regular polygon with `n` corners (3 to 128), the first corner pointing right of the centre, corners going clockwise on screen.
     void AddNgon(Vec2 center, float radius, Color32 col, int n, float thickness = 1.0f) const;
     void AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const;
@@ -1292,7 +1283,7 @@ struct DrawList {
     void PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const;
     void PrimWriteIdx(ImDrawIdx idx) const;
     void PrimVtx(Vec2 pos, Vec2 uv, Color32 col) const;
-    /// The texture the following geometry samples (a stack of 8; PopTexture goes back). The texture is an SDL_Texture the host owns.
+    /// The texture the following geometry samples (a stack of 8; PopTexture goes back). The texture is a painter texture the host owns.
     void PushTexture(const ImTextureRef& tex) const;
     void PopTexture() const;
     mutable unsigned _VtxCurrentIdx = 0;

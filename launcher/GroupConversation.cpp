@@ -282,7 +282,7 @@ void DrawGroupConversation(
             const ImVec2 tp = ImGui::GetCursorScreenPos();
             if (ImGui::InvisibleButton("##thumb", ImVec2(th, th))) { g_chatLightboxReq = imgs[k]; ImGui::CloseCurrentPopup(); }
             ImDrawList* md = ImGui::GetWindowDrawList();
-            if (SDL_Texture* tx = AvatarTexture(imgs[k]))
+            if (okay::ui2d::Tex tx = AvatarTexture(imgs[k]))
                 md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
             else md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), okaytheme::U32(okaytheme::kField), 8.0f);
             ImGui::PopID();
@@ -459,7 +459,7 @@ void DrawGroupConversation(
             }
             const ImVec2 cp = ImGui::GetCursorScreenPos();
             const ImVec2 ac(cp.x + avatarW * 0.5f, cp.y + avatarW * 0.5f);
-            if (SDL_Texture* at = AvatarTexture(avatarOf(m.sender)))
+            if (okay::ui2d::Tex at = AvatarTexture(avatarOf(m.sender)))
                 dl->AddImageRounded((ImTextureID)(intptr_t)at, cp, ImVec2(cp.x + avatarW, cp.y + avatarW), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, avatarW * 0.5f);
             else {
                 const ImVec4 col = NameColor(m.senderName);
@@ -516,7 +516,7 @@ void DrawGroupConversation(
             const ImVec2 ip = ImGui::GetCursorScreenPos();
             const bool mclick = ImGui::InvisibleButton("##media", mediaSz);
             const bool mhov = ImGui::IsItemHovered();
-            if (SDL_Texture* mt = ChatImageTexture(mediaUrl))
+            if (okay::ui2d::Tex mt = ChatImageTexture(mediaUrl))
                 bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
                                      ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
             else {
@@ -536,7 +536,7 @@ void DrawGroupConversation(
         }
         else RenderChatBody(mb, ImGui::GetContentRegionAvail().x);
         if (!imgUrl.empty()) {   // inline preview of an image link (click: full size)
-            if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
+            if (okay::ui2d::Tex it = ChatImageTexture(imgUrl)) {
                 int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                 const float availW = ImGui::GetContentRegionAvail().x;
                 float w = (iw > 0 && iw > availW) ? availW : (float)iw; if (w < 1) w = availW;

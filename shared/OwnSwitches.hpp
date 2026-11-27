@@ -43,14 +43,13 @@ struct Item {
 
 /// The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 /// unless the person turned it off (see the top). "http" was removed when our own web client became the only one (no curl to switch
-/// back to); an old off=http line is ignored, like off=wav.
+/// back to); an old off=http line is ignored, like off=wav. "platform" and "ownrender" went with SDL2 (2026-11-27): our own window
+/// layer and OkayUI's own drawing are the only ones, so old off=platform / off=ownrender lines are ignored too.
 inline const std::vector<Item>& Items() {
     static const std::vector<Item> t = {
         {"okayui",   "OkayUI screens",        "Draw the screens that have an OkayUI version (What's New, the editor Console) with our own toolkit instead of Dear ImGui.", "OKAY_UI_BACKEND",      "okayui", kNeedsOkayUi},
         {"inspector", "OkayUI Inspector",     "Draw the Inspector's component bodies with our own toolkit (a preview). Needs \"OkayUI screens\" on too; any body that has no OkayUI version, or a newer Dear ImGui one, stays Dear ImGui.", "OKAY_UI_INSPECTOR", "1", kNeedsOkayUi},
-        {"ownrender", "OkayUI own renderer",  "Draw the OkayUI screens with OkayUI's own renderer instead of SDL's geometry calls: Direct3D 11 where the window uses SDL's Direct3D 11 renderer (the Windows default), OpenGL where it uses SDL's OpenGL renderer. Any other frame draws as before.", "OKAY_UI_OWN_RENDER", "1", kNeedsOkayUi},
         {"browser",  "Browser", "Our own browser: the Browser page in the launcher's sidebar and the OkaySpace Browser program, and web links from chat open in a new tab of the Browser page. Off: links open in the system browser. Needs \"OkayUI screens\" on too.", "OKAY_BROWSER", "1", kNeedsOkayUi},
-        {"platform", "Our own window layer",  "Open windows, read the keyboard and mouse and draw with our own okay::platform backend and OpenGL painter instead of SDL (Linux only; OKAY_OWN_PAINTER=software uses the CPU painter).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
     };
     return t;
 }

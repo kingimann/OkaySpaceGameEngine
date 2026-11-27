@@ -14,8 +14,7 @@
 // from the server's invite code, so the relay only ever sees ciphertext.
 // No echo cancellation: headphones are recommended.
 #pragma once
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers
 #include "../shared/OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 #include "okay/Crypto/Sha256.hpp"     // SHA-256 for the room key (the engine's one copy)
 #include "okay/Crypto/Crypto.hpp"     // okay::crypto::ChaCha20Xor: only in builds without libsodium

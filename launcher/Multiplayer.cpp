@@ -31,7 +31,7 @@ namespace okl {
 // inviting friends, and the server browser's data. The running game reports to
 // us through okay/Platform/GameIpc.hpp files.
 // ============================================================================
-SDL_Window* g_launcherWindow = nullptr;   // brought forward when a game asks for the invite window
+okay::platform::Window* g_launcherWindow = nullptr;   // brought forward when a game asks for the invite window
 
 struct MyGame {
     bool running = false;

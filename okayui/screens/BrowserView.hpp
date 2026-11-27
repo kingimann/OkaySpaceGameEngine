@@ -69,7 +69,7 @@ public:
 };
 
 /// The texture for an image of the page (`src` as written), or null while there is none.
-using BrowserImageFn = std::function<SDL_Texture*(const std::string& src)>;
+using BrowserImageFn = std::function<Tex (const std::string& src)>;
 
 /// What the host says about an embedded box (DrawCmd::Embed): whether it can run an OkaySpace game, and the game's state.
 struct EmbedState {

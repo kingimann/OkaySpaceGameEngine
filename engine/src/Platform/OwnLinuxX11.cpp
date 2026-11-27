@@ -656,6 +656,13 @@ public:
         if (mask & Button3Mask) r |= MouseMask(MouseRight);
         return r;
     }
+    // Shift, Lock (Caps Lock), Control and Mod1..Mod5 as the server reports them with the pointer (Xlib manual, XQueryPointer:
+    // "the current logical state of the keyboard buttons and the modifier keys"). Without a display: none.
+    uint32_t ModState() override {
+        ::Window root, child; int rx, ry, wx, wy; unsigned mask = 0;
+        if (!m_x.XQueryPointer(m_dpy, m_root, &root, &child, &rx, &ry, &wx, &wy, &mask)) return 0;
+        return ModsFromX(mask);
+    }
     // The pointer on the whole screen: the root window's coordinates from XQueryPointer.
     bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
         ::Window root, child; int rx = 0, ry = 0, wx, wy; unsigned mask = 0;

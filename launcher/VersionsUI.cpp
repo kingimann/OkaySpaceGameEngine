@@ -3,8 +3,7 @@
 #include "VersionsUI.hpp"
 #include "UpdateView.hpp"   // okay::updateview::SkippedLine (the same words as What's New)
 
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers
 #include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 
 #include <algorithm>

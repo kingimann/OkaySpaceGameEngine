@@ -13,7 +13,7 @@
 // 2026-11-23) sets OKAY_UI_BACKEND=okayui at the top of main(), so rule 1 picks OkayUI with no OKAY_DEV. Unticking the item leaves the variable
 // unset, so the answer falls back to the build default; that is why the build default stays Dear ImGui (an okayui build default could not
 // be switched off from the screen).
-// A build without OkayUI compiled in (no SDL2, or the web player) always answers Dear ImGui.
+// A build without OkayUI compiled in (the web player) always answers Dear ImGui.
 #include <cctype>
 #include <string>
 

@@ -4,7 +4,8 @@
 // each entry moves to the header of the file that ends up owning it. Everything is in namespace okl (the launcher's
 // names; main.cpp's anonymous namespace became okl so the split-out files can reach them).
 #include "okay/UI/OkayUIImGuiNames.hpp"   // OkayUI, in Dear ImGui's names
-#include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform::Window (the launcher's windows)
+#include "PainterBridge.hpp"          // okay::pb::Renderer, okay::ui2d::Tex
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
 #include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link
 #include "JoinPlan.hpp"                     // okay::joinplan::Candidate (MpJoinProjects)
@@ -32,30 +33,28 @@ namespace fs = std::filesystem;   // the same alias as main.cpp's
 #include <sys/types.h>   // pid_t (PlayProc)
 #endif
 
-// Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
-// windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
-#include "WindowHandles.hpp"   // native handle -> okay::platform::Window (sdl2 and own-backend windows)
+// Window calls on the launcher's windows (okay::platform::Window). A null window does nothing.
 namespace lw {
-inline void Restore(SDL_Window* w)  { if (auto s = okay::pb::Win(w)) s->Restore(); }
-inline void Raise(SDL_Window* w)    { if (auto s = okay::pb::Win(w)) s->Raise(); }
-inline void Show(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Show(); }
-inline void Hide(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Hide(); }
-inline void Minimize(SDL_Window* w) { if (auto s = okay::pb::Win(w)) s->Minimize(); }
-inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
-inline bool IsMinimized(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsMinimized(); }
-inline bool IsVisible(SDL_Window* w)   { auto s = okay::pb::Win(w); return s && s->IsVisible(); }
-inline bool HasInputFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasInputFocus(); }
-inline bool HasMouseFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasMouseFocus(); }
+inline void Restore(okay::platform::Window* w)  { if (auto* s = w) s->Restore(); }
+inline void Raise(okay::platform::Window* w)    { if (auto* s = w) s->Raise(); }
+inline void Show(okay::platform::Window* w)     { if (auto* s = w) s->Show(); }
+inline void Hide(okay::platform::Window* w)     { if (auto* s = w) s->Hide(); }
+inline void Minimize(okay::platform::Window* w) { if (auto* s = w) s->Minimize(); }
+inline void GetPos(okay::platform::Window* w, int* x, int* y) { int a = 0, b = 0; if (auto* s = w) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline bool IsMinimized(okay::platform::Window* w) { auto* s = w; return s && s->IsMinimized(); }
+inline bool IsVisible(okay::platform::Window* w)   { auto* s = w; return s && s->IsVisible(); }
+inline bool HasInputFocus(okay::platform::Window* w) { auto* s = w; return s && s->HasInputFocus(); }
+inline bool HasMouseFocus(okay::platform::Window* w) { auto* s = w; return s && s->HasMouseFocus(); }
 inline bool AnyKeyboardFocus() { auto* b = okay::platform::Default(); return b && b->KeyboardFocusWindowId() != 0; }
-inline void* Win32Handle(SDL_Window* w) { auto s = okay::pb::Win(w); return s ? s->Win32Handle() : nullptr; }
-inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
-inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetSize(x, y); }
-inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::pb::Win(w)) s->SetPosition(x, y); }
-inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetMinimumSize(x, y); }
-inline uint32_t Id(SDL_Window* w)   { auto s = okay::pb::Win(w); return s ? s->Id() : 0; }
-inline bool IsFocused(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsFocused(); }
-inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::pb::Win(w)) s->Flash(m); }
-inline bool SetAlwaysOnTop(SDL_Window* w, bool on) { auto s = okay::pb::Win(w); return s && s->SetAlwaysOnTop(on); }
+inline void* Win32Handle(okay::platform::Window* w) { auto* s = w; return s ? s->Win32Handle() : nullptr; }
+inline void GetSize(okay::platform::Window* w, int* x, int* y) { int a = 0, b = 0; if (auto* s = w) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
+inline void SetSize(okay::platform::Window* w, int x, int y) { if (auto* s = w) s->SetSize(x, y); }
+inline void SetPos(okay::platform::Window* w, int x, int y)  { if (auto* s = w) s->SetPosition(x, y); }
+inline void SetMinSize(okay::platform::Window* w, int x, int y) { if (auto* s = w) s->SetMinimumSize(x, y); }
+inline uint32_t Id(okay::platform::Window* w)   { auto* s = w; return s ? s->Id() : 0; }
+inline bool IsFocused(okay::platform::Window* w) { auto* s = w; return s && s->IsFocused(); }
+inline void Flash(okay::platform::Window* w, okay::platform::FlashMode m) { if (auto* s = w) s->Flash(m); }
+inline bool SetAlwaysOnTop(okay::platform::Window* w, bool on) { auto* s = w; return s && s->SetAlwaysOnTop(on); }
 } // namespace lw
 
 namespace okay { struct JoinLink; }
@@ -63,7 +62,7 @@ namespace okay { struct MyBanInfo; namespace account { class AccountService; } }
 namespace okay { struct PlaytimeEntry; }
 
 // An RGBA8 picture as a texture of `renderer` (main.cpp, global scope); null when it cannot be made.
-SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h);
+okay::ui2d::Tex TextureFromRgba(okay::pb::Renderer* renderer, const unsigned char* rgba, int w, int h);
 
 namespace okl {
 
@@ -79,7 +78,7 @@ void OpenExternal(const std::string& target);   // open a URL or folder with the
 int RunCmd(const std::string& cmd, bool wait);  // run a command without a console window; wait = return its exit code
 // Chat media (main.cpp).
 void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string& tok);   // any emoji token centred at c
-SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, int* h = nullptr);   // a chat image / GIF frame (cached)
+okay::ui2d::Tex ChatImageTexture(const std::string& url, int* w = nullptr, int* h = nullptr);   // a chat image / GIF frame (cached)
 std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                             const std::vector<std::string>* recentGifs, bool canSendMedia);   // emoji / GIF / sticker picker
 // Shared look helpers (main.cpp).
@@ -91,7 +90,7 @@ std::string FitText(const std::string& s, float maxW);   // s shortened with "..
 void DrawVerifiedBadge(ImDrawList* d, ImVec2 c, float r);   // the blue "verified" tick
 // State and config (main.cpp).
 extern std::string g_exeDir;                   // the folder the launcher runs from
-extern SDL_Renderer* g_renderer;               // the renderer textures are uploaded to (switched while the chat window draws)
+extern okay::pb::Renderer* g_renderer;               // the renderer textures are uploaded to (switched while the chat window draws)
 extern int g_rslot;                            // render slot: 0 = launcher window, 1 = chat window (each texture cache keeps one copy per slot)
 bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes = {},
               const std::function<bool()>& cancelled = {});   // fetch a URL to a file (blocking); onBytes = progress; cancelled = stop

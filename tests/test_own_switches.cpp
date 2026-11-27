@@ -160,12 +160,12 @@ static void own_switches_default_reaches_the_okayui_gates() {
     DropEnv(AppliedVar());
     Context ctx; ctx.windows = true; ctx.okayUi = true;
     auto got = Apply(Parse("", Items()), Items(), ctx);
-    CHECK(JoinIds(got) == "okayui,inspector,ownrender,browser");                // platform is not offered on Windows
+    CHECK(JoinIds(got) == "okayui,inspector,browser");                // platform and ownrender went with SDL2 (no switch: ours is the only path)
     CHECK(Get("OKAY_BROWSER") && std::string(Get("OKAY_BROWSER")) == "1");     // the Browser page (launcher/BrowserPage.hpp) starts on
     CHECK(Get("OKAY_OWN_HTTP") == nullptr && Get("OKAY_PLATFORM_BACKEND") == nullptr);
     CHECK(okayuibackend::Resolve(Get("OKAY_UI_BACKEND"), "", okayuibackend::DevMode(Get("OKAY_DEV")), true) == okayuibackend::Backend::OkayUI);
     CHECK(okayuibackend::InspectorOn(okayuibackend::Backend::OkayUI, Get("OKAY_DEV"), Get("OKAY_UI_INSPECTOR")));
-    CHECK(Get("OKAY_UI_OWN_RENDER") && std::string(Get("OKAY_UI_OWN_RENDER")) == "1");
+    CHECK(Get("OKAY_UI_OWN_RENDER") == nullptr);   // the SDL renderer host it chose is gone: nothing sets the variable
     CHECK(Get("OKAY_OWN_WAV") == nullptr);   // the WAV switch was deleted: nothing sets its variable
     // a person's own OKAY_UI_BACKEND=imgui still opts out (a child program started with it sees it as theirs)
     DropEnv("OKAY_UI_BACKEND"); DropEnv(AppliedVar()); PutEnv("OKAY_UI_BACKEND", "imgui");

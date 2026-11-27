@@ -437,6 +437,55 @@ inline double copysign(double x, double y) {
     a.u = (a.u & 0x7FFFFFFFFFFFFFFFull) | (b.u & 0x8000000000000000ull);
     return a.d;
 }
+// rint, nearbyint, lrint and llrint (ISO/IEC 9899 7.12.9.3-5; Round 34, SoftwareDevice.cpp): the nearest whole number,
+// a tie going to the even one (the default rounding mode, the only one okay-ms has).
+inline double rint(double x) {
+    if (x != x || x == okay_math::inf_d() || x == -okay_math::inf_d()) return x;
+    const double f = okay_math::floor_d(x);
+    const double d = x - f;
+    if (d > 0.5) return f + 1.0;
+    if (d < 0.5) return f;
+    return fmod(f, 2.0) == 0.0 ? f : f + 1.0;
+}
+inline float rint(float x) { return (float)rint((double)x); }
+inline double nearbyint(double x) { return rint(x); }
+inline float nearbyint(float x) { return (float)rint((double)x); }
+inline long lrint(double x) { return (long)rint(x); }
+inline long lrint(float x) { return (long)rint((double)x); }
+inline long long llrint(double x) { return (long long)rint(x); }
+inline long long llrint(float x) { return (long long)rint((double)x); }
+// lgamma (ISO/IEC 9899 7.12.8.3; Round 34, RandomExtras.cpp): log|Gamma(x)|. For x >= 15, Stirling's series
+// (x - 1/2) ln x - x + ln(2 pi) / 2 + sum B(2k) / (2k (2k - 1) x^(2k - 1)), with the Bernoulli numbers B2 = 1/6,
+// B4 = -1/30, B6 = 1/42, B8 = -1/30, B10 = 5/66, B12 = -691/2730; below, Gamma(x + 1) = x Gamma(x) moves x up; for
+// x < 0.5 the reflection Gamma(x) Gamma(1 - x) = pi / sin(pi x). A pole (0, -1, -2, ...) gives +infinity.
+inline double lgamma(double x) {
+    if (x != x) return x;
+    if (x == okay_math::inf_d() || x == -okay_math::inf_d()) return okay_math::inf_d();
+    const double pi = 3.14159265358979323846;
+    if (x < 0.5) {
+        if (x == okay_math::floor_d(x)) return okay_math::inf_d();
+        const double s = sin(pi * x);
+        return log(pi / fabs(s)) - lgamma(1.0 - x);
+    }
+    double shift = 0.0;
+    double v = x;
+    double prod = 1.0;
+    while (v < 15.0) {
+        prod *= v;
+        v += 1.0;
+        if (prod > 1e280) {
+            shift += log(prod);
+            prod = 1.0;
+        }
+    }
+    shift += log(prod);
+    const double inv = 1.0 / v;
+    const double inv2 = inv * inv;
+    const double series = inv * (1.0 / 12.0 + inv2 * (-1.0 / 360.0 + inv2 * (1.0 / 1260.0 + inv2 * (-1.0 / 1680.0 +
+                                 inv2 * (1.0 / 1188.0 + inv2 * (-691.0 / 360360.0))))));
+    return (v - 0.5) * log(v) - v + 0.91893853320467274178 + series - shift;
+}
+inline float lgamma(float x) { return (float)lgamma((double)x); }
 }
 // INFINITY, NAN, HUGE_VAL and HUGE_VALF (ISO/IEC 9899 7.12 3-5): built from the bit patterns above. Own difference: they
 // are values computed at run time, not constant expressions (a static initializer cannot use them).

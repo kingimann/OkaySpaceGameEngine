@@ -667,6 +667,56 @@ inline okay_setfill setfill(char c) { okay_setfill m; m.c = c; return m; }
 inline ostream& operator<<(ostream& os, okay_setprecision m) { os.precision(m.n); return os; }
 inline ostream& operator<<(ostream& os, okay_setw m) { os.width(m.n); return os; }
 inline ostream& operator<<(ostream& os, okay_setfill m) { os.fill(m.c); return os; }
+// std::quoted ([quoted.manip]; Round 34, Character.cpp): written, the text between delimiters with each delimiter and
+// escape character inside preceded by the escape; read, a delimited text with its escapes undone, or one plain word when
+// the next character is not the delimiter. Own simplification: one form for both directions (it holds a const pointer;
+// reading writes through it, so it must name a modifiable string, as the standard's string& form does).
+struct okay_quoted {
+    const string* s;
+    char delim;
+    char escape;
+};
+inline okay_quoted quoted(const string& s, char delim = '"', char escape = '\\') {
+    okay_quoted q;
+    q.s = &s;
+    q.delim = delim;
+    q.escape = escape;
+    return q;
+}
+inline ostream& operator<<(ostream& os, okay_quoted q) {
+    string out(1, q.delim);
+    for (size_t i = 0; i < q.s->size(); ++i) {
+        const char c = (*q.s)[i];
+        if (c == q.delim || c == q.escape) out += q.escape;
+        out += c;
+    }
+    out += q.delim;
+    return os << out;
+}
+inline istream& operator>>(istream& is, okay_quoted q) {
+    string& target = *const_cast<string*>(q.s);
+    ws(is);
+    if (is.peek() != (int)(unsigned char)q.delim) return is >> target;
+    is.get();
+    target.clear();
+    for (int c = is.get(); ; c = is.get()) {
+        if (c < 0) {
+            is.setstate(ios_base::failbit);
+            break;
+        }
+        if (c == (int)(unsigned char)q.escape) {
+            c = is.get();
+            if (c < 0) {
+                is.setstate(ios_base::failbit);
+                break;
+            }
+        } else if (c == (int)(unsigned char)q.delim) {
+            break;
+        }
+        target += (char)c;
+    }
+    return is;
+}
 
 // <sstream>: a device over a std::string ([stringbuf]).
 class stringbuf : public streambuf {

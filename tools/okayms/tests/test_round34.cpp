@@ -705,6 +705,68 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Silent wrong code (Round 33 and before): a decimal floating literal with more than 19 digits wrapped the 64-bit
+// numbers its digits were gathered in, so 0.91893853320467274178 was about 0.73 and 3.14159265358979323846 was wrong
+// ([lex.fcon]); now up to 38 significant digits are kept and rounded once (IEEE 754 round to nearest even).
+static void r34_long_literals(Tally& tally) {
+    std::printf("r34_long_literals\n");
+    okayms_test::run_both(kRun, tally, "long_literals", R"OKMS(
+static bool near(double a, double b, double t) { double d = a - b; if (d < 0) d = -d; return d < t; }
+int entry(void) {
+  CK(1, near(0.9189385332046727, 0.9189385332, 1e-9));
+  CK(2, near(0.91893853320467274, 0.9189385332, 1e-9));
+  CK(3, near(0.918938533204672741, 0.9189385332, 1e-9));
+  CK(4, near(0.9189385332046727417, 0.9189385332, 1e-9));
+  CK(5, near(0.91893853320467274178, 0.9189385332, 1e-9));
+  CK(6, near(3.14159265358979323846, 3.1415926535, 1e-9));
+  CK(7, near(123456789012345678901234.0, 1.2345678901234568e23, 1e9));
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Library pieces the next engine files use (Round 34): std::rint, nearbyint, lrint, llrint (ISO/IEC 9899 7.12.9; ties to
+// even), std::lgamma (7.12.8.3; Stirling's series with the Bernoulli numbers, the recurrence and the reflection
+// formula), the range insert of set and unordered_set, string::shrink_to_fit, and std::quoted ([quoted.manip]).
+static void r34_library(Tally& tally) {
+    std::printf("r34_library\n");
+    okayms_test::run_both(kRun, tally, "library", std::string(kAlloc) + R"OKMS(
+#include <cmath>
+#include <set>
+#include <unordered_set>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <iomanip>
+static bool near(double a, double b) { double d = a - b; if (d < 0) d = -d; return d < 1e-9 * (1 + (b < 0 ? -b : b)); }
+int entry(void) {
+  CK(1, std::lrint(2.5) == 2 && std::lrint(3.5) == 4 && std::lrint(-2.5) == -2 && std::lrint(2.4f) == 2 && std::lrint(0.6f) == 1);
+  CK(2, std::llrint(-3.7) == -4 && std::rint(1.5) == 2.0 && std::nearbyint(0.5) == 0.0);
+  CK(3, near(std::lgamma(1.0), 0.0) && near(std::lgamma(2.0), 0.0) && near(std::lgamma(5.0), 3.17805383034794561964));
+  CK(4, near(std::lgamma(0.5), 0.57236494292470008707) && near(std::lgamma(-0.5), 1.26551212348464539649));
+  CK(5, near(std::lgamma(100.0), 359.13420536957539878));
+  std::vector<int> v = {3, 1, 3, 2};
+  std::set<int> s;
+  s.insert(v.begin(), v.end());
+  std::unordered_set<int> u;
+  u.insert(v.begin(), v.end());
+  CK(6, s.size() == 3 && u.size() == 3 && u.count(2) == 1);
+  std::string t = "abc";
+  t.reserve(100);
+  t.shrink_to_fit();
+  CK(7, t == "abc");
+  std::ostringstream os;
+  os << std::quoted(std::string("a \"b\" c")) << ' ' << std::quoted(std::string("-"));
+  CK(8, os.str() == "\"a \\\"b\\\" c\" \"-\"");
+  std::istringstream is(os.str() + " plain");
+  std::string r1, r2, r3;
+  is >> std::quoted(r1) >> std::quoted(r2) >> std::quoted(r3);
+  CK(9, r1 == "a \"b\" c" && r2 == "-" && r3 == "plain");
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -725,5 +787,7 @@ int main(int argc, char** argv) {
     r34_enum_alias(tally);
     r34_conversions(tally);
     r34_new_aggregate(tally);
-    return tally.finish(16);
+    r34_long_literals(tally);
+    r34_library(tally);
+    return tally.finish(18);
 }

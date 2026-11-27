@@ -80,6 +80,10 @@ public:
         const long long idx = slot_of(value);
         return idx >= 0 ? items_.data() + idx : end();
     }
+    // The elements of [first, last) ([associative.reqmts], [unord.req]; Round 34, LocCheck.cpp and Physics2DEngine.inl).
+    template <typename It> void insert(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     pair<const T*, bool> insert(const T& value) {
         const long long idx = slot_of(value);
         if (idx >= 0) return pair<const T*, bool>(items_.data() + idx, false);
@@ -136,6 +140,10 @@ public:
     void reserve(size_t) {}
     size_t count(const T& value) const { return items_.count(value); }
     const T* find(const T& value) const { return items_.find(value); }
+    // The elements of [first, last) ([associative.reqmts], [unord.req]; Round 34, LocCheck.cpp and Physics2DEngine.inl).
+    template <typename It> void insert(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     pair<const T*, bool> insert(const T& value) { return items_.insert(value); }
     size_t erase(const T& value) { return items_.erase(value); }
     const T* erase(const T* pos) { return items_.erase(pos); }

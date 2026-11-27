@@ -340,6 +340,7 @@ public:
     std::reverse_iterator<const char*> rend() const { return std::reverse_iterator<const char*>(data_); }
 
     void reserve(size_t n) { reserve_exact(n); }
+    void shrink_to_fit() {}  // a non-binding request ([string.capacity]); kept as it is (Round 34)
     void clear() {
         size_ = 0;
         data_[0] = 0;

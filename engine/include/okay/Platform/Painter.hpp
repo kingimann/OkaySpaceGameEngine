@@ -1,21 +1,20 @@
 #pragma once
-// okay::platform::Painter: the 2D drawing surface of a window, one interface with two implementations.
+// okay::platform::Painter: the 2D drawing surface of a window, one interface with these implementations.
 //
-//   sdl2      wraps an SDL_Renderer. Every call is the SDL call it replaces, so the picture is the one
-//             the app drew before the interface existed.
 //   software  (own backend; OkayUI::soft::CreateWindowPainter in okayui/soft) draws on the CPU into an
 //             RGBA8 frame buffer with OkayUI's software rasteriser and hands the finished frame to the
 //             window (Window::PresentPixels: XPutImage on X11, StretchDIBits on Win32). No GPU.
 //   opengl    (own backend; CreateGLPainter below, engine/src/Platform/GLPainter.cpp) draws with OpenGL 3.3 core
 //             (3.0 / GLSL 1.30 when that is all there is) on the window's own GL context (GLX on X11, WGL on
 //             Win32). Entry points come from Backend::GLProcAddress, so there is no link-time GL.
+//   sdl2      the web build only (Emscripten's SDL2 port, SdlPainter.cpp): wraps an SDL_Renderer. Not in desktop builds.
 //
 // It extends okay::ui2d::Painter (the primitive set the in-game UI pass already draws through: colour
 // state, rects, lines, clip, textures, copies, triangle geometry) with what an app needs around that:
 // the output size, clear, the draw blend mode, texture creation and upload, present and vsync.
 //
-// OWN CODE, NOT READY: the software implementation is opt-in (OKAY_PLATFORM_BACKEND=own at run time),
-// off by default, and has no user-visible setting. See docs/platform/platform_layer.md.
+// The OpenGL painter is the desktop default (shared/OwnPainter.hpp), the software one the fallback when a window has no GL.
+// See docs/platform/platform_layer.md.
 #include "okay/Platform/Platform.hpp"
 #include "okay/UI/UIPainter.hpp"
 
@@ -47,8 +46,7 @@ public:
 
     virtual PainterKind Kind() const = 0;
     const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : Kind() == PainterKind::OpenGL ? "opengl" : "software"; }
-    /// The SDL_Renderer* behind an sdl2 painter, else null. Only for libraries that still speak SDL
-    /// (OkayUI::EndFrame(SDL_Renderer*), Dear ImGui's backend).
+    /// The SDL_Renderer* behind an sdl2 painter (the web build only), else null.
     virtual void* NativeRenderer() = 0;
 
     /// Size of the render target in pixels (the drawable size of the window).
@@ -134,15 +132,11 @@ struct PainterDesc {
     bool requireAccelerated = false;
 };
 
-/// sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.
+#if defined(__EMSCRIPTEN__)
+/// sdl2 (the web build only, Emscripten's SDL2 port): a renderer on an sdl2 window (accelerated, else any).
 /// Null when `w` is not an sdl2 window or the renderer cannot be made (`err`, when given, says why).
 std::unique_ptr<Painter> CreateSdl2Painter(Window& w, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
-/// sdl2 over a renderer somebody else owns (the editor's and the launcher's). `sdlRenderer` is an
-/// SDL_Renderer*; the painter never destroys it.
-std::unique_ptr<Painter> WrapSdl2Renderer(void* sdlRenderer);
-/// Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
-/// sdl2 implementation without a window. Null when SDL is not compiled in.
-std::unique_ptr<Painter> CreateSdl2SurfacePainter(int w, int h);
+#endif
 
 /// opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
 /// window's GL context (Window::CreateGLContext, 3.3 core first, else what the driver gives), loads its entry points through

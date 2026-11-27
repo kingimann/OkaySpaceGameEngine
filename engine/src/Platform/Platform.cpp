@@ -298,11 +298,6 @@ void DelayMs(uint32_t ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-#ifndef OKAY_PLATFORM_HAVE_SDL2
-bool TranslateSdl2Event(const void*, Event&) { return false; }
-std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }   // the real one is in SdlBackend.cpp
-#endif
-
 void Log(const std::string& line) {
     if (Backend* b = Default()) { b->Log(line); return; }
     std::fprintf(stderr, "INFO: %s\n", line.c_str());

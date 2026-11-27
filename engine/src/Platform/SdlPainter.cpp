@@ -1,5 +1,6 @@
-// okay::platform::Painter over SDL_Renderer. Every method is the SDL call it stands for; nothing is
-// reinterpreted, so an app moved onto the interface draws what it drew on the renderer directly.
+// okay::platform::Painter over SDL_Renderer, for the web build only (Emscripten's SDL2 port; engine/CMakeLists.txt compiles
+// this file only when EMSCRIPTEN). Every method is the SDL call it stands for. The desktop programs draw with the OpenGL
+// painter (GLPainter.cpp) or the software painter (okayui/soft); SDL2 is not part of the desktop builds.
 #include "okay/Platform/Painter.hpp"
 
 #ifdef OKAY_PLATFORM_HAVE_SDL2
@@ -138,31 +139,6 @@ std::unique_ptr<Painter> CreateSdl2Painter(Window& w, const PainterDesc& d, std:
     return std::unique_ptr<Painter>(new SdlPainter(r, true));
 }
 
-std::unique_ptr<Painter> WrapSdl2Renderer(void* sdlRenderer) {
-    if (!sdlRenderer) return nullptr;
-    return std::unique_ptr<Painter>(new SdlPainter((SDL_Renderer*)sdlRenderer, false));
-}
-
-std::unique_ptr<Painter> CreateSdl2SurfacePainter(int w, int h) {
-    if (w <= 0 || h <= 0) return nullptr;
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ABGR8888);
-    if (!s) return nullptr;
-    SDL_Renderer* r = SDL_CreateSoftwareRenderer(s);
-    if (!r) { SDL_FreeSurface(s); return nullptr; }
-    return std::unique_ptr<Painter>(new SdlPainter(r, true, s));
-}
-
-} // namespace okay::platform
-
-#else // no SDL2: the sdl2 painter does not exist
-
-namespace okay::platform {
-std::unique_ptr<Painter> CreateSdl2Painter(Window&, const PainterDesc&, std::string* err) {
-    if (err) *err = "this build has no SDL2";
-    return nullptr;
-}
-std::unique_ptr<Painter> WrapSdl2Renderer(void*) { return nullptr; }
-std::unique_ptr<Painter> CreateSdl2SurfacePainter(int, int) { return nullptr; }
 } // namespace okay::platform
 
 #endif

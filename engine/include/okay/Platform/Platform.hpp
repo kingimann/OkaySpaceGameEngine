@@ -1,18 +1,15 @@
 #pragma once
 // okay::platform - the seam between the engine and the OS / windowing library.
 //
-// Everything the engine takes from SDL2 (windows, events, keyboard and mouse,
+// Everything the engine needs from the OS (windows, events, keyboard and mouse,
 // the OpenGL context, timers, clipboard, audio devices, game controllers) goes
-// through the interfaces here, so SDL2 is one backend among several:
+// through the interfaces here:
 //
-//   BackendKind::Sdl2  thin wrapper over SDL2 (the default).
-//   BackendKind::Own   our own code: Linux = X11/GLX + ALSA + evdev, all loaded
-//                      with dlopen at run time (no link dependency); Windows =
-//                      Win32/WGL (compiles, untested); macOS = not written.
-//
-// The CMake option OKAY_PLATFORM_BACKEND=sdl2|own picks DefaultKind(). Both
-// backends can be created side by side with Get(kind), which is how the tests
-// run the same checks on each.
+//   BackendKind::Own   our own code, the only backend on the desktop: Linux = X11/GLX
+//                      + ALSA + evdev, all loaded with dlopen at run time (no link
+//                      dependency); Windows = Win32/WGL/WASAPI/XInput/HID; macOS = not written.
+//   BackendKind::Sdl2  the web build only (Emscripten's SDL2 port, SdlBackend.cpp): there
+//                      is no own web backend yet. Not compiled into any desktop program.
 //
 // Header rules (MinGW): no <mutex>/<thread> here, and no names that clash with
 // Windows or X11 macros (CreateWindow, None, Status, Bool, ...).
@@ -97,7 +94,7 @@ enum class EventType {
     TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. sdl2 (SDL_TEXTEDITING), own Windows and the Xbox UWP backend (UNVERIFIED there)
     RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
     RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
-    Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it
+    Other,             // an event the seam has no type for (a backend's internal marker; PollEvent never returns it)
 };
 
 struct Event {
@@ -119,11 +116,6 @@ struct Event {
     /// TextEditing only: clause boundaries of `text` in code points (first 0, last = length), from the input method. Empty when
     /// the IME gave none (and always on the sdl2 backend, whose SDL_TEXTEDITING has no clauses).
     std::vector<int> clauses;
-    /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
-    /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
-    /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken
-    /// (and freed) in `text`, so do not read it from `native`. Temporary: it goes away with SDL2.
-    const void* native = nullptr;
 };
 
 // ---- Windows and the OpenGL context -----------------------------------------
@@ -374,9 +366,6 @@ public:
     /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
     /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
     virtual bool PushEvent(const Event& e) { (void)e; return false; }
-    /// With true, PollEvent also returns the events the seam has no type for, as EventType::Other with `native` set
-    /// (sdl2 only; default off). Lets an app that still feeds Dear ImGui's SDL backend see every event it needs.
-    virtual void ReportUnmappedEvents(bool on) { (void)on; }
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
     /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
@@ -479,19 +468,6 @@ public:
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
 };
-
-/// A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
-/// seam before windows are created by Backend::MakeWindow). Null when sdl2 is not compiled in or `sdlWindow` is
-/// null. The caller still owns and destroys the SDL window, and must destroy it only after this object. A GL
-/// context made through the wrapper (CreateGLContext) belongs to the wrapper and goes with it. Temporary: it goes
-/// away with SDL2.
-std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
-
-/// Turn one SDL_Event (passed as `const SDL_Event*`) into a platform Event, for code that still polls SDL itself but
-/// feeds a seam consumer (the ImGui platform feed). Handles quit, window, key, text, mouse and wheel events only and
-/// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
-/// compiled in. Temporary: it goes away with SDL2.
-bool TranslateSdl2Event(const void* sdlEvent, Event& out);
 
 /// Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
 int CpuCount();

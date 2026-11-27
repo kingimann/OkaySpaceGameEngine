@@ -745,13 +745,11 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
 okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
-# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
-# The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GLPainter.cpp)
-if(OKAY_PLATFORM_SDL_INCLUDES)
-    target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
-endif()
-if(OKAY_PLATFORM_SDL_OPTIONS)
+# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the OpenGL painter; the software painter
+# lives in okayui/soft (okay_ui_soft). The sdl2 painter (SdlPainter.cpp) is built for the web (Emscripten) only.
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/GLPainter.cpp)
+if(EMSCRIPTEN)
+    target_sources(okay_engine PRIVATE src/Platform/SdlPainter.cpp)
     set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
 endif()
 

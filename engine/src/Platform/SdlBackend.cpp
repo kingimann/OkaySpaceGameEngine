@@ -1,5 +1,5 @@
-// okay::platform backend over SDL2: a thin translation layer, behaviour as the
-// engine always had it. Compiled only when SDL2 was found (or Emscripten's port).
+// okay::platform backend over SDL2, for the web build only: Emscripten's SDL2 port (-sUSE_SDL=2), compiled only when
+// EMSCRIPTEN (cmake/OkayPlatform.cmake). The desktop programs use our own backend (OwnLinux*.cpp, OwnWin32*.cpp).
 #ifdef OKAY_PLATFORM_HAVE_SDL2
 #include <algorithm>
 #include <cstdlib>
@@ -297,7 +297,7 @@ public:
     }
 
     bool PollEvent(Event& out) override {
-        // m_last outlives this call (Event::native points at it until the next poll). A drop's string is taken and freed by Translate.
+        // A drop's string is taken and freed by Translate.
         // Not SDL_PollEvent: SDL 2.30.0's version returns 0 once on a queue that holds an event pushed after the previous
         // poll emptied it (found by tests/test_platform_events.cpp: the event arrives on the next call). Pump then take one is
         // what it is meant to do and has no such gap.
@@ -305,14 +305,12 @@ public:
             SDL_PumpEvents();
             if (SDL_PeepEvents(&m_last, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) != 1) break;
             Event r;
-            if (Translate(m_last, r)) { r.native = &m_last; out = std::move(r); return true; }
-            if (m_reportUnmapped) { r.type = EventType::Other; r.timestampMs = m_last.common.timestamp; r.native = &m_last; out = std::move(r); return true; }
+            if (Translate(m_last, r)) { out = std::move(r); return true; }
         }
         return false;
     }
     void PumpEvents() override { SDL_PumpEvents(); }
     bool HasPendingEvents() override { return SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) == SDL_TRUE; }
-    void ReportUnmappedEvents(bool on) override { m_reportUnmapped = on; }
     bool PushEvent(const Event& r) override {
         SDL_Event e;
         SDL_zero(e);
@@ -605,32 +603,12 @@ private:
 #endif
     Uint32 m_started = 0;
     SDL_Event m_last;
-    bool m_reportUnmapped = false;
     SDL_Cursor* m_cursors[11] = {};
 };
 
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
-
-bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
-    if (!sdlEvent) return false;
-    const SDL_Event& e = *(const SDL_Event*)sdlEvent;
-    switch (e.type) {   // only the kinds a UI feed needs; no side effects (a drop's string is left alone)
-    case SDL_QUIT: case SDL_WINDOWEVENT: case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT: case SDL_TEXTEDITING:
-    case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL: {
-        Event r;
-        if (!SdlBackend::TranslateEvent(e, r)) return false;
-        out = std::move(r); return true;
-    }
-    default: return false;
-    }
-}
-
-std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
-    if (!sdlWindow) return nullptr;
-    return std::unique_ptr<Window>(new SdlWindow((SDL_Window*)sdlWindow, false));
-}
 
 } // namespace okay::platform
 #endif // OKAY_PLATFORM_HAVE_SDL2

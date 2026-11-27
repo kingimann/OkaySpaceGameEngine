@@ -2701,9 +2701,37 @@ struct Parser {
         if (local_visible(name)) return false;
         for (const Global& g : globals)
             if (g.name == name) return false;
-        for (const FuncDecl& f : funcs)
-            if (f.name == name) return true;
-        return false;
+        return first_func(name) != nullptr;
+    }
+    // The first function of this internal name, or null (Round 33: an index instead of a scan of every function at each
+    // name the parser reads; a heavy engine file spent most of its two and a half minutes in those scans). The index
+    // follows `funcs` as it grows; when entries were removed or replaced it is built again.
+    mutable std::unordered_map<std::string, size_t> func_index_{};
+    mutable size_t func_index_size_ = 0;
+    mutable std::string func_index_last_{};
+    void sync_func_index() const {
+        if (func_index_size_ == funcs.size() && (funcs.empty() || funcs.back().name == func_index_last_)) return;
+        const bool grown = func_index_size_ > 0 && funcs.size() > func_index_size_ &&
+                           funcs[func_index_size_ - 1].name == func_index_last_;
+        if (!grown) {
+            func_index_.clear();
+            func_index_size_ = 0;
+        }
+        for (size_t i = func_index_size_; i < funcs.size(); ++i) func_index_.emplace(funcs[i].name, i);
+        func_index_size_ = funcs.size();
+        func_index_last_ = funcs.empty() ? std::string() : funcs.back().name;
+    }
+    const FuncDecl* first_func(const std::string& name) const {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            sync_func_index();
+            const auto it = func_index_.find(name);
+            if (it == func_index_.end()) return nullptr;
+            if (it->second < funcs.size() && funcs[it->second].name == name) return &funcs[it->second];
+            func_index_size_ = 0;  // stale (an entry was removed): build again
+            func_index_last_.clear();
+            func_index_.clear();
+        }
+        return nullptr;
     }
     // Members of class template instances whose bodies did not compile, with the error: a call of one is an error.
     std::map<std::string, std::string> unusable_members{};

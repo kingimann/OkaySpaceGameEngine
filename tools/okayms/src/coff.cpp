@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include "okayms/coff.hpp"
 
 #include <cstring>
@@ -51,19 +52,15 @@ bool has_embedded_nul(const std::string& name) {
 // string starts at offset 4. Identical names share one entry.
 class StringTable {
 public:
+    // Round 33: found through a map of the names already written (the walk over the whole table at each name took a
+    // seventh of a heavy file's compile time). The same offsets as before.
     uint32_t intern(const std::string& text) {
-        size_t at = 0;
-        while (at < bytes_.size()) {
-            const size_t end = bytes_.find('\0', at);
-            if (end == std::string::npos) break;
-            if (bytes_.compare(at, end - at, text) == 0) {
-                return static_cast<uint32_t>(4 + at);
-            }
-            at = end + 1;
-        }
+        const auto found = offsets_.find(text);
+        if (found != offsets_.end()) return found->second;
         const uint32_t offset = static_cast<uint32_t>(4 + bytes_.size());
         bytes_ += text;
         bytes_.push_back('\0');
+        offsets_.emplace(text, offset);
         return offset;
     }
 
@@ -71,6 +68,7 @@ public:
 
 private:
     std::string bytes_;
+    std::unordered_map<std::string, uint32_t> offsets_;
 };
 
 std::string read_cstring(const uint8_t* table, uint32_t table_size, uint32_t offset, std::string* error) {

@@ -863,15 +863,14 @@ bool Parser::static_type(const Node& node, Type* out) const {
                 *out = global.type;
                 return true;
             }
-        for (const FuncDecl& fn : funcs)
-            if (fn.name == node.text) {
-                // The name of a function is a pointer to it.
-                *out = Type{};
-                out->base = 1;
-                out->pointers = 1;
-                out->func_id = fn.func_id;
-                return true;
-            }
+        if (const FuncDecl* fn = first_func(node.text)) {
+            // The name of a function is a pointer to it.
+            *out = Type{};
+            out->base = 1;
+            out->pointers = 1;
+            out->func_id = fn->func_id;
+            return true;
+        }
         return false;
     case Node::Assign:
         return !node.kids.empty() && static_type(node.kids[0], out);
@@ -1003,11 +1002,10 @@ bool Parser::static_type(const Node& node, Type* out) const {
             return true;
         }
         if (!node.text.empty()) {
-            for (const FuncDecl& fn : funcs)
-                if (fn.name == node.text) {
-                    *out = fn.ret;
-                    return true;
-                }
+            if (const FuncDecl* fn = first_func(node.text)) {
+                *out = fn->ret;
+                return true;
+            }
             // A call through a variable that holds a function pointer.
             Node callee;
             callee.kind = Node::Name;
@@ -1741,8 +1739,7 @@ bool Parser::parse_unary(Node* out) {
         }
         bool exact_function = false;
         if (name.find("::") != std::string::npos)
-            for (const FuncDecl& fd : funcs)
-                if (fd.name == name) exact_function = true;
+            if (first_func(name) != nullptr) exact_function = true;
         if (!exact_function && !from_global && !member_call && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
             // A bare name inside a namespace finds the functions of that namespace and of the ones around
             // it ([basic.lookup.unqual]), innermost first.
@@ -1750,8 +1747,7 @@ bool Parser::parse_unary(Node* out) {
             for (;;) {
                 const std::string candidate = ns + "::" + name;
                 bool known = false;
-                for (const FuncDecl& fd : funcs)
-                    if (fd.name == candidate) known = true;
+                if (first_func(candidate) != nullptr) known = true;
                 if (known) {
                     name = candidate;
                     break;
@@ -1765,8 +1761,7 @@ bool Parser::parse_unary(Node* out) {
             !using_namespaces.empty()) {
             // A bare call that names no function of its own: look in the namespaces of `using namespace`.
             bool own = false;
-            for (const FuncDecl& fd : funcs)
-                if (fd.name == name) own = true;
+            if (first_func(name) != nullptr) own = true;
             if (!own) {
                 // `using namespace detail;` inside namespace okay names okay::detail ([namespace.udir] 2): the
                 // namespace is looked for from the namespace being read outward.
@@ -1775,8 +1770,7 @@ bool Parser::parse_unary(Node* out) {
                     std::string open = current_ns;
                     for (;;) {
                         const std::string candidate = (open.empty() ? std::string() : open + "::") + ns + "::" + name;
-                        for (const FuncDecl& fd : funcs)
-                            if (fd.name == candidate) found = true;
+                        if (first_func(candidate) != nullptr) found = true;
                         if (found) {
                             name = candidate;
                             break;
@@ -1793,8 +1787,7 @@ bool Parser::parse_unary(Node* out) {
             // Easing::Linear(x) where Easing is a namespace inside one that a `using namespace` names (or that is open
             // here): the function is registered with the whole path.
             bool own = false;
-            for (const FuncDecl& fd : funcs)
-                if (fd.name == name) own = true;
+            if (first_func(name) != nullptr) own = true;
             if (!own) {
                 std::vector<std::string> outer = using_namespaces;
                 std::string open = current_ns;
@@ -1806,8 +1799,7 @@ bool Parser::parse_unary(Node* out) {
                 for (const std::string& ns : outer) {
                     const std::string candidate = ns + "::" + name;
                     bool known = false;
-                    for (const FuncDecl& fd : funcs)
-                        if (fd.name == candidate) known = true;
+                    if (first_func(candidate) != nullptr) known = true;
                     if (known) {
                         name = candidate;
                         break;
@@ -1845,8 +1837,7 @@ bool Parser::parse_unary(Node* out) {
             const size_t first = name.find("::");
             const std::string suffix = name.substr(name.rfind("::") + 2);
             bool is_function = false;
-            for (const FuncDecl& fd : funcs)
-                if (fd.name == name) is_function = true;
+            if (first_func(name) != nullptr) is_function = true;
             if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
                 (class_name_text(suffix) || (typedefs.count(suffix) == 0 && find_struct(suffix) >= 0) ||
                  (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3))) {
@@ -2158,8 +2149,7 @@ bool Parser::parse_unary(Node* out) {
                 bsid = struct_named(name);
             }
             bool named_function = false;
-            for (const FuncDecl& known : funcs)
-                if (known.name == name) named_function = true;
+            if (first_func(name) != nullptr) named_function = true;
             if (bsid >= 0 && !named_function) {
                 if (!braced_temp(bsid, out)) return false;
                 return parse_postfix(out);
@@ -2198,8 +2188,7 @@ bool Parser::parse_unary(Node* out) {
                 csid = struct_named(name);
             }
             bool is_function = false;
-            for (const FuncDecl& known : funcs)
-                if (known.name == name) is_function = true;
+            if (first_func(name) != nullptr) is_function = true;
             if (csid >= 0 && !is_function) {
                 next();
                 std::vector<Node> cargs;
@@ -2312,9 +2301,7 @@ bool Parser::parse_unary(Node* out) {
             probe.text = name;
             var_object = static_type(probe, &vt) && vt.base == 3 && vt.pointers == 0 && !vt.is_array() && vt.struct_id >= 0 &&
                          (local_visible(name) || [&]() {
-                             for (const FuncDecl& fd : funcs)
-                                 if (fd.name == name) return false;
-                             return true;
+                             return first_func(name) == nullptr;
                          }());
         }
         if (name == "va_arg" && accept(TLParen)) {

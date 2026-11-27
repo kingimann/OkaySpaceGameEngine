@@ -1,5 +1,6 @@
 // Emitting the object file: every function's code, symbols, relocations, line table and unwind data.
 // Moved out of compile.cpp unchanged (docs/engine/modularization_plan.md, batch T1).
+#include <unordered_map>
 #include "compile_internal.hpp"
 #include "gen.hpp"
 
@@ -27,12 +28,13 @@ struct Sym {
     uint8_t storage = kClassExternal;
 };
 
-int struct_arg_space(const Node& node, const std::vector<FuncDecl>& funcs, const Gen& gen) {
+// by_name: each function's last entry by internal name (Round 33: this walk scanned every function at every call node,
+// a fifth of a heavy file's compile time).
+int struct_arg_space(const Node& node, const std::unordered_map<std::string, const FuncDecl*>& by_name, const Gen& gen) {
     int best = 0;
     if (node.kind == Node::Call && !node.text.empty()) {
-        const FuncDecl* fn = nullptr;
-        for (const FuncDecl& item : funcs)
-            if (item.name == node.text) fn = &item;
+        const auto found = by_name.find(node.text);
+        const FuncDecl* fn = found == by_name.end() ? nullptr : found->second;
         if (fn != nullptr) {
             int sum = 0;
             const int n = std::min(static_cast<int>(node.kids.size()), static_cast<int>(fn->params.size()));
@@ -44,7 +46,7 @@ int struct_arg_space(const Node& node, const std::vector<FuncDecl>& funcs, const
             best = sum;
         }
     }
-    for (const Node& kid : node.kids) best = std::max(best, struct_arg_space(kid, funcs, gen));
+    for (const Node& kid : node.kids) best = std::max(best, struct_arg_space(kid, by_name, gen));
     return best;
 }
 
@@ -57,6 +59,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                     int opt_level, const LineSource& line_source, std::string* error, CompileOutput* out) {
     Gen gen(funcs);
     gen.debug_lines = line_source.enabled;
+    std::unordered_map<std::string, const FuncDecl*> by_name;  // the last entry of each name, as the old scan found
+    for (const FuncDecl& item : funcs) by_name[item.name] = &item;
     gen.structs = &structs;
     gen.globals = &globals;
     gen.func_types = &func_types;
@@ -160,7 +164,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         int max_args = count_args(fn.body);
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
-        const int copy_bytes = struct_arg_space(fn.body, funcs, gen);
+        const int copy_bytes = struct_arg_space(fn.body, by_name, gen);
         int frame = local_end + 8 * Gen::kTempSlots + copy_bytes + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;

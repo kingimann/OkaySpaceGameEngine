@@ -177,7 +177,13 @@ void SetDockTrailingReserve(int leaf, float width);
 /// The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
 Rect GetDockStripRect(int leaf);
 /// What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
-struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window; };
+// The drop a drag would make now: `active` with the node and side it docks to (`preview`: the area the window would fill), or, while a
+// docked tab is dragged away from every target, `floats` with `preview` the rectangle it would float in. `cancelled`: the drag was
+// cancelled (Escape or the right button) and waits for the left button to come up.
+struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window;
+                      bool floats = false; bool fromTab = false; };
+/// Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
+bool DockDragging();
 DockDropInfo GetDockDrop();
 
 } // namespace OkayUI

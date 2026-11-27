@@ -432,21 +432,104 @@ void TestTabsAndClose() {
     CHECK(!r.open["Beta"]);
     CHECK(r.L().WindowCount() == 2);
     CHECK(Valid(r.L()));
-    // tear a tab off: drag it down out of the strip, it floats and follows the pointer
+    // tear a tab off: drag it down out of the strip; it stays docked while the drag shows where it would land, and the drop splits
     r.open["Beta"] = true;
     const UI::Vec2 tg = r.TabCentre("Gamma");
     r.Drag(tg.x, tg.y, tg.x + 10, 300, 8, false);
-    CHECK(r.L().IsFloating("Gamma"));
+    CHECK(!r.L().IsFloating("Gamma") && UI::DockDragging());
     CHECK(UI::GetDockDrop().active);                       // pointer is over the dock space
     r.sim.Up(); r.Frames(2);
-    CHECK(Valid(r.L()));
+    CHECK(Valid(r.L()) && !UI::DockDragging());
     // the leaf with the remaining tab; drop a torn-off tab onto the bottom of it
     const UI::Vec2 tw = r.TabCentre("Alpha");
     r.Drag(tw.x, tw.y, 400, 420, 8, false);
-    CHECK(r.L().IsFloating("Alpha"));
+    CHECK(!r.L().IsFloating("Alpha"));
     r.sim.Up(); r.Frames(2);
     CHECK(Valid(r.L()));
     CHECK(r.L().WindowCount() == 3);              // Beta, closed above, is drawn again by the rig and floats
+}
+
+// Dragging a docked tab (owner, 2026-11-27: "Dragging tabs and placing them needs more work"): the window stays where it is while the drag
+// shows the exact area it would fill (the guide tile under the pointer, or the region of the leaf); a release on a target docks it there, a
+// release away from every target floats it under the pointer; Escape or the right button cancels and nothing moves; a click that moves less
+// than the threshold is a click; its own leaf, when it is the only tab there, is no target (a bad drop never loses a panel).
+void TestTabDragDock() {
+    RUN_SUITE("dock space: drag a tab to dock, float, cancel");
+    Rig r({"Alpha", "Beta", "Gamma"}, 800, 500);
+    r.area = R(0, 0, 800, 420);                          // a band under the dock area: a release there floats
+    r.L().Dock("Alpha", r.L().Root(), DockSide_Center);
+    r.L().Dock("Beta", r.L().NodeOf("Alpha"), DockSide_Center);
+    r.L().Dock("Gamma", r.L().NodeOf("Alpha"), DockSide_Right);
+    r.L().SetActive("Alpha");
+    r.Frames(3);
+    const int left = r.L().NodeOf("Alpha"), right = r.L().NodeOf("Gamma");
+    const UI::Rect gc = r.L().ContentRect(right);
+    // 1. Beta onto the centre of Gamma's pane: still docked on the left during the drag, the drop shows Gamma's whole leaf
+    UI::Vec2 tb = r.TabCentre("Beta");
+    r.Drag(tb.x, tb.y, gc.x + gc.w * 0.5f, gc.y + gc.h * 0.5f, 8, false);
+    CHECK(r.L().NodeOf("Beta") == left && UI::DockDragging());
+    UI::DockDropInfo d = UI::GetDockDrop();
+    CHECK(d.active && !d.floats && d.node == right && d.side == DockSide_Center && d.fromTab && d.window == "Beta");
+    const Bitmap& mid = r.sim.Draw(30, 30, 34);
+    CHECK(CountNot(mid, (int)gc.x + 10, (int)gc.y + 10, (int)gc.x + 60, (int)gc.y + 60, ThemeRgba(UI::Style().panel)) > 1000);   // the preview tints the pane
+    r.sim.Up(); r.Frames(2);
+    CHECK(r.L().NodeOf("Beta") == right && Valid(r.L()));
+    const std::string before = UI::DockSaveLayout();
+    // 2. Escape cancels: nothing moves, the release does nothing
+    UI::Vec2 ta = r.TabCentre("Alpha");
+    r.Drag(ta.x, ta.y, gc.x + 20, gc.y + gc.h * 0.5f, 8, false);
+    CHECK(UI::DockDragging() && UI::GetDockDrop().active);
+    r.sim.Press(Key_Escape); r.Frame();
+    CHECK(!UI::DockDragging() && !UI::GetDockDrop().active);
+    r.Move(gc.x + 30, gc.y + gc.h * 0.5f);
+    r.sim.Up(); r.Frames(2);
+    CHECK(UI::DockSaveLayout() == before);
+    // 3. the right button cancels too
+    ta = r.TabCentre("Alpha");
+    r.Drag(ta.x, ta.y, gc.x + 20, gc.y + gc.h * 0.5f, 8, false);
+    r.sim.rdown = true; r.Frame(); r.sim.rdown = false; r.Frame();
+    r.sim.Up(); r.Frames(2);
+    CHECK(UI::DockSaveLayout() == before && !UI::DockDragging());
+    // 4. a click that moves 3 pixels is a click (chooses the tab), not a drag
+    UI::Vec2 tg = r.TabCentre("Gamma");
+    r.Move(tg.x, tg.y); r.sim.Down(); r.Frame(); r.Move(tg.x + 3, tg.y + 2); r.sim.Up(); r.Frames(2);
+    CHECK(r.L().NodeOf("Gamma") == right && r.L().Find(right)->tabs.size() == 2 && !UI::DockDragging());
+    // 5. its own leaf, when it is the only tab there: no target, no float, nothing changes
+    const std::string before2 = UI::DockSaveLayout();
+    const UI::Rect lc = r.L().ContentRect(left);
+    ta = r.TabCentre("Alpha");
+    r.Drag(ta.x, ta.y, lc.x + lc.w * 0.5f, lc.y + lc.h * 0.5f, 8, false);
+    CHECK(!UI::GetDockDrop().active && !UI::GetDockDrop().floats);
+    r.sim.Up(); r.Frames(2);
+    CHECK(UI::DockSaveLayout() == before2 && r.L().Contains("Alpha") && !r.L().IsFloating("Alpha"));
+    // 6. a release away from every target floats it under the pointer, the size of its pane
+    tb = r.TabCentre("Beta");
+    r.Drag(tb.x, tb.y, 300, 460, 8, false);
+    d = UI::GetDockDrop();
+    CHECK(!d.active && d.floats && d.preview.w >= 220.0f);
+    r.sim.Up(); r.Frames(2);
+    CHECK(r.L().IsFloating("Beta") && Valid(r.L()));
+    CHECK(r.shown["Beta"]);
+    // 7. the guide tile at the middle of the top edge docks along the whole top
+    r.L().Dock("Beta", r.L().NodeOf("Gamma"), DockSide_Center);
+    r.Frames(2);
+    tb = r.TabCentre("Beta");
+    r.Drag(tb.x, tb.y, 400, 30, 10, false);
+    d = UI::GetDockDrop();
+    CHECK(d.active && d.rootEdge && d.side == DockSide_Top);
+    r.sim.Up(); r.Frames(2);
+    const DockLayout::Node* bn = r.L().Find(r.L().NodeOf("Beta"));
+    CHECK(bn && bn->rect.y < 2.0f && bn->rect.w > 790.0f && Valid(r.L()));
+    // 8. a split tile of a leaf: the left half of Gamma's pane
+    const int gl = r.L().NodeOf("Gamma");
+    const UI::Rect gc2 = r.L().ContentRect(gl);
+    const float tile = std::max(14.0f, std::min(30.0f, std::min(gc2.w, gc2.h) / 5.0f));
+    ta = r.TabCentre("Alpha");
+    r.Drag(ta.x, ta.y, gc2.x + gc2.w * 0.5f - tile - 5.0f, gc2.y + gc2.h * 0.5f, 10, false);
+    d = UI::GetDockDrop();
+    CHECK(d.active && d.node == gl && d.side == DockSide_Left && std::fabs(d.preview.w - r.L().Find(gl)->rect.w * 0.5f) < 1.0f);
+    r.sim.Up(); r.Frames(2);
+    CHECK(r.L().Find(r.L().Find(r.L().NodeOf("Alpha"))->parent) && Valid(r.L()) && r.L().WindowCount() == 3);
 }
 
 void TestSplitters() {
@@ -557,6 +640,7 @@ int main() {
     TestFloatingAndDockByApi();
     TestDragDock();
     TestTabsAndClose();
+    TestTabDragDock();
     TestSplitters();
     TestSaveLoadThroughUi();
     TestGolden();

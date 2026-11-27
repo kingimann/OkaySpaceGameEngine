@@ -24,7 +24,7 @@ D::Options Named(const char* name, D::Scheme sc = D::Scheme::Auto) { D::Options 
 
 void TestPalettes() {
     RUN_SUITE("design: every design is complete and readable");
-    CHECK(D::DesignCount() >= 4);
+    CHECK(D::DesignCount() >= 8);
     for (int i = 0; i < D::DesignCount(); ++i) {
         const D::Design& d = D::DesignAt(i);
         CHECK(d.name && d.name[0] && d.blurb && d.blurb[0]);
@@ -47,6 +47,12 @@ void TestPalettes() {
             CHECK(D::Contrast(p.onAccent, p.accent) >= 3.0f);   // a label on a filled accent (large text, 3:1)
             CHECK(D::Contrast(p.tooltipText, D::WithAlpha(p.tooltipBg, 255)) >= 7.0f);
             CHECK(D::Contrast(p.textFaint, p.base) >= 3.0f);    // placeholders still readable
+            // the states read: hover and press move visibly away from the rest colour, the selection tint shows on the page
+            D::Options so; std::snprintf(so.design, sizeof so.design, "%s", d.name); so.scheme = sc == 0 ? D::Scheme::Dark : D::Scheme::Light;
+            const D::Tokens st = D::Resolve(so);
+            CHECK(Dist(st.controlHover, st.c.control) > 0.05f && Dist(st.controlPressed, st.c.control) > 0.05f);
+            CHECK(Dist(st.accentHover, st.c.accent) > 0.05f);
+            CHECK(st.selection.a >= 80);
         }
     }
     // The designs look clearly different: page colour, shape or both.

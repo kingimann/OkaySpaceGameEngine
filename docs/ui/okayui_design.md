@@ -29,9 +29,16 @@ reduce motion. `design::Resolve(options)` gives the **tokens** every program dra
 | Midnight | dark | near-black indigo, violet accent, round (10 / 6 / 16), deep shadows, pill tabs |
 | High Contrast | dark, light | black or white, 2 px outlines on everything, yellow (dark) or blue (light) accent, 3 px focus ring, no shadows, near square |
 | Paper | light first, dark | warm off-white, flat (no shadows), thin warm outlines, segmented tabs, terracotta accent, radius 3 |
+| Ember | dark | warm brown-black, cream text, orange accent with dark text on it, segmented tabs, borderless, radius 9 |
+| Glacier | light | cool blue-grey page, white cards, navy text, cobalt accent, hairline outlines, underline tabs, radius 5 |
+| Dusk | dark, light | low glare on purpose (still AA): teal-grey and sand, outlines, pill tabs, slow motion, radius 8 |
+| Blossom | light | soft pastel rose-white, plum text, raspberry accent, very round (12 / 18), pill tabs |
+| Void | dark | OLED pure black, near-black layers, mint accent with black text, no shadows, underline tabs |
+| Aurora | dark, light | colourful: deep violet with a hot pink accent (light: lavender and magenta), deep shadows, radius 11 |
 
 Every palette passes the checks in `test_okayui_design`: body text 7:1 and secondary text and status colours 4.5:1 on every
-surface (WCAG 2.x), a label on the accent 3:1, tooltip text 7:1, placeholders 3:1. Names are saved in the file: never rename one.
+surface (WCAG 2.x), a label on the accent 3:1, tooltip text 7:1, placeholders 3:1; hover, press and accent-hover move visibly
+from their rest colour and the selection tint is at least 31% opaque. Every pair of designs differs in colour and in shape. Names are saved in the file: never rename one.
 
 ## Tokens
 

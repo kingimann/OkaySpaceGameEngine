@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -134,11 +135,128 @@ Design MakePaper() {
     return d;
 }
 
+// Ember: a warm dark: brown-black surfaces, cream text, an orange accent with dark text on it; segmented tabs, borderless, soft.
+Design MakeEmber() {
+    Design d; d.name = "Ember"; d.blurb = "Warm dark: brown-black, cream text, an orange accent.";
+    d.hasDark = true; d.hasLight = false;
+    Palette& k = d.dark;
+    k.deep = C(18, 12, 10); k.sunken = C(24, 17, 14); k.base = C(30, 22, 18); k.raised = C(40, 30, 25); k.overlay = C(46, 35, 29);
+    k.field = C(38, 28, 23); k.control = C(54, 41, 34);
+    k.text = C(244, 234, 224); k.textDim = C(196, 176, 158); k.textFaint = C(146, 128, 112);
+    k.hairline = C(255, 220, 190, 24); k.accent = C(240, 124, 56);
+    k.success = C(110, 210, 140); k.warning = C(240, 190, 90); k.danger = C(255, 128, 110); k.info = C(120, 180, 255);
+    k.onAccent = C(24, 12, 4); k.ink = C(255, 228, 206); k.tooltipBg = C(10, 6, 4, 245); k.tooltipText = C(244, 234, 224);
+    d.light = d.dark;
+    Shape& s = d.shape;
+    s.radius = 9; s.radiusSmall = 6; s.radiusLarge = 14; s.borderPx = 1; s.controlBorders = false; s.shadow = 2;
+    s.tabs = TabShape::Segmented; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 140; s.boldHeaders = false;
+    return d;
+}
+// Glacier: a cool light: blue-grey page, white cards, deep navy text, a cobalt accent; hairline outlines, underline tabs.
+Design MakeGlacier() {
+    Design d; d.name = "Glacier"; d.blurb = "Cool light: blue-grey page, white cards, cobalt accent.";
+    d.hasDark = false; d.hasLight = true; d.lightFirst = true;
+    Palette& l = d.light; l.light = true;
+    l.deep = C(214, 226, 236); l.sunken = C(228, 238, 245); l.base = C(242, 247, 251); l.raised = C(255, 255, 255); l.overlay = C(255, 255, 255);
+    l.field = C(234, 242, 248); l.control = C(222, 234, 243);
+    l.text = C(14, 30, 46); l.textDim = C(56, 76, 96); l.textFaint = C(100, 118, 136);
+    l.hairline = C(14, 40, 70, 34); l.accent = C(0, 104, 176);
+    l.success = C(0, 104, 64); l.warning = C(122, 74, 0); l.danger = C(176, 28, 48); l.info = C(0, 84, 164);
+    l.onAccent = C(255, 255, 255); l.ink = C(10, 30, 50); l.tooltipBg = C(14, 30, 46, 245); l.tooltipText = C(240, 247, 252);
+    d.dark = d.light;
+    Shape& s = d.shape;
+    s.radius = 5; s.radiusSmall = 4; s.radiusLarge = 8; s.borderPx = 1; s.controlBorders = true; s.shadow = 1;
+    s.tabs = TabShape::Underline; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 110; s.boldHeaders = false;
+    return d;
+}
+// Dusk: low contrast on purpose (still AA): deep teal-grey surfaces and soft sand text, or the reverse in light; pill tabs.
+Design MakeDusk() {
+    Design d; d.name = "Dusk"; d.blurb = "Soft and low-glare: teal-grey and sand, easy on the eyes.";
+    d.hasDark = d.hasLight = true;
+    Palette& k = d.dark;
+    k.deep = C(14, 28, 34); k.sunken = C(18, 34, 41); k.base = C(22, 40, 48); k.raised = C(28, 48, 57); k.overlay = C(32, 54, 64);
+    k.field = C(26, 46, 55); k.control = C(38, 60, 70);
+    k.text = C(206, 212, 200); k.textDim = C(156, 168, 160); k.textFaint = C(116, 130, 126);
+    k.hairline = C(206, 212, 200, 26); k.accent = C(54, 150, 180);
+    k.success = C(130, 196, 110); k.warning = C(214, 176, 84); k.danger = C(246, 140, 124); k.info = C(110, 168, 220);
+    k.onAccent = C(8, 20, 24); k.ink = C(206, 220, 214); k.tooltipBg = C(8, 18, 22, 245); k.tooltipText = C(214, 220, 208);
+    Palette& l = d.light; l.light = true;
+    l.deep = C(232, 224, 204); l.sunken = C(240, 233, 214); l.base = C(250, 244, 228); l.raised = C(253, 248, 234); l.overlay = C(255, 251, 240);
+    l.field = C(255, 251, 240); l.control = C(238, 231, 212);
+    l.text = C(54, 64, 66); l.textDim = C(84, 94, 94); l.textFaint = C(118, 124, 118);
+    l.hairline = C(54, 64, 66, 40); l.accent = C(30, 112, 140);
+    l.success = C(60, 110, 30); l.warning = C(120, 80, 0); l.danger = C(170, 50, 40); l.info = C(40, 90, 150);
+    l.onAccent = C(255, 255, 255); l.ink = C(54, 64, 66); l.tooltipBg = C(40, 50, 52, 245); l.tooltipText = C(250, 244, 228);
+    Shape& s = d.shape;
+    s.radius = 8; s.radiusSmall = 5; s.radiusLarge = 12; s.borderPx = 1; s.controlBorders = true; s.shadow = 1;
+    s.tabs = TabShape::Pill; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 180; s.boldHeaders = false;
+    return d;
+}
+// Blossom: a soft pastel light: rose-white surfaces, plum text, a raspberry accent; very round, pill tabs, soft shadows.
+Design MakeBlossom() {
+    Design d; d.name = "Blossom"; d.blurb = "Soft pastel light: rose-white, plum text, very round.";
+    d.hasDark = false; d.hasLight = true; d.lightFirst = true;
+    Palette& l = d.light; l.light = true;
+    l.deep = C(236, 224, 232); l.sunken = C(244, 234, 240); l.base = C(252, 246, 249); l.raised = C(255, 255, 255); l.overlay = C(255, 255, 255);
+    l.field = C(248, 238, 244); l.control = C(240, 226, 236);
+    l.text = C(52, 32, 48); l.textDim = C(100, 72, 94); l.textFaint = C(140, 112, 132);
+    l.hairline = C(80, 30, 70, 30); l.accent = C(196, 60, 132);
+    l.success = C(26, 104, 56); l.warning = C(122, 76, 6); l.danger = C(172, 36, 56); l.info = C(56, 74, 172);
+    l.onAccent = C(255, 255, 255); l.ink = C(80, 30, 70); l.tooltipBg = C(52, 32, 48, 245); l.tooltipText = C(252, 246, 249);
+    d.dark = d.light;
+    Shape& s = d.shape;
+    s.radius = 12; s.radiusSmall = 7; s.radiusLarge = 18; s.borderPx = 1; s.controlBorders = false; s.shadow = 2;
+    s.tabs = TabShape::Pill; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 160; s.boldHeaders = false;
+    return d;
+}
+// Void: OLED pure black: black page, near-black raised layers, a mint accent with black text on it; no shadows (nothing to
+// cast them on), underline tabs.
+Design MakeVoid() {
+    Design d; d.name = "Void"; d.blurb = "OLED pure black, a mint accent, no shadows.";
+    d.hasDark = true; d.hasLight = false;
+    Palette& k = d.dark;
+    k.deep = C(0, 0, 0); k.sunken = C(0, 0, 0); k.base = C(0, 0, 0); k.raised = C(14, 14, 16); k.overlay = C(18, 18, 22);
+    k.field = C(12, 12, 14); k.control = C(24, 24, 28);
+    k.text = C(240, 240, 244); k.textDim = C(164, 164, 174); k.textFaint = C(112, 112, 122);
+    k.hairline = C(255, 255, 255, 30); k.accent = C(0, 200, 170);
+    k.success = C(80, 220, 140); k.warning = C(240, 190, 70); k.danger = C(255, 110, 110); k.info = C(110, 180, 255);
+    k.onAccent = C(0, 0, 0); k.ink = C(255, 255, 255); k.tooltipBg = C(28, 28, 32, 250); k.tooltipText = C(240, 240, 244);
+    d.light = d.dark;
+    Shape& s = d.shape;
+    s.radius = 9; s.radiusSmall = 5; s.radiusLarge = 12; s.borderPx = 1; s.controlBorders = false; s.shadow = 0;
+    s.tabs = TabShape::Underline; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 100; s.boldHeaders = false;
+    return d;
+}
+// Aurora: colourful: deep violet surfaces and a hot pink accent (light: lavender and magenta); round, generous, deep shadows.
+Design MakeAurora() {
+    Design d; d.name = "Aurora"; d.blurb = "Colourful: deep violet with a hot pink accent.";
+    d.hasDark = d.hasLight = true;
+    Palette& k = d.dark;
+    k.deep = C(16, 10, 34); k.sunken = C(22, 14, 44); k.base = C(28, 18, 54); k.raised = C(40, 26, 72); k.overlay = C(46, 30, 82);
+    k.field = C(36, 24, 66); k.control = C(58, 38, 96);
+    k.text = C(246, 240, 255); k.textDim = C(196, 182, 228); k.textFaint = C(148, 134, 184);
+    k.hairline = C(220, 200, 255, 34); k.accent = C(255, 80, 160);
+    k.success = C(110, 230, 160); k.warning = C(255, 200, 90); k.danger = C(255, 120, 140); k.info = C(130, 190, 255);
+    k.onAccent = C(255, 255, 255); k.ink = C(230, 214, 255); k.tooltipBg = C(10, 6, 24, 245); k.tooltipText = C(246, 240, 255);
+    Palette& l = d.light; l.light = true;
+    l.deep = C(226, 220, 244); l.sunken = C(236, 232, 250); l.base = C(246, 244, 253); l.raised = C(255, 255, 255); l.overlay = C(255, 255, 255);
+    l.field = C(240, 236, 252); l.control = C(230, 224, 248);
+    l.text = C(28, 18, 54); l.textDim = C(74, 62, 110); l.textFaint = C(116, 104, 150);
+    l.hairline = C(40, 20, 90, 32); l.accent = C(196, 30, 120);
+    l.success = C(20, 110, 60); l.warning = C(124, 76, 0); l.danger = C(180, 24, 60); l.info = C(40, 70, 180);
+    l.onAccent = C(255, 255, 255); l.ink = C(40, 20, 90); l.tooltipBg = C(28, 18, 54, 245); l.tooltipText = C(246, 244, 253);
+    Shape& s = d.shape;
+    s.radius = 11; s.radiusSmall = 6; s.radiusLarge = 16; s.borderPx = 1; s.controlBorders = false; s.shadow = 3;
+    s.tabs = TabShape::Underline; s.focusRingPx = 2; s.spacing = 1; s.motionMs = 160; s.boldHeaders = false;
+    return d;
+}
+
 const Design* Designs() {
-    static const Design kAll[] = {MakeGraphite(), MakeSlate(), MakeMidnight(), MakeHighContrast(), MakePaper()};
+    static const Design kAll[] = {MakeGraphite(), MakeSlate(), MakeMidnight(), MakeHighContrast(), MakePaper(),
+                                  MakeEmber(), MakeGlacier(), MakeDusk(), MakeBlossom(), MakeVoid(), MakeAurora()};
     return kAll;
 }
-constexpr int kDesignCount = 5;
+constexpr int kDesignCount = 11;
 
 bool SameName(const char* a, const char* b) {
     if (!a || !b) return false;
@@ -228,9 +346,11 @@ Tokens Resolve(const Options& in) {
     const Palette& p = t.c;
     const Rgba white = C(255, 255, 255), black = C(0, 0, 0);
     t.controlHover = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.06f : 0.08f);
+    // Pressed: a step toward the deepest surface (a control pushed in); where that is too close to see (light schemes, flat black or
+    // white controls) a stronger ink tint instead.
     t.controlPressed = Mix(p.control, p.deep, 0.45f);
-    if (p.control.r == p.deep.r && p.control.g == p.deep.g && p.control.b == p.deep.b)   // flat black / white controls (High Contrast)
-        t.controlPressed = Mix(p.control, WithAlpha(p.ink, 255), 0.18f);
+    auto far = [](Rgba a, Rgba b) { return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) > 15; };
+    if (!far(t.controlPressed, p.control)) t.controlPressed = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.14f : 0.18f);
     t.accentHover = Mix(p.accent, p.light ? black : white, 0.12f);
     t.accentPressed = Mix(p.accent, black, 0.15f);
     t.selection = WithAlpha(p.accent, 102);

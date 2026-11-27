@@ -35,8 +35,8 @@ bool BeginMenuBar() {
     if (!g_lay.active) return false;
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
-    if (!g_look || colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.bgDown));
-    if (g_look) quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
+    if (colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.track));
+    quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);   // a hairline under the bar
     g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
     return true;
 }
@@ -70,6 +70,22 @@ void menuListBegin(int id, float y) {
         }
     } else *scroll = 0.0f;
     g_curMenu.itemStartY = top; g_curMenu.virtTop = top - off; g_curMenu.itemY = top - off;
+    // The list's popover box, from last frame's height (the first frame of a new list has none: its rows paint their own
+    // background, as before).
+    g_curMenu.boxed = *full > 0.0f;
+    if (g_curMenu.boxed) {
+        const bool wasOverlay = g_toOverlay;
+        g_toOverlay = true;
+        const float bh = g_curMenu.clipY1 > g_curMenu.clipY0 ? g_curMenu.clipY1 - g_curMenu.clipY0 : *full;
+        popoverBox(g_curMenu.x, top - 4.0f, g_curMenu.w, bh + 8.0f, pick(Col_PopupBg, g_theme.overlay));
+        g_toOverlay = wasOverlay;
+    }
+}
+// A row of the open list: a soft rounded highlight inset from the box's edges (or, in an unboxed first frame, the row's own
+// background with the highlight on it).
+void menuRowBg(float x, float y, float w, float h, bool lit) {
+    if (!g_curMenu.boxed) quad(x, y, w, h, pick(Col_PopupBg, g_theme.overlay));
+    if (lit) rrect(x + 4.0f, y + 1.0f, w - 8.0f, h - 2.0f, g_theme.radiusSmall, pick(Col_HeaderHovered, g_theme.bgHover));
 }
 // Is a row at (y, h) of the open list inside its visible band? (always, unless the list scrolls)
 bool menuRowShown(float y, float h) {
@@ -162,12 +178,12 @@ bool BeginMenu(const char* label) {
             const bool wasOverlay = g_toOverlay;   // inside a popup (a context menu's sub-menu) the popup's later rows stay on top too
             g_toOverlay = true;
             const float ty = y + (h - textH()) * 0.5f;
-            quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
+            menuRowBg(x, y, w, h, ih || *open || ksel);
             drawText(x + g_curMenu.textInset, ty, label, s, g_theme.text);
             if (g_curMenu.fromPopup) {   // Dear ImGui's arrow, as on the popup's own sub-menu rows
                 const float th = textH(), r = th * 0.40f, cx = x + w - g_curMenu.textInset - th * 0.5f, cy = ty + th * 0.5f;
                 tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, g_theme.text);
-            } else drawText(x + w - labelW(">") - 8.0f, ty, ">", s, pick(Col_TextDisabled, g_theme.textDim));
+            } else chevron(x + w - 16.0f, y + h * 0.5f, 7.0f, false, pick(Col_TextDisabled, g_theme.textDim));
             g_toOverlay = wasOverlay;
         }
         if (!*open) { kbSlot(id)->idx = -1; return false; }
@@ -194,7 +210,11 @@ bool BeginMenu(const char* label) {
     g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
-    if (*open || inside) quad(x, y, bw, h, g_theme.bgHover);
+    {   // a soft rounded chip under the pointer or while its menu is open
+        unsigned char tmp[4];
+        const float over = anim(id, 0, *open || inside);
+        if (over > 0.0f) rrect(x + 2.0f, y + 3.0f, bw - 4.0f, h - 6.0f, g_theme.radiusSmall, withAlpha(g_theme.bgHover, over, tmp));
+    }
     drawText(x + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
 
     if (*open) {
@@ -219,7 +239,7 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
     x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
     const bool ih = enabled && hit(x, y, w, h);
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
-    if (ih || lit) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
+    if (ih || lit) rrect(x, y, w, h, g_framedWidgets ? 0.0f : g_theme.radiusSmall, pick(Col_HeaderHovered, g_theme.bgHover));
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     drawText(ix, iy, label, s, col);
     const float right = ix + w - g_lay.spacingX;
@@ -292,12 +312,12 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     const bool wasOverlay = g_toOverlay;   // a sub-menu of a popup: the popup's rows after it must stay on top
     g_toOverlay = true;
     const float in = g_curMenu.textInset;
-    quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
-    if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
+    menuRowBg(x, y, w, h, ih || ksel);
+    if (selected) { const float tk = std::min(h - 6.0f, in + 2.0f); tickMark(x + (in - tk) * 0.5f + 1.0f, y + (h - tk) * 0.5f, tk, g_theme.accent); }   // a tick marks a checked item
     drawText(x + in, y + (h - textH()) * 0.5f, VisLabel(label).b, s, col);
-    if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
+    if (shortcut && shortcut[0]) {   // right-aligned, faint; skipped when it would run into the label
         const float sw = labelW(shortcut), sx = x + w - sw - in;
-        if (sx > x + in + visW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
+        if (sx > x + in + visW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textFaint));
     }
     g_toOverlay = wasOverlay;
     return clicked;
@@ -314,8 +334,8 @@ void MenuSeparator() {
     if (!menuRowShown(y, h)) return;
     const bool wasOverlay = g_toOverlay;
     g_toOverlay = true;
-    quad(x, y, w, h, pick(Col_PopupBg, g_theme.panel));
-    quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, pick(Col_Separator, g_theme.border));
+    if (!g_curMenu.boxed) quad(x, y, w, h, pick(Col_PopupBg, g_theme.overlay));
+    quad(x + 8.0f, y + h * 0.5f, w - 16.0f, 1.0f, pick(Col_Separator, g_theme.border));
     g_toOverlay = wasOverlay;
 }
 
@@ -392,16 +412,13 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
         else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
         if (bg) quad(x, y, w, h, bg);
         drawText(textX + g_lay.spacingX * 0.5f, ty, label, s, tcol);
-    } else if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
+    } else {   // the design's rows: a soft accent tint and a bar on the left when selected, a faint ink wash under the pointer
         unsigned char tmp[4];
-        const unsigned char white[4] = {255, 255, 255, 255};
-        if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
-        else if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        drawText(textX + 10.0f, ty, VisLabel(label).b, s, tcol);
-    } else {
-        if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
-        else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-        drawText(textX + 6.0f, ty, VisLabel(label).b, s, tcol);
+        const float over = anim(id, 0, inside && !selected);
+        const float rd = std::min(g_theme.radiusSmall + 1.0f, h * 0.5f);
+        if (selected) { rrect(x, y, w, h, rd, pick(Col_HeaderActive, g_theme.selection)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
+        else if (over > 0.0f) rrect(x, y, w, h, rd, pick(Col_HeaderHovered, withAlpha(g_theme.ink, 0.07f * over, tmp)));
+        drawText(textX + (g_look ? 10.0f : 6.0f), ty, VisLabel(label).b, s, tcol);
     }
     if (clicked) {
         if (p_sel) *p_sel = !*p_sel;
@@ -458,7 +475,7 @@ bool ui_core::beginPopupBody(int id) {
     // Frame (overlay so it sits above everything). Height is last frame's content.
     registerOverlay(px, py, w, *hSlot + padY * 2.0f, true);
     g_toOverlay = true;
-    panelColored(px, py, w, *hSlot + padY * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
+    popoverBox(px, py, w, *hSlot + padY * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.overlay)));
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
@@ -603,15 +620,8 @@ bool BeginCombo(const char* label, const char* preview) {
     } else if (takesPress && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
     const bool open = ps && ps->open;
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, preview);
-    else {
-    quad(x, y, boxW, h, g_theme.border);
-    if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
-    PushClipRect(x, y, std::max(1.0f, boxW - 24.0f), h);
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
-    PopClipRect();
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
-    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
-    }
+    else comboBox(id, x, y, boxW, h, insideBox, open, preview);
+    (void)b;
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
     if (!ps) return false;
     const bool shown = beginPopupBody(ps->id);

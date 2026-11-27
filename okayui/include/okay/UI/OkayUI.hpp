@@ -125,40 +125,62 @@ struct Input {
     const char* commit           = nullptr;   // text the input method committed this frame
 };
 
-/// Visual style (colors are RGBA, 0..255). Mutable via Style().
+/// Visual style (colors are RGBA, 0..255). Mutable via Style(). Every value comes from the design in force
+/// (okay/UI/OkayUIDesign.hpp: design::Set, design::ThemeFor); the initial values below are the default design (Graphite, dark).
 struct Theme {
-    unsigned char bg[4]      = { 54,  58,  66, 255};
-    unsigned char bgHover[4] = { 72,  78,  90, 255};
-    unsigned char bgDown[4]  = { 36,  40,  48, 255};
-    unsigned char border[4]  = { 18,  20,  24, 255};
-    unsigned char text[4]    = {236, 239, 245, 255};
-    unsigned char panel[4]   = { 40,  43,  50, 235};   // Panel() background
-    unsigned char track[4]   = { 26,  28,  34, 255};   // Slider/ProgressBar groove
-    unsigned char accent[4]  = { 84, 150, 240, 255};   // fill / handle / checkmark
+    unsigned char bg[4]      = { 44,  44,  50, 255};   // controls (buttons, boxes)
+    unsigned char bgHover[4] = { 61,  61,  66, 255};
+    unsigned char bgDown[4]  = { 30,  30,  34, 255};
+    unsigned char border[4]  = {255, 255, 255,  20};   // hairline
+    unsigned char text[4]    = {237, 237, 241, 255};
+    unsigned char panel[4]   = { 23,  23,  26, 255};   // Panel() background / window body
+    unsigned char track[4]   = { 18,  18,  21, 255};   // Slider/ProgressBar groove
+    unsigned char accent[4]  = {110,  96, 240, 255};   // fill / handle / checkmark
     float borderPx  = 1.0f;
     float textScale = 2.0f;    // 8x8 font cell * scale (2 -> 16px-tall glyphs)
-    float rounding  = 4.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
-    unsigned char textDim[4] = {150, 155, 166, 255};   // TextDisabled / secondary text
-    unsigned char titleBg[4] = { 36,  40,  48, 255};   // window title bars
-    unsigned char field[4]   = { 26,  28,  34, 255};   // text-field fill
-    float windowRounding = 4.0f;   // window corners
+    float rounding  = 7.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
+    unsigned char textDim[4] = {163, 164, 173, 255};   // TextDisabled / secondary text
+    unsigned char titleBg[4] = { 18,  18,  21, 255};   // window headers
+    unsigned char field[4]   = { 32,  32,  37, 255};   // text-field fill
+    float windowRounding = 12.0f;  // window corners
     float windowPadding  = 10.0f;  // inside a window, around its content
-    bool  windowShadow   = false;  // soft drop shadow under windows
+    bool  windowShadow   = true;   // soft drop shadow under windows
     bool  caretBlink     = true;   // text caret blinks (off: always visible, for tests and screenshots)
     // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
     // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
     unsigned char      colors[64][4] = {};
     unsigned long long colorSet = 0;
+    // ---- The rest of the design's tokens (docs/ui/okayui_design.md) ----
+    unsigned char raised[4]      = { 30,  30,  34, 255};   // cards, section headers
+    unsigned char overlay[4]     = { 36,  36,  41, 255};   // popovers, menus, combo lists, dialogs
+    unsigned char textFaint[4]   = {118, 119, 128, 255};   // placeholders, shortcuts, indent guides
+    unsigned char onAccent[4]    = {255, 255, 255, 255};   // text and glyphs on a filled accent
+    unsigned char accentHover[4] = {127, 114, 242, 255};
+    unsigned char focusRing[4]   = {146, 135, 244, 220};   // the ring around the control that has the keyboard
+    unsigned char selection[4]   = {110,  96, 240, 102};   // selected rows, selected text
+    unsigned char ink[4]         = {255, 255, 255, 255};   // the tint for soft hovers (light on dark, dark on light)
+    unsigned char tooltipBg[4]   = {  8,   8,  10, 245};
+    unsigned char tooltipText[4] = {237, 237, 241, 255};
+    unsigned char success[4]     = { 74, 201, 132, 255};
+    unsigned char warning[4]     = {240, 184,  72, 255};
+    unsigned char danger[4]      = {244, 104, 104, 255};
+    float radiusSmall  = 5.0f;    // check boxes, tags
+    float focusRingPx  = 2.0f;
+    int   tabShape     = 0;       // design::TabShape: 0 underline, 1 pill, 2 segmented
+    int   shadowDepth  = 2;       // 0 none .. 3 deep (windows, popovers, toasts)
+    bool  controlBorders = false; // buttons and fields carry an outline
+    float motionMs     = 120.0f;  // hover / press / open transitions (0 or a host with no clock: none)
+    float spacing      = 1.0f;    // density: 0.75 compact, 1 comfortable, 1.3 spacious
+    bool  lightScheme  = false;
+    bool  accentHeaders = false;  // section headers carry an accent bar
 };
 
-/// The OkaySpace launcher's look for game UI: its font (Roboto, smooth TrueType
-/// text instead of the 8x8 bitmap), its "Slate" colours (blue-tinted dark panels,
-/// hairline borders, accent for interactive states), rounder controls, pill tabs,
-/// shadows. The player turns it on; `false` restores the classic look. Needs the
-/// SDL_Renderer path (EndFrame(SDL_Renderer*)).
+/// TrueType text (Roboto, the default in every program) and the design in force (okay/UI/OkayUIDesign.hpp). `false` goes
+/// back to the 8x8 bitmap font (the last fallback; the headless tests use it), with the same design. The name is frozen
+/// (it was the launcher's look first). Needs the SDL_Renderer path (EndFrame(SDL_Renderer*)) or a backend that reads the atlas.
 void UseLauncherLook(bool on = true);
 bool LauncherLook();
-/// The Slate theme on its own (what UseLauncherLook applies), e.g. to tweak and reapply.
+/// The Slate design (the launcher's look) as a Theme with TrueType metrics, e.g. to tweak and reapply. Frozen name.
 Theme SlateTheme();
 
 /// Latch this frame's input and reset the geometry batch.

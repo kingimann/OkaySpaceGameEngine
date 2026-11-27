@@ -223,8 +223,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
     const bool frozen = g_tbl.rowsDone < g_tbl.freezeRows || !g_tbl.scrollY;
     if (tblScrolls()) tblSetClip(true, 2);
     const float fullL = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, fullW2 = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
-    if (g_look) quad(fullL, rowY + hh - 1.0f, fullW2, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
-    else quad(fullL, rowY, fullW2, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
+    quad(fullL, rowY + hh - 1.0f, fullW2, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
     const Font* prevF = g_font; g_font = &kFontBold;
     for (int i = 0; i < g_tbl.count; ++i) {
         if (tblHidden(i)) continue;
@@ -242,7 +241,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
             if (hot || down) quad(cx, rowY, cw, hh, pick(down ? Col_HeaderActive : Col_HeaderHovered, down ? g_theme.bgDown : g_theme.bgHover));
         }
         if (labels[i] && labels[i][0] && !(i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoHeaderLabel)))
-            drawText(cx + 4.0f, rowY + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
+            drawText(cx + 4.0f, rowY + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
         if (sortable) {
             const TblStore& t = *g_tbl.store;
             for (int k = 0; k < t.sortN; ++k) if (t.sortCol[k] == i) {
@@ -304,13 +303,12 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     // Optional header row: a bar with bold column labels.
     if (headers) {
         const float hh = rowH();
-        if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
-        else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
+        quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
         const Font* prevF = g_font; g_font = &kFontBold;
         for (int i = 0; i < columns; ++i) {
             float cx = tblColX(i);
             if (headers[i] && headers[i][0])
-                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
+                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
         }
         g_font = prevF;
         g_tbl.rowTop += hh;
@@ -510,8 +508,8 @@ void TableNextRow() {
     const float bx = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, bw = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
     if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, 2);
     if ((g_tbl.flags & Table_RowBg) && (g_tbl.rowIndex & 1)) {   // banded rows: drawn first so the cells go on top
-        unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        quad(bx, by, bw, bandH, pick(Col_TableRowBgAlt, withAlpha(white, 0.045f, tmp)));
+        unsigned char tmp[4];
+        quad(bx, by, bw, bandH, pick(Col_TableRowBgAlt, withAlpha(g_theme.ink, 0.045f, tmp)));
     } else if ((g_tbl.flags & Table_RowBg) && colorIsSet(Col_TableRowBg)) {
         quad(bx, by, bw, bandH, g_theme.colors[Col_TableRowBg]);
     }
@@ -627,7 +625,7 @@ void EndTable() {
             else if (over && g_pressed) { g_active = bid; g_focusClaimed = true; }
             sx = std::max(0.0f, std::min(sx, maxX));
             const float tx = g_tbl.ox + (sx / maxX) * (trackW - thumbW);
-            if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(g_tbl.ox, sby, trackW, kBarThick, pick(Col_ScrollbarBg, g_theme.track));
+            if (colorIsSet(Col_ScrollbarBg)) quad(g_tbl.ox, sby, trackW, kBarThick, pick(Col_ScrollbarBg, g_theme.track));
             const bool act = g_active == bid;
             quad(tx + 1.0f, sby + 1.0f, thumbW - 2.0f, kBarThick - 2.0f, act ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent)));
         }

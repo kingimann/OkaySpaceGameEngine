@@ -52,18 +52,16 @@ void paintTooltipBox(const char* text) {
     if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
     if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
     g_toOverlay = true;
-    if (g_look) {
-        const unsigned char tip[4] = {38, 42, 51, 250};
-        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-    } else {
-        quad(bx, by, bw, bh, g_theme.border);
-        quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
+    {   // a small card in the design's tooltip colours, on a light shadow; an outline when the design draws strong outlines
+        const float rd = std::min(g_theme.radiusSmall + 2.0f, bh * 0.5f);
+        elevation(bx, by, bw, bh, rd, g_theme.shadowDepth > 1 ? 1 : g_theme.shadowDepth);
+        rrect(bx, by, bw, bh, rd, g_theme.tooltipBg);
+        if (g_theme.borderPx >= 2.0f) ringRect(bx, by, bw, bh, rd, 1.0f, g_theme.border);
     }
     char line[256]; int n = 0; float ly = by + pad;
     for (const char* c = text;; ++c) {
         if (*c == '\n' || *c == 0) {
-            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.text);
+            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.tooltipText);
             ly += th + lineGap; n = 0;
             if (*c == 0) break;
         } else if (n < 255) line[n++] = *c;
@@ -147,14 +145,8 @@ void EndTooltip() {
         for (int i = t.startV; i < g_onv; ++i) { g_ovVerts[i].position.x += dx; g_ovVerts[i].position.y += dy; }
         const int contentEndI = g_oni, spansBefore = g_novSpans;
         g_toOverlay = true;
-        if (g_look) {
-            const unsigned char tip[4] = {38, 42, 51, 250};
-            rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-            rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-        } else {
-            quad(bx, by, bw, bh, g_theme.border);
-            quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
-        }
+        // A tooltip with widgets in it is a popover (its widgets draw in the page's text colours).
+        { const unsigned char bgc[4] = {g_theme.overlay[0], g_theme.overlay[1], g_theme.overlay[2], 250}; popoverBox(bx, by, bw, bh, bgc); }
         const int boxN = g_oni - contentEndI;
         g_novSpans = spansBefore;        // the box takes the flat span at the start of the tooltip
         if (boxN > 0 && contentEndI > t.startI) {

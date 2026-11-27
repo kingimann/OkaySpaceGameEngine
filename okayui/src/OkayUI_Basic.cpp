@@ -28,15 +28,12 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
         g_active = id;
     }
 
-    const unsigned char* bg = g_theme.bg;
-    if (g_active == id && inside) bg = g_look ? g_theme.accent : g_theme.bgDown;
-    else if (inside)             bg = g_theme.bgHover;
-
-    // Rounded border frame, then the inset fill.
+    // The design's control: its fill eases to the hover colour and on to the pressed one (motion), an outline when the design
+    // draws outlines on controls.
+    unsigned char st[4];
+    const unsigned char* bg = stateColor(id, inside, g_active == id && inside, g_theme.bg, g_theme.bgHover, g_theme.bgDown, st);
     const float rd = rnd();
-    rrect(x, y, w, h, rd, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
+    controlBox(x, y, w, h, rd, bg);
 
     // Centered label (what follows "##" is only part of the id).
     const VisLabel vis(label);
@@ -99,23 +96,19 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
         if (label && *label) drawText(x + size + 8.0f, y + (size - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
         return changed;
     }
-    const unsigned char* bg = g_theme.bg;
-    if (g_active == id && inside) bg = g_theme.bgDown;
-    else if (inside)             bg = g_theme.bgHover;
-
-    // Rounded box frame + fill.
-    const float rd = rnd() * 0.6f;
-    rrect(x, y, size, size, rd, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (size > 2.0f * b) rrect(x + b, y + b, size - 2.0f * b, size - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
-    // Check mark: a centered accent square when ticked (launcher look: an accent box with a tick).
-    if (*value && g_look) {
-        rrect(x, y, size, size, rd, pick(Col_CheckMark, g_theme.accent));
-        const unsigned char white[4] = {255, 255, 255, 255};
-        tickMark(x, y, size, white);
-    } else if (*value) {
-        const float pad = size * 0.28f;
-        rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, pick(Col_CheckMark, g_theme.accent));
+    // An empty box is the field colour inside a ring of the ink (brighter under the pointer); a ticked one fills with the accent
+    // (fading in with motion) and carries a tick drawn as two strokes in the on-accent colour.
+    const float rd = std::min(g_theme.radiusSmall, size * 0.4f);
+    unsigned char st[4], ring[4];
+    const unsigned char* fill = stateColor(id, inside, g_active == id && inside, g_theme.field, g_theme.bgHover, g_theme.bgDown, st);
+    rrect(x, y, size, size, rd, fill);
+    const float on = anim(id, 2, *value);
+    if (on < 1.0f) ringRect(x, y, size, size, rd, std::max(1.5f, g_theme.borderPx), withAlpha(g_theme.ink, inside ? 0.55f : 0.32f, ring));
+    if (on > 0.0f) {
+        unsigned char acc[4];
+        rrect(x, y, size, size, rd, withAlpha(pick(Col_CheckMark, g_theme.accent), on, acc));
+        unsigned char tick[4];
+        tickMark(x, y, size, withAlpha(g_theme.onAccent, on, tick));
     }
     // Label to the right, vertically centered against the box.
     if (label && *label) {
@@ -138,17 +131,23 @@ bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label,
         g_active = id;
     }
 
-    // Pill track: dim when off, accent when on; knob slides between the two ends.
+    // Pill track: the control colour when off, the accent when on (blended with motion); the knob slides between the ends
+    // and sits on a small shadow. The knob is the on-accent colour when on, the text colour when off.
     const float rd = h * 0.5f;
-    const unsigned char* track = *value ? g_theme.accent : g_theme.bg;
-    rrect(x, y, w, h, rd, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, track);
+    const float on = anim(id, 2, *value);
+    unsigned char trk[4];
+    const unsigned char* off = inside ? g_theme.bgHover : g_theme.bg;
+    mixColor(off, g_theme.accent, on, trk);
+    controlBox(x, y, w, h, rd, trk);
     const float pad = h * 0.14f;
     const float kd  = h - 2.0f * pad;                          // knob diameter
-    const float kx  = *value ? (x + w - pad - kd) : (x + pad); // slid to the on/off end
-    const unsigned char* knob = (inside || g_active == id) ? g_theme.text : g_theme.bgHover;
-    rrect(kx, y + pad, kd, kd, kd * 0.5f, knob);
+    const float kx  = x + pad + (w - 2.0f * pad - kd) * on;    // slid toward the on end
+    const unsigned char sh[4] = {0, 0, 0, (unsigned char)(g_theme.lightScheme ? 40 : 70)};
+    fillCircle(kx + kd * 0.5f, y + pad + kd * 0.5f + 1.0f, kd * 0.5f + 0.5f, sh);
+    unsigned char kc[4];
+    mixColor(g_theme.text, g_theme.onAccent, on, kc);
+    if (g_theme.lightScheme && on < 0.5f) { kc[0] = kc[1] = kc[2] = 255; }   // a white knob on a light track
+    fillCircle(kx + kd * 0.5f, y + pad + kd * 0.5f, kd * 0.5f, kc);
     // Label to the right of the switch, vertically centered.
     if (label && *label) {
         const float s = g_theme.textScale, th = fH() * s;
@@ -176,52 +175,34 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
         setFromMouse();                      // jump to the click position
     }
 
-    // Rounded groove, then the filled portion, then a circular handle.
+    // A thin groove in the sunken colour, the filled part in the accent, and a round thumb with a soft shadow that grows a
+    // little under the pointer (motion) and shows an accent halo while dragged.
     const float t = clamp01((*value - minV) / (maxV - minV));
-    if (g_look) {   // thin field-coloured groove, accent fill, white knob
-        const float gy2 = y + h * 0.5f - 2.5f;
-        rrect(x, gy2, w, 5.0f, 2.5f, g_theme.field);
-        if (w * t > 0.0f) rrect(x, gy2, w * t, 5.0f, 2.5f, g_theme.accent);
-        const float kr = h * 0.32f;
-        float kcx = x + w * t;
-        if (kcx < x + kr) kcx = x + kr;
-        if (kcx > x + w - kr) kcx = x + w - kr;
-        const unsigned char ring[4] = {0, 0, 0, 60};
-        fillCircle(kcx, y + h * 0.5f + 1.0f, kr + 1.0f, ring);
-        const unsigned char knob[4] = {245, 247, 252, 255};
-        fillCircle(kcx, y + h * 0.5f, kr, (g_active == id || inside) ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, knob));
-        return changed;
-    }
-    const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
-    rrect(x, gy, w, 6.0f, 3.0f, g_theme.track);
-    if (w * t > 0.0f) rrect(x, gy, w * t, 6.0f, 3.0f, g_theme.accent);
-    const float hr = h * 0.42f;                // handle radius
-    float hcx = x + w * t;
-    if (hcx < x + hr) hcx = x + hr;
-    if (hcx > x + w - hr) hcx = x + w - hr;
-    const unsigned char* hc = (g_active == id || inside) ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent);
-    fillCircle(hcx, y + h * 0.5f, hr, g_theme.border);
-    fillCircle(hcx, y + h * 0.5f, hr - 1.5f, hc);
+    const float gh = std::max(4.0f, std::floor(h * 0.18f)), gy = y + (h - gh) * 0.5f;
+    rrect(x, gy, w, gh, gh * 0.5f, g_theme.track);
+    if (w * t > 0.0f) rrect(x, gy, w * t, gh, gh * 0.5f, g_theme.accent);
+    const float over = anim(id, 0, inside || g_active == id);
+    const float kr = h * 0.30f + over * h * 0.04f;
+    float kcx = x + w * t;
+    if (kcx < x + kr) kcx = x + kr;
+    if (kcx > x + w - kr) kcx = x + w - kr;
+    const float kcy = y + h * 0.5f;
+    if (g_active == id) { unsigned char halo[4]; fillCircle(kcx, kcy, kr + 5.0f, withAlpha(g_theme.accent, 0.28f, halo), 28); }
+    const unsigned char sh[4] = {0, 0, 0, (unsigned char)(g_theme.lightScheme ? 45 : 80)};
+    fillCircle(kcx, kcy + 1.0f, kr + 1.0f, sh);
+    const unsigned char knobW[4] = {250, 250, 252, 255};
+    const unsigned char* kc = (g_active == id || inside) ? pick(Col_SliderGrabActive, knobW) : pick(Col_SliderGrab, knobW);
+    fillCircle(kcx, kcy, kr, kc, 28);
+    if (g_theme.controlBorders) ringRect(kcx - kr, kcy - kr, 2.0f * kr, 2.0f * kr, kr, 1.0f, g_theme.border);
     return changed;
 }
 
 void ProgressBar(float x, float y, float w, float h, float t) {
     t = clamp01(t);
-    if (g_look) {   // a pill: field track, accent fill
-        const float bh = h > 10.0f ? 10.0f : h, by = y + (h - bh) * 0.5f;
-        rrect(x, by, w, bh, bh * 0.5f, g_theme.field);
-        if (w * t >= bh * 0.5f) rrect(x, by, w * t, bh, bh * 0.5f, g_theme.accent);
-        return;
-    }
-    const float rd = rnd();
-    rrect(x, y, w, h, rd, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) {
-        const float ir = rd > b ? rd - b : 0.0f;
-        rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, ir, g_theme.track);
-        const float iw = (w - 2.0f * b) * t;
-        if (iw > 0.0f) rrect(x + b, y + b, iw, h - 2.0f * b, ir, g_theme.accent);
-    }
+    // A pill: the sunken groove and the accent fill, at most 10 pixels tall, centred in the box.
+    const float bh = h > 10.0f ? 10.0f : h, by = y + (h - bh) * 0.5f;
+    rrect(x, by, w, bh, bh * 0.5f, g_theme.track);
+    if (w * t > 0.0f) rrect(x, by, std::max(w * t, std::min(bh, w)), bh, bh * 0.5f, g_theme.accent);
 }
 
 bool RadioButton(int id, float x, float y, float size, const char* label, int* value, int option) {
@@ -236,16 +217,19 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
         g_active = id;
     }
 
-    const unsigned char* bg = g_theme.bg;
-    if (g_active == id && inside) bg = g_theme.bgDown;
-    else if (inside)             bg = g_theme.bgHover;
-
-    // Circular radio (distinct from the square checkbox).
+    // A round box: an ink ring around the field colour; the chosen one is an accent disc with a dot in the on-accent colour.
+    unsigned char st[4], ring[4];
+    const unsigned char* bg = stateColor(id, inside, g_active == id && inside, g_theme.field, g_theme.bgHover, g_theme.bgDown, st);
     const float cx = x + size * 0.5f, cy = y + size * 0.5f, rr = size * 0.5f;
-    fillCircle(cx, cy, rr, g_theme.border);
-    fillCircle(cx, cy, rr - g_theme.borderPx, bg);
-    // Selected indicator: a smaller centered accent dot.
-    if (*value == option) fillCircle(cx, cy, size * 0.22f, pick(Col_CheckMark, g_theme.accent));
+    const bool chosen = *value == option;
+    const float on = anim(id, 2, chosen);
+    fillCircle(cx, cy, rr, withAlpha(g_theme.ink, inside ? 0.55f : 0.32f, ring), 28);
+    fillCircle(cx, cy, rr - std::max(1.5f, g_theme.borderPx), bg, 28);
+    if (on > 0.0f) {
+        unsigned char acc[4], dot[4];
+        fillCircle(cx, cy, rr, withAlpha(pick(Col_CheckMark, g_theme.accent), on, acc), 28);
+        fillCircle(cx, cy, size * (0.30f - 0.08f * on), withAlpha(g_theme.onAccent, on, dot), 20);
+    }
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
@@ -266,32 +250,37 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
     }
 
     const bool selected = (*current == index);
-    if (g_look) {   // launcher pill tabs: accent when selected, faint white otherwise
-        unsigned char tmp[4];
-        const unsigned char white[4] = {255, 255, 255, 255};
-        const unsigned char* fill = selected ? g_theme.accent : withAlpha(white, inside ? 0.10f : 0.05f, tmp);
-        rrect(x, y, w, h, h * 0.5f, fill);
-        if (label && *label) {
-            const float s = g_theme.textScale, tw = visW(label), th = fH() * s;
-            drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
+    // Three shapes, chosen by the design (Theme::tabShape): an underline (text only, the chosen tab's label in the text colour
+    // over a 2-pixel accent bar, the others dimmer), a pill (the chosen tab filled with the accent) or a segment (the chosen
+    // tab a raised chip in a sunken track; the track is drawn by the bar). Hover eases in with motion.
+    const float over = anim(id, 0, inside && !selected);
+    const float s = g_theme.textScale, tw = visW(label), th = fH() * s;
+    unsigned char tmp[4], tc[4];
+    const unsigned char* txt = g_theme.text;
+    switch (g_theme.tabShape) {
+        case 1: {   // pill
+            if (selected) rrect(x, y, w, h, h * 0.5f, pick(Col_TabActive, g_theme.accent));
+            else if (over > 0.0f) rrect(x, y, w, h, h * 0.5f, pick(Col_TabHovered, withAlpha(g_theme.ink, 0.10f * over, tmp)));
+            txt = selected ? g_theme.onAccent : mixColor(g_theme.textDim, g_theme.text, over, tc);
+            break;
         }
-        return *current == index;
+        case 2: {   // segment
+            if (selected) {
+                elevation(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f, g_theme.radiusSmall, g_theme.shadowDepth > 0 ? 1 : 0);
+                controlBox(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f, g_theme.radiusSmall, pick(Col_TabActive, g_theme.panel));
+            } else if (over > 0.0f) rrect(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f, g_theme.radiusSmall, pick(Col_TabHovered, withAlpha(g_theme.ink, 0.07f * over, tmp)));
+            txt = selected ? g_theme.text : mixColor(g_theme.textDim, g_theme.text, over, tc);
+            break;
+        }
+        default: {  // underline
+            if (over > 0.0f) rrect(x + 2.0f, y + 3.0f, w - 4.0f, h - 6.0f, g_theme.radiusSmall, pick(Col_TabHovered, withAlpha(g_theme.ink, 0.06f * over, tmp)));
+            if (selected) rrect(x + 6.0f, y + h - 2.0f, w - 12.0f, 2.0f, 1.0f, pick(Col_TabActive, g_theme.accent));
+            txt = selected ? g_theme.text : mixColor(g_theme.textDim, g_theme.text, over, tc);
+            break;
+        }
     }
-    const unsigned char* bg = selected ? pick(Col_TabActive, g_theme.bg) : pick(Col_Tab, g_theme.track);
-    if (!selected && inside) bg = pick(Col_TabHovered, g_theme.bgHover);
-
-    quad(x, y, w, h, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, bg);
-    if (selected) quad(x, y, w, 3.0f, g_theme.accent);   // accent strip on the active tab
-    if (label && *label) {
-        const float s  = g_theme.textScale;
-        const float tw = visW(label);
-        const float th = fH() * s;
-        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
-    }
+    if (label && *label) drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, txt);
     return *current == index;
 }
-
 
 } // namespace OkayUI

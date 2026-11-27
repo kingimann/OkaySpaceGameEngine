@@ -894,6 +894,7 @@ jobs:
 
       - name: Install Playwright and Chromium (test tools only; nothing of them ships)
         run: |
+          bash scripts/ci-apt-mirror.sh   # a broken outside apt source (e.g. Microsoft's, 403 on 2026-11-27) must not fail --with-deps
           mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm install --no-audit --no-fund playwright@1.63.0
           npx --prefix "$RUNNER_TEMP/pw" playwright install --with-deps chromium
 

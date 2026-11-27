@@ -800,11 +800,8 @@ void VisualScriptApp::Impl::drawNodeMenu() {
             for (int i = 0; i < (int)d->dataIn.size(); ++i) s.g.unlinkPin(id, 1, 0, i);
             for (int i = 0; i < (int)d->dataOut.size(); ++i) s.g.unlinkPin(id, 1, 1, i);
         }
-    } else if (pick == "bp") {
-        if (s.g.path.empty()) note("Save the graph to a file first: breakpoints are kept per graph file.", 1);
-        else if (!vsed::VsCanBreakAt(*n)) note("Breakpoints go on steps (blocks the flow runs through). A value block runs when a step reads it.", 1);
-        else okay::vs::VsDebugger::Get().ToggleBreakpoint(s.g.path, id);
-    } else if (pick == "comment") { vsed::VsCommentAround(s, 0, 0); renameBox = true; }
+    } else if (pick == "bp") toggleBreakpointOn(id);
+    else if (pick == "comment") { vsed::VsCommentAround(s, 0, 0); renameBox = true; }
     else {
         if (!vsed::VsRunCommand(s, pick, root())) note("Nothing to do here", 1);
         if (pick == "vs.findReferences" || pick == "vs.watchValues") settings.panel = 2;

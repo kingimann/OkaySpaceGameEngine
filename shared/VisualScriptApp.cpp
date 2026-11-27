@@ -209,6 +209,15 @@ void VisualScriptApp::Impl::answerPrompt(int answer) {
     close(promptTab);
 }
 
+void VisualScriptApp::Impl::toggleBreakpointOn(int id) {
+    vsed::VsEditState& s = st();
+    const vsed::VsEditNode* n = s.g.find(id);
+    if (!n) return;
+    if (s.g.path.empty()) note("Save the graph to a file first: breakpoints are kept per graph file.", 1);
+    else if (!vsed::VsCanBreakAt(*n)) note("Breakpoints go on steps (blocks the flow runs through). A value block runs when a step reads it.", 1);
+    else okay::vs::VsDebugger::Get().ToggleBreakpoint(s.g.path, id);
+}
+
 void VisualScriptApp::Impl::checkNow() {
     vsed::VsEditState& s = st();
     vsed::VsRefreshChecks(s, s.g, s.g.toText(), root());
@@ -483,11 +492,7 @@ void VisualScriptApp::Impl::drawDetails(float X, float Y, float W, float H, bool
                 if (UI::Button(marked ? "Remove Bookmark" : "Add Bookmark") && !modal) vsed::VsRunCommand(s, "vs.toggleBookmark", root());
                 UI::SameLine();
                 const bool bp = !g.path.empty() && okay::vs::VsDebugger::Get().HasBreakpoint(g.path, n->id);
-                if (UI::Button(bp ? "Remove Breakpoint" : "Add Breakpoint") && !modal) {
-                    if (g.path.empty()) note("Save the graph to a file first: breakpoints are kept per graph file.", 1);
-                    else if (!vsed::VsCanBreakAt(*n)) note("Breakpoints go on steps (blocks the flow runs through). A value block runs when a step reads it.", 1);
-                    else okay::vs::VsDebugger::Get().ToggleBreakpoint(g.path, n->id);
-                }
+                if (UI::Button(bp ? "Remove Breakpoint" : "Add Breakpoint") && !modal) toggleBreakpointOn(n->id);
                 if (UI::Button("Find References") && !modal) { vsed::VsRunCommand(s, "vs.findReferences", root()); settings.panel = 2; }
                 if (!d->dataOut.empty()) {
                     UI::SameLine();

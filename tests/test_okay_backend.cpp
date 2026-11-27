@@ -179,6 +179,25 @@ int main() {
               "t?a=is.null&b=is.true&c=is.false&d=is.unknown");
         CHECK(path(db.From("t").In("id", {"a", "b c", "x,y", "q\"t", ""})) == "t?id=in.(a,b%20c,%22x%2Cy%22,%22q%5C%22t%22,%22%22)");
         CHECK(path(db.From("t").In("id", {})) == "t?id=in.()");
+        // (round 5) In's three ways of writing items: quoted when needed (default), encoded only, unchanged.
+        CHECK(path(db.From("t").In("id", {"a", "x,y", "(z)", " s"}, ob::ValueText::EncodedUnquoted)) == "t?id=in.(a,x%2Cy,%28z%29,%20s)");
+        CHECK(path(db.From("t").In("id", {"a", "x,y", "(z)", "b c&d"}, ob::ValueText::AsIs)) == "t?id=in.(a,x,y,(z),b c&d)");
+        CHECK(path(db.From("t").In("id", {"u-1", "u-2"}, ob::ValueText::EncodedUnquoted)) == path(db.From("t").In("id", {"u-1", "u-2"})));
+        // (round 5) Or, And and Cond: PostgREST's logical operators, in call order with the other parts.
+        using Q = ob::Query;
+        CHECK(path(db.From("t").Select("a").Or({Q::Cond("x", "eq", "1"), Q::Cond("y", "neq", "2")}).Limit(3)) == "t?select=a&or=(x.eq.1,y.neq.2)&limit=3");
+        CHECK(path(db.From("t").Or({Q::And({Q::Cond("a", "eq", "1"), Q::Cond("b", "eq", "2")}), Q::And({Q::Cond("a", "eq", "2"), Q::Cond("b", "eq", "1")})})) ==
+              "t?or=(and(a.eq.1,b.eq.2),and(a.eq.2,b.eq.1))");
+        CHECK(path(db.From("t").Or({})) == "t?or=()");
+        CHECK(Q::And({}) == "and()");
+        CHECK(Q::Cond("a", "gt", "2026-01-02T03:04:05Z", ob::ValueText::AsIs) == "a.gt.2026-01-02T03:04:05Z");
+        // Hostile values inside or=(...): by default quoted when they hold a reserved character, then encoded, so a value can
+        // neither end the condition nor add a part to the query; encoded only, or unchanged, when asked.
+        CHECK(Q::Cond("n", "eq", "a,b)&or=(x") == "n.eq.%22a%2Cb%29%26or%3D%28x%22");
+        CHECK(Q::Cond("n", "eq", "a,b)&or=(x", ob::ValueText::EncodedUnquoted) == "n.eq.a%2Cb%29%26or%3D%28x");
+        CHECK(Q::Cond("n", "eq", "a b", ob::ValueText::AsIs) == "n.eq.a b");
+        CHECK(Q::Cond("n&x", "eq&y", "v") == "n%26x.eq%26y.v");   // names are written like column names
+        CHECK(Q::Cond("n", "eq", "") == "n.eq.%22%22");             // an empty value is quoted (else "n.eq." is no value)
         // Order: one part, tie-breakers added to it; limit, offset, range.
         CHECK(path(db.From("t").Order("a", true).Eq("x", "1").Order("b")) == "t?order=a.desc,b.asc&x=eq.1");
         CHECK(path(db.From("t").Limit(5).Offset(10)) == "t?limit=5&offset=10");

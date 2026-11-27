@@ -153,6 +153,7 @@ struct VisualScriptApp::Impl {
     std::vector<std::string> recipeNames() const;
     bool pickRecipe(std::size_t index);
     bool attachSelected();
+    void toggleBreakpointOn(int id);   // a breakpoint on a step (said in words when it cannot go there)
     int menuBox(const std::string& id, float px, float py, const std::vector<std::string>& rows, bool& close);
     bool connectFrom(int node, std::size_t row);
     bool AddNextStepAt(std::size_t index);

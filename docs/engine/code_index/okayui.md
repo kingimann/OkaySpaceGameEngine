@@ -367,8 +367,8 @@ Back to the [code index](../code_index.md). 12 headers, 644 names.
 - `CodeMarker` struct, line 106: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
 - `CodeMove` enum, line 114: Where the caret goes.
 - `CodeEdit` class, line 120
-- `TextBoxPalette` function, line 497: The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
-- `MakeTextBox` function, line 499: Make 'ed' a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
+- `TextBoxPalette` function, line 498: The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
+- `MakeTextBox` function, line 500: Make 'ed' a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
 
 ## `okayui/include/okay/UI/OkayUICompat.hpp`
 

@@ -498,11 +498,8 @@ void VisualScriptApp::Impl::drawConnectMenu() {
 // ---- the outline --------------------------------------------------------------------------------------------------------------------
 
 void VisualScriptApp::Impl::drawOutline(float X, float Y, float W, float H, bool modal) {
-    UI::BareNextWindow();
-    if (UI::Begin((cfg.idPrefix + "_outline").c_str(), X, Y, W, H)) {
-        const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), kPanel);
-        dl->AddLine(UI::Vec2(X + W - 1, Y), UI::Vec2(X + W - 1, Y + H), kLine);
+    if (okayuiapp::BeginFilled(cfg.idPrefix + "_outline", X, Y, W, H, kPanel)) {
+        UI::GetWindowDrawList()->AddLine(UI::Vec2(X + W - 1, Y), UI::Vec2(X + W - 1, Y + H), kLine);
         vsed::VsEditState& s = st();
         const vsed::VsEditGraph& g = s.g;
         UI::SetCursorScreenPos(UI::Vec2(X + 8, Y + 8));

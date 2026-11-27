@@ -1519,6 +1519,13 @@ if(WIN32)
     target_link_libraries(test_okay_backend_golden_storage PRIVATE shell32)
 endif()
 add_test(NAME okay_backend_golden_storage COMMAND test_okay_backend_golden_storage)
+# OkayBackend round 5: every table request and database function call of the community headers, part 1 (Profiles, Friends,
+# BlockList, Privacy's ProfilesGet, Invites, Parties) must send byte-identical requests to the golden texts recorded before the
+# move, and the Supabase provider called directly the same. Fake server only. Header-only, like test_okay_backend.
+add_executable(test_okay_backend_golden_community1 test_okay_backend_golden_community1.cpp)
+target_compile_features(test_okay_backend_golden_community1 PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_community1 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_community1 COMMAND test_okay_backend_golden_community1)
 # OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
 # header order, the transports, reading token claims. Header-only, no network.
 add_executable(test_okay_backend test_okay_backend.cpp)
@@ -1646,6 +1653,8 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_executable(test_own_switches test_own_switches.cpp)
 target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME own_switches COMMAND test_own_switches)
+# The configured okay::platform default (cmake/OkayPlatform.cmake: own on Linux since #1341, sdl2 elsewhere): the default-build check expects it.
+target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_PLATFORM="${OKAY_PLATFORM_BACKEND}")
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)

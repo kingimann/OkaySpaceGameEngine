@@ -44,10 +44,10 @@ std::string CapturedKey() {
     for (const auto& k : named) if (UI::IsKeyPressed(k.first, false)) return k.second;
     return std::string();
 }
-std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+using okay::edtabs::Lower;   // the editor's one lower-case helper (EditorTabs.hpp)
 }  // namespace
 
-// ---- one key, an object or a file, a choice ---------------------------------------------------------------------------------------
+// ---- the fields: a pressed button, an object or a file, a choice ----
 
 bool VisualScriptApp::Impl::keyField(const std::string& id, std::string& value, float width) {
     bool changed = false;

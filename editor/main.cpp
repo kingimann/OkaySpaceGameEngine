@@ -136,15 +136,8 @@
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client)
-#include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
-#include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
-#ifdef OKAY_HAVE_OKAYUI
-#include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
-#include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
-#include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
-#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
-#include "OkayUIHostImGui.hpp"           // MouseInOtherViewport: a hosted panel in another OS window gets ImGui's mouse
-#endif
+#include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface
+#include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), tested headless
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "QuitPromptState.hpp"          // the quit prompt's per-frame state (ImGui-free, tested)
@@ -168,10 +161,10 @@
 #ifdef OKAY_ENABLE_TEST_HOOKS
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
 #endif
-#include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "ImGuiPainterRenderer.hpp"   // OkayUI's frame drawn through okay::platform::Painter (okayui/probe/ImGuiPainterRenderer.hpp)
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
 #include "OwnPainter.hpp"      // which painter draws an own-backend window (OpenGL, else software)
-#include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
+#include "ImGuiPlatformFeed.hpp"          // the input feed: okay::platform events into OkayUI's IO
 
 #include <numeric>
 #include <algorithm>
@@ -809,8 +802,6 @@ int main(int argc, char** argv) {
 #include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
 #include "okay/JavaScript/JavaScriptVM.hpp"   // JavaScript scripts: the same (our own engine, okay::js)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
-#include "backends/imgui_impl_sdl2.h"
-#include "backends/imgui_impl_sdlrenderer2.h"
 #include "EmbeddedFonts.hpp" // embedded Roboto Medium (Apache 2.0, the UI font) and JetBrains Mono (OFL, the code font)
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
 #include "ScriptIdeApp.hpp"       // scriptide::TestRunScript: Run (a sandbox scene), shared with the Script Editor program
@@ -2059,11 +2050,7 @@ okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
 bool UseOkayUICodeEdit() {   // the script editor's code is always our own OkayUI::CodeEdit (the vendored ImGuiColorTextEdit is deleted)
-#ifdef OKAY_HAVE_OKAYUI
-    return true;
-#else
     return false;
-#endif
 }
 // Hosted OkayUI screens take the mouse, keys and text: with the "OkayUI screens" backend (as before), and otherwise only for OkayUI's
 // own hosted pieces: a panel drawn by OkayUI only that is hovered or focused, a hosted area under the mouse, or a focused OkayUI code
@@ -2097,10 +2084,6 @@ static void NoteFpsSummary(double frameMs) {
     std::string line = s_sum.Add(f, frameMs);
     if (line.empty()) return;
     // Which modal (if any) holds the editor right now: a modal that stays open minute after minute is what blocks every click.
-#if !defined(OKAY_ON_OKAYUI)   // (the OkayUI compatibility build has no Dear ImGui window internals)
-    const ImGuiWindow* modal = ImGui::GetCurrentContext() ? ImGui::GetTopMostPopupModal() : nullptr;
-    line += std::string("; modal open: ") + (modal ? (modal->Hidden ? std::string(modal->Name) + " (hidden)" : std::string(modal->Name)) : std::string("none"));
-#endif
     okay::restart::AppendLog(PerfLogPath(), line);
 }
 // Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
@@ -2124,14 +2107,6 @@ static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs
     std::string ctx = playing ? "play" : "edit";
     ctx += UseOkayUIBackend() ? ", OkayUI screens" : ", Dear ImGui";
     if (UseOkayUIInspector()) ctx += ", OkayUI Inspector";
-#ifdef OKAY_HAVE_OKAYUI
-    if (OkayUI::render::OwnRenderSwitchOn()) {
-        const OkayUI::render::HostPath hp = okay::pb::OkayUILastFrame().path;
-        ctx += hp == OkayUI::render::HostPath::OwnD3D11 ? ", own renderer (Direct3D 11)" : hp == OkayUI::render::HostPath::OwnGL ? ", own renderer (OpenGL)"
-                                                                                       : ", own renderer off for this frame (SDL path)";
-    }
-    if (const int lost = OkayUIRegionOverflow()) ctx += ", " + std::to_string(lost) + " OkayUI areas without the mouse";
-#endif
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
     const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);
@@ -2142,13 +2117,6 @@ static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs
     if (ImGui::GetFrameCount() > 30 && s_shown < 5) { ++s_shown; ConsoleLog("[perf] " + line + (s_shown == 5 ? " (more in okay_editor_perf.log)" : ""), 1); }
 }
 
-#ifdef OKAY_HAVE_OKAYUI
-okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
-okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
-okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
-int OkayUIRegionOverflow() { return g_okayRegion.Overflowed(); }
-#endif
-bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 bool g_darkMode = true;         // Edit > Dark Mode / Light Mode (the only theme choice); saved as "darkmode"
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
@@ -2680,8 +2648,6 @@ void LoadSettings() {
     // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
     // user's own choices stick afterward.
     if (ver < 3) { g_editorFov = 60.0f; SaveSettings(); }
-    // Multi-window panels are always on now (no toggle) — the old coordinate-space
-    // bug that forced them off in v2.623 is fixed. g_multiWindow stays true.
 }
 void SaveSettings() {
     if (g_layoutSettled) g_view.layoutPreset = okay::edtabs::PresetFromName(g_layoutName);   // -1 = a saved / custom arrangement
@@ -4595,14 +4561,8 @@ static float TabIconPx()    { return g_tabIconPx > 0.0f ? g_tabIconPx : std::rou
 static float TabIconInset() { return std::round(7.0f * g_uiScale); }
 static float TabPadX()      { return TabIconInset() + TabIconPx() + std::round(6.0f * g_uiScale); }
 struct TabPaddingScope {
-#ifdef OKAY_ON_OKAYUI   // OkayUI applies a GetStyle() write at the next frame, after the dock has laid its tabs out: the same padding as a pushed style var
     TabPaddingScope() { ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(TabPadX(), ImGui::GetStyle().FramePadding.y)); }
     ~TabPaddingScope() { ImGui::PopStyleVar(); }
-#else
-    float saved;
-    TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x) { ImGui::GetStyle().FramePadding.x = TabPadX(); }
-    ~TabPaddingScope() { ImGui::GetStyle().FramePadding.x = saved; }
-#endif
     TabPaddingScope(const TabPaddingScope&) = delete;
     TabPaddingScope& operator=(const TabPaddingScope&) = delete;
 };
@@ -6297,30 +6257,6 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
     }
-#ifdef OKAY_HAVE_OKAYUI
-    // A developer demo panel, not a feature: only offered with OKAY_DEV set.
-    if (const char* devEnv = std::getenv("OKAY_DEV"); devEnv && devEnv[0] && devEnv[0] != '0') {
-        ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
-    }
-#endif
-#ifdef OKAY_HAVE_OKAYUI
-    if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
-    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, Crash Log and Audio Mixer)
-        const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
-        for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
-            if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
-                g_uiBackendSetting = okayuibackend::Name(opt);
-                ResolveUiBackend();
-                SaveSettings();
-            }
-        ImGui::Separator();
-        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: the Console, Crash Log and Audio Mixer panels are ported.");
-        ImGui::EndMenu();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console, Crash Log and Audio Mixer panels with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
-    }
-#endif
     if (ImGui::BeginMenu("Experimental: try our own code")) {   // the same table and file as the launcher's Settings > Experimental (shared/OwnSwitches.hpp)
         namespace osw = okay::ownswitches;
         osw::State& st = osw::Global();
@@ -49720,177 +49656,10 @@ static bool PollHandoff(bool& raiseWindow) {
     return request;
 }
 
-// ==== Multi-window (dual monitor) support ====================================
-// Dear ImGui's stock SDL_Renderer2 backend renders only the main window, so we
-// implement the renderer side of multi-viewports ourselves: every OS window
-// ImGui spawns (a panel/tab dragged outside the editor) gets its own
-// SDL_Renderer, plus per-renderer copies of the ImGui-managed textures (the
-// font atlas) uploaded from the CPU pixels ImGui retains. SDL textures cannot
-// be shared across renderers, so editor images (Scene/Game views, thumbnails)
-// are skipped in secondary windows — dock those panels back into the main
-// window to see their content; text/vector panels (Hierarchy, Inspector,
-// Console, Script Editor, Flow Graph, ...) work fully on any monitor.
-// On when g_multiWindow is set and both backends can do it (ViewportsSupported; g_multiWindow is declared
-// with the other editor settings).
-
-struct OkayVpData {
-    SDL_Renderer* ren = nullptr;
-    std::unordered_map<ImTextureData*, SDL_Texture*> texes;   // per-renderer copies
-};
-
-// Fetch (creating/updating as needed) this renderer's copy of an ImGui-managed
-// texture. ImGui keeps the CPU pixels alive, so we can upload them per renderer.
-static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
-    if (!td || td->Status == ImTextureStatus_Destroyed) return nullptr;
-    auto it = d->texes.find(td);
-    SDL_Texture* t = (it != d->texes.end()) ? it->second : nullptr;
-    bool fresh = false;
-    if (!t) {
-        t = okay::pb::CreateTexture(d->ren, td->Width, td->Height, okay::pb::Access::Static, true, true);
-        if (!t) return nullptr;
-        d->texes[td] = t;
-        fresh = true;
-    }
-    // The main backend consumes Status, but this frame's dirty rects stay in
-    // Updates[] until the next NewFrame — apply them to our copy too.
-    if (fresh)
-        okay::pb::UpdateTexture(d->ren, t, nullptr, td->GetPixels(), td->GetPitch());
-    else
-        for (ImTextureRect& r : td->Updates) {
-            const int sr[4] = {r.x, r.y, r.w, r.h};
-            okay::pb::UpdateTexture(d->ren, t, sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
-        }
-    return t;
-}
-
-static void OkayVp_CreateWindow(ImGuiViewport* vp) {
-    okay::platform::Backend* pb = okay::platform::Default();   // the viewport windows are SDL windows
-    SDL_Window* w = pb ? (SDL_Window*)pb->NativeHandleFromId((uint32_t)(intptr_t)vp->PlatformHandle) : nullptr;
-    if (!w) return;
-    OkayVpData* d = new OkayVpData();
-    if (std::unique_ptr<okay::platform::Window> vw = okay::platform::WrapSdl2Window(w)) d->ren = okay::pb::CreateRenderer(*vw);   // (the wrapper is only borrowed for the call)
-    vp->RendererUserData = d;
-}
-
-static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
-    if (OkayVpData* d = (OkayVpData*)vp->RendererUserData) {
-        for (auto& kv : d->texes) okay::pb::DestroyTexture(d->ren, kv.second);
-        if (d->ren) okay::pb::DestroyRenderer(d->ren);
-        delete d;
-    }
-    vp->RendererUserData = nullptr;
-}
-
-// Render one viewport's draw data with an SDL_Renderer, handling the
-// multi-viewport coordinate space: with viewports enabled, ImGui emits vertices
-// in ABSOLUTE DESKTOP coordinates, and SDL_Renderer has no projection/offset
-// stage — so when DisplayPos isn't (0,0) the vertices are rebased into
-// window-local space through a scratch copy before SDL_RenderGeometryRaw.
-// (Shipping v2.623 without this displaced the whole UI by the window's screen
-// position.) `d` is the per-window texture cache for secondary renderers;
-// null = the main renderer, whose textures resolve through GetTexID() as usual.
-static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d) {
-    if (!dd || !ren) return;
-    ImVec2 off = dd->DisplayPos;
-    ImVec2 scale = dd->FramebufferScale;
-    int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
-    if (fbW <= 0 || fbH <= 0) return;
-    okay::platform::Painter* P = okay::pb::For(ren);
-    P->SetScale(scale.x, scale.y);
-
-    static std::vector<ImDrawVert> s_rebase;   // reused scratch for offset vertices
-    for (const ImDrawList* dl : dd->CmdLists) {
-        const ImDrawVert* vtx = dl->VtxBuffer.Data;
-        if (off.x != 0.0f || off.y != 0.0f) {
-            s_rebase.assign(dl->VtxBuffer.Data, dl->VtxBuffer.Data + dl->VtxBuffer.Size);
-            for (ImDrawVert& v : s_rebase) { v.pos.x -= off.x; v.pos.y -= off.y; }
-            vtx = s_rebase.data();
-        }
-        const ImDrawIdx* idx = dl->IdxBuffer.Data;
-        for (int ci = 0; ci < dl->CmdBuffer.Size; ++ci) {
-            const ImDrawCmd* cmd = &dl->CmdBuffer[ci];
-            if (cmd->UserCallback) {
-                if (cmd->UserCallback != ImDrawCallback_ResetRenderState)
-                    cmd->UserCallback(dl, cmd);
-                continue;
-            }
-            ImVec2 cmin((cmd->ClipRect.x - off.x) * scale.x, (cmd->ClipRect.y - off.y) * scale.y);
-            ImVec2 cmax((cmd->ClipRect.z - off.x) * scale.x, (cmd->ClipRect.w - off.y) * scale.y);
-            if (cmin.x < 0) cmin.x = 0;
-            if (cmin.y < 0) cmin.y = 0;
-            if (cmax.x > (float)fbW) cmax.x = (float)fbW;
-            if (cmax.y > (float)fbH) cmax.y = (float)fbH;
-            if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
-            okay::ui2d::Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
-            P->SetClipRect(&clip);
-
-            SDL_Texture* tex = nullptr;
-            if (d) {   // secondary renderer: per-window copies; foreign textures skipped
-                if (cmd->TexRef._TexData)
-                    tex = OkayVpTexture(d, cmd->TexRef._TexData);
-                else if (cmd->TexRef._TexID != ImTextureID_Invalid)
-                    continue;   // raw SDL_Texture from the main renderer: can't cross renderers
-            } else {   // main renderer: everything resolves normally
-                tex = (SDL_Texture*)(intptr_t)cmd->GetTexID();
-            }
-
-            const char* vbase = (const char*)(vtx + cmd->VtxOffset);
-            P->GeometryRaw((okay::ui2d::Tex)tex,
-                (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
-                (const std::uint8_t*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
-                (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
-                dl->VtxBuffer.Size - (int)cmd->VtxOffset,
-                idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
-        }
-    }
-    P->SetClipRect(nullptr);
-}
-
-static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
-    OkayVpData* d = (OkayVpData*)vp->RendererUserData;
-    if (!d || !d->ren || !vp->DrawData) return;
-
-    // Drop cached copies of textures ImGui destroyed this frame.
-    for (auto it = d->texes.begin(); it != d->texes.end();) {
-        if (it->first->Status == ImTextureStatus_Destroyed) {
-            okay::pb::DestroyTexture(d->ren, it->second);
-            it = d->texes.erase(it);
-        } else ++it;
-    }
-
-    okay::pb::SetDrawColor(d->ren, 15, 16, 20, 255);
-    okay::pb::Clear(d->ren);
-    OkayRenderDrawData(vp->DrawData, d->ren, d);
-    okay::pb::Present(d->ren);
-}
-
-// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
-static bool g_imguiOwnFeed = false;
-static bool g_imguiOwnRender = false;   // OKAY_IMGUI_RENDER=own: our Painter-based renderer instead of imgui_impl_sdlrenderer2
+// The UI's input: okay::platform events into OkayUI's IO (shared/ImGuiPlatformFeed.hpp). OkayUI draws into the one main window:
+// panels that Dear ImGui let you drag out into their own OS window are floating windows inside it (docs/status/UNFINISHED.md).
 static okay::imguifeed::Feed g_imguiFeed;
-// One platform event for Dear ImGui through whichever path is on: our own feed takes it directly; imgui_impl_sdl2 (the
-// default) takes the SDL record the sdl2 backend keeps in Event::native (it is only valid inside the current poll loop pass).
-static void FeedImGuiEvent(const okay::platform::Event& e) {
-    if (g_imguiOwnFeed) { g_imguiFeed.ProcessEvent(e, ImGui::GetIO()); return; }
-    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
-}
-// True when both halves of multi-window panels are there: the platform backend can create OS windows (the
-// SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
-// X11; not Wayland or the headless offscreen driver) and the renderer side (OkayVpInstall) is installed.
-static bool ViewportsSupported() {
-    const ImGuiBackendFlags f = ImGui::GetIO().BackendFlags;
-    return (f & ImGuiBackendFlags_PlatformHasViewports) && (f & ImGuiBackendFlags_RendererHasViewports);
-}
-
-// Install the renderer-side viewport handlers (the SDL2 platform backend
-// already provides the window-side ones).
-static void OkayVpInstall() {
-    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
-    pio.Renderer_CreateWindow  = OkayVp_CreateWindow;
-    pio.Renderer_DestroyWindow = OkayVp_DestroyWindow;
-    pio.Renderer_RenderWindow  = OkayVp_RenderWindow;
-    ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
-}
+static void FeedImGuiEvent(const okay::platform::Event& e) { g_imguiFeed.ProcessEvent(e, ImGui::GetIO()); }
 
 // ---- Launcher handshake: "save your project and close" ---------------------------
 // The launcher won't exit or install an update while the editor is open. It drops
@@ -50117,11 +49886,6 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
-#ifdef OKAY_HAVE_OKAYUI
-    // Window mode (dev switch, off by default): OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui. OkayUI owns the window and the frame and Dear ImGui is never
-    // started; only the Audio Mixer is ported to it so far (docs/ui/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
-    if (oked::HostModeRequested(std::getenv("OKAY_DEV"), std::getenv("OKAY_UI_BACKEND"), std::getenv("OKAY_UI_HOST"))) return oked::RunOkayUIHostMode(argc, argv);
-#endif
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/online/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
     //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
@@ -50310,9 +50074,6 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;   // the dock layout is read and written by LoadDockLayout / SaveDockLayout, in the per-user folder
-    // Multi-window panels (ImGuiConfigFlags_ViewportsEnable) are turned on below, once the platform and renderer
-    // backends are installed and have said whether they can open extra OS windows.
-    io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
     // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
@@ -50474,45 +50235,14 @@ int main(int argc, char** argv) {
     okay::editor::vsed::StepCatalog = VsStepCatalog;
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
     ApplyTheme();
-    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
-    // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
-    const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;   // OKAY_PLATFORM_BACKEND=own: SDL's ImGui backends cannot see an own window
-    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    // The UI's input (okay::platform events into OkayUI) and drawing (OkayUI's frame through the window's okay::platform::Painter).
+    // Keys, text, mouse, wheel, focus, clipboard, cursor shape and the input method's caret; no gamepad navigation.
     std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
-    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
-    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
-    if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
-    else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
-    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
-    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
-#ifdef OKAY_ON_OKAYUI
+    sdlSeam->ReportUnmappedEvents(false);
+    g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
+    okay::imguirender::Init(ImGui::GetIO());
     OkayUI::UseImGuiCoordinates(true);   // the editor on OkayUI: its code places things by Dear ImGui's coordinate rules (as the launcher)
-#endif
-    OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
-    // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
-    // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
-    // ImGui turns the flag off in its first frame otherwise (and asserts if it is turned back on in the second).
-    if (g_multiWindow) {
-        if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-        else {
-            const char* drv = sdlSeam->Name();   // the platform backend ("sdl2" or "own")
-            const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
-                                    "' cannot open extra windows here, so panels stay inside the editor window.";
-            std::printf("[okay] %s\n", msg.c_str());
-            ConsoleLog(msg, 1);
-        }
-    }
 
-#ifdef OKAY_HAVE_OKAYUI
-    // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
-    // builtins (ui_begin/ui_button/ui_slider/...) draw real OkayUI widgets right
-    // here in the editor during Play — the same code path the shipped player uses.
-    // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
-    static okay::OkayUIScriptBridge g_editorUIBridge;
-    g_editorUIBridge.SetRenderer(renderer);   // dialogue portraits as textures
-    okay::SetScriptUI(&g_editorUIBridge);
-#endif
 
     // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
     // can rasterize the Scene view (hardware MSAA + depth) without touching the
@@ -50680,8 +50410,8 @@ int main(int argc, char** argv) {
         shutDownDone = true;
         OKAY_BREADCRUMB("Shutdown");   // the hang watchdog keeps watching: a close that hangs is reported too (stopped at the end)
         okaycrash::ctx::NextFrame();
-        if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-        if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
+        okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO());
+        g_imguiFeed.Shutdown(ImGui::GetIO());
         ImGui::DestroyContext();
         // Tear down the optional GPU renderer: free its GL objects with its own context
         // current, then drop the context + hidden window.
@@ -50829,9 +50559,6 @@ int main(int argc, char** argv) {
         while (sdlSeam->PollEvent(e)) {
             using EvT = okay::platform::EventType;
             using PKey = okay::platform::Key;
-#ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
-#endif
             if (e.type == EvT::KeyDown && !e.repeat && e.key == PKey::Escape)
                 g_escapeEdge = true;
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
@@ -50860,24 +50587,6 @@ int main(int argc, char** argv) {
             // A press or the wheel over an open OkayUI menu or list (a hosted panel's popup, which OkayUI draws over every ImGui
             // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
             bool okayOverlay = false;
-#ifdef OKAY_HAVE_OKAYUI
-            if (OkayUIInputOn() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
-                int ox = e.x, oy = e.y;
-                if (e.type == EvT::MouseWheel) sdlSeam->MouseState(&ox, &oy);
-                okayOverlay = e.windowId == winSeam->Id() && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
-            }
-            // A key typed into a hosted OkayUI field is the field's: Dear ImGui does not queue it too. Dear ImGui hands queued keys out
-            // over the next frames, so at a low frame rate a letter typed into an OkayUI search field reached the editor's shortcuts
-            // after a click had moved the keyboard away ("S Health" typed, the row clicked: the "h" hid the object; stage 9).
-            // Modifier keys still go (Ctrl, Shift and Alt stay right in Dear ImGui), and Ctrl+P, which plays from any field.
-            if (OkayUIInputOn() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
-                const PKey k = e.type == EvT::KeyDown ? e.key : PKey::Unknown;
-                const bool modifier = k == PKey::LCtrl || k == PKey::RCtrl || k == PKey::LShift || k == PKey::RShift || k == PKey::LAlt ||
-                                      k == PKey::RAlt || k == PKey::LGui || k == PKey::RGui;
-                const bool playKey = k == PKey::P && (e.mods & okay::platform::ModCtrl);
-                if (!modifier && !playKey) okayOverlay = true;   // (the same "not Dear ImGui's" switch as a press over an OkayUI list)
-            }
-#endif
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay)
                 FeedImGuiEvent(e);
             if (e.type == EvT::Quit) g_quitRequested = true;
@@ -51241,51 +50950,6 @@ int main(int argc, char** argv) {
             UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
         }
 
-#ifdef OKAY_HAVE_OKAYUI
-        // Open the OkayUI frame BEFORE the scene ticks, so a playing game's ui_*
-        // script calls record their widgets into this frame. The widgets (plus the
-        // optional Test UI demo panel) are flushed to the screen at render end via
-        // OkayUI::EndFrame(). One BeginFrame/EndFrame brackets the whole editor frame.
-        {
-            int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
-            OkayUI::Input uin;
-            uin.mouseX = (float)mx; uin.mouseY = (float)my;
-            {   // over another OS window of Dear ImGui's (a hosted panel dragged out): ImGui's mouse, in the main window's pixels
-                ImVec2 vm;
-                if (okayuihost::MouseInOtherViewport(vm)) { uin.mouseX = vm.x; uin.mouseY = vm.y; }
-            }
-            uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
-            uin.blocked = io.WantCaptureMouse;
-            uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
-            uin.backspace = g_okayUIBack;
-            {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
-                // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
-                g_okayRegion.NextFrame();
-                g_okayHostedInput = okayuihost::HostedInputWanted(g_okayRegion, g_scriptCodeOwnsKeys);   // last frame's hover and focus
-                const bool left = uin.mouseDown;
-                const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
-                const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = OkayUIInputOn() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
-                // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
-                // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
-                const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys || held);
-                if (OkayUIInputOn()) {
-                    uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
-                    if (keys) uin = h;
-                    else if (held) {
-                        std::memcpy(uin.keyDown, h.keyDown, sizeof uin.keyDown);
-                        uin.ctrl = h.ctrl; uin.shift = h.shift;
-                    }
-                    uin.displayW = io.DisplaySize.x; uin.displayH = io.DisplaySize.y;   // popups and menus are kept inside the window
-                }
-            }
-            OkayUI::SetFont(OkayUI::FontDefault());
-            static bool lookChosen = false;   // the Game view shows game UI exactly as the player draws it
-            if (!lookChosen) { lookChosen = true; if (!std::getenv("OKAY_CLASSIC_UI")) OkayUI::UseLauncherLook(true); }
-            OkayUI::BeginFrame(uin);
-        }
-#endif
 
         // An open inventory is modal: controllers pause look/move (mirrors the player).
         {
@@ -51360,7 +51024,7 @@ int main(int argc, char** argv) {
                     s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
-                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/ui/own_ui_toolkit.md 6.24 step 4).
+                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp (docs/ui/own_ui_toolkit.md 6.24 step 4).
                 // Play: the loop's update is TickGame (debugger fiber aware); "Run N frames" ending sets the Pause button; resume lets a node breakpoint go.
                 // The loop steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the scene by the scaled delta: 0 while paused.
                 oked::StepSimulation(ed, oked::SimStep{dt, g_paused, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f}, EditorSimHooks());
@@ -51472,16 +51136,12 @@ int main(int argc, char** argv) {
         // Space and Enter are typing there, and Space would otherwise press the ImGui item that last had nav focus.
         const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
         bool okayTyping = false;
-#ifdef OKAY_HAVE_OKAYUI
-        okayTyping = OkayUIInputOn() && OkayUI::WantsTextInput();
-#endif
         if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        { OKAY_PROFILE("ImGui.NewFrame"); if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
-          if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame(); }
+        { OKAY_PROFILE("ImGui.NewFrame"); g_imguiFeed.NewFrame(ImGui::GetIO()); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -51530,11 +51190,9 @@ int main(int argc, char** argv) {
             if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design
             ImGui::NewFrame();
         }
-#ifdef OKAY_ON_OKAYUI
         // Dear ImGui's framed widgets and text rows for the whole frame (the editor's code is written for them; as the launcher does)
         OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);
         OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);
-#endif
         ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
@@ -52303,106 +51961,14 @@ int main(int argc, char** argv) {
         }
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
-#ifdef OKAY_HAVE_OKAYUI
-        if (OkayUIInputOn() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
-            GImGui->PlatformImeData.WantTextInput = true;
-            // The input method's candidate window goes where the OkayUI field or code editor says its caret is (OkayUI draws in the
-            // main window's own pixels; ImGui's positions are desktop positions with the multi-window viewports).
-            const OkayUI::ImeRect ime = OkayUI::GetImeRect();
-            if (ime.valid) {
-                const ImGuiViewport* mvp = ImGui::GetMainViewport();
-                GImGui->PlatformImeData.InputPos = ImVec2(mvp->Pos.x + ime.caret.x, mvp->Pos.y + ime.caret.y);
-                GImGui->PlatformImeData.InputLineHeight = ime.caret.h;
-                GImGui->PlatformImeData.ViewportId = mvp->ID;
-                GImGui->PlatformImeData.WantVisible = true;
-            }
-            ImGui::SetNextFrameWantCaptureKeyboard(true);
-            if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
-        }
-#endif
         InputProbeEndFrame();   // clicks arriving and landing nowhere: what Dear ImGui thinks, to okay_editor_perf.log
-#ifdef OKAY_ON_OKAYUI
         OkayUI::PopStyleVar(2);   // the frame's framed widgets and text rows (pushed after NewFrame)
-#endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SaveDockLayout(false); SavePanelStateIfChanged();   // the layout and the open panels survive a restart (and a forced close)
         okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         okay::pb::SetDrawColor(renderer, 30, 30, 34, 255);
         okay::pb::Clear(renderer);
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            // Multi-window mode: draw data is in absolute desktop coordinates,
-            // which the stock SDL_Renderer backend can't offset — process the
-            // texture updates it owns, then draw through our rebasing renderer.
-            ImDrawData* mdd = ImGui::GetDrawData();
-            if (mdd && mdd->Textures)
-                for (ImTextureData* tx : *mdd->Textures)
-                    if (tx->Status != ImTextureStatus_OK)
-                    {
-                        if (g_imguiOwnRender) okay::imguirender::UpdateTexture(*okay::pb::For(renderer), tx);
-                        else ImGui_ImplSDLRenderer2_UpdateTexture(tx);
-                    }
-            { OKAY_PROFILE("ImGui.Draw"); OkayRenderDrawData(mdd, renderer, nullptr); }   // (this multi-window branch is the default one: it was not timed, so its cost showed as "not timed")
-        } else {
-            { OKAY_PROFILE("ImGui.Draw");
-              if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
-              else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
-        }
-#ifdef OKAY_HAVE_OKAYUI
-        // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
-        // composites on top with no GL/D3D conflict. The frame was opened with
-        // BeginFrame() before ed.Tick(), so a playing game's ui_* script widgets are
-        // already recorded; the optional Test UI demo panel is appended below.
-        if (g_showTestUI) {
-            static bool  s_sound  = true;
-            static float s_volume = 60.0f;
-            static int   s_mode   = 0, s_quality = 1;
-            static char  s_name[16] = "Player1";
-            static bool  s_bold   = false;
-            static const char* s_qualOpts[] = {"Low", "Medium", "High"};
-            float wy = io.DisplaySize.y - 420.0f; if (wy < 40.0f) wy = 40.0f;
-            // Written as a sequence of auto-layout calls — no manual coordinates. The
-            // window is draggable by its title bar.
-            OkayUI::SetFont(s_bold ? OkayUI::FontBold() : OkayUI::FontDefault());
-            OkayUI::Begin("Test UI", 24.0f, wy, 320.0f, 380.0f);
-            OkayUI::BeginMenuBar();
-            if (OkayUI::BeginMenu("File")) {
-                if (OkayUI::MenuItem("New"))  ConsoleLog("OkayUI menu: New");
-                if (OkayUI::MenuItem("Open")) ConsoleLog("OkayUI menu: Open");
-                OkayUI::EndMenu();
-            }
-            if (OkayUI::BeginMenu("Help")) {
-                if (OkayUI::MenuItem("About")) ConsoleLog("OkayUI: a tiny immediate-mode toolkit.");
-                OkayUI::EndMenu();
-            }
-            OkayUI::EndMenuBar();
-            OkayUI::Text("Drag me by the title bar");
-            OkayUI::Separator();
-            OkayUI::InputText("Name", s_name, (int)sizeof(s_name));
-            OkayUI::Combo("Quality", s_qualOpts, 3, &s_quality);
-            OkayUI::RadioButton("Easy", &s_mode, 0);
-            OkayUI::SameLine();
-            OkayUI::RadioButton("Hard", &s_mode, 1);
-            OkayUI::SliderFloat("Volume", &s_volume, 0.0f, 100.0f);
-            OkayUI::Checkbox("Sound", &s_sound);
-            OkayUI::Checkbox("Bold font", &s_bold);
-            if (OkayUI::CollapsingHeader("Stats")) {
-                OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
-                OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
-            }
-            OkayUI::Spacing();
-            if (OkayUI::Button("Play"))
-                ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");
-            OkayUI::SameLine();
-            OkayUI::Button("Quit");
-            OkayUI::End();
-            OkayUI::SetFont(OkayUI::FontDefault());
-        }
-        // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
-        { OKAY_PROFILE("ImGui.OkayUI"); okay::pb::OkayUIEndFrame(renderer); }   // OkayUI's draw (its own renderer with OKAY_UI_OWN_RENDER)
-        // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
-        // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
-        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
-#endif
+        { OKAY_PROFILE("ImGui.Draw"); okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData()); }
         if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
             static int shotFrames = 0;
             if (++shotFrames == 160 && shot[0]) {
@@ -52442,20 +52008,6 @@ int main(int argc, char** argv) {
         DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
-        // Multi-window panels: create/size/paint the extra OS windows (tabs
-        // dragged out of the editor).
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            OKAY_PROFILE("Present.Windows");   // each extra window presents (and may wait for its vsync): timed, not "Not timed"
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
-        // g_multiWindow changed while running (nothing changes it today): flipping the flag between frames is
-        // supported by Dear ImGui, except turning it on for the second frame, and turning it on is only worth it
-        // when both backends can open windows (otherwise Dear ImGui turns it off again in the next NewFrame()).
-        if (g_multiWindow != ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0)) {
-            if (!g_multiWindow) io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
-            else if (ViewportsSupported() && ImGui::GetFrameCount() > 1) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-        }
 
         {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
@@ -52483,9 +52035,6 @@ int main(int argc, char** argv) {
                     std::sort(v.rbegin(), v.rend());
                     std::printf("[perf] frame %.2f ms (%.0f fps):", accFrame / n, 1000.0 / (accFrame / n));
                     for (size_t i = 0; i < v.size() && i < 14; ++i) std::printf("  %s %.2f", v[i].second.c_str(), v[i].first);
-#ifdef OKAY_HAVE_OKAYUI
-                    std::printf("  [OkayUI mouse areas: %d kept, %d without the mouse]", g_okayRegion.Count(), g_okayRegion.Overflowed());
-#endif
                     std::printf("\n"); std::fflush(stdout);
                     acc.clear(); accFrame = 0; n = 0;
                 }

@@ -1,4 +1,4 @@
-// editor/ModalGuard.hpp compiled for the editor built on OkayUI (OKAY_ON_OKAYUI, okay-editor-okayui): the same guard over OkayUI's popups.
+// editor/ModalGuard.hpp, the editor's guard over OkayUI's popups (the editor is built on OkayUI only; its Dear ImGui part was deleted on 2026-11-27).
 // Checks, headless (OkayUI only, the stand-in imgui.h of okayui/probe first on the include path):
 //  1. OpenModalWhenFree: the first question keeps the screen, the second waits and opens once the first is answered (the two recovery
 //     questions of editor/main.cpp, which replaced each other every frame in the Dear ImGui build before the guard);

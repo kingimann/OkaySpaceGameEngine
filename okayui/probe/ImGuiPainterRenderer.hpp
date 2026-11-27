@@ -1,6 +1,6 @@
 #pragma once
-// Stand-in for shared/ImGuiPainterRenderer.hpp in the executables built against OkayUI (okayui/probe comes first on their include path): the same
-// entry points the launcher and the editor call (okay::imguirender::Init / Render / Shutdown), but the frame is OkayUI's own, drawn through the
+// The UI's renderer for the programs built against OkayUI's compatibility layer (okayui/probe comes first on their include path): the
+// entry points the launcher and the editor call (okay::imguirender::Init / Render / Shutdown); the frame is OkayUI's own, drawn through the
 // window's okay::platform::Painter by the toolkit's frame drawer (okayui/soft/OkayUI_SoftPainter.hpp; the SDL painter takes its triangles too).
 #include "imgui.h"
 #include "okay/Platform/Painter.hpp"
@@ -15,8 +15,7 @@
 
 namespace okay::imguirender {
 
-inline bool OwnRequested(const char*, bool = true) { return true; }
-inline const char* ActiveLine(bool) { return "UI drawing: OkayUI frame through okay::platform::Painter (the OkayUI build; Dear ImGui is not in this program)"; }
+inline const char* ActiveLine() { return "UI drawing: OkayUI frame through okay::platform::Painter"; }
 inline void Init(ImGuiIO& io) { io.BackendRendererName = "okayui_painter"; OkayUI::UseLauncherLook(true); }   // the launcher look: the TTF atlas, rounded frames
 /// `dd` is unused: OkayUI's frame data is what ImGui::Render() (OkayUI::EndFrameData) just finished.
 inline void Render(okay::platform::Painter& p, ImDrawData*) {

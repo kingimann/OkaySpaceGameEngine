@@ -55,7 +55,7 @@
    "editor/ModelingEasy.hpp": 2,
    "editor/ProjectBrowser.cpp": 2,
    "editor/ProjectUpgrade.cpp": 1,
-   "editor/main.cpp": 8,
+   "editor/main.cpp": 2,
    "engine/include/okay/Components/BlendShapes.hpp": 1,
    "engine/include/okay/Components/GridInventoryUI.hpp": 2,
    "engine/include/okay/Core/DataPack.hpp": 1,

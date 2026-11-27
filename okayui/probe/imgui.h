@@ -1,6 +1,7 @@
 #pragma once
-// Port probe stand-in for imgui.h: lets a Dear ImGui panel compile (syntax check only) against OkayUI, so what is missing shows as
-// compiler errors. Put this directory first on the include path (scripts/okayui_port_probe.sh does). Not used by any real build.
+// OkayUI's imgui.h: code written in Dear ImGui's names (the editor, the launcher, the Visual Script and Script Editor apps) compiles
+// against OkayUI through it. Put this directory first on the include path (every such target does; scripts/okayui_port_probe.sh too).
+// Dear ImGui itself is not in the repository (2026-11-27).
 #include "okay/UI/OkayUIImGuiNames.hpp"
 #ifndef IMGUI_IMPL_API
 #define IMGUI_IMPL_API

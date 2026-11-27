@@ -281,7 +281,7 @@ def _notices(t):
     rel = "dist/THIRD_PARTY_NOTICES.txt"
     try: txt = open(os.path.join(t, rel), errors="replace").read()
     except OSError: return [rel + ": missing"]
-    for name in ("GCC Runtime Library Exception", "winpthreads", "libsodium", "SDL2", "Dear ImGui", "steam_api64.dll",
+    for name in ("GCC Runtime Library Exception", "winpthreads", "libsodium", "SDL2", "steam_api64.dll",
                  "Emscripten", "musl", "Roboto", "JetBrains Mono", "DejaVu", "Apache License"):
         if name not in txt: bad.append("%s: does not name %s" % (rel, name))
     if not os.path.isfile(os.path.join(t, "assets/fonts/Roboto-LICENSE.txt")): bad.append("assets/fonts/Roboto-LICENSE.txt: missing")

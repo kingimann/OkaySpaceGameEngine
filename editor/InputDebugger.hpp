@@ -3,7 +3,7 @@
 // actions), the last events, and each action's response curve with sliders for dead zone, curve,
 // sensitivity and invert. Reads okay::InputDebug and okay::InputActions only. OkayUI draws it (no Dear
 // ImGui version; docs/ui/own_ui_toolkit.md section 29): FillInputPanel builds the model the window shows
-// (tools/input_shots.cpp uses it too, for its pictures), ApplyInputPanelIntent does what the person asked.
+//, ApplyInputPanelIntent does what the person asked.
 // Written for this project from the InputDebug / InputActions interfaces; no outside code.
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"

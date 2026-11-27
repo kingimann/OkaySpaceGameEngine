@@ -74,8 +74,6 @@ target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/engine/include
     ${CMAKE_SOURCE_DIR}/okayui/include
     ${CMAKE_SOURCE_DIR}/okayui/screens)
-# OKAY_ON_OKAYUI: the shared helpers (shared/ImGuiPlatformFeed.hpp, ...) take their OkayUI path.
-target_compile_definitions(okayspace-launcher PRIVATE OKAY_ON_OKAYUI=1)
 # OkayUI (the toolkit, its screens such as What's New and Tips, the software painter's frame drawer) and the Browser page (the same
 # browser as the browser program: shared/BrowserApp.cpp over okay_browser).
 target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)

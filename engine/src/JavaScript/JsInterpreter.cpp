@@ -255,7 +255,8 @@ ForInObj* ForInPrepare(Runtime& rt, const Value& v) {
     std::vector<GcObj*> seen;
     std::unordered_set<GcObj*> seenSet;
     int guard = 0;
-    for (Object* q = o; q; q = q->proto) {
+    for (Object* q = o; q; q = rt.GetPrototypeOf(q)) {
+        rt.Keep(q);
         std::vector<GcObj*> keys = rt.OwnKeys(q, true, false);
         rt.Charge(keys.size());
         for (GcObj* k : keys) {
@@ -353,6 +354,12 @@ static Value CallAt(Runtime& rt, Value* at, int argc) {
             for (int i = 0; i < argc; ++i) args.push_back(at[2 + i]);
             return rt.Call(Value::Obj(b->target), b->thisv, args.data(), (int)args.size());
         }
+        case Cls::Proxy:
+            if (o->proxyFn) {
+                std::vector<Value> args(at + 2, at + 2 + argc);   // the value stack above `at` is reused by the trap call
+                return ProxyCall(rt, static_cast<ProxyObj*>(o), at[1], args.data(), argc);
+            }
+            rt.ThrowType("this value is not a function");
         default: rt.ThrowType("this value is not a function");
     }
 }
@@ -393,6 +400,7 @@ Value Runtime::Construct(const Value& fn, const Value* args, int argc, Object* n
         for (int i = 0; i < argc; ++i) all.push_back(args[i]);
         return Construct(Value::Obj(b->target), all.data(), (int)all.size(), newTarget == o ? b->target : newTarget);
     }
+    if (o->cls == Cls::Proxy) return ProxyConstruct(*this, static_cast<ProxyObj*>(o), args, argc, newTarget);
     if (M.nativeDepth >= M_t::kMaxNativeDepth) ThrowRange("too much recursion (library calls nested too deeply)");
     if (M.sp + argc + 64 > M.stackEnd) ThrowRange("too much recursion (the value stack is full)");
     Value* at = M.sp;
@@ -425,8 +433,10 @@ Value Runtime::Construct(const Value& fn, const Value* args, int argc, Object* n
     return r;
 }
 
-bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Value>& args, Value* result, std::string* err) {
-    M_t& M = *vm;
+// A call into the engine from the host (CallHost, ConstructHost, RunModule): run `body`, then the promise jobs; a thrown
+// error or a stop comes back as false with its text, and the machine is put back as it was.
+bool HostEntry(Runtime& rt, const std::function<Value()>& body, Value* result, std::string* err) {
+    M_t& M = *rt.vm;
     Value* sp0 = M.sp;
     int nf = M.nframes;
     std::size_t nh = M.handlers.size();
@@ -435,18 +445,18 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
     const bool top = M.nativeDepth == 0 && M.nframes == 0;
     try {
-        Value r = Call(fn, thisv, args.data(), (int)args.size());
-        Keep(r);
-        RunJobs();
+        Value r = body();
+        rt.Keep(r);
+        rt.RunJobs();
         if (top) {
-            scratch_.clear();
-            Keep(r);   // the host reads it before its next call
+            rt.Scratch().clear();
+            rt.Keep(r);   // the host reads it before its next call
         }
         if (result) *result = r;
         return true;
     } catch (const JsThrow&) {
-        if (err) *err = ExceptionText(exception);
-        exception = Value();
+        if (err) *err = rt.ExceptionText(rt.exception);
+        rt.exception = Value();
     } catch (const JsTerminate& t) {
         if (err) *err = t.why;
         M.jobs.clear();
@@ -455,42 +465,16 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     M.nframes = nf;
     M.handlers.resize(nh);
     M.nativeDepth = nd;
-    if (top) scratch_.clear();
+    if (top) rt.Scratch().clear();
     return false;
 }
 
+bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Value>& args, Value* result, std::string* err) {
+    return HostEntry(*this, [&]() { return Call(fn, thisv, args.data(), (int)args.size()); }, result, err);
+}
+
 bool Runtime::ConstructHost(const Value& fn, const std::vector<Value>& args, Value* result, std::string* err) {
-    M_t& M = *vm;
-    Value* sp0 = M.sp;
-    int nf = M.nframes;
-    std::size_t nh = M.handlers.size();
-    int nd = M.nativeDepth;
-    // At the top level nothing else holds scratch values: what the host made since the last call (keys,
-    // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
-    const bool top = M.nativeDepth == 0 && M.nframes == 0;
-    try {
-        Value r = Construct(fn, args.data(), (int)args.size());
-        Keep(r);
-        RunJobs();
-        if (top) {
-            scratch_.clear();
-            Keep(r);   // the host reads it before its next call
-        }
-        if (result) *result = r;
-        return true;
-    } catch (const JsThrow&) {
-        if (err) *err = ExceptionText(exception);
-        exception = Value();
-    } catch (const JsTerminate& t) {
-        if (err) *err = t.why;
-        M.jobs.clear();
-    }
-    M.sp = sp0;
-    M.nframes = nf;
-    M.handlers.resize(nh);
-    M.nativeDepth = nd;
-    if (top) scratch_.clear();
-    return false;
+    return HostEntry(*this, [&]() { return Construct(fn, args.data(), (int)args.size()); }, result, err);
 }
 
 void Runtime::RunJobs() {
@@ -808,6 +792,10 @@ Value Execute(Runtime& rt, int entry) {
                                     break;
                                 }
                             }
+                        } else if (o.IsObj() && k.IsNum() && o.O()->cls == Cls::TypedArray) {
+                            o = TypedArrayGet(rt, static_cast<TypedArrayObj*>(o.O()), k.n == 0 ? 0.0 : k.n);
+                            --SP;
+                            break;
                         } else if (o.IsStr() && k.IsNum()) {
                             const std::u16string& s = o.S()->s;
                             double d = k.n;
@@ -845,6 +833,11 @@ Value Execute(Runtime& rt, int entry) {
                                     break;
                                 }
                             }
+                        } else if (o.IsObj() && k.IsNum() && o.O()->cls == Cls::TypedArray) {
+                            TypedArraySet(rt, static_cast<TypedArrayObj*>(o.O()), k.n == 0 ? 0.0 : k.n, v);
+                            SP[-3] = SP[-1];
+                            SP -= 2;
+                            break;
                         }
                         rt.PutV(o, k, v);
                         SP[-3] = SP[-1];
@@ -1111,7 +1104,7 @@ Value Execute(Runtime& rt, int entry) {
                                 *SP++ = r;
                                 break;
                             }
-                            if (o->cls == Cls::Bound) {
+                            if (o->cls == Cls::Bound || o->proxyFn) {
                                 f->pc = pc;
                                 Value r = CallAt(rt, fs, argc);
                                 SP = fs;
@@ -1435,7 +1428,10 @@ Value Execute(Runtime& rt, int entry) {
                         SP[-1] = Value::Obj(p);
                         try {
                             std::string s = rt.ToUtf8(spec);
-                            if (rt.importHook) {
+                            if (rt.modules.resolve && rt.modules.fetch) {
+                                f->pc = pc;
+                                DynamicImport(rt, p, s, cl->code->chunk);
+                            } else if (rt.importHook) {
                                 Value r = rt.importHook(rt, s);
                                 ResolvePromise(rt, p, r);
                             } else
@@ -1447,6 +1443,77 @@ Value Execute(Runtime& rt, int entry) {
                         }
                         break;
                     }
+                    // ---- private names (6.2.12, 7.3.31-7.3.33 PrivateFieldAdd / PrivateMethodOrAccessorAdd / PrivateGet / PrivateSet)
+                    case OP_NewPrivate: {
+                        Symbol* y = rt.NewSymbol(static_cast<String*>(KEY(I.a)));
+                        y->priv = true;
+                        *SP++ = Value::Sym(y);
+                        break;
+                    }
+                    case OP_GetPrivate: {   // [obj key] -> [value]
+                        Symbol* key = SP[-1].Y();
+                        if (!SP[-2].IsObj()) rt.ThrowType("can not read " + KeyText(rt, key->desc) + " of " + Describe(SP[-2]));
+                        Object* o = SP[-2].O();
+                        Prop* p = o->FindRaw(key);
+                        if (!p) rt.ThrowType("can not read " + KeyText(rt, key->desc) + ": the object was not made by its class");
+                        if (p->flags & kAccessor) {
+                            if (!p->get) rt.ThrowType(KeyText(rt, key->desc) + " has a setter but no getter");
+                            Value g = Value::Obj(p->get), ov = SP[-2];
+                            f->pc = pc;
+                            Value r = rt.Call(g, ov, nullptr, 0);
+                            SP[-2] = r;
+                        } else SP[-2] = p->v;
+                        --SP;
+                        break;
+                    }
+                    case OP_SetPrivate: {   // [obj key value] -> [value]
+                        Symbol* key = SP[-2].Y();
+                        if (!SP[-3].IsObj()) rt.ThrowType("can not set " + KeyText(rt, key->desc) + " of " + Describe(SP[-3]));
+                        Object* o = SP[-3].O();
+                        Prop* p = o->FindRaw(key);
+                        if (!p) rt.ThrowType("can not set " + KeyText(rt, key->desc) + ": the object was not made by its class");
+                        Value v = SP[-1];
+                        if (p->flags & kAccessor) {
+                            if (!p->set) rt.ThrowType(KeyText(rt, key->desc) + " has a getter but no setter");
+                            Value s = Value::Obj(p->set), ov = SP[-3];
+                            f->pc = pc;
+                            rt.Call(s, ov, &v, 1);
+                        } else if (!(p->flags & kWritable)) rt.ThrowType("the private method " + KeyText(rt, key->desc) + " can not be assigned");
+                        else p->v = v;
+                        SP[-3] = v;
+                        SP -= 2;
+                        break;
+                    }
+                    case OP_DefPrivate: {   // [obj key value] -> []; b: 0 field, 1 method, 2 getter, 3 setter
+                        Symbol* key = SP[-2].Y();
+                        Object* o = SP[-3].O();
+                        Prop* p = o->FindRaw(key);
+                        if (I.b == 2 || I.b == 3) {
+                            Object* fn = SP[-1].O();
+                            if (p && (!(p->flags & kAccessor) || (I.b == 2 ? p->get : p->set)))
+                                rt.ThrowType(KeyText(rt, key->desc) + " is already on this object");
+                            if (!p) {
+                                p = o->AddRaw(key, Value(), kAccessor);
+                                rt.CountBytes(sizeof(Prop));
+                            }
+                            (I.b == 2 ? p->get : p->set) = fn;
+                        } else {
+                            if (p) rt.ThrowType(KeyText(rt, key->desc) + " is already on this object (a class initialized it twice)");
+                            o->AddRaw(key, SP[-1], I.b == 0 ? kWritable : 0);   // even on a non-extensible object (7.3.31)
+                            rt.CountBytes(sizeof(Prop));
+                        }
+                        SP -= 3;
+                        break;
+                    }
+                    case OP_HasPrivate: {   // [key obj] -> [bool]
+                        if (!SP[-1].IsObj()) rt.ThrowType("the right side of 'in' must be an object, not " + Describe(SP[-1]));
+                        SP[-2] = Value::Bool(SP[-1].O()->FindRaw(SP[-2].p) != nullptr);
+                        --SP;
+                        break;
+                    }
+                    case OP_UpToLocal:   // a module's prologue: the binding in slot a is the loader's cell b
+                        base[I.a] = Value::Internal(cl->ups[(std::size_t)I.b]);
+                        break;
                     case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
                         if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
                             static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();

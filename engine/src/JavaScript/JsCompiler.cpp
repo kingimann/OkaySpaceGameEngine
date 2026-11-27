@@ -97,6 +97,62 @@ struct Compiler {
 
     Compiler(Runtime& r, SyntaxError& e, const std::string& c) : rt(r), err(e), chunk(c) {}
 
+    // ---- modules (16.2.1.6.4 InitializeEnvironment): the module's exported bindings, its imports and import.meta
+    // live in cells its loader makes (so other modules share them); the prologue puts them in the binding slots.
+    FuncInfo* moduleFi = nullptr;
+    ModuleInfo* mod = nullptr;
+    std::unordered_set<std::u16string> moduleCells;
+    std::vector<ModuleExtern> externs;
+
+    void ModulePrologue() {
+        for (const ModuleInfo::Import& im : mod->imports) {   // import bindings: immutable, read through the exporter's cell
+            line = im.line;
+            Declare(im.localName, VK_Const, nullptr);
+        }
+        bool needDefault = false;
+        for (const ModuleInfo::Export& e : mod->exports)
+            if (e.localName == u"*default*") needDefault = true;
+        if (needDefault) Declare(u"*default*", VK_Const, nullptr);
+        if (mod->usesMeta) Declare(u"*meta*", VK_Const, nullptr)->initKnown = true;
+        std::unordered_set<std::u16string> done;
+        for (const ModuleInfo::Export& e : mod->exports) {
+            if (e.localName.empty() || !done.insert(e.localName).second) continue;
+            Var* v = FindIn(CurScope(), e.localName);
+            if (!v) {
+                err.line = e.line;
+                err.column = e.col;
+                err.message = "'" + Utf16To8(e.localName) + "' is exported but not declared in this module";
+                throw CompileFail{};
+            }
+            bool imported = false;
+            for (const ModuleInfo::Import& im : mod->imports) imported |= im.localName == e.localName;
+            if (imported) continue;   // export of a namespace import: the import's cell below
+            const bool lexical = v->kind == VK_Let || v->kind == VK_Const || v->kind == VK_Class;
+            externs.push_back(ModuleExtern{e.localName, (std::uint8_t)(lexical ? 1 : 0)});
+        }
+        for (const ModuleInfo::Import& im : mod->imports) externs.push_back(ModuleExtern{im.localName, 2});
+        if (mod->usesMeta) externs.push_back(ModuleExtern{u"*meta*", 3});
+        if (externs.size() > 60000) Fail(nullptr, "the module has too many imports and exports");
+        for (std::size_t i = 0; i < externs.size(); ++i) {
+            Var* v = FindIn(CurScope(), externs[i].name);
+            v->captured = true;
+            Emit(OP_UpToLocal, v->slot, (int)i);
+        }
+    }
+
+    Proto* Module(Ast& ast) {
+        moduleFi = ast.script;
+        mod = ast.module.get();
+        for (const ModuleInfo::Import& im : mod->imports) moduleCells.insert(im.localName);
+        for (const ModuleInfo::Export& e : mod->exports)
+            if (!e.localName.empty()) moduleCells.insert(e.localName);
+        moduleCells.insert(u"*default*");
+        moduleCells.insert(u"*meta*");
+        Proto* p = CompileFunction(moduleFi, false);
+        p->name = rt.Intern("module");
+        return p;
+    }
+
     [[noreturn]] void Fail(Node* at, const std::string& m) {
         err.line = at ? at->line : line;
         err.column = at ? at->col : 0;
@@ -112,7 +168,11 @@ struct Compiler {
             case OP_GetUpChk: case OP_GetGlobal: case OP_TypeofGlobal: case OP_NewObject: case OP_LoadThis:
             case OP_LoadThisChk: case OP_LoadNewTarget: case OP_LoadFunc: case OP_LoadHome: case OP_Closure:
             case OP_Arguments: case OP_RestArgs: case OP_DupX1: case OP_DupX2: case OP_GetPropKeep: case OP_TemplateObj:
+            case OP_NewPrivate:
                 return 1;
+            case OP_GetPrivate: case OP_HasPrivate: return -1;
+            case OP_SetPrivate: return -2;
+            case OP_DefPrivate: return -3;
             case OP_Dup2: return 2;
             case OP_Pop: case OP_PutLoc: case OP_PutCell: case OP_PutUp: case OP_InitLex: case OP_SetProp:
             case OP_GetElem: case OP_In: case OP_InstanceOf: case OP_Add: case OP_Sub: case OP_Mul: case OP_Div:
@@ -208,7 +268,7 @@ struct Compiler {
         Var v;
         v.name = name;
         v.slot = NewSlot();
-        v.captured = IsCaptured(name);
+        v.captured = IsCaptured(name) || (moduleFi && fs->fi == moduleFi && moduleCells.count(name) > 0);
         v.kind = kind;
         v.initKnown = !(kind == VK_Let || kind == VK_Const || kind == VK_Class);
         s->vars.push_back(v);
@@ -390,7 +450,7 @@ struct Compiler {
         FS f;
         f.parent = fs;
         f.fi = fi;
-        f.strict = !rt.sloppyScripts || (fs && fs->strict) || classDepth > 0 || HasUseStrict(fi->exprBody ? nullptr : fi->body);
+        f.strict = !rt.sloppyScripts || fi->module || (fs && fs->strict) || classDepth > 0 || HasUseStrict(fi->exprBody ? nullptr : fi->body);
         Proto* p = new Proto();
         protos.push_back(p);   // linked into the heap by CompileScript's caller
         f.p = p;
@@ -498,8 +558,10 @@ struct Compiler {
         std::vector<std::pair<std::u16string, Node*>> vars;
         if (!fi->exprBody && fi->body) CollectVarNames(fi->body, vars);
         if (!fi->exprBody && fi->body)
-            for (Node* s : fi->body->list)
+            for (Node* s : fi->body->list) {
                 if (s->k == NK::FuncDecl) vars.push_back({s->a->fn->name, s});
+                else if (s->k == NK::ExportDefault && s->b && s->b->k == NK::FuncDecl) vars.push_back({s->b->a->fn->name, s->b});
+            }
         for (auto& vn : vars) {
             if (Var* ex = FindIn(CurScope(), vn.first)) {
                 if (ex->kind == VK_Hidden) ex->kind = VK_Var;
@@ -527,6 +589,15 @@ struct Compiler {
                     Emit(OP_Pop);
                     continue;
                 }
+                if (field->flags & NF_Private) {   // 7.3.31 PrivateFieldAdd / 7.3.32 PrivateMethodOrAccessorAdd
+                    Emit(OP_LoadThis);
+                    EmitLoad(field->str, field);
+                    if (field->flags & NF_Method) EmitLoad(field->c->str, field->c);
+                    else if (field->a) Expr(field->a);
+                    else Emit(OP_Undef);
+                    Emit(OP_DefPrivate, 0, (field->flags & NF_Method) ? 1 + field->op : 0);
+                    continue;
+                }
                 Emit(OP_LoadThis);
                 if (field->a) Expr(field->a);
                 else Emit(OP_Undef);
@@ -550,6 +621,7 @@ struct Compiler {
         } else {
             DeclareLexicals(fi->body->list, false);
             InitLexicalSlots();
+            if (fi->module) ModulePrologue();
             HoistFunctions(fi->body->list);
             for (Node* s : fi->body->list) Stmt(s);
             Emit(OP_ReturnUndef);
@@ -690,6 +762,14 @@ struct Compiler {
                 return;
             }
             case NK::ExportDefault: {
+                if (fs->fi->module) {   // 16.2.3.7: the value goes to the default binding (a named declaration is its own)
+                    if (n->b && n->b->k == NK::FuncDecl) return;   // hoisted
+                    Expr(n->a);
+                    const std::u16string target = (n->b && n->b->k == NK::Class) ? n->a->str : u"*default*";
+                    EmitStore(target, false, n, true);
+                    MarkInit(target);
+                    return;
+                }
                 if (n->b && n->b->k == NK::FuncDecl) {   // export default function name() {} : already declared
                     EmitLoad(n->b->a->fn->name, n);
                 } else if (n->b && n->b->k == NK::Class) {
@@ -841,7 +921,11 @@ struct Compiler {
             case NK::Member:
                 Expr(p->a);
                 Emit(OP_Swap);
-                Emit(OP_SetProp, AtomConst(p->str));
+                if (p->flags & NF_Private) {   // [o v] -> [o k v]
+                    EmitLoad(p->str, p);
+                    Emit(OP_Swap);
+                    Emit(OP_SetPrivate);
+                } else Emit(OP_SetProp, AtomConst(p->str));
                 Emit(OP_Pop);
                 return;
             case NK::Index: {
@@ -1223,6 +1307,12 @@ struct Compiler {
             case NK::Unary: UnaryExpr(n); return;
             case NK::Update: UpdateExpr(n); return;
             case NK::Binary: {
+                if (n->op == 1000 && n->a->k == NK::PrivName) {   // #x in obj (13.10.1)
+                    EmitLoad(n->a->str, n->a);
+                    Expr(n->b);
+                    Emit(OP_HasPrivate);
+                    return;
+                }
                 Expr(n->a);
                 Expr(n->b);
                 static const struct { int p; int op; } map[] = {
@@ -1272,9 +1362,15 @@ struct Compiler {
                 }
                 Expr(n->a);
                 if (n->flags & NF_Optional) ChainJump(OP_JumpNullish);
+                if (n->flags & NF_Private) {
+                    EmitLoad(n->str, n);
+                    Emit(OP_GetPrivate);
+                    return;
+                }
                 Emit(OP_GetProp, AtomConst(n->str));
                 return;
             }
+            case NK::PrivName: Fail(n, "'" + Utf16To8(n->str) + "' can only be used before 'in' or after '.'");
             case NK::Index: {
                 if (n->a->k == NK::Super) {
                     EmitThis();
@@ -1377,7 +1473,14 @@ struct Compiler {
             AfterSuperCall();
             return;
         }
-        if (callee->k == NK::Member && callee->a->k != NK::Super) {
+        if (callee->k == NK::Member && (callee->flags & NF_Private)) {   // [obj] -> [fn obj]
+            Expr(callee->a);
+            if (callee->flags & NF_Optional) ChainJump(OP_JumpNullish);
+            Emit(OP_Dup);
+            EmitLoad(callee->str, callee);
+            Emit(OP_GetPrivate);
+            Emit(OP_Swap);
+        } else if (callee->k == NK::Member && callee->a->k != NK::Super) {
             Expr(callee->a);
             if (callee->flags & NF_Optional) ChainJump(OP_JumpNullish);
             Emit(OP_GetPropKeep, AtomConst(callee->str));
@@ -1493,6 +1596,18 @@ struct Compiler {
             if (!prefix) Emit(OP_Pop);
             return;
         }
+        if (t->k == NK::Member && (t->flags & NF_Private)) {
+            Expr(t->a);
+            EmitLoad(t->str, t);
+            Emit(OP_Dup2);
+            Emit(OP_GetPrivate);
+            Emit(OP_ToNum);
+            if (!prefix) Emit(OP_DupX2);
+            Emit(incOp);
+            Emit(OP_SetPrivate);
+            if (!prefix) Emit(OP_Pop);
+            return;
+        }
         if (t->k == NK::Member) {
             if (t->a->k == NK::Super) Fail(t, "++ on super properties is not supported");
             Expr(t->a);
@@ -1548,6 +1663,13 @@ struct Compiler {
                 EmitStore(t->str, true, t);
                 return;
             }
+            if (t->k == NK::Member && (t->flags & NF_Private)) {
+                Expr(t->a);
+                EmitLoad(t->str, t);
+                Expr(n->b);
+                Emit(OP_SetPrivate);
+                return;
+            }
             if (t->k == NK::Member) {
                 if (t->a->k == NK::Super) {
                     EmitThis();
@@ -1601,7 +1723,33 @@ struct Compiler {
             EmitStore(t->str, true, t);
             return;
         }
+        const bool priv = t->k == NK::Member && (t->flags & NF_Private);
         if (t->a->k == NK::Super) Fail(t, "compound assignment to super properties is not supported");
+        if (priv) {   // the Index sequence with the private name as the key: [o k v]
+            Expr(t->a);
+            EmitLoad(t->str, t);
+            Emit(OP_Dup2);
+            Emit(OP_GetPrivate);
+            if (logical) {
+                int j = EmitJump(jop);
+                Emit(OP_Pop);
+                fs->depth += 1;
+                Expr(n->b);
+                Emit(OP_SetPrivate);
+                int je = EmitJump(OP_Jump);
+                Patch(j);
+                Emit(OP_DupX2);
+                Emit(OP_Pop);
+                Emit(OP_Pop);
+                Emit(OP_Pop);
+                Patch(je);
+                return;
+            }
+            Expr(n->b);
+            Emit(CompoundOp(n->op));
+            Emit(OP_SetPrivate);
+            return;
+        }
         if (t->k == NK::Member) {
             Expr(t->a);
             Emit(OP_Dup);
@@ -1738,14 +1886,24 @@ struct Compiler {
         struct Leave { int& d; ~Leave() { --d; } } leave{classDepth};
         ClassInfo* ci = n->ci;
         bool named = !n->str.empty();
-        if (named) {
-            PushScope();
-            Var* v = Declare(n->str, VK_Const, n);
+        const bool scoped = named || !ci->privNames.empty();
+        if (scoped) PushScope();
+        auto declareEmpty = [&](const std::u16string& name) {
+            Var* v = Declare(name, VK_Const, n);
             if (v->captured) Emit(OP_NewCell, v->slot, 1);
             else { Emit(OP_PushEmpty); Emit(OP_PutLoc, v->slot); }
-        }
+        };
+        if (named) declareEmpty(n->str);
         if (ci->heritage) Expr(ci->heritage);
         else Emit(OP_PushEmpty);
+        // 15.7.14 steps 5-6: a new Private Name for each #name of the body (after the heritage, which sees the outer ones)
+        for (const std::u16string& pn : ci->privNames) {
+            declareEmpty(pn);
+            Emit(OP_NewPrivate, AtomConst(pn));
+            EmitStore(pn, false, n, true);
+            MarkInit(pn);
+        }
+        for (const std::u16string& h : ci->privHidden) declareEmpty(h);
         Proto* ctor = CompileFunction(ci->ctor, false);
         fs->p->protos.push_back(ctor);
         Emit(OP_Class, (int)fs->p->protos.size() - 1, ci->heritage ? 1 : 0);   // [heritage] -> [ctor proto]
@@ -1754,10 +1912,30 @@ struct Compiler {
             bool isStatic = (m->flags & NF_Static) != 0;
             if (isStatic) { Emit(OP_Dup2); Emit(OP_Pop); }
             else Emit(OP_Dup);
+            if (m->flags & NF_Private) {   // [ctor proto home] -> the method in its hidden binding, its home set
+                const std::u16string hidden = m->str + (m->op == 1 ? u":g" : m->op == 2 ? u":s" : u":m");
+                EmitClosure(m->b);
+                Emit(OP_Swap);
+                Emit(OP_SetHome);
+                Emit(OP_Pop);
+                EmitStore(hidden, false, m, true);
+                MarkInit(hidden);
+                continue;
+            }
             PushKey(m);
             EmitClosure(m->b);
             Emit(m->op == 1 ? OP_DefGetter : m->op == 2 ? OP_DefSetter : OP_DefMethod, 0, 0);
             Emit(OP_Pop);
+        }
+        // the static private methods go on the class itself, before the static fields run (15.7.14 step 32)
+        for (Node* m : n->list) {
+            if (!(m->flags & NF_Private) || !(m->flags & NF_Static)) continue;
+            line = m->line;
+            Emit(OP_Dup2);
+            Emit(OP_Pop);
+            EmitLoad(m->str, m);
+            EmitLoad(m->str + (m->op == 1 ? u":g" : m->op == 2 ? u":s" : u":m"), m);
+            Emit(OP_DefPrivate, 0, 1 + m->op);
         }
         if (ci->instFields) {
             Proto* f = CompileFunction(ci->instFields, false);
@@ -1782,7 +1960,7 @@ struct Compiler {
             Emit(OP_Call, 0);
             Emit(OP_Pop);
         }
-        if (named) PopScope();
+        if (scoped) PopScope();
     }
 
     void YieldExpr(Node* n) {
@@ -1872,6 +2050,23 @@ struct Compiler {
 };
 
 } // namespace
+
+Proto* CompileModule(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err, std::vector<ModuleExtern>& externs) {
+    Compiler c(rt, err, chunk);
+    Proto* p = nullptr;
+    try {
+        p = c.Module(ast);
+    } catch (const CompileFail&) {
+        for (Proto* x : c.protos) delete x;
+        return nullptr;
+    } catch (...) {
+        for (Proto* x : c.protos) delete x;
+        throw;
+    }
+    for (Proto* x : c.protos) rt.Adopt(x);
+    externs = std::move(c.externs);
+    return p;
+}
 
 Proto* CompileScript(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err) {
     Compiler c(rt, err, chunk);

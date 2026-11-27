@@ -15,27 +15,27 @@ Back to the [code index](../code_index.md). 2 headers, 31 names.
 - `GcObj` struct, line 95
 - `String` struct, line 105
 - `Symbol` struct, line 115
-- `Cell` struct, line 123: A captured variable (the spec's binding in an environment record that a closure keeps alive).
-- `PropFlag` enum, line 130: Property attributes (spec 6.1.7.1).
-- `Prop` struct, line 139
-- `Cls` enum, line 148: What kind of object (the spec's ordinary and exotic objects, plus our internal ones).
-- `Object` struct, line 157
-- `ArrayObj` struct, line 177: Arrays and argument objects: a dense element part plus the length (spec 10.4.2).
-- `BoxObj` struct, line 190: Primitive wrappers (Boolean, Number, String, Symbol objects) and other one-value objects.
-- `NativeFunc` struct, line 200
-- `Closure` struct, line 210
-- `BoundFunc` struct, line 221
-- `HostObj` struct, line 230: Engine objects (the game binding): what they are is up to their host class.
-- `HostClass` struct, line 240: How engine objects behave: get / set return true when they handled the key.
-- `CallArgs` struct, line 248
-- `JsThrow` struct, line 258: A JavaScript exception is being thrown; the value is Runtime::exception.
-- `JsTerminate` struct, line 260: The run stopped (budget, memory, too deep): try/catch can not catch this.
-- `SyntaxError` struct, line 264
-- `ErrorType` enum, line 269
-- `Runtime` class, line 272: A JavaScript engine instance: its own heap, globals and budget.
-- `Utf8To16` function, line 510: UTF-8 <-> UTF-16 (lone surrogates become U+FFFD in UTF-8).
-- `Utf16To8` function, line 511
-- `AsciiTo16` function, line 512
+- `Cell` struct, line 124: A captured variable (the spec's binding in an environment record that a closure keeps alive).
+- `PropFlag` enum, line 131: Property attributes (spec 6.1.7.1).
+- `Prop` struct, line 140
+- `Cls` enum, line 149: What kind of object (the spec's ordinary and exotic objects, plus our internal ones).
+- `Object` struct, line 164
+- `ArrayObj` struct, line 185: Arrays and argument objects: a dense element part plus the length (spec 10.4.2).
+- `BoxObj` struct, line 198: Primitive wrappers (Boolean, Number, String, Symbol objects) and other one-value objects.
+- `NativeFunc` struct, line 208
+- `Closure` struct, line 218
+- `BoundFunc` struct, line 229
+- `HostObj` struct, line 238: Engine objects (the game binding): what they are is up to their host class.
+- `HostClass` struct, line 248: How engine objects behave: get / set return true when they handled the key.
+- `CallArgs` struct, line 256
+- `JsThrow` struct, line 266: A JavaScript exception is being thrown; the value is Runtime::exception.
+- `JsTerminate` struct, line 268: The run stopped (budget, memory, too deep): try/catch can not catch this.
+- `SyntaxError` struct, line 272
+- `ErrorType` enum, line 277
+- `Runtime` class, line 280: A JavaScript engine instance: its own heap, globals and budget.
+- `Utf8To16` function, line 542: UTF-8 <-> UTF-16 (lone surrogates become U+FFFD in UTF-8).
+- `Utf16To8` function, line 543
+- `AsciiTo16` function, line 544
 
 ## `engine/include/okay/JavaScript/JavaScriptVM.hpp`
 

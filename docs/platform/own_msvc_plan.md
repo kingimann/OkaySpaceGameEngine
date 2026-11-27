@@ -1190,11 +1190,21 @@ Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `cl
 
 **Our own headers:** `<GL/gl.h>` (OpenGL 1.1 types, enumerants and opengl32.dll functions, from the OpenGL 1.1 specification), `<list>` ([list]; iterator and const_iterator are one type), `<winsock2.h>` and `<ws2tcpip.h>` (from Microsoft's public Winsock documentation), `std::function::target` and `target_type`, `std::quoted`, `rint`/`nearbyint`/`lrint`/`llrint`, `lgamma` (Stirling's series with Bernoulli numbers, recurrence and reflection), range insert of `set`/`unordered_set`, `string::shrink_to_fit` (no-op), `numeric_limits` for char, unsigned char, short, unsigned short and bool, a primary `std::hash` for integers and enumerations, variant's bool alternative from a class with `operator bool`.
 
-Tests: new `tests/test_round34.cpp`, 18 tests (programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine and compared with MinGW g++; one compile-only check of `<GL/gl.h>`; the Winsock test sends a UDP datagram to itself through ws2_32.dll under Wine). See the report of this round for the counts and the survey numbers.
+Measurement: `tools/okayms/survey.sh` (300-second limit per file) on the 514 `engine/src/**/*.cpp` files. "Before" is the Round 33 compiler and headers (d3ee2155e) run in this round; "after" is commit 7f67ff741 (the two commits after it only move code into a helper).
+
+| Survey | Before (Round 33) | After |
+|---|---|---|
+| Windows (default) | 363 of 514 | **424 of 514** (no time-outs) |
+| Plain (`SURVEY_PLAIN=1`, first run) | not run | 408 of 514 |
+
+No file that compiled before stops compiling (checked file by file). Next blockers (Windows): `thread_local` objects with constructors at namespace scope (6 files), VehicleBuilder.hpp:69 (3), Jobs.hpp:259 (2), NotNode::Eval "not an address" (2), `<d3d11.h>` (2), then single files. Plain survey: `<time.h>` (33 files), then the same single files.
+
+Tests: new `tests/test_round34.cpp`, 18 tests (programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine and compared with MinGW g++; one compile-only check of `<GL/gl.h>`; the Winsock test sends a UDP datagram to itself through ws2_32.dll under Wine): `tests 18, checks passed 241, failed 0`. With the Round 33 compiler and headers: `tests 18, checks passed 63, failed 50`. The whole suite (`tools/okayms/build.sh`, 76 test programs, `env -u TMPDIR -u TEMP -u TMP`) passes: 76 of 76, `SUITE rc=0`.
+
+Written from ISO/IEC 14882 (the sections named above), ISO/IEC 9899 (7.12.8.3, 7.12.9, 5.2.4.2.1), the OpenGL 1.1 specification, Microsoft's public Winsock documentation and the Intel SDM vol. 2 (MOV, MOVSX, MOVZX). No code from MSVC, its STL, the Windows SDK, MinGW, Mesa, Khronos headers, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography.
 
 Not done / unverified / differences (Round 34):
 
 - Not run on Windows. No decorated name compared with MSVC; local classes use our own decoration.
 - `signed char` and `char` are one type, and `long` is `int`, to okay-ms (specializations of both collide).
 - Namespace-scope `thread_local` objects with constructors (5 files), a local pointer to an array `T (*p)[N]` (2 files), `<d3d11.h>`, an out-of-class definition of a conversion function, and `std::quoted` reading needs a modifiable string (one form for both directions).
-- The plain survey numbers and the next blockers are in the round's report.

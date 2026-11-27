@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 76 headers, 1145 names.
+Back to the [code index](../code_index.md). 76 headers, 1143 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -990,36 +990,34 @@ Back to the [code index](../code_index.md). 76 headers, 1145 names.
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
 - `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 65
-- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 94
-- `SplitIds` function, line 102
-- `JoinIds` function, line 111
-- `Has` function, line 116
-- `Find` function, line 120
-- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 152: The default: everything on.
-- `AllOff` function, line 154: "Back to the third-party parts": everything off.
-- `Set` function, line 155
-- `AppliedVar` function, line 164
-- `PutEnv` function, line 166
-- `DropEnv` function, line 173
-- `AppliedNow` function, line 180
-- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 207
-- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 217
-- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 242
-- `SaveFile` function, line 249
-- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 265
-- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
+- `Context` struct, line 59: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 74
+- `SplitIds` function, line 82
+- `JoinIds` function, line 91
+- `Has` function, line 96
+- `Find` function, line 100
+- `Select` function, line 106: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 115: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 125: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 132: The default: everything on.
+- `AllOff` function, line 134: "Back to the third-party parts": everything off.
+- `Set` function, line 135
+- `AppliedVar` function, line 144
+- `PutEnv` function, line 146
+- `DropEnv` function, line 153
+- `AppliedNow` function, line 160
+- `SetByUser` function, line 166: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 172: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 187
+- `StatusOf` function, line 190: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 197
+- `DefaultPath` function, line 208: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 222
+- `SaveFile` function, line 229
+- `State` struct, line 240: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 245
+- `Startup` function, line 248: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 255: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

@@ -40,5 +40,5 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 16 | 78 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
-| okayui | 13 | 682 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 76 | 1145 | [code_index/shared.md](code_index/shared.md) |
+| okayui | 13 | 690 | [code_index/okayui.md](code_index/okayui.md) |
+| shared | 76 | 1143 | [code_index/shared.md](code_index/shared.md) |

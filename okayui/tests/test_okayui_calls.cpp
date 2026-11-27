@@ -686,7 +686,9 @@ int main() {
                 for (int y = 10; y < 60 && first < 0; ++y) { const unsigned p = PixelAt(b, x, y); if (((p >> 24) & 255) > 90 && ((p >> 16) & 255) > 90) first = x; }
             return first;
         };
+        UI::UseImGuiCoordinates(true);   // (Dear ImGui's rules: the launcher's mode)
         const int plain = hintX(-1.0f), padded = hintX(30.0f);
+        UI::UseImGuiCoordinates(false);
         CHECK(plain > 0 && padded > plain + 10);
     }
     TEST_MAIN_RESULT();

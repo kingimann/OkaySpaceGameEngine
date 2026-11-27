@@ -1228,7 +1228,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     ts->first = snapToChar(buf, len, ts->first);
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
-    const float pad = g_framedWidgets && g_framePadX >= 0.0f ? g_framePadX : (g_look ? 9.0f : 6.0f);   // Dear ImGui's form: a pushed FramePadding.x is where the text starts
+    const float pad = g_imguiCoords && g_framedWidgets && g_framePadX >= 0.0f ? g_framePadX : (g_look ? 9.0f : 6.0f);   // Dear ImGui's rules (UseImGuiCoordinates): a pushed FramePadding.x is where the text starts
     const float padL = g_fieldPadL >= 0.0f ? g_fieldPadL : pad, padR = g_fieldPadR >= 0.0f ? g_fieldPadR : pad;   // SearchField makes room for its icons
     const float tx = x + padL;
     const bool inside = hit(x, y, w, h);

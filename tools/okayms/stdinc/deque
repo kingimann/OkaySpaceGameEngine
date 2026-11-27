@@ -117,6 +117,24 @@ public:
         new (block_ + head_ + size_) T(std::move(moved));
         ++size_;
     }
+    // emplace_back and emplace_front ([sequence.reqmts]; Round 33, Layout.cpp's synth.emplace_back()): the element is
+    // made from the arguments (as vector's: passed on as written), after the room is made, so an argument that refers
+    // into this deque must not be used when the block moves.
+    template <typename... A>
+    T& emplace_back(A&&... args) {
+        room_back();
+        new (block_ + head_ + size_) T(args...);
+        ++size_;
+        return block_[head_ + size_ - 1];
+    }
+    template <typename... A>
+    T& emplace_front(A&&... args) {
+        room_front();
+        new (block_ + head_ - 1) T(args...);
+        --head_;
+        ++size_;
+        return block_[head_];
+    }
     void push_front(const T& value) {
         if (block_ != 0 && head_ == 0) {
             T copy(value);

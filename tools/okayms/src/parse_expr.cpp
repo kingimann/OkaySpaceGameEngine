@@ -160,6 +160,44 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
 // C{args} ([expr.type.conv], [dcl.init.list]): a temporary object of class bsid made from the braced list at the
 // current token, by a constructor, or member by member for an aggregate. Its construction goes before the
 // statement and its destructor runs after it.
+// A one-dimensional array of scalars set from the braced list at `at` ([dcl.init.aggr] 4.2, 5): element by element, the
+// elements the list leaves out value-initialized (zero). Reads the list. Round 33.
+bool Parser::braced_array_stores(const Node& target, const Type& array_type, std::vector<Node>* steps) {
+    if (!expect(TLBrace, "'{'")) return false;
+    const Type et = peel_array(array_type);
+    for (int ei = 0; ei < array_type.array_len; ++ei) {
+        Node val;
+        if (!is(TRBrace)) {
+            if (!parse_expr(1, &val)) return false;
+            if (et.base != 0 && et.base != 3 && et.pointers == 0 && !convert_class(&val, et)) return false;
+            accept(TComma);
+        } else {
+            val.kind = Node::IntLit;
+            val.number = 0;
+            val.type.base = 1;
+        }
+        Node idx;
+        idx.kind = Node::IntLit;
+        idx.number = static_cast<uint64_t>(ei);
+        idx.type.base = 1;
+        Node el;
+        el.kind = Node::Index;
+        el.kids.push_back(target);
+        el.kids.push_back(std::move(idx));
+        Node asg;
+        asg.kind = Node::Assign;
+        asg.op = TAssign;
+        asg.number = 1;
+        asg.kids.push_back(std::move(el));
+        asg.kids.push_back(std::move(val));
+        Node est;
+        est.kind = Node::ExprStmt;
+        est.kids.push_back(std::move(asg));
+        steps->push_back(std::move(est));
+    }
+    return expect(TRBrace, "'}'");
+}
+
 bool Parser::braced_temp(int bsid, Node* out) {
         Type bt;
         bt.base = 3;
@@ -208,6 +246,18 @@ bool Parser::braced_temp(int bsid, Node* out) {
                 Node item;
                 if (is(TLBrace) && f.type.base == 3 && f.type.pointers == 0 && !f.type.is_array() && f.type.struct_id >= 0) {
                     if (!braced_temp(f.type.struct_id, &item)) return false;
+                } else if (is(TLBrace) && f.type.is_array() && f.type.more.empty() && f.type.pointers == 0 &&
+                           f.type.base != 3) {
+                    // An array member of scalars from a nested list (Layout.cpp's `bool anyPseudo[6]`; Round 33).
+                    Node fld;
+                    fld.kind = Node::Field;
+                    fld.op = TDot;
+                    fld.text = f.name;
+                    fld.kids.push_back(node_name(hidden.name));
+                    if (!braced_array_stores(fld, f.type, &stmt_pre)) return false;
+                    ++k;
+                    if (!accept(TComma)) break;
+                    continue;
                 } else if (is(TLBrace)) {
                     error = "a nested list for a member of this type is not supported";
                     return false;
@@ -223,10 +273,11 @@ bool Parser::braced_temp(int bsid, Node* out) {
                 fn.op = TDot;
                 fn.text = f.name;
                 fn.kids.push_back(node_name(hidden.name));
+                if (agg.ref_members.count(f.name) > 0) item = node_addr(std::move(item));  // a reference member is bound
                 Node assign;
                 assign.kind = Node::Assign;
                 assign.op = TAssign;
-                assign.number = obj_needs_ctor(f.type) || obj_needs_dtor(f.type) ? 0 : 1;
+                assign.number = agg.ref_members.count(f.name) == 0 && (obj_needs_ctor(f.type) || obj_needs_dtor(f.type)) ? 0 : 1;
                 assign.kids.push_back(std::move(fn));
                 assign.kids.push_back(std::move(item));
                 Node st;

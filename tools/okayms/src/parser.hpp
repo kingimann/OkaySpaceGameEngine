@@ -1215,6 +1215,37 @@ struct Parser {
                 fn.op = TArrow;
                 fn.text = f.name;
                 fn.kids.push_back(self);
+                if (args[k].kind == Node::Block && args[k].text == "tokbrace") {
+                    // A nested braced list for this member (C{a, {b, c}} read as constructor arguments, Round 33): made
+                    // for the member's type here. Before, the list was stored as nothing (silent wrong values).
+                    const size_t saved_at = at;
+                    at = static_cast<size_t>(args[k].number);
+                    bool ok = true;
+                    if (f.type.is_array() && f.type.more.empty() && f.type.pointers == 0 && f.type.base != 3) {
+                        ok = braced_array_stores(fn, f.type, &steps);
+                        at = saved_at;
+                        if (!ok) return false;
+                        ++k;
+                        continue;
+                    }
+                    Node made;
+                    if (f.type.base == 3 && f.type.pointers == 0 && !f.type.is_array() && f.type.struct_id >= 0) {
+                        ok = is_init_list_class(f.type) ? init_list_temp(f.type, &made) : braced_temp(f.type.struct_id, &made);
+                    } else if (!f.type.is_array() && tokens[at + 1].kind == TRBrace) {
+                        made.kind = Node::IntLit;
+                        made.number = 0;
+                        made.type.base = 1;
+                    } else if (!f.type.is_array()) {
+                        next();
+                        ok = parse_expr(1, &made);
+                    } else {
+                        error = "a nested list for a member of this type is not supported";
+                        ok = false;
+                    }
+                    at = saved_at;
+                    if (!ok) return false;
+                    args[k] = std::move(made);
+                }
                 if (sd.ref_members.count(f.name) > 0) {
                     // A reference member is bound to its item: the field keeps the item's address ([dcl.init.aggr] 4.2,
                     // [dcl.init.ref]). Before Round 33 the item was stored through the unset reference (JsLibJson.cpp's
@@ -3506,6 +3537,7 @@ struct Parser {
     bool parse_lambda(Node* out);
     bool braced_temp(int bsid, Node* out);
     bool braced_arg(Node* arg);
+    bool braced_array_stores(const Node& target, const Type& array_type, std::vector<Node>* steps);
     // At a '{': is there another '{' inside it, before its matching '}'?
     bool has_nested_braces_ahead() const {
         int depth = 0;
@@ -5774,6 +5806,22 @@ struct Parser {
         fn.params.push_back(flag);
         fn.param_names.push_back("flags");
         finish_signature(&fn);
+        // The parameters belong to this function's outermost scope, whatever block of another function is being read
+        // when the destructor is made (Round 33: made at a `return` inside a nested block of a file with try, the
+        // parameters took that block's scope number and the body could not see `this`).
+        struct ScopeReset {
+            int& depth;
+            std::vector<int>& parent;
+            int saved_depth;
+            std::vector<int> saved_parent;
+            ~ScopeReset() {
+                depth = saved_depth;
+                parent = saved_parent;
+            }
+        } scope_reset{scope_depth, scope_parent, scope_depth, scope_parent};
+        scope_depth = 0;
+        scope_parent.clear();
+        scope_parent.push_back(0);
         std::vector<Local> locals;
         for (size_t p = 0; p < fn.params.size(); ++p) {
             Local local;

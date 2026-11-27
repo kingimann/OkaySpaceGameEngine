@@ -739,7 +739,11 @@ bool Gen::gen_expr(const Node& node) {
             const int mark_depth = temp_depth;
             if (!gen_addr(node.kids[0])) return false;
             const Type target = last_type;
-            if (target.base == 3 && target.pointers == 0 && !target.is_array() && !fits_register(target)) {
+            // An array member copied whole (the implicit copy constructor's `this->f = o.f` for `bool f[3]`; Round 33):
+            // its bytes, as for a big struct. Before, nothing useful was stored (silent wrong copies).
+            const bool array_copy = target.is_array() && target.pointers == 0 && !target.is_ref && node.number == 1 &&
+                                    node.kids[1].kind != Node::Call;
+            if (array_copy || (target.base == 3 && target.pointers == 0 && !target.is_array() && !fits_register(target))) {
                 const int dest = spill_addr();
                 if (!error.empty()) return false;
                 if (node.kids[1].kind == Node::Call) {

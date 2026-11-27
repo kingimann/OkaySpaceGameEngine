@@ -564,6 +564,78 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Aggregates (Layout.cpp's `Builder builder{sheets, &ctx, {}, {false, ...}, {}}`): an array member of scalars from a
+// nested list, a reference member bound in the nested-list path ([dcl.init.aggr] 4.2), and the implicit copy
+// constructor of a class with an array member and a member with its own copy constructor ([class.copy.ctor] 14).
+// Silent wrong code before: the copy constructor stored nothing for the array (the copy read stack garbage: 205 for 111),
+// and the reference member was stored as a value; deque::emplace_back did not exist.
+static void r33_aggregates(Tally& tally) {
+    std::printf("r33_aggregates\n");
+    okayms_test::run_both(kRun, tally, "aggregates", std::string(kAlloc) + R"OKMS(
+#include <deque>
+#include <string>
+#include <utility>
+#include <vector>
+struct Ctx { int k = 3; };
+struct Builder {
+  const std::vector<int>& sheets;
+  const Ctx* ctx;
+  std::deque<int> synth;
+  bool anyPseudo[6] = {false, false, false, false, false, false};
+  std::vector<std::pair<std::string, int>> counters;
+  int count() const { int n = 0; for (bool b : anyPseudo) n += b ? 1 : 0; return n + (int)sheets.size() + ctx->k; }
+};
+struct S { int a; bool f[3] = {false, false, false}; std::vector<int> v; };
+int entry(void) {
+  S t;
+  t.a = 1; t.f[0] = true; t.f[2] = true;
+  S s(t);
+  CK(1, s.a * 100 + s.f[0] * 10 + s.f[2] == 111);
+  S u{1, {true, false, true}, {}};
+  CK(2, u.a * 100 + u.f[0] * 10 + u.f[2] == 111 && u.v.empty());
+  std::vector<int> sheets = {1, 2};
+  Ctx c;
+  Builder builder{sheets, &c, {}, {false, true, false, true, false, false}, {}};
+  CK(3, builder.count() == 7 && builder.synth.empty() && builder.counters.empty());
+  Builder b2{sheets, &c, {}, {true}, {}};
+  CK(4, b2.count() == 6 && b2.anyPseudo[0] && !b2.anyPseudo[1]);
+  builder.synth.emplace_back(4);
+  builder.synth.emplace_front(2);
+  builder.synth.emplace_back();
+  CK(5, builder.synth.size() == 3 && builder.synth.front() == 2 && builder.synth[1] == 4 && builder.synth.back() == 0);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// A std::function local in a nested block of a file that uses exceptions, left by `return` (ActionListOps.cpp): the
+// holder's scalar deleting destructor was made there, and its parameters took the block's scope ("unknown name this").
+static void r33_eh_block(Tally& tally) {
+    std::printf("r33_eh_block\n");
+    okayms_test::run_both(kRunEh, tally, "eh_block", R"OKMS(
+#include <functional>
+struct N { N* c; int tag; };
+int find_tag(N* r, int op, int want) {
+  int b = 0;
+  if (op == 1) {
+    try { b += 1; } catch (...) { b = 0; }
+  } else {
+    std::function<N*(N*)> g = [&](N* k) -> N* { if (!k) return nullptr; if (k->tag == want) return k; if (N* d = g(k->c)) return d; return nullptr; };
+    N* hit = g(r);
+    return hit ? hit->tag : -1;
+  }
+  return b;
+}
+int entry(void) {
+  N c{nullptr, 7};
+  N b{&c, 5};
+  N a{&b, 3};
+  CK(1, find_tag(&a, 0, 7) == 7 && find_tag(&a, 0, 9) == -1 && find_tag(&a, 1, 0) == 1);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -580,5 +652,7 @@ int main(int argc, char** argv) {
     r33_lists_math(tally);
     r33_backend(tally);
     r33_return_convert(tally);
-    return tally.finish(12);
+    r33_aggregates(tally);
+    r33_eh_block(tally);
+    return tally.finish(14);
 }

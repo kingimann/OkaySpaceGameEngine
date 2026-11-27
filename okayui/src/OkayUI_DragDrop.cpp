@@ -44,8 +44,11 @@ bool DragSource(int payload) {
     return g_dd.active && g_dd.payload == payload;
 }
 
+// What a drag source draws between BeginDragDropSource and EndDragDropSource is its preview: a tooltip at the pointer (Dear ImGui's documented
+// behaviour), unless DragDrop_SourceNoPreviewTooltip. It used to be laid out in the window, where it pushed the rows below it down while a
+// row was dragged (the editor's Hierarchy dropped onto the row above the one under the pointer).
+static bool g_ddTip = false;
 bool BeginDragDropSource(int flags) {
-    (void)flags;
     if (!g_lay.active) return false;
     const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
     // Hash the float bits (a NaN, infinity or 1e30 position must not go through a float-to-int cast: undefined).
@@ -58,7 +61,9 @@ bool BeginDragDropSource(int flags) {
         const float dx = g_in.mouseX - g_tdd.armX, dy = g_in.mouseY - g_tdd.armY;
         if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > 6.0f) { g_tdd.active = true; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.pay = DragPayload(); }
     }
-    return g_tdd.active && g_tdd.srcId == sid;
+    const bool on = g_tdd.active && g_tdd.srcId == sid;
+    if (on && !(flags & DragDrop_SourceNoPreviewTooltip) && !g_ddTip) g_ddTip = BeginTooltip();
+    return on;
 }
 bool SetDragDropPayload(const char* type, const void* data, int size) {
     if (!g_tdd.active || !type || !*type || size < 0 || size > kDragPayloadMax || (size > 0 && !data)) return false;
@@ -68,7 +73,7 @@ bool SetDragDropPayload(const char* type, const void* data, int size) {
     return true;
 }
 void SetDragDropPreview(const char* text) { if (g_tdd.active) std::snprintf(g_tdd.preview, sizeof g_tdd.preview, "%s", text ? text : ""); }
-void EndDragDropSource() {}
+void EndDragDropSource() { if (g_ddTip) { g_ddTip = false; EndTooltip(); } }
 
 static bool g_tddOver = false;   // BeginDragDropTarget said yes for the item being asked about
 bool BeginDragDropTarget() { return BeginDragDropTarget(0); }
@@ -147,5 +152,6 @@ bool DropTarget(int* outPayload) {
 // ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
-    OKAYUI_CTX_VAR(g_tddOver))
+    OKAYUI_CTX_VAR(g_tddOver),
+    OKAYUI_CTX_VAR(g_ddTip))
 } // namespace OkayUI

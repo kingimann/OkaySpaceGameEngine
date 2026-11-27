@@ -132,7 +132,7 @@ void menuBodyBegin() {
     c = PopupCtx{};
     c.lay = g_lay; c.id = g_curMenu.menuId; c.x = g_curMenu.x; c.y = g_curMenu.itemStartY; c.w = g_curMenu.w;
     c.hSlot = g_curMenu.heightSlot; c.wSlot = g_curMenu.widthSlot; c.padX = g_curMenu.textInset; c.padY = 0.0f; c.exact = false;
-    c.menu = true; c.wasOverlay = g_toOverlay;
+    c.menu = true; c.wasOverlay = g_toOverlay; c.childTop = g_childTop;
     c.clipBase = g_clipBase; g_clipBase = g_clipTop; overlayClipOff();
     g_toOverlay = true;
     g_curMenu.body = true;
@@ -145,7 +145,8 @@ void menuBodyBegin() {
     g_lay.contentW = g_curMenu.w - 2.0f * g_curMenu.textInset;
     g_lay.indent = 0.0f; g_lay.seed = g_curMenu.menuId;
     g_lay.pendingSameLine = false; g_lay.hasLineTop = false;
-    g_lay.prevX = ox; g_lay.prevY = g_curMenu.itemY; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    // GetItemRect right after BeginMenu is the menu's row (or bar button), as in Dear ImGui
+    g_lay.prevX = g_curMenu.bx; g_lay.prevY = g_curMenu.by; g_lay.prevW = g_curMenu.bw; g_lay.prevH = g_curMenu.bh;
     g_lay.maxRight = g_curMenu.x;
     if (g_dispH > 0.0f) g_lay.bottom = g_dispH;   // a menu reaches down to the display's bottom at most
 }
@@ -505,30 +506,38 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     const int id = hashLabel(label);
     const bool disabled = (flags & Selectable_Disabled) != 0;
     const float s = g_theme.textScale;
-    const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : rowH();
+    // Dear ImGui's Selectable (StyleVar_FramedWidgets): a text line tall unless a height is given, the label at the item, and its highlight
+    // and hit box reach half the item spacing past it on every side, so consecutive rows touch (Selectable_Header keeps its own box).
+    const bool imguiRow = g_framedWidgets && !(flags & Selectable_Header);
+    const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : (imguiRow ? textH() : rowH());
     float w = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : fullW();
     float x, y; place(w, h, x, y);
     const float textX = x;                        // the label starts at the cell, even when the highlight spans the table
+    const float itemY = y, itemH = h;
     if ((flags & Selectable_SpanAllColumns) && g_tbl.active) {
         x = g_tbl.x0 - (g_tbl.scrollX ? g_tbl.sx : 0.0f); w = g_tbl.fullW;
         g_lay.prevX = x; g_lay.prevW = w;
     }
-    const bool inside = !disabled && hit(x, y, w, h);
+    float bx = x, by = y, bw = w, bh = h;   // the highlight and hit box
+    if (imguiRow) { bx -= g_lay.spacingX * 0.5f; by -= g_lay.spacingY * 0.5f; bw += g_lay.spacingX; bh += g_lay.spacingY; }
+    x = bx; y = by; w = bw;
+    const float hh = bh;
+    const bool inside = !disabled && hit(x, y, w, hh);
     g_lastId = id; if (inside) g_hot = id;
     bool clicked = false;
     const bool dblOnly = (flags & Selectable_DoubleClickOnly) != 0;
     if (g_active == id) { if (g_released) { if (inside && !dblOnly) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
-    const float ty = y + (h - textH()) * 0.5f;
-    if (flags & Selectable_Header) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
+    const float ty = itemY + (itemH - textH()) * 0.5f;
+    if ((flags & Selectable_Header) || imguiRow) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
         unsigned char tmp[4];
         const unsigned char* bg = nullptr;
         if (inside && g_active == id) bg = pick(Col_HeaderActive, g_theme.accent);
         else if (inside)              bg = pick(Col_HeaderHovered, g_theme.bgHover);
         else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
-        if (bg) quad(x, y, w, h, bg);
-        drawText(textX + g_lay.spacingX * 0.5f, ty, label, s, tcol);
+        if (bg) quad(x, y, w, hh, bg);
+        drawText(imguiRow ? textX : textX + g_lay.spacingX * 0.5f, ty, imguiRow ? VisLabel(label).b : label, s, tcol);
     } else {   // the design's rows: a soft accent tint and a bar on the left when selected, a faint ink wash under the pointer
         unsigned char tmp[4];
         const float over = anim(id, 0, inside && !selected);
@@ -540,6 +549,8 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     if (clicked) {
         if (p_sel) *p_sel = !*p_sel;
         if (flags & Selectable_ClosePopup) CloseCurrentPopup();
+        else if (imguiRow && !(flags & Selectable_DontClosePopups) && g_popupTop > 0 && g_childTop == g_popupStack[g_popupTop - 1].childTop)
+            CloseCurrentPopup();   // Dear ImGui: a Selectable right in a popup (a combo's list, a context menu) closes it; one in a child of it does not
     }
     return clicked;
 }
@@ -602,7 +613,7 @@ bool ui_core::beginPopupBody(int id) {
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
     // A popup is a top-level window: the clips of what it was opened over do not cut it; a child region inside it clips in the overlay.
     c.clipBase = g_clipBase; g_clipBase = g_clipTop; overlayClipOff();
-    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f;
+    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f; c.childTop = g_childTop;
     c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
     g_lay.ox = px + padX; g_lay.oy = py + padY;

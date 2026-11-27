@@ -525,7 +525,7 @@ void TestFuzz() {
 // with the value inside (they used to stay OkayUI's thin sliders, unlike the calls with a format).
 void TestImGuiLookTree() {
     RUN_SUITE("Dear ImGui's look: tree node rows, label spacing, indent; plain sliders are framed");
-    Rig r; UI::Rect n1, c1, n2, sl; float spacing = 0.0f, fontH = 0.0f; bool open = false; float v = 0.5f; int iv = 3;
+    Rig r; UI::Rect n1, c1, n2, sl; float lines = 0.0f, spacing = 0.0f, fontH = 0.0f; bool open = false; float v = 0.5f; int iv = 3;
     r.body = [&] {
         UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
         UI::GetStyle().IndentSpacing = 30.0f;
@@ -536,6 +536,7 @@ void TestImGuiLookTree() {
         UI::TreeNodeEx("leaf", UI::TreeNode_Leaf | UI::TreeNode_NoTreePushOnOpen); n2 = UI::GetItemRect();
         UI::SliderFloat("slide", &v, 0.0f, 1.0f); sl = UI::GetItemRect();
         UI::SliderInt("count", &iv, 0, 10);
+        const float y0 = UI::GetCursorScreenPos().y; UI::Text("first line\nsecond line"); lines = UI::GetCursorScreenPos().y - y0;   // a line break: two lines
         UI::PopStyleVar(2);
     };
     r.Frames(3);
@@ -544,7 +545,8 @@ void TestImGuiLookTree() {
     CHECK(std::fabs(spacing - (fontH + 2.0f * UI::GetStyle().FramePadding.x)) <= 0.5f);   // the font size and twice FramePadding.x
     CHECK(std::fabs((c1.x - n1.x) - 30.0f) <= 0.5f);                   // the style's IndentSpacing
     CHECK(std::fabs(n2.x - n1.x) <= 0.5f);                             // TreePop took the same 30 back
-    CHECK(sl.h > fontH + 2.0f);                                       // a framed slider: a frame tall
+    CHECK(sl.h > fontH + 2.0f);
+    CHECK(lines >= 2.0f * fontH - 0.5f);                               // "first\nsecond": two text lines (it was one line with a '?' glyph)                                       // a framed slider: a frame tall
     // the framed slider puts its value in the frame (pixels of the text colour inside it); a click sets the value from the pointer
     r.Click(sl.x + 4.0f, CenterY(sl));
     CHECK(v < 0.1f);
@@ -580,6 +582,79 @@ void TestImGuiLookColorEdit() {
     CHECK(c[1] == 0.6f && c[2] == 1.0f && c[3] == 1.0f);
 }
 
+// A tab bar inside a tab item of another (the editor's Dialogue window: Node / Graph / Problems / Test inside its Dialogue tab). The inner
+// BeginTabBar used to return false while the outer bar was open, so the side panel was empty.
+void TestNestedTabBars() {
+    RUN_SUITE("tab bars nest");
+    Rig r; bool innerShown = false, xBody = false, bShown = false; UI::Rect bTab{};
+    r.body = [&] {
+        innerShown = xBody = bShown = false;
+        if (UI::BeginTabBar("outer")) {
+            if (UI::BeginTabItem("A")) {
+                if (UI::BeginTabBar("inner")) {
+                    innerShown = true;
+                    if (UI::BeginTabItem("X")) { xBody = true; UI::EndTabItem(); }
+                    if (UI::BeginTabItem("Y")) { UI::EndTabItem(); }
+                    UI::EndTabBar();
+                }
+                UI::EndTabItem();
+            }
+            if (UI::BeginTabItem("B")) { bShown = true; UI::EndTabItem(); }
+            bTab = UI::GetItemRect();
+            UI::EndTabBar();
+        }
+    };
+    r.Frames(3);
+    CHECK(innerShown && xBody);
+    CHECK(!bShown);
+    r.Click(CenterX(bTab), CenterY(bTab));   // the outer bar still works after the inner one ended
+    r.Frames(2);
+    CHECK(bShown && !innerShown);
+}
+
+// Dear ImGui's Selectable in its look: a text line tall, the highlight and hit box reach half the item spacing past it, so rows touch (the
+// Behavior Tree palette's rows were a whole frame tall each, with dead gaps between them).
+void TestImGuiLookSelectable() {
+    RUN_SUITE("Dear ImGui's look: Selectable rows are a text line tall and touch");
+    Rig r; UI::Rect a{}, b{}; int ca = 0, cb = 0; float fontH = 0.0f;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        fontH = UI::GetFontSize();
+        if (UI::Selectable("first")) ++ca;
+        a = UI::GetItemRect();
+        if (UI::Selectable("second")) ++cb;
+        b = UI::GetItemRect();
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    CHECK(std::fabs(a.h - fontH) <= 1.0f);                    // the item: one text line
+    const float gapMid = (a.y + a.h + b.y) * 0.5f;            // between the two items: inside one of the hit boxes
+    r.Click(a.x + 20.0f, gapMid - 0.6f);
+    CHECK(ca + cb == 1);
+}
+
+// What a drag source draws (its preview) is a tooltip at the pointer: the rows under the source keep their places while a row is dragged, so
+// the row under the pointer is the one that takes the drop (the editor's Hierarchy dropped Cube onto Sphere, the row above Sun, because the
+// preview text was laid out in the list).
+void TestDragPreviewIsTooltip() {
+    RUN_SUITE("a drag source's preview is a tooltip, not a row of the window");
+    Rig r; UI::Rect a{}, c{}; std::string dropped; float cYIdle = 0.0f;
+    r.body = [&] {
+        UI::Button("source row", V(200, 0)); a = UI::GetItemRect();
+        if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("ROW", "a", 2); UI::Text("source row (dragged)"); UI::EndDragDropSource(); }
+        UI::Button("middle row", V(200, 0));
+        UI::Button("target row", V(200, 0)); c = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) { if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ROW")) dropped = (const char*)p->Data; UI::EndDragDropTarget(); }
+    };
+    r.Frames(3); cYIdle = c.y;
+    r.sim.Move(CenterX(a), CenterY(a)); r.Frame(); r.sim.Down(); r.Frame();
+    r.sim.Move(CenterX(a), CenterY(a) + 20.0f); r.Frame();
+    r.sim.Move(CenterX(c), CenterY(c)); r.Frame(); r.Frame();
+    CHECK(std::fabs(c.y - cYIdle) < 0.5f);                   // the rows did not move while dragging
+    r.sim.Up(); r.Frame();
+    CHECK(dropped == "a");
+}
+
 int main() {
     TestMultiline();
     TestHintArrowProgress();
@@ -587,6 +662,9 @@ int main() {
     TestTreeFlags();
     TestImGuiLookTree();
     TestImGuiLookColorEdit();
+    TestNestedTabBars();
+    TestImGuiLookSelectable();
+    TestDragPreviewIsTooltip();
     TestPlots();
     TestFuzz();
     TEST_MAIN_RESULT();

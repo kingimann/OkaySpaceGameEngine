@@ -5,6 +5,7 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // Window_MenuBar
+#include "okay/UI/OkayUIInternals.hpp"   // GetDockHostDrawList
 
 #include <cmath>
 #include <cstdio>
@@ -688,6 +689,82 @@ void TestMenuOfWidgets() {
     (void)undo;
 }
 
+// Dear ImGui's SameLine(offset_from_start_x): the next item goes at that x from the window's left edge, also left of the item before it (the
+// editor's menu bar centres Play and right-aligns the layout list and the version that way; the one-argument Dear ImGui call is that, see
+// okayui/probe/imgui.h). OkayUI used to treat it as a gap after the last item: Play sat 624 pixels right of the centre, the rest off screen.
+void TestSameLineOffset() {
+    RUN_SUITE("windows: SameLine(offset) is an x from the window's left edge");
+    Reset();
+    Sim sim(800, 400);
+    UI::Rect a{}, b{}, c{}; UI::Vec2 wpos{};
+    auto ui = [&] {
+        UI::UseImGuiCoordinates(true);
+        UI::SetNextWindowPos(V(30, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 300), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, 0)) {
+            wpos = UI::GetWindowPos();
+            UI::Button("a long first button", V(300, 0)); a = UI::GetItemRect();
+            UI::SameLine(100.0f, 0.0f); UI::Button("b"); b = UI::GetItemRect();      // left of a's end
+            UI::SameLine(450.0f, 0.0f); UI::Button("c"); c = UI::GetItemRect();
+        }
+        UI::End();
+        UI::UseImGuiCoordinates(false);
+    };
+    sim.Frames(3, ui);
+    CHECK(std::fabs(b.x - (wpos.x + 100.0f)) < 0.5f);
+    CHECK(std::fabs(b.y - a.y) < 0.5f);
+    CHECK(std::fabs(c.x - (wpos.x + 450.0f)) < 0.5f);
+}
+
+// MenuItem(label, shortcut, bool* p_selected): Dear ImGui's toggle row. Before the overload the pointer became `selected = true`, so the
+// editor's menu toggles (Show Gizmos, Snap to grid, Auto-scroll, ...) always showed a tick and a click changed nothing.
+void TestMenuItemToggle() {
+    RUN_SUITE("windows: MenuItem with a bool pointer toggles it");
+    Reset();
+    Sim sim(500, 320);
+    UI::Rect btn{}, row{}; bool open = false, on = false; int clicks = 0;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(400, 240), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            if (UI::BeginMenuBar()) {
+                open = UI::BeginMenu("View");
+                if (open) { if (UI::MenuItem("Grid", nullptr, &on)) ++clicks; row = UI::GetItemRect(); UI::EndMenu(); }
+                btn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    CHECK(open && !on);
+    sim.Click(CenterX(row), CenterY(row), ui); sim.Frame(ui);
+    CHECK(on && clicks == 1);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    sim.Click(CenterX(row), CenterY(row), ui); sim.Frame(ui);
+    CHECK(!on && clicks == 2);
+}
+
+// The dock host's draw list (a dock node's HostWindow->DrawList): what is drawn on it lies under the floating windows even when it is drawn
+// after they ended. The editor draws its panel icons on the docked tabs that way, at the end of the frame; they showed through a floating
+// window (the Animator, the Modeling window) as stray squares and arrows.
+void TestDockHostListUnderFloating() {
+    RUN_SUITE("windows: the dock host's list is drawn under floating windows");
+    Reset();
+    Sim sim(400, 300);
+    UI::Vec2 fpos{}, fsize{};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(100, 80), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(200, 150), UI::Cond_FirstUseEver);
+        if (UI::Begin("Floating", nullptr, 0)) { fpos = UI::GetWindowPos(); fsize = UI::GetWindowSize(); UI::Text("over the dock"); }
+        UI::End();
+        UI::GetDockHostDrawList().AddRectFilled(V(20, 20), V(380, 280), UI::RGBA(201, 31, 77, 255));   // after every window: as the editor's tab icons
+    };
+    sim.Frames(3, ui);
+    const Bitmap& b = sim.Draw(12, 14, 20);
+    const unsigned red = Rgba(201, 31, 77);
+    CHECK(PixelAt(b, 40, 40) == red);                                                        // outside the window: drawn
+    CHECK(PixelAt(b, (int)(fpos.x + fsize.x * 0.5f), (int)(fpos.y + fsize.y - 10)) != red);   // inside it: under the window
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -703,5 +780,8 @@ int main() {
     TestSizeAxisZeroFits();
     TestRegionInsideWindow();
     TestMenuOfWidgets();
+    TestSameLineOffset();
+    TestMenuItemToggle();
+    TestDockHostListUnderFloating();
     TEST_MAIN_RESULT();
 }

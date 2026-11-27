@@ -1199,6 +1199,9 @@ struct ImDrawCmd {
 };
 struct DrawList {
     bool overlay;
+    /// The dock space host's list (WindowRef::DrawList of a dock node's HostWindow): what is drawn on it goes UNDER the floating windows,
+    /// whenever it is drawn (the editor draws its tab icons on it after every window has ended; they showed through floating windows).
+    bool bottomHost = false;
     void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
     /// `rounding` is the corner radius in pixels (0 = square; clamped to half the shorter side).
     void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f, float thickness = 1.0f) const;
@@ -1300,7 +1303,7 @@ Vec2 GetFontTexUvWhitePixel();
 /// There is one handle per list, living for the whole program.
 struct DrawListHandle : DrawList {
     bool isNull = false;
-    DrawListHandle(bool isOverlay) { overlay = isOverlay; }
+    DrawListHandle(bool isOverlay, bool isDockHost = false) { overlay = isOverlay; bottomHost = isDockHost; }
     /// So `cond ? GetWindowDrawList() : nullptr` compiles: a handle that converts to a null pointer.
     DrawListHandle(std::nullptr_t) { overlay = false; isNull = true; }
     const DrawListHandle* operator->() const { return this; }

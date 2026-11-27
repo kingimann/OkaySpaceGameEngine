@@ -130,6 +130,7 @@ struct LayoutState {
     bool hasLineTop = false; float lineTopY = 0;
     bool  pendingSameLine = false;
     float sameLineSpacing = -1.0f;
+    bool  sameLineAbs = false; float sameLineX = 0;   // SameLine(offsetFromStartX): the next item starts exactly at sameLineX (left of the last item too)
     float indent = 0.0f;            // TreeNode indentation of the content's left edge
     float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
     float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
@@ -298,6 +299,7 @@ inline bool finite1(float v) { return v == v && v > -1.0e7f && v < 1.0e7f; }
 inline bool finite2(Vec2 p) { return finite1(p.x) && finite1(p.y); }
 extern const DrawListHandle g_windowList;
 extern const DrawListHandle g_foregroundList;
+extern const DrawListHandle g_dockHostList;   // the dock host's list: drawn under the floating windows (DrawList::bottomHost)
 
 extern const fontatlas::Atlas* g_ttf;
 extern int g_itemWTop;
@@ -410,7 +412,8 @@ constexpr float kScrollbarW = 10.0f;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
                   float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0;
                   int clipBase = 0;      // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
-                  bool menu = false, wasOverlay = false; };   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
+                  bool menu = false, wasOverlay = false;
+                  int childTop = 0; };   // g_childTop when it began: a child region begun inside it is deeper   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
 constexpr int kPopupStackMax = 8;   // popups and open menu lists, nested
 extern PopupCtx g_popupStack[kPopupStackMax];
 extern int g_popupTop;
@@ -442,6 +445,7 @@ inline float fullW()    { return g_lay.contentW - g_lay.indent; }
 // Where the next item's left edge will land (honors a pending SameLine).
 inline float cursorX() {
     if (g_lay.pendingSameLine) {
+        if (g_lay.sameLineAbs) return g_lay.sameLineX;
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         return g_lay.prevX + g_lay.prevW + sp;
     }
@@ -487,11 +491,13 @@ inline void registerWindowRect(int id, unsigned long long z, float x, float y, f
 }
 // Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
 struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
-extern WinRec g_wrec[64]; extern int g_nwrec; extern int g_wrecOpen;
+constexpr int kMaxWinRecs = 256;   // windows' geometry runs of a frame (a window drawn in pieces, the dock host's late drawing, has several)
+constexpr int kDockHostRecId = 0x0d0c4057;   // the record id of geometry drawn on the dock host's list
+extern WinRec g_wrec[kMaxWinRecs]; extern int g_nwrec; extern int g_wrecOpen;
 inline void wrecEnd() { if (g_wrecOpen >= 0) { g_wrec[g_wrecOpen].i1 = g_ni; g_wrecOpen = -1; } }
 inline void wrecBegin(int id, unsigned long long z) {
     wrecEnd();
-    if (g_nwrec >= 64) return;
+    if (g_nwrec >= kMaxWinRecs) return;
     g_wrecOpen = g_nwrec++;
     g_wrec[g_wrecOpen] = WinRec{id, z, g_ni, g_ni, g_nv, g_nspans, g_curClipOn, g_curClipRect, g_curTex};
 }
@@ -546,6 +552,7 @@ struct TypedDrag {
 inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 extern TabSel g_tabSel[16];
 extern TabOrder g_tabOrders[16];
+void tabBarsReset();   // OkayUI_Tabs.cpp: no tab bar open (frame start)
 extern TabBarCtx g_tabBar;
 extern DragDrop g_dd;
 extern TypedDrag g_tdd;

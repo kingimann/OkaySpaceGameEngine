@@ -452,11 +452,12 @@ void place(float w, float h, float& x, float& y) {
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
     if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
         g_posOverride = false;
-        x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f;
+        x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f; g_lay.sameLineAbs = false;
         sameLine = g_posSameLine; g_posSameLine = false;
     } else if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
-        x = g_lay.prevX + g_lay.prevW + sp;
+        x = g_lay.sameLineAbs ? g_lay.sameLineX : g_lay.prevX + g_lay.prevW + sp;
+        g_lay.sameLineAbs = false;
         y = g_lay.hasLineTop && !g_centerNext ? g_lay.lineTopY : g_lay.prevY;   // one centred on the item before it: on that item
         g_lay.pendingSameLine = false;
         g_lay.sameLineSpacing = -1.0f;
@@ -958,13 +959,13 @@ unsigned long long g_zCounter = 0;
 bool g_wheelUsed = false;   // a scrolling child took this frame's wheel (the window does not scroll as well)
 bool g_escapeUsed = false;  // a popup closed on this frame's Escape (the popups it was opened from stay open)
 bool g_hitWinOn = false; int g_hitWinId = 0; unsigned long long g_hitWinZ = 0;   // the window being built, for hit()
-WinRec g_wrec[64]; int g_nwrec = 0; int g_wrecOpen = -1;
+WinRec g_wrec[kMaxWinRecs]; int g_nwrec = 0; int g_wrecOpen = -1;
 // trade places, so a frame whose stamps agree with the call order is left exactly as it was.
 void reorderWindows() {
     wrecEnd();
     const int n = g_nwrec;
     if (n < 2) return;
-    int ord[64];
+    int ord[kMaxWinRecs];
     for (int i = 0; i < n; ++i) ord[i] = i;
     for (int i = 1; i < n; ++i) { const int v = ord[i]; int j = i - 1; while (j >= 0 && g_wrec[ord[j]].z > g_wrec[v].z) { ord[j + 1] = ord[j]; --j; } ord[j + 1] = v; }
     bool same = true;
@@ -1110,7 +1111,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; menuBarReset(); regionReset(); g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
+    g_inMenuBar = false; menuBarReset(); regionReset(); g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; tabBarsReset();
     g_idSeed = 0; g_idTop = 0; g_idSkipped = 0;   // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -1873,16 +1874,20 @@ float GetTreeNodeToLabelSpacing() {
 
 void SameLine(float spacing) {
     if (!g_lay.active) return;
-    g_lay.pendingSameLine = true;
+    g_lay.pendingSameLine = true; g_lay.sameLineAbs = false;
     g_lay.sameLineSpacing = spacing;
 }
 
+// Dear ImGui's SameLine(offset_from_start_x, spacing): a non-zero offset puts the next item at that x from the window's left edge (the point
+// GetCursorPos counts from, with UseImGuiCoordinates; else the content's left edge), even left of the item before it; 0 follows the item.
 void SameLine(float offsetFromStartX, float spacing) {
     if (!g_lay.active) return;
-    g_lay.pendingSameLine = true;
-    if (std::isfinite(offsetFromStartX) && offsetFromStartX > 0.0f) {
-        const float target = g_lay.ox + offsetFromStartX, end = g_lay.prevX + g_lay.prevW;
-        g_lay.sameLineSpacing = target > end ? target - end : 0.0f;
+    g_lay.pendingSameLine = true; g_lay.sameLineAbs = false;
+    if (std::isfinite(offsetFromStartX) && offsetFromStartX != 0.0f) {
+        const float base = g_imguiCoords && g_lay.winW > 0.0f ? g_lay.baseX : g_lay.ox;
+        g_lay.sameLineAbs = true;
+        g_lay.sameLineX = base + offsetFromStartX + (std::isfinite(spacing) && spacing > 0.0f ? spacing : 0.0f);
+        g_lay.sameLineSpacing = -1.0f;
     } else g_lay.sameLineSpacing = std::isfinite(spacing) ? spacing : -1.0f;
 }
 
@@ -2106,6 +2111,8 @@ void textBlock(const char* s, const unsigned char* col) {
             p = e + 1;
         }
         para.Done();
+    } else if (s && g_textRowH != 0.0f && std::strchr(s, '\n')) {   // Dear ImGui's text rows: a line break starts a new line under the first (no '?' glyph)
+        wrapLines(s, 1.0e9f, col, 1.0e9f);
     } else textLine(s, col);
 }
 } // namespace

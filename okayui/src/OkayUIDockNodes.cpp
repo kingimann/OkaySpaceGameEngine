@@ -166,7 +166,7 @@ void Rebuild(Table& t) {
         WindowRef& h = t.host;
         if (!h.Name[0]) { std::snprintf(h.Name, sizeof h.Name, "##DockSpaceHost"); h.ID = WindowIdOfTitle(h.Name); h.RootWindow = &h; h.WindowBorderSize = 0.0f; }
         h.Pos = Vec2{area.x, area.y}; h.Size = Vec2{area.w, area.h}; h.Active = h.WasActive = area.w > 0.0f;
-        h.DrawList = const_cast<DrawListHandle*>(&GetWindowDrawList());
+        h.DrawList = const_cast<DrawListHandle*>(&GetDockHostDrawList());   // drawn under the floating windows whenever it is drawn
         FillRect(h.InnerClipRect, h.Pos, h.Size);
     }
     // ---- nodes ----

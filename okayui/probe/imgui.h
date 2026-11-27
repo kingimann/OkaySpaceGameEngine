@@ -7,3 +7,9 @@
 #endif
 // The Dear ImGui draw output types are OkayUI's own shapes now (OkayUI.hpp, "Dear ImGui's draw-data shapes"); the backend calls that take them
 // are host-specific: see backends/.
+
+// Dear ImGui's SameLine takes the offset from the window's left edge first (SameLine(x) puts the next item at x), OkayUI's one-argument
+// SameLine takes the spacing: Dear ImGui code gets Dear ImGui's meaning (declared in ImGui itself, so it hides OkayUI's).
+namespace ImGui {
+inline void SameLine(float offsetFromStartX = 0.0f, float spacing = -1.0f) { ::OkayUI::SameLine(offsetFromStartX, spacing); }
+}

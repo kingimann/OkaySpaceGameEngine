@@ -27,7 +27,7 @@ extern "C" std::time_t time(std::time_t* t) { const std::time_t v = 1700000000; 
 namespace fs = std::filesystem;
 namespace oked {   // what main.cpp provides to the panels in the editor; stubs for the test
 bool g_showScenes = true;
-bool g_showConsole = true, g_paused = false, g_consoleCollapse = false;
+bool g_showConsole = true, g_paused = false, g_consoleCollapse = false, g_clearConsoleOnPlay = false;   // (the Console options menu toggles a real bool now)
 void SaveSettings() {}
 void ActivateBoundConsoleSource(const okay::ConsoleSource&) {}
 void OpenScriptFileInEditorAt(const std::string&, int) {}

@@ -350,6 +350,11 @@ bool IsPopupOpen(const char* name, int flags) {
     return false;
 }
 bool BeginPopup(const char* id, int) { return BeginPopup(id); }
+bool MenuItem(const char* label, const char* shortcut, bool* p_selected, bool enabled) {
+    if (!MenuItem(label, shortcut, p_selected ? *p_selected : false, enabled)) return false;
+    if (p_selected) *p_selected = !*p_selected;
+    return true;
+}
 void SetKeyboardFocusHere(int) { SetKeyboardFocusHere(); }
 bool RadioButton(const char* label, bool active) { int v = active ? 1 : 0; return RadioButton(label, &v, 1) && !active; }
 bool ColorButton(const char* id, const ImVec4& c, int flags, Vec2 size) { const float rgba[4] = {c.x, c.y, c.z, c.w}; return ColorButton(id, rgba, flags, size.x > 0.0f ? size.x : 0.0f); }

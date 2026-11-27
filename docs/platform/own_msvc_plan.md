@@ -1161,3 +1161,40 @@ Not done / unverified / differences (Round 33):
 - `map::extract` copies the entry (okay-ms's map is a sorted vector). `unordered_multimap` needs `<` on the key. The double `<cmath>` functions are a few units in the last place, not correctly rounded.
 - The initializer-list viability check reads each item once to learn its type and drops what that reading made; a lambda in such an item is made twice (two closure classes).
 - okay-cc (Linux/ELF) was not worked on this round.
+
+### Round 34: inherited constructors, qualified names, our own `<GL/gl.h>` `<list>` `<winsock2.h>`, and six silent wrong-code bugs (three in register allocation)
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-34`, 2026-11-27. Not run on Windows. Started from Round 33 (d3ee2155e).
+
+**Language rules (each from ISO/IEC 14882):**
+
+- `using Base::Base;` inherits the base's constructors ([namespace.udecl] 3, [class.inhctor.init]): okayscript's `RuntimeError` (16 files). Own simplification: they are made as constructors of the derived class (the C++11 model), keeping the base's default arguments.
+- `decltype(C::m)` of a data member outside a member function ([expr.prim.id] 3); `m{a, b}` and `m{x}` for an aggregate member in a constructor's initializer list ([class.base.init] 7); a `constexpr` local read in a lambda without a capture ([basic.def.odr] 5); `std::vector<E> v{1};` as a default member initializer takes vector(1) when 1 cannot become an E ([over.match.list] 1).
+- Arrays of aggregates whose members have constructors (`struct Blob {...}` with Color and Vec2 members), and a small class returned in a register stored into an aggregate item.
+- A qualified name is looked up from the namespace being read outward ([namespace.qual]): okayofficial's `json::Value` was another namespace's (8 files). `ns::Name(...)` in a template argument keeps its namespace (an enumeration `Result` of another namespace was taken). A using-declaration through a namespace alias (`using og::json::Escape;`).
+- `int ns::f() {...}` at namespace scope defines the namespace's function ([namespace.memdef] 2); `ns::f(...)` from a member function of the same name calls the namespace's ([namespace.qual]).
+- Local classes are their own class in each function ([class.local]): decorated `Name@__l<n>` (no linkage, our own form), found first in their function and its lambdas.
+- The injected-class-name in a member template of a class template ([temp.local] 1); a static member template called with explicit arguments from a lambda; members (also member templates, and the members of the class around a lambda) hide namespace functions of the same name.
+- A braced list is a non-deduced context ([temp.deduct.call] 1). A specialization's own type matches only that type ([temp.class.spec.match] 2). Enumerators through a class's alias (`Builder::K::Float`, 4 files). `Clock::time_point{}`. `new Agg{...}` for an aggregate with class members. An if with an init statement whose condition makes a temporary. `__declspec(dllimport) const T* f()`.
+- `explicit` conversion functions are left out of implicit conversions ([class.conv.fct] 2); a class with `operator int` given for an int parameter converts; `is_convertible` counts conversion functions.
+- The COFF symbol bound is 4 Mi records (it was 100000; `Script/EngineApi.cpp` and the OkayScriptVM files needed more).
+
+**Silent wrong code fixed (each has a check in `tests/test_round34.cpp`; the Round 33 compiler's result in brackets):**
+
+- Register allocation: a variable used in a loop was live only to its last name in the tree, so a variable made in the body took its register and the next pass compared with the wrong value (`Twice({1, 2, 3}, 3)` returned 2, not 12, at /O1 and /O2). A variable named in a loop is now live for the whole loop; a label makes every variable live for the whole function.
+- A `char` or `short` local in a register was spilled with a 32-bit store over the next local (a range `for` over `*s` lost its end pointer: access violation, exit 5).
+- A `char`/`short` local in a register was not cut to its width on assignment (`unsigned char c = 0xFF` read as -1; sum 254 for 256).
+- `numeric_limits<unsigned>::max()` was `numeric_limits<int>`'s 2147483647 (a specialization matched any type of the same base).
+- A class with `operator int` passed for an int parameter passed the object's bytes.
+- A decimal floating literal with more than 19 digits wrapped (0.91893853320467274178 read as about 0.73).
+
+**Our own headers:** `<GL/gl.h>` (OpenGL 1.1 types, enumerants and opengl32.dll functions, from the OpenGL 1.1 specification), `<list>` ([list]; iterator and const_iterator are one type), `<winsock2.h>` and `<ws2tcpip.h>` (from Microsoft's public Winsock documentation), `std::function::target` and `target_type`, `std::quoted`, `rint`/`nearbyint`/`lrint`/`llrint`, `lgamma` (Stirling's series with Bernoulli numbers, recurrence and reflection), range insert of `set`/`unordered_set`, `string::shrink_to_fit` (no-op), `numeric_limits` for char, unsigned char, short, unsigned short and bool, a primary `std::hash` for integers and enumerations, variant's bool alternative from a class with `operator bool`.
+
+Tests: new `tests/test_round34.cpp`, 18 tests (programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine and compared with MinGW g++; one compile-only check of `<GL/gl.h>`; the Winsock test sends a UDP datagram to itself through ws2_32.dll under Wine). See the report of this round for the counts and the survey numbers.
+
+Not done / unverified / differences (Round 34):
+
+- Not run on Windows. No decorated name compared with MSVC; local classes use our own decoration.
+- `signed char` and `char` are one type, and `long` is `int`, to okay-ms (specializations of both collide).
+- Namespace-scope `thread_local` objects with constructors (5 files), a local pointer to an array `T (*p)[N]` (2 files), `<d3d11.h>`, an out-of-class definition of a conversion function, and `std::quoted` reading needs a modifiable string (one form for both directions).
+- The plain survey numbers and the next blockers are in the round's report.

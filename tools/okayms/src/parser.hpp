@@ -3614,6 +3614,7 @@ struct Parser {
     bool parse_pack_element(size_t from, size_t to, size_t k, bool unary, Node* out);
     bool try_fold(Node* out, bool* folded);
     bool parse_new(Node* out);
+    std::string hold_new_pointer(Node made);
     Node malloc_of(const Type& ty) const;
     bool ensure_vector_helpers(int sid);
     bool parse_delete(Node* out);

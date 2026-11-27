@@ -1045,6 +1045,24 @@ Node Parser::malloc_of(const Type& ty) const {
     return alloc;
 }
 
+// The pointer a new-expression made, kept in a hidden local by a statement before this one; its name.
+std::string Parser::hold_new_pointer(Node made) {
+    Local hidden;
+    hidden.name = "__pn" + std::to_string(tmp_count++);
+    hidden.type = made.type;
+    place_local(cur_locals, hidden);
+    Node set_ptr;
+    set_ptr.kind = Node::Assign;
+    set_ptr.op = TAssign;
+    set_ptr.kids.push_back(node_name(hidden.name));
+    set_ptr.kids.push_back(std::move(made));
+    Node set_stmt;
+    set_stmt.kind = Node::ExprStmt;
+    set_stmt.kids.push_back(std::move(set_ptr));
+    stmt_pre.push_back(std::move(set_stmt));
+    return hidden.name;
+}
+
 bool Parser::parse_new(Node* out) {
     next();
     // new (place) T(args) ([expr.new]): construct in storage that is already there; nothing is allocated.
@@ -1233,33 +1251,21 @@ bool Parser::parse_new(Node* out) {
     cast.kids.push_back(has_place ? std::move(place) : malloc_of(ty));
     if (!ctor && !args.empty()) {
         // new (p) int(v): the value is stored in a statement before this one, and the pointer is the result.
-        Local hidden;
-        hidden.name = "__pn" + std::to_string(tmp_count++);
-        hidden.type = cast.type;
-        place_local(cur_locals, hidden);
-        Node set_ptr;
-        set_ptr.kind = Node::Assign;
-        set_ptr.op = TAssign;
-        set_ptr.kids.push_back(node_name(hidden.name));
-        set_ptr.kids.push_back(std::move(cast));
+        const std::string held = hold_new_pointer(std::move(cast));
         Node target;
         target.kind = Node::Unary;
         target.op = TStar;
-        target.kids.push_back(node_name(hidden.name));
+        target.kids.push_back(node_name(held));
         Node store;
         store.kind = Node::Assign;
         store.op = TAssign;
         store.kids.push_back(std::move(target));
         store.kids.push_back(std::move(args[0]));
-        Node set_stmt;
-        set_stmt.kind = Node::ExprStmt;
-        set_stmt.kids.push_back(std::move(set_ptr));
         Node store_stmt;
         store_stmt.kind = Node::ExprStmt;
         store_stmt.kids.push_back(std::move(store));
-        stmt_pre.push_back(std::move(set_stmt));
         stmt_pre.push_back(std::move(store_stmt));
-        *out = node_name(hidden.name);
+        *out = node_name(held);
         return true;
     }
     if (!ctor) {
@@ -1271,21 +1277,9 @@ bool Parser::parse_new(Node* out) {
         // new Agg{a, b, ...} for an aggregate whose members need constructors (Matchmaker.cpp's `new RunArgs{m, g, be,
         // req, poll, wait}` with shared_ptr and string members; [expr.new] 22, [dcl.init.aggr] 4; Round 34, before "no
         // matching constructor in RunArgs"): the storage, then the aggregate's construction there, as for a local.
-        Local hidden;
-        hidden.name = "__pn" + std::to_string(tmp_count++);
-        hidden.type = cast.type;
-        place_local(cur_locals, hidden);
-        Node set_ptr;
-        set_ptr.kind = Node::Assign;
-        set_ptr.op = TAssign;
-        set_ptr.kids.push_back(node_name(hidden.name));
-        set_ptr.kids.push_back(std::move(cast));
-        Node set_stmt;
-        set_stmt.kind = Node::ExprStmt;
-        set_stmt.kids.push_back(std::move(set_ptr));
-        stmt_pre.push_back(std::move(set_stmt));
+        const std::string held = hold_new_pointer(std::move(cast));
         Node make;
-        if (!special_call(ty.struct_id, "<ctor>", node_name(hidden.name), std::move(args), &make)) return false;
+        if (!special_call(ty.struct_id, "<ctor>", node_name(held), std::move(args), &make)) return false;
         if (make.kind != Node::ExprStmt && make.kind != Node::Block) {
             Node st;
             st.kind = Node::ExprStmt;
@@ -1293,7 +1287,7 @@ bool Parser::parse_new(Node* out) {
             make = std::move(st);
         }
         stmt_pre.push_back(std::move(make));
-        *out = node_name(hidden.name);
+        *out = node_name(held);
         return true;
     }
     std::string tctor;

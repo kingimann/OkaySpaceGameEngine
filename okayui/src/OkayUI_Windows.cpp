@@ -755,6 +755,8 @@ void EndChild() {
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_bareNext),
+    OKAYUI_CTX_VAR(g_regions),
+    OKAYUI_CTX_VAR(g_regionTop),
     OKAYUI_CTX_VAR(g_childAutoSlot),
     OKAYUI_CTX_VAR(ui_core::g_curWin),
     OKAYUI_CTX_VAR(ui_core::g_dockAware),

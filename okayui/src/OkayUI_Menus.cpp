@@ -697,6 +697,8 @@ bool BeginPopupContextItem(const char* id) {
 // ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_barReserved),
+    OKAYUI_CTX_VAR(g_barSavedLay),
     OKAYUI_CTX_VAR(g_comboCloseId),
     OKAYUI_CTX_VAR(g_modalNoTitle))
 } // namespace OkayUI

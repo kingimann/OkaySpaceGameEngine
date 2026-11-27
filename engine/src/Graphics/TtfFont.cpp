@@ -43,15 +43,31 @@ bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     std::size_t got = std::fread(data.data(), 1, (std::size_t)sz, f);
     std::fclose(f);
     if (got != (std::size_t)sz) { Log::Error("[ttf] short read ", path); return false; }
-    m_bytes = std::move(data);
-    return Bake(m_bytes.data(), m_bytes.size(), bakeHeightPx, path);
+    return LoadShared(std::make_shared<const std::vector<unsigned char>>(std::move(data)), bakeHeightPx, path);
 }
 
 bool TtfFont::LoadFromMemory(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name) {
     m_valid = false;
     if (!bytes || size < 16) return false;
-    m_bytes.assign(bytes, bytes + size);
-    return Bake(m_bytes.data(), m_bytes.size(), bakeHeightPx, name);
+    return LoadShared(std::make_shared<const std::vector<unsigned char>>(bytes, bytes + size), bakeHeightPx, name);
+}
+
+// The faces ForPixelHeight / ForDeviceSize make share the file bytes of the face they come from instead of each copying
+// them (a 17 MB CJK font drawn at five sizes held 85 MB of copies). The bytes are never written after the load.
+bool TtfFont::LoadShared(std::shared_ptr<const std::vector<unsigned char>> bytes, float bakeHeightPx, const std::string& name) {
+    m_valid = false;
+    m_info.reset();   // (it points into the bytes this replaces)
+    m_bytes = std::move(bytes);
+    if (!m_bytes || m_bytes->size() < 16) return false;
+    return Bake(m_bytes->data(), m_bytes->size(), bakeHeightPx, name);
+}
+
+std::size_t TtfFont::MemoryBytes() const {
+    const std::size_t file = m_bytes ? m_bytes->size() : 0;
+    std::size_t n = file + (std::size_t)m_atlas.Width() * (std::size_t)m_atlas.Height() * 4;
+    for (const auto& kv : m_sized)
+        if (kv.second) n += kv.second->MemoryBytes() - (kv.second->m_bytes == m_bytes ? file : 0);   // shared bytes counted once
+    return n;
 }
 
 bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& path) {
@@ -277,13 +293,13 @@ float TtfFont::Measure(const char* text, float pixelHeight, bool kerning) const 
 }
 
 TtfFont* TtfFont::ForPixelHeight(float pixelHeight) const {
-    if (!m_valid || m_bytes.empty()) return const_cast<TtfFont*>(this);
+    if (!m_valid || !m_bytes || m_bytes->empty()) return const_cast<TtfFont*>(this);
     const int h = UIGlyphBakePixels(pixelHeight);
     if (std::fabs(m_bakeHeight - (float)h) < 0.51f) return const_cast<TtfFont*>(this);
     auto& slot = m_sized[h];
     if (!slot) {
         auto baked = std::make_unique<TtfFont>();
-        if (!baked->LoadFromMemory(m_bytes.data(), m_bytes.size(), (float)h, m_name))
+        if (!baked->LoadShared(m_bytes, (float)h, m_name))
             return const_cast<TtfFont*>(this);
         slot = std::move(baked);
     }
@@ -297,7 +313,7 @@ float TtfCoverageGamma(float deviceHeight) {
 }
 
 TtfFont* TtfFont::ForDeviceSize(float deviceHeight, bool darken) const {
-    if (!m_valid || m_bytes.empty()) return const_cast<TtfFont*>(this);
+    if (!m_valid || !m_bytes || m_bytes->empty()) return const_cast<TtfFont*>(this);
     float h;
     // Quarter-pixel steps up to 16 px, half-pixel steps up to 32 (the size error stays under 1.6%, so a glyph is drawn one to one),
     // then the 6% steps of UIGlyphBakePixels. That keeps the number of baked faces near 130 however the zoom is dragged.
@@ -311,16 +327,31 @@ TtfFont* TtfFont::ForDeviceSize(float deviceHeight, bool darken) const {
     if (!slot) {
         auto baked = std::make_unique<TtfFont>();
         baked->m_coverageGamma = gamma;
-        if (!baked->LoadFromMemory(m_bytes.data(), m_bytes.size(), h, m_name)) return const_cast<TtfFont*>(this);
+        if (!baked->LoadShared(m_bytes, h, m_name)) return const_cast<TtfFont*>(this);
         slot = std::move(baked);
     }
     return slot.get();
 }
 
 // ---- Process-wide cache ------------------------------------------------------
+namespace {
+std::unordered_map<std::string, std::unique_ptr<TtfFont>>& FontCache() {
+    static std::unordered_map<std::string, std::unique_ptr<TtfFont>> cache;
+    return cache;
+}
+std::unique_ptr<TtfFont>& BuiltinSlot() { static std::unique_ptr<TtfFont> font; return font; }
+}
+
+std::size_t FontCacheBytes() {
+    std::size_t n = BuiltinSlot() ? BuiltinSlot()->MemoryBytes() : 0;
+    for (const auto& kv : FontCache())
+        if (kv.second) n += kv.second->MemoryBytes();
+    return n;
+}
+
 TtfFont* GetFont(const std::string& path) {
     if (path.empty()) return nullptr;
-    static std::unordered_map<std::string, std::unique_ptr<TtfFont>> cache;
+    auto& cache = FontCache();
     auto it = cache.find(path);
     if (it != cache.end()) return it->second.get();    // may be a cached failure (nullptr-valued)
     auto font = std::make_unique<TtfFont>();
@@ -334,7 +365,7 @@ TtfFont* GetFont(const std::string& path) {
 }
 
 TtfFont* BuiltinUIFont() {
-    static std::unique_ptr<TtfFont> font;
+    std::unique_ptr<TtfFont>& font = BuiltinSlot();
     static bool tried = false;
     if (!tried) {
         tried = true;

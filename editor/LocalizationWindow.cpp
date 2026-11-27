@@ -24,7 +24,6 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Core/Localization.hpp"
-#include "okay/Graphics/TtfFont.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -1125,18 +1124,6 @@ bool LocalizedSwitch(EditorState& ed, Component* c) {
 // =====================================================================================
 // Fonts and Build Game
 // =====================================================================================
-void MergeLocalizationFonts(float sizePx) {
-    // The UI font has Latin, Greek and Cyrillic: add the first installed font with
-    // CJK characters behind it.
-    for (const std::string& path : SystemFallbackFonts()) {
-        const TtfFont* f = GetFont(path);
-        if (!f || !f->Has(0x65E5)) continue;   // 日
-        ImFontConfig fc;
-        fc.MergeMode = true;
-        if (ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), sizePx, &fc)) return;
-    }
-}
-
 void CopyLocalizationFiles(EditorState& ed, const std::string& dataDir) {
     StringTable t = Localization::Table();
     if (t.Empty()) return;

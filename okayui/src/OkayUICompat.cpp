@@ -455,15 +455,22 @@ void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::
     if (g_nB85 < 8) g_b85[g_nB85++] = B85{array, ttf, size};
 }
 ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return Record(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg, nullptr); }
+// OkayUI never merges one font into another (text a font lacks is drawn by the fallback font, okay::FontForText), so a MergeMode
+// request is only recorded: loading it would read the file, copy it and bake an atlas that nothing draws (the editor's CJK merge and
+// the launcher's emoji merge held 2 copies of a 10 to 20 MB system font each, for nothing).
+static bool Merging(const ImFontConfig* cfg) { return cfg && cfg->MergeMode; }
 ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) {
-    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg, size > 0 ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
+    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg,
+                  size > 0 && !Merging(cfg) ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
 }
 ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) {
     ImFont* made = nullptr;
-    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
+    for (int i = 0; i < g_nB85 && !Merging(cfg); ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
     return Record(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg, made);
 }
-ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, AddFontTtfFile(file, px)); }
+ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) {
+    return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, Merging(cfg) ? nullptr : AddFontTtfFile(file, px));
+}
 void FontAtlasRef::Clear() { g_nFontReqs = 0; g_nFontPool = 0; }
 int FontAtlasRef::FontCount() const { return g_nFontPool + g_nUserFonts; }
 FontAtlasRef* GetFontAtlasRef() { return &g_atlasRef; }

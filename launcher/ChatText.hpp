@@ -41,7 +41,6 @@ void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id);       // emoji `id` c
 void DrawHeart(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
 void EmojiPicker(const char* id, char* buf, std::size_t cap);    // emoji button + picker for any text box
 extern ImFont* g_fontMono;                                       // JetBrains Mono for `code` (loaded in main)
-void MergeEmojiFallback(float size);                             // merge the system emoji font into the font just added
 void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f);   // a message body with markup, emoji and link cards
 float MeasureChatBodyWidth(const std::string& bodyIn, float maxW);
 void IconTile(const std::string& name, float size);              // a coloured tile with the name's initial

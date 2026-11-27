@@ -14,6 +14,7 @@
 #endif
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
+#include "okay/Core/Memory.hpp"       // the memory report (OKAY_MEMORY_REPORT=1 prints it at exit)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
@@ -1118,9 +1119,10 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 extern bool g_showGame;   // (defined with the panel flags below)
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
-// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
+// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp); remembered in okay_settings.txt.
 int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
-bool  g_idleThrottle = false;   // slow to g_idleFps while nothing is clicked, typed or playing
+bool  g_idleThrottle = okay::editor::perf::kIdleThrottleDefault;   // ON: slow to g_idleFps while nothing is clicked, held, typed, playing or previewing
+int   g_keysHeld = 0;           // keys down in the editor window now (a held key keeps the idle throttle awake)
 int   g_idleFps = 30;
 bool  g_perfMode = false;       // cheaper Scene-view rendering (no AO / bloom / FXAA / supersampling, one small shadow cascade)
 bool  g_showPerfOverlay = false; // the frame-time overlay (FPS, ms graph, where the frame went)
@@ -2588,7 +2590,7 @@ void LoadSettings() {
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "editorfpscap") g_fpsCapEditor = v < 0 ? 0 : (v > 1000 ? 1000 : v);
-        else if (k == "idlethrottle") g_idleThrottle = (v != 0);
+        else if (k == "idle_throttle") g_idleThrottle = (v != 0);   // (the old "idlethrottle" line was written for everyone, so it is not read: everyone starts on)
         else if (k == "idlefps") g_idleFps = v < 5 ? 5 : (v > 240 ? 240 : v);
         else if (k == "perfmode") g_perfMode = (v != 0);
         else if (k == "perfoverlay") g_showPerfOverlay = (v != 0);
@@ -2661,7 +2663,7 @@ void SaveSettings() {
       << "aamode "     << g_aaMode << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "editorfpscap " << g_fpsCapEditor << "\n"
-      << "idlethrottle " << (g_idleThrottle ? 1 : 0) << "\n"
+      << "idle_throttle " << (g_idleThrottle ? 1 : 0) << "\n"
       << "idlefps " << g_idleFps << "\n"
       << "perfmode " << (g_perfMode ? 1 : 0) << "\n"
       << "perfoverlay " << (g_showPerfOverlay ? 1 : 0) << "\n"
@@ -50094,7 +50096,6 @@ int main(int argc, char** argv) {
         // simply absent from Roboto, so those are drawn or swapped in the code.)
         if (!okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 18.0f, fc))
             io.Fonts->AddFontDefault();
-        MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 22.0f, fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
@@ -50561,6 +50562,8 @@ int main(int argc, char** argv) {
             using PKey = okay::platform::Key;
             if (e.type == EvT::KeyDown && !e.repeat && e.key == PKey::Escape)
                 g_escapeEdge = true;
+            if (e.type == EvT::KeyDown && !e.repeat) ++g_keysHeld;                       // (the idle throttle's "a key is held")
+            else if (e.type == EvT::KeyUp && g_keysHeld > 0) --g_keysHeld;
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
@@ -52009,9 +52012,23 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
 
-        {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
+        {   // Frame limiter (View > Rendering, off by default) and idle throttle (on by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
-            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
+            if (!winSeam->HasInputFocus()) g_keysHeld = 0;   // a key released in another window sends no KeyUp here
+            okay::editor::perf::IdleWake wake;
+            wake.playing = ed.isPlaying();
+            wake.pointerHeld = ImGui::IsAnyMouseDown();
+            wake.keyHeld = g_keysHeld > 0;
+            wake.preview = TimelinePreviewPlaying() || g_livePrevCh || g_maScenePrev || okay::editor::apreview::ActiveCharacter();
+            wake.debugger = okay::vs::VsDebugger::Get().Active();
+            wake.splash = !StartSplash().finish.Done();
+            // A new Console line (build output, a download, an import, a file reload, a background job reporting) is activity:
+            // full speed for a moment after it.
+            static unsigned long long s_serial = 0; static Uint64 s_activity = okay::platform::PerfCounter();
+            if (ConsoleLineSerial() != s_serial) { s_serial = ConsoleLineSerial(); s_activity = okay::platform::PerfCounter(); }
+            const double sinceActivity = (double)(okay::platform::PerfCounter() - s_activity) / (double)okay::platform::PerfFrequency();
+            const double target = okay::editor::perf::TargetFps(ps, wake, okay::editor::perf::QuietSeconds(g_secSinceInput, sinceActivity),
+                                                                 winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
@@ -52042,6 +52059,10 @@ int main(int argc, char** argv) {
         }
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
+    }
+    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT=1: the memory at the end of the session, before anything is freed
+        okay::AddMemoryCounter("Fonts: TrueType cache (OkayUI and engine text)", [] { return okay::FontCacheBytes(); });
+        std::fputs(okay::MemoryReportText("[memory] editor").c_str(), stdout); std::fflush(stdout);
     }
     DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first

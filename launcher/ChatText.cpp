@@ -199,28 +199,6 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 // tokenizer feeds both drawing and width measurement, so a chat bubble always
 // hugs exactly what gets drawn.
 ImFont* g_fontMono = nullptr;   // JetBrains Mono for `code` (loaded in main)
-// Merge the system's emoji font into the font just added, so emoji typed into
-// text boxes draw as emoji rather than "?" (message bodies use Twemoji images).
-// Dear ImGui's own font rasterizer draws their outlines in one colour. Missing font = no-op.
-void MergeEmojiFallback(float size) {
-    static const char* kPaths[] = {
-#if defined(_WIN32)
-        "C:\\Windows\\Fonts\\seguiemj.ttf",
-#elif defined(__APPLE__)
-        "/System/Library/Fonts/Apple Symbols.ttf",
-#else
-        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-#endif
-    };
-    for (const char* path : kPaths) {
-        std::error_code ec;
-        if (!fs::exists(path, ec)) continue;
-        ImFontConfig fc; fc.MergeMode = true; fc.OversampleH = 1; fc.OversampleV = 1;
-        if (ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &fc)) return;
-    }
-}
 enum { kMdBold = 1, kMdItalic = 2, kMdStrike = 4, kMdCode = 8, kMdSpoiler = 16 };
 struct ChatTok { std::string text; int style = 0; bool glue = false; bool newline = false; };
 struct ChatBlock { int kind = 0; std::string text; std::vector<ChatTok> toks; };   // kind: 0 text, 1 quote, 2 code

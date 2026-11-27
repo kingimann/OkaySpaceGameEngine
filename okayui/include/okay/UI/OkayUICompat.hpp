@@ -438,7 +438,8 @@ PlatformIO& GetPlatformIO();
 /// io.Fonts: Dear ImGui hosts ask the atlas for fonts at start-up. OkayUI loads none here: each Add* call is RECORDED (what, how big, where from) in a
 /// list the host reads with FontRequests(), and returns a stable ImFont* that works with PushFont / PopFont (it is a copy of the default font; the
 /// size asked for is kept in `FontRequest::px`). A host that wants those faces builds them itself (the launcher look's atlas, UseLauncherLook) and
-/// maps the returned pointers. Compressed base-85 TTF data is not decoded.
+/// maps the returned pointers. Compressed base-85 TTF data is not decoded. A MergeMode request (ImFontConfig::MergeMode) is recorded and
+/// loads nothing: OkayUI does not merge fonts (a character the font lacks is drawn by the fallback font), so a merged face would be an unused copy.
 struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, FromFile } kind = Default; float px = 0.0f; const void* data = nullptr; int dataSize = 0; char file[260] = {0}; bool merge = false; ImFont* font = nullptr; };
 /// ---- Real fonts (a multi-font store) ----
 /// Register a TrueType font from bytes (copied) at a pixel size: the returned Font works with SetFont, PushFont / PopFont and DrawList::AddText(font, size, ...),

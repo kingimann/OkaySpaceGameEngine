@@ -54,10 +54,6 @@ bool LocKeyInput(okay::editor::EditorState& ed, const char* label, std::string& 
 // with its current words. Returns the switch's state.
 bool LocalizedSwitch(okay::editor::EditorState& ed, okay::Component* c);
 
-// Font setup: merge an installed font with CJK glyphs into the editor's UI font,
-// so the string table shows every language.
-void MergeLocalizationFonts(float sizePx);
-
 // Build Game: copy the string table and the fonts its languages name into the
 // build's Data folder (keeping their paths relative to the table).
 void CopyLocalizationFiles(okay::editor::EditorState& ed, const std::string& dataDir);

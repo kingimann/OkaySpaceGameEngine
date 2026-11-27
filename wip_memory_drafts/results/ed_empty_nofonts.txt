@@ -1,1 +1,0 @@
-ed_empty_nofonts exit=0 at15s: VmHWM: 328496 VmRSS: 327708 RssAnon: 211244 RssFile: 112464  | at25s: VmHWM: 328496 VmRSS: 327708 RssAnon: 211244 RssFile: 112464  | idle CPU 65.5% of one core

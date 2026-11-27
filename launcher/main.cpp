@@ -41,6 +41,8 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
+#include "okay/Core/Memory.hpp"     // the memory report (OKAY_MEMORY_REPORT=1 prints it at exit)
+#include "okay/Graphics/TtfFont.hpp"  // FontCacheBytes, for the memory report
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -10813,7 +10815,6 @@ static bool ChatHostCreate() {
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!okf::AddToAtlas(ImGui::GetIO().Fonts, okf::RobotoMediumTtf(), 17.0f, fc))
             ImGui::GetIO().Fonts->AddFontDefault();
-        MergeEmojiFallback(17.0f);
         g_chatHost.mono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
     {
@@ -13465,7 +13466,6 @@ int main(int argc, char** argv) {
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!okf::AddToAtlas(ImGui::GetIO().Fonts, okf::RobotoMediumTtf(), 17.0f, fc))
             ImGui::GetIO().Fonts->AddFontDefault();
-        MergeEmojiFallback(17.0f);
         // JetBrains Mono (same as the editor's script editor) for `code` in chat.
         g_fontMono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
@@ -22411,6 +22411,10 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT=1: the memory at the end of the session, before anything is freed
+        okay::AddMemoryCounter("Fonts: TrueType cache (OkayUI and engine text)", [] { return okay::FontCacheBytes(); });
+        std::fputs(okay::MemoryReportText("[memory] launcher").c_str(), stdout); std::fflush(stdout);
+    }
     if (!g_staySignedIn) accountPtr->Logout();   // "Stay signed in" was unticked: the next start asks again
     // Remember the window size for next launch.
     ChatHostSaveGeometry();

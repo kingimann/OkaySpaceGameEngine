@@ -1398,6 +1398,7 @@ void DrawToolbar(EditorState& ed) {
 
 // ---- The window --------------------------------------------------------------------------------
 bool TimelineFocused() { return g_showTimeline && g_focused; }
+bool TimelinePreviewPlaying() { return S().playing; }
 
 void OpenTimelineFile(const std::string& path) { DoOpen(path); }
 

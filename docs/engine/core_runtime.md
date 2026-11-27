@@ -210,6 +210,13 @@ constructor that throws gives the slot back.
 
 `AllocStats` (`used`, `reserved`, `limit`, `highWater`, `live`, `allocations`, `failures`, `resets`) is shared by both.
 
+**Memory report** (`Memory.hpp` / `src/Core/Memory.cpp`, claude/memory-1). `QueryProcessMemory()` reads the process's resident,
+private and peak memory (Linux `/proc/self/status`: VmRSS, RssAnon, VmHWM; Windows `K32GetProcessMemoryInfo`: WorkingSetSize,
+PrivateUsage, PeakWorkingSetSize, looked up at run time). `AddMemoryCounter(name, fn)` registers a named byte counter (the
+fonts register `FontCacheBytes`), and `MemoryReportText(title)` prints both, biggest counter first. With
+`OKAY_MEMORY_REPORT=1` the editor and the launcher print the report to stdout when their main loop ends. Tested in
+`tests/test_arena_handles.cpp` (the status parser, a 64 MB allocation seen, the counters).
+
 ### Handles: SlotMap
 
 ```cpp

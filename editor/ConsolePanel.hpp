@@ -16,6 +16,9 @@ extern int g_consoleCounts[3];   // info, warning, error currently stored in the
 // from an active ConsoleSourceScope.
 void ConsoleLog(const std::string& msg, int level = 0);
 void ConsoleClear();
+// Goes up by one with every ConsoleLog line: the idle throttle reads a change as activity (build output, a download, an import,
+// a file reload, a background job reporting), so the editor runs at full speed for a moment after it (EditorPerf.hpp QuietSeconds).
+unsigned long long ConsoleLineSerial();
 // A second reader of every line (window mode: the OkayUI Console copy). Null (the default) = none. Called after the line is stored.
 void ConsoleSetMirror(void (*fn)(const std::string&, int));
 // The Console window: severity filters with counts, category, search, collapse, details.

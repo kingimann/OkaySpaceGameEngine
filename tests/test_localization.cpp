@@ -666,7 +666,23 @@ int main() {
                             (double)bigSize / 1048576.0, (double)grew / 1048576.0, (double)atlases / 1048576.0);
                 CHECK(grew < atlases + (std::size_t)bigSize * 4 + (std::size_t)(4u << 20));   // was atlases + 29 x the file
             }
+            const std::size_t ownAtlas = (std::size_t)own.Atlas().Width() * (std::size_t)own.Atlas().Height() * 4;
+            CHECK(own.MemoryBytes() == (std::size_t)bigSize + ownAtlas + atlases);   // the file once, every atlas
         }
+        // The same on every machine, with the built-in font's bytes: five sized faces hold the file once.
+        std::vector<unsigned char> builtin;
+        CHECK(EmbeddedUIFontData(builtin) && builtin.size() > 100000);
+        TtfFont emb;
+        CHECK(emb.LoadFromMemory(builtin.data(), builtin.size(), 48.0f, "builtin copy"));
+        std::size_t embAtlases = (std::size_t)emb.Atlas().Width() * (std::size_t)emb.Atlas().Height() * 4;
+        for (float h : {9.0f, 11.5f, 13.25f, 20.0f, 40.0f}) {
+            const TtfFont* f = emb.ForDeviceSize(h, true);
+            CHECK(f != nullptr && f != &emb && f->Valid() && f->Measure("Okay", h) > 0.0f);
+            embAtlases += (std::size_t)f->Atlas().Width() * (std::size_t)f->Atlas().Height() * 4;
+        }
+        CHECK(emb.MemoryBytes() == builtin.size() + embAtlases);   // was builtin.size() x 6 + the atlases
+        const TtfFont* bf = BuiltinUIFont();   // (made first: the cache then counts it)
+        CHECK(bf != nullptr && FontCacheBytes() >= bf->MemoryBytes() && bf->MemoryBytes() >= builtin.size());
     }
 
     // ---- Fonts: a font with the glyphs stands in, and new characters are baked on demand ----

@@ -7520,11 +7520,15 @@ static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
 static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
 static float g_projCell   = 112.0f; // grid tile size (readable thumbnails; the view menu can shrink them)
 static float g_projTreeW  = 200.0f; // folder-tree pane width (drag the splitter)
+// The list view's columns (drag a border in its header): the name column's share of the row and the Type, Size and Date widths.
+static float g_listNameFrac = 0.5f, g_listTypeW = 124.0f, g_listSizeW = 78.0f, g_listDateW = 76.0f;
 static void SaveProjectViewPrefs() {
     std::ostringstream f;
     f << "filter " << g_projFilter << "\nsort " << g_projSort
       << "\nview " << g_projView << "\ncell " << (int)g_projCell
-      << "\ntreew " << (int)g_projTreeW << "\n";
+      << "\ntreew " << (int)g_projTreeW
+      << "\nlistname " << (int)std::lround(g_listNameFrac * 100.0f) << "\nlisttype " << (int)g_listTypeW
+      << "\nlistsize " << (int)g_listSizeW << "\nlistdate " << (int)g_listDateW << "\n";
     okayproj::WriteTextAtomic(EditorFile("okay_projectview.txt"), f.str());
 }
 static void LoadProjectViewPrefs() {
@@ -7542,6 +7546,10 @@ static void LoadProjectViewPrefs() {
             else if (k == "view")   g_projView   = v != 0 ? 1 : 0;
             else if (k == "cell")   g_projCell   = v < 48 ? 48.0f : (v > 128 ? 128.0f : (float)v);
             else if (k == "treew")  g_projTreeW  = v < 120 ? 120.0f : (v > 480 ? 480.0f : (float)v);
+            else if (k == "listname") g_listNameFrac = (float)std::clamp(v, 20, 85) / 100.0f;   // the same limits as the drag
+            else if (k == "listtype") g_listTypeW = (float)std::clamp(v, 50, 400);
+            else if (k == "listsize") g_listSizeW = (float)std::clamp(v, 40, 300);
+            else if (k == "listdate") g_listDateW = (float)std::clamp(v, 40, 300);
         }
     }
 }
@@ -9127,6 +9135,73 @@ void DrawProject(EditorState& ed) {
     // the folder has more assets than fit.
     const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
                                             : 168.0f;   // (room for the database line: GUID, uses, used by, tags)
+    // List-view column geometry, shared by the header row and each entry row so they line up. The header is drawn above the scrolling
+    // list (it stays in view while the rows scroll under it), so the geometry comes from the width the list will have with its scrollbar.
+    // The Type, Size and Date columns sit right after the name column, which is about half the row; each border in the header is dragged to
+    // resize, and the widths are kept with the view preferences (okay_projectview.txt).
+    float& s_listTypeW = g_listTypeW; float& s_listSizeW = g_listSizeW; float& s_listNameFrac = g_listNameFrac; const float s_listDateW = g_listDateW;
+    const float listW = std::max(1.0f, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
+    // In a narrow panel the three columns shrink together so Date still fits beside a name column of at least 120 pixels.
+    const float colsWant = s_listTypeW + s_listSizeW + s_listDateW, colsRoom = std::max(60.0f, listW - 120.0f);
+    const float colK = colsWant > colsRoom ? colsRoom / colsWant : 1.0f;
+    const float kTypeCol = s_listTypeW * colK, kSizeCol = s_listSizeW * colK, kDateCol = s_listDateW * colK;
+    const float nameW = std::clamp(listW * s_listNameFrac, 120.0f, std::max(120.0f, listW - kTypeCol - kSizeCol - kDateCol));
+    const float typeOff = nameW;                      // x from a row's left edge
+    const float sizeOff = typeOff + kTypeCol;
+    const float dateOff = sizeOff + kSizeCol;
+    // Column headers for the list view: click Name / Type / Size / Date to sort by it (the sorted column is in the text colour with a
+    // small arrow); drag the line between two headers to resize.
+    if (vw == 1) {
+        const ImVec2 h0 = ImGui::GetCursorScreenPos();
+        const float hh = ImGui::GetTextLineHeight() + 8.0f;
+        ImDrawList* hdl = ImGui::GetWindowDrawList();
+        const okaypb::ctx::Item sortItems = okaypb::ctx::SortMenu(okaypb::ctx::State{});   // the column names are the Sort menu's (one list)
+        std::string names[4];
+        for (int c = 0; c < 4 && c < (int)sortItems.children.size(); ++c) names[c] = sortItems.children[(size_t)c].label;
+        if (names[3].rfind("Date", 0) == 0) names[3] = "Date";   // "Date Modified" is too wide for its column
+        const float offs[5] = {0.0f, typeOff, sizeOff, dateOff, dateOff + kDateCol};
+        for (int c = 0; c < 4; ++c) {
+            ImGui::SetCursorScreenPos(ImVec2(h0.x + offs[c], h0.y));
+            ImGui::PushID(c);
+            if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(8.0f, offs[c + 1] - offs[c] - 6.0f), hh))) { s_sort = c; SaveProjectViewPrefs(); }
+            const bool hv = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const bool on = s_sort == c;
+            const ImU32 tc = ImGui::GetColorU32(on || hv ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            const float tx = h0.x + offs[c] + (c == 0 ? 5.0f : 0.0f), ty = h0.y + (hh - ImGui::GetTextLineHeight()) * 0.5f;
+            if (hv) hdl->AddRectFilled(ImVec2(h0.x + offs[c], h0.y), ImVec2(h0.x + offs[c + 1] - 6.0f, h0.y + hh), ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+            hdl->AddText(ImVec2(tx, ty), tc, names[c].c_str());
+            if (on) {   // a small chevron after the sorted column's name: up for A to Z (Name, Type), down for biggest / newest first
+                const float ax = tx + ImGui::CalcTextSize(names[c].c_str()).x + 9.0f, ay = h0.y + hh * 0.5f, a = 3.5f, k = (c >= 2) ? 1.0f : -1.0f;
+                hdl->AddLine(ImVec2(ax - a, ay - k * a * 0.5f), ImVec2(ax, ay + k * a * 0.5f), tc, 1.6f);
+                hdl->AddLine(ImVec2(ax, ay + k * a * 0.5f), ImVec2(ax + a, ay - k * a * 0.5f), tc, 1.6f);
+            }
+        }
+        for (int b = 1; b < 4; ++b) {   // the borders: drag to resize the column on their left
+            const float bx = h0.x + offs[b] - 4.0f;
+            ImGui::SetCursorScreenPos(ImVec2(bx - 3.0f, h0.y));
+            ImGui::PushID(100 + b);
+            ImGui::InvisibleButton("##colsz", ImVec2(6.0f, hh));
+            const bool act = ImGui::IsItemActive(), hv = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (hv || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            hdl->AddLine(ImVec2(bx, h0.y + 5.0f), ImVec2(bx, h0.y + hh - 5.0f), ImGui::GetColorU32(hv || act ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator), hv || act ? 2.0f : 1.0f);
+            if (ImGui::IsItemDeactivated()) SaveProjectViewPrefs();   // the widths are kept once the drag ends
+            if (act) {
+                const float dx = ImGui::GetIO().MouseDelta.x;
+                if (b == 1) {   // (a name column held at its widest by a narrow panel: a drag to the right must not shrink the saved share)
+                    const float want = (nameW + dx) / listW;
+                    if (!(dx > 0.0f && want < s_listNameFrac)) s_listNameFrac = std::clamp(want, 0.2f, 0.85f);
+                }
+                else if (b == 2) s_listTypeW = std::clamp(s_listTypeW + dx, 50.0f, 400.0f);
+                else s_listSizeW = std::clamp(s_listSizeW + dx, 40.0f, 300.0f);
+            }
+        }
+        ImGui::SetCursorScreenPos(ImVec2(h0.x, h0.y + hh));
+        ImGui::Dummy(ImVec2(0, 0));
+        ImGui::Separator();
+    }
+
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false, ImGuiWindowFlags_NoNavInputs);
     const float gridAvailH = ImGui::GetContentRegionAvail().y;   // for fitting the tiles (below)
 
@@ -9232,69 +9307,6 @@ void DrawProject(EditorState& ed) {
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
     if (cols < 1) cols = 1;
-    // List-view column geometry (Type + Size + Date right-aligned), shared by the
-    // header row and each entry row so they line up.
-    // The Type, Size and Date columns sit right after the name column, which is about half the row (it was everything but the three
-    // narrow columns, so Type started far to the right); each border in the header is dragged to resize (kept for the session).
-    static float s_listTypeW = 124.0f, s_listSizeW = 78.0f, s_listDateW = 76.0f, s_listNameFrac = 0.5f;
-    // In a narrow panel the three columns shrink together so Date still fits beside a name column of at least 120 pixels.
-    const float colsWant = s_listTypeW + s_listSizeW + s_listDateW, colsRoom = std::max(60.0f, availW - 120.0f);
-    const float colK = colsWant > colsRoom ? colsRoom / colsWant : 1.0f;
-    const float kTypeCol = s_listTypeW * colK, kSizeCol = s_listSizeW * colK, kDateCol = s_listDateW * colK;
-    const float nameW = std::clamp(availW * s_listNameFrac, 120.0f, std::max(120.0f, availW - kTypeCol - kSizeCol - kDateCol));
-    const float typeOff = nameW;                      // x from a row's left edge
-    const float sizeOff = typeOff + kTypeCol;
-    const float dateOff = sizeOff + kSizeCol;
-
-    // Column headers for the list view: click Name / Type / Size / Date to sort by it (the sorted column is in the text colour with a
-    // small arrow); drag the line between two headers to resize.
-    if (vw == 1) {
-        const ImVec2 h0 = ImGui::GetCursorScreenPos();
-        const float hh = ImGui::GetTextLineHeight() + 8.0f;
-        ImDrawList* hdl = ImGui::GetWindowDrawList();
-        const okaypb::ctx::Item sortItems = okaypb::ctx::SortMenu(okaypb::ctx::State{});   // the column names are the Sort menu's (one list)
-        std::string names[4];
-        for (int c = 0; c < 4 && c < (int)sortItems.children.size(); ++c) names[c] = sortItems.children[(size_t)c].label;
-        if (names[3].rfind("Date", 0) == 0) names[3] = "Date";   // "Date Modified" is too wide for its column
-        const float offs[5] = {0.0f, typeOff, sizeOff, dateOff, dateOff + kDateCol};
-        for (int c = 0; c < 4; ++c) {
-            ImGui::SetCursorScreenPos(ImVec2(h0.x + offs[c], h0.y));
-            ImGui::PushID(c);
-            if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(8.0f, offs[c + 1] - offs[c] - 6.0f), hh))) { s_sort = c; SaveProjectViewPrefs(); }
-            const bool hv = ImGui::IsItemHovered();
-            ImGui::PopID();
-            const bool on = s_sort == c;
-            const ImU32 tc = ImGui::GetColorU32(on || hv ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-            const float tx = h0.x + offs[c] + (c == 0 ? 5.0f : 0.0f), ty = h0.y + (hh - ImGui::GetTextLineHeight()) * 0.5f;
-            if (hv) hdl->AddRectFilled(ImVec2(h0.x + offs[c], h0.y), ImVec2(h0.x + offs[c + 1] - 6.0f, h0.y + hh), ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
-            hdl->AddText(ImVec2(tx, ty), tc, names[c].c_str());
-            if (on) {   // a small chevron after the sorted column's name: up for A to Z (Name, Type), down for biggest / newest first
-                const float ax = tx + ImGui::CalcTextSize(names[c].c_str()).x + 9.0f, ay = h0.y + hh * 0.5f, a = 3.5f, k = (c >= 2) ? 1.0f : -1.0f;
-                hdl->AddLine(ImVec2(ax - a, ay - k * a * 0.5f), ImVec2(ax, ay + k * a * 0.5f), tc, 1.6f);
-                hdl->AddLine(ImVec2(ax, ay + k * a * 0.5f), ImVec2(ax + a, ay - k * a * 0.5f), tc, 1.6f);
-            }
-        }
-        for (int b = 1; b < 4; ++b) {   // the borders: drag to resize the column on their left
-            const float bx = h0.x + offs[b] - 4.0f;
-            ImGui::SetCursorScreenPos(ImVec2(bx - 3.0f, h0.y));
-            ImGui::PushID(100 + b);
-            ImGui::InvisibleButton("##colsz", ImVec2(6.0f, hh));
-            const bool act = ImGui::IsItemActive(), hv = ImGui::IsItemHovered();
-            ImGui::PopID();
-            if (hv || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            hdl->AddLine(ImVec2(bx, h0.y + 5.0f), ImVec2(bx, h0.y + hh - 5.0f), ImGui::GetColorU32(hv || act ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator), hv || act ? 2.0f : 1.0f);
-            if (act) {
-                const float dx = ImGui::GetIO().MouseDelta.x;
-                if (b == 1) s_listNameFrac = std::clamp((nameW + dx) / std::max(1.0f, availW), 0.2f, 0.85f);
-                else if (b == 2) s_listTypeW = std::clamp(s_listTypeW + dx, 50.0f, 400.0f);
-                else s_listSizeW = std::clamp(s_listSizeW + dx, 40.0f, 300.0f);
-            }
-        }
-        ImGui::SetCursorScreenPos(ImVec2(h0.x, h0.y + hh));
-        ImGui::Dummy(ImVec2(0, 0));
-        ImGui::Separator();
-    }
-
     // Selection with modifier keys: Ctrl-click toggles an item in the multi-select
     // set (keeping the others), Shift-click selects the whole visible range from
     // the active item, a plain click selects just that one. `selected` is always

@@ -617,5 +617,77 @@ int main() {
         CHECK(after.y == cpos.y + winH - 40.0f);
         UI::UseImGuiCoordinates(false);
     }
+    {   // CalcTextSize with a wrap width (Dear ImGui's measure): words wrap, a word wider than the line breaks inside it, '\n' breaks
+        Reset(); Sim s(400, 300);
+        s.Frame([] {});
+        const float lh = UI::GetTextLineHeight();
+        const UI::Vec2 one = UI::CalcTextSize("short", nullptr, false, 300.0f);
+        CHECK(one.y == lh && one.x > 0.0f && one.x <= 300.0f);
+        std::string words; while (words.size() < 200) words += "wrapped words ";
+        const UI::Vec2 w = UI::CalcTextSize(words.c_str(), nullptr, false, 150.0f);
+        CHECK(w.y >= 3.0f * lh && w.x <= 150.0f);
+        const std::string xs(200, 'x');
+        const UI::Vec2 x = UI::CalcTextSize(xs.c_str(), nullptr, false, 150.0f);   // one long word: broken inside, never wider than the line
+        CHECK(x.y >= 3.0f * lh && x.x <= 150.0f && x.x > 100.0f);
+        CHECK(UI::CalcTextSize("a\nb\nc").y == 3.0f * lh);
+        CHECK(UI::CalcTextSize(xs.c_str()).y == lh);                        // no wrap width: one line
+    }
+    {   // InputTextMultiline with EnterReturnsTrue + CtrlEnterForNewLine (the launcher's chat composer): typing is no "send", Enter is and
+        // breaks no line, Ctrl+Enter breaks the line
+        Reset(); Sim s(400, 200);
+        char buf[128] = "";
+        int sends = 0;
+        UI::Rect box{};
+        auto ui = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 200}); UI::Begin("c", nullptr, UI::Window_NoTitleBar);
+            if (UI::InputTextMultiline("##msg", buf, 128, UI::Vec2{300, 60}, UI::InputText_EnterReturnsTrue | UI::InputText_CtrlEnterForNewLine)) ++sends;
+            box = UI::GetItemRect();
+            UI::End();
+        };
+        s.Frames(2, ui);
+        s.Click(box.x + 20, box.y + 20, ui);                                // the box takes the keyboard
+        s.Frames(2, ui);
+        s.text = "hello"; s.Frame(ui); s.Frame(ui);
+        CHECK(std::strcmp(buf, "hello") == 0 && sends == 0);
+        s.ctrl = true; s.edge[Key_Enter] = true; s.Frame(ui); s.ctrl = false; s.Frame(ui);
+        CHECK(std::strchr(buf, '\n') != nullptr && sends == 0);          // Ctrl+Enter: a new line
+        s.edge[Key_Enter] = true; s.Frame(ui); s.Frame(ui);
+        CHECK(sends == 1 && std::strcmp(buf, "hello\n") == 0);           // Enter: sent, no extra line
+        bool focusNext = true;                                              // SetKeyboardFocusHere before the box gives it the keyboard
+        auto ui2 = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 200}); UI::Begin("c", nullptr, UI::Window_NoTitleBar);
+            UI::InputText("##other", buf, 8);
+            if (focusNext) { UI::SetKeyboardFocusHere(); focusNext = false; }
+            UI::InputTextMultiline("##msg2", buf, 128, UI::Vec2{300, 60});
+            UI::End();
+        };
+        buf[0] = 0; s.Frames(3, ui2);
+        s.text = "x"; s.Frame(ui2); s.Frame(ui2);
+        CHECK(std::strcmp(buf, "x") == 0);
+    }
+    {   // a framed text field starts its text (and its hint) at a pushed FramePadding.x, as Dear ImGui's does (the launcher's search pill
+        // draws its magnifier in that room)
+        Reset(); Sim s(400, 120);
+        char buf[32] = "";
+        auto hintX = [&](float padX) {
+            s.Frame([&] {
+                UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 120}); UI::Begin("f", nullptr, UI::Window_NoTitleBar);
+                UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+                if (padX >= 0.0f) UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{padX, 6.0f});
+                UI::SetNextItemWidth(300.0f);
+                UI::InputTextWithHint("##s", "Search", buf, 32);
+                if (padX >= 0.0f) UI::PopStyleVar();
+                UI::PopStyleVar();
+                UI::End();
+            });
+            const Bitmap b = s.Draw(0, 0, 0);
+            int first = -1;   // the leftmost column with hint-coloured text pixels in the field's row band
+            for (int x = 0; x < 400 && first < 0; ++x)
+                for (int y = 10; y < 60 && first < 0; ++y) { const unsigned p = PixelAt(b, x, y); if (((p >> 24) & 255) > 90 && ((p >> 16) & 255) > 90) first = x; }
+            return first;
+        };
+        const int plain = hintX(-1.0f), padded = hintX(30.0f);
+        CHECK(plain > 0 && padded > plain + 10);
+    }
     TEST_MAIN_RESULT();
 }

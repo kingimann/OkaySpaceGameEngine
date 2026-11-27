@@ -1,11 +1,11 @@
-// The launcher's Command line page. See CommandLineUI.hpp. Our own code on Dear ImGui's public API (and imgui_internal's
-// key ownership, so Tab and the arrows reach the shell instead of moving the focus). The rules (words, completion,
+// The launcher's Command line page. See CommandLineUI.hpp. Our own code on OkayUI, in Dear ImGui's names (and its key
+// ownership, so Tab and the arrows reach the shell instead of moving the focus). The rules (words, completion,
 // history, running okay, the shells, the layout) are CommandLine.cpp; the terminal emulator is Terminal.cpp.
 #include "CommandLineUI.hpp"
 
 #include "CommandLine.hpp"
 #include "NavIcons.hpp"      // the launcher's shared controls: BeginSlateCombo, FitButtonW, PageFooterH, UiPx
-#include "imgui_internal.h"   // SetScrollY on the output box's own window, SetKeyOwner
+#include "okay/UI/OkayUIInternals.hpp"   // SetKeyOwner
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -155,18 +155,7 @@ void DrawOkayTab(Tab& t, const Host& host, const PageLayout& L, ImVec2 origin) {
     const std::string& text = s.Lines().empty() ? s_empty : s.Text();
     ImGui::InputTextMultiline("##cliout", const_cast<char*>(text.c_str()), text.size() + 1, ImVec2(L.output.w, L.output.h),
                               ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoUndoRedo | ImGuiInputTextFlags_WordWrap);
-#ifdef OKAY_ON_OKAYUI
     if (t.follow > 0) { OkayUI::ScrollTextBoxToEnd("##cliout"); --t.follow; }   // the box keeps its own scroll: to its last line
-#else
-    {   // The box is a child window, the newest child of this page: scroll it to its end (imgui_internal SetScrollY).
-        ImGuiWindow* page = ImGui::GetCurrentWindow();
-        if (t.follow > 0 && !page->DC.ChildWindows.empty()) {
-            ImGuiWindow* box = page->DC.ChildWindows.back();
-            ImGui::SetScrollY(box, box->ScrollMax.y + 1000.0f);   // clamped to the end
-            --t.follow;
-        }
-    }
-#endif
     ImGui::PopStyleColor();
 
     Place(L.input, origin);

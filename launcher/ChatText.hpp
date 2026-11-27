@@ -2,7 +2,7 @@
 // Emoji, chat text formatting and link previews (ChatText.cpp): the emoji tokens and their drawings, the Discord-style
 // markup tokenizer that draws and measures a chat body, and the link-preview cards. Moved out of launcher/main.cpp
 // unchanged (docs/engine/modularization_plan.md, Part C section 5, batch L1).
-#include "imgui.h"
+#include "okay/UI/OkayUIImGuiNames.hpp"   // OkayUI, in Dear ImGui's names
 #include <cstddef>
 #include <string>
 

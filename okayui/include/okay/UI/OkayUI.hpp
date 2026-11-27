@@ -536,7 +536,8 @@ bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
 /// highlighting or auto-indent (okayui/src/OkayUIText.cpp). `size.x` <= 0 fills the width left (less the label), `size.y` <= 0 is five rows.
 /// Enter breaks the line, Tab inserts a tab, the mouse and keys select, copy, cut, paste, undo (Ctrl+Z) and scroll. Returns true on any
 /// frame the text changed. An edit that would not fit in `cap` is cut at a whole character and the editor's undo history restarts.
-/// Flags: InputText_ReadOnly, InputText_WordWrap. Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
+/// Flags: InputText_ReadOnly, InputText_WordWrap, InputText_EnterReturnsTrue (true on Enter, or on Ctrl+Enter unless
+/// InputText_CtrlEnterForNewLine; that key does not break the line). Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
 /// rewritten only when the user edits). The state of up to 16 boxes is kept (by label); the least recently drawn is forgotten.
 bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{}, unsigned flags = 0);
 /// Scroll the multi-line box of this label (drawn this frame or the last, in the same ID scope as its InputTextMultiline call) to its

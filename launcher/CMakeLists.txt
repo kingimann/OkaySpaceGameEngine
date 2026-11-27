@@ -1,12 +1,14 @@
-# OkaySpace Launcher — a Dear ImGui + SDL2 front end (Create / Play / Marketplace).
-# Needs SDL2 dev libraries; fetches Dear ImGui at configure time. Built when
-# -DOKAY_BUILD_LAUNCHER=ON.
-include(FetchContent)
-
+# OkaySpace Launcher (Create / Play / Marketplace / chat ...), drawn by OkayUI, our own UI toolkit (okayui/): the pages are written in
+# Dear ImGui's names and compiled against OkayUI's compatibility layer (okayui/probe first on the include path: "imgui.h" and
+# "ImGuiPainterRenderer.hpp" are OkayUI's). No Dear ImGui is in it. Needs SDL2 dev libraries (the window on Windows). Built when
+# -DOKAY_BUILD_LAUNCHER=ON. docs/ui/own_ui_toolkit.md section 31.
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
     return()
+endif()
+if(NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
+    message(FATAL_ERROR "okayspace-launcher is drawn by OkayUI: okay_ui, okay_ui_screens and okay_ui_soft (okayui/CMakeLists.txt) must be in the build")
 endif()
 
 if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
@@ -15,33 +17,6 @@ elseif(TARGET SDL2::SDL2)
     set(OKAY_LAUNCHER_SDL SDL2::SDL2)
 else()
     set(OKAY_LAUNCHER_SDL ${SDL2_LIBRARIES})
-endif()
-
-# Reuse the same pinned Dear ImGui (docking) commit as the editor. FetchContent
-# is idempotent, so if the editor already fetched it this is a no-op download.
-set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
-    CACHE STRING "Dear ImGui git commit/branch to fetch")
-FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        ${OKAY_IMGUI_TAG})
-FetchContent_MakeAvailable(imgui)
-
-# A launcher-local ImGui lib (distinct target name from the editor's okay_imgui
-# so both can build in one configure).
-if(NOT TARGET launcher_imgui)
-    add_library(launcher_imgui STATIC
-        ${imgui_SOURCE_DIR}/imgui.cpp
-        ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
-    target_include_directories(launcher_imgui SYSTEM PUBLIC
-        ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-    target_link_libraries(launcher_imgui PUBLIC ${OKAY_LAUNCHER_SDL})
-    target_compile_options(launcher_imgui PRIVATE -w)
-    # 32-bit ImWchar: emoji (U+1F000+) survive in text inputs instead of "??".
-    target_compile_definitions(launcher_imgui PUBLIC IMGUI_USE_WCHAR32)
 endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
@@ -91,34 +66,25 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # screen draws through (okay::platform::WrapSdl2Renderer, whose font and image upload
 # need the engine's TrueType and image code). It is a static library, so the linker takes
 # only the objects the launcher actually uses.
+target_include_directories(okayspace-launcher BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's
+# shared/ for the launcher's AppIcon, and the engine's public headers for the (header-only) account service it shares with the engine.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/tools/okay-cli
-    ${CMAKE_SOURCE_DIR}/engine/include)
-target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
-# The opt-in OkayUI backend (Settings > Appearance > UI backend): the What's New page has an OkayUI port. Dear ImGui stays the
-# default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
-if(TARGET okay_ui_screens)
-    target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
-    if(TARGET okay_ui_soft)   # the software painter: the launcher's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
-        target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
-    endif()
-    if(TARGET okay_ui_render)   # OkayUI's own OpenGL renderer for the hosted screens (OKAY_UI_OWN_RENDER=1, off by default; shared/OkayUIFrame.hpp)
-        target_link_libraries(okayspace-launcher PRIVATE okay_ui_render)
-    endif()
-    target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
-    # the Browser page (sidebar > Browser): the same browser as the browser program (tabs, menus, find, downloads, games)
-    target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)
-endif()
-if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
-    target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
-endif()
+    ${CMAKE_SOURCE_DIR}/engine/include
+    ${CMAKE_SOURCE_DIR}/okayui/include
+    ${CMAKE_SOURCE_DIR}/okayui/screens)
+# OKAY_ON_OKAYUI: the shared helpers (shared/ImGuiPlatformFeed.hpp, ...) take their OkayUI path.
+target_compile_definitions(okayspace-launcher PRIVATE OKAY_ON_OKAYUI=1)
+# OkayUI (the toolkit, its screens such as What's New and Tips, the software painter's frame drawer) and the Browser page (the same
+# browser as the browser program: shared/BrowserApp.cpp over okay_browser).
+target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)
+target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens okay_ui okay_ui_soft okay_browser)
 # okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
-target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
+target_link_libraries(okayspace-launcher PRIVATE ${OKAY_LAUNCHER_SDL} okay::platform)
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()
-target_link_libraries(okayspace-launcher PRIVATE okay_browser)   # the Browser page (BrowserPage.cpp)
 # shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto (our own Ed25519 and SHA-512; libsodium is used for
 # Ed25519 instead where the build has it). Link the crypto library by itself so the launcher does not depend on the
 # engine for it. (okay_crypto is always defined: engine/ is always added.)
@@ -143,37 +109,4 @@ endif()
 
 if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
-endif()
-
-# ---- The launcher on OkayUI (OKAY_LAUNCHER_ON_OKAYUI, off by default) ----------------------------------------------------------------------------
-# The SAME sources, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's) instead of
-# Dear ImGui. The input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path); the backend entry points are shared/OkayUIImGuiBackendShim.cpp.
-# Output: bin/OkaySpaceOkayUI(.exe) next to OkaySpace(.exe). docs/ui/own_ui_toolkit.md "Running the real launcher and editor on OkayUI".
-if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
-    set(_ok_src "")
-    foreach(_f ${OKAY_LAUNCHER_SOURCES})
-        list(APPEND _ok_src ${_f})
-    endforeach()
-    add_executable(okayspace-launcher-okayui ${_ok_src} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp
-                   ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)   # the Browser page, drawn straight into the launcher's OkayUI frame
-    okay_win_version(okayspace-launcher-okayui "OkaySpace Launcher (OkayUI)" "OkaySpaceOkayUI.exe")
-    target_compile_definitions(okayspace-launcher-okayui PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
-    target_compile_features(okayspace-launcher-okayui PRIVATE cxx_std_17)
-    target_include_directories(okayspace-launcher-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
-    target_include_directories(okayspace-launcher-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/tools/okay-cli ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens)
-    target_link_libraries(okayspace-launcher-okayui PRIVATE okay_ui_screens okay_ui ${OKAY_LAUNCHER_SDL} okay::platform okay_crypto okay_browser)
-    if(TARGET okay_ui_soft)
-        target_link_libraries(okayspace-launcher-okayui PRIVATE okay_ui_soft)
-    endif()
-    if(TARGET okay_engine)
-        target_link_libraries(okayspace-launcher-okayui PRIVATE okay_engine)
-    endif()
-    if(WIN32)
-        target_link_libraries(okayspace-launcher-okayui PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)
-        set_target_properties(okayspace-launcher-okayui PROPERTIES WIN32_EXECUTABLE TRUE)
-    endif()
-    set_target_properties(okayspace-launcher-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkaySpaceOkayUI")
-    if(OKAY_ENABLE_TEST_HOOKS)
-        target_compile_definitions(okayspace-launcher-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
-    endif()
 endif()

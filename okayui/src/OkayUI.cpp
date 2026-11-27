@@ -1228,7 +1228,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     ts->first = snapToChar(buf, len, ts->first);
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
-    const float pad = g_look ? 9.0f : 6.0f;
+    const float pad = g_framedWidgets && g_framePadX >= 0.0f ? g_framePadX : (g_look ? 9.0f : 6.0f);   // Dear ImGui's form: a pushed FramePadding.x is where the text starts
     const float padL = g_fieldPadL >= 0.0f ? g_fieldPadL : pad, padR = g_fieldPadR >= 0.0f ? g_fieldPadR : pad;   // SearchField makes room for its icons
     const float tx = x + padL;
     const bool inside = hit(x, y, w, h);
@@ -1963,6 +1963,22 @@ void imguiWrap(const char* text, float maxW, float scale, const std::function<fl
             piece[k] = 0;
             const float add = fMeasureWhole(piece, scale);
             if (fitEnd && w + add > maxW) break;
+            if (!fitEnd && add > maxW && k > 1) {   // one word wider than the line: broken inside it, as many whole characters as fit (at least one)
+                const char* c = r;
+                while (*c == ' ') ++c;
+                const char* cut = nullptr;
+                while (c < we) {
+                    const char* n = c + 1;
+                    while (n < we && ((unsigned char)*n & 0xC0) == 0x80) ++n;   // a whole UTF-8 character
+                    char part[512]; int pk = 0;
+                    for (const char* x = r; x < n && pk < 500; ++x) part[pk++] = *x;
+                    part[pk] = 0;
+                    if (cut && fMeasureWhole(part, scale) > maxW) break;
+                    cut = n; c = n;
+                }
+                fitEnd = cut ? cut : we; r = fitEnd;
+                break;
+            }
             w += add; fitEnd = we; r = we;
         }
         const char* end = fitEnd ? fitEnd : r;
@@ -3468,6 +3484,7 @@ const DrawListHandle& GetForegroundDrawList() { return g_foregroundList; }
 // ---- Measurement and cursor -------------------------------------------------------------------
 Vec2 CalcTextSize(const char* text) {
     if (!text || !*text) return Vec2{ 0.0f, textH() };
+    if (std::strchr(text, '\n')) return wrappedTextSize(text, 0.0f, g_theme.textScale);   // several lines (Dear ImGui's measure)
     return Vec2{ labelW(text), textH() };
 }
 float GetTextLineHeight() { return textH(); }

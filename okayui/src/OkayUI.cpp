@@ -3678,7 +3678,7 @@ bool BeginPopupContextWindow(const char* id) {
     // A right click on the window's own background (over the window, not over any item or a window above) opens it at the pointer.
     if (g_lay.active && g_curWin.valid && g_rPressed && g_hot == 0 && g_active == 0 && IsWindowHovered()) {
         PopupSlot* p = popupSlot(pid, true);
-        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; std::snprintf(p->name, sizeof p->name, "%s", id ? id : ""); }
     }
     return beginPopupBody(pid);
 }

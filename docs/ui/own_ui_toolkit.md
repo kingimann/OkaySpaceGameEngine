@@ -3478,11 +3478,51 @@ Dear ImGui editor's run of the same script; none are in the repository.
 | 14 | `ImGui::GetStyle()` writes were lost (the editor's theme metrics and colours, the play tint) | run, look | the launcher branch's `ApplyStyleWrites` (merged in; one implementation) | `okayui_calls` | closed (launcher branch) |
 | 14b | the panel icons covered the tab names: the editor widens the tabs' text inset for the length of `DockSpace` only | look | the editor on OkayUI pushes `FramePadding` there (`TabPaddingScope`); OkayUI's dock tabs take a pushed `FramePadding.x` as their text inset | `okayui_dockaware` | closed |
 | 15 | rows and buttons were taller than in Dear ImGui (the Create button 26 pixels lower) | look | the editor on OkayUI turns on `UseImGuiCoordinates` and pushes `StyleVar_FramedWidgets` and `StyleVar_TextRowHeight -1` each frame, as the launcher does (now 11 pixels off) | the pictures | mostly closed |
-| 15b | the Hierarchy's rows are still taller than Dear ImGui's and the type icons overlap the names (the row leaves room with leading spaces and draws the icon at the arrow's width) | look | | | open |
-| 15c | Edit > Appearance: the design picker is a sub-menu of free widgets; OkayUI's bar menus hold only menu rows, so its widgets draw at the window's edge | run | | | open (a menu that is a popup window of any widgets) |
-| 16 | the Inspector's Color field shows sliders where Dear ImGui shows 0..255 cells | run, look | | | open |
+| 15b | the Hierarchy's rows are still taller than Dear ImGui's and the type icons overlap the names (the row leaves room with leading spaces and draws the icon at the arrow's width) | look | Dear ImGui's tree rows in its look: an unframed node one text line tall, the label `GetTreeNodeToLabelSpacing()` (font size and twice FramePadding.x) in, the style's IndentSpacing | `okayui_widgets` | closed (round 2) |
+| 15c | Edit > Appearance: the design picker is a sub-menu of free widgets; OkayUI's bar menus hold only menu rows, so its widgets draw at the window's edge | run | a menu's list is a popup window of any widgets (its body is a popup layout; rows and widgets share it; it grows to fit) | `okayui_windows` | closed (round 2) |
+| 16 | the Inspector's Color field shows sliders where Dear ImGui shows 0..255 cells | run, look | Dear ImGui's ColorEdit in its look: a drag cell per channel with R/G/B/A markers, the swatch, the label; the plain SliderFloat / SliderInt / DragFloat calls draw framed with the value inside | `okayui_widgets` | closed (round 2) |
 | 17 | multi-window panels (a tab dragged out into its own OS window) | run | off in this program: OkayUI has one window | | open |
-| 18 | not tried: drag and drop (Hierarchy, Project to Scene), the Script Editor, Animator, Timeline, Dialogue and Behavior Tree windows, the file dialogs, text input with an input method, the Visual Script window (moved by another branch), Windows | run | | | not tried |
+| 18 | not tried in round 1: drag and drop, the other windows, the file dialogs, input-method typing | run | round 2: see the table and checklist below | | partly closed |
+
+**Round 2 (same day): more gaps, all closed in OkayUI** (each test failed on the old code first, by a run unless marked "by reading").
+
+| Gap (what broke in the editor) | Closed by | Test |
+|---|---|---|
+| Plain `ImGui::Separator()` rows were missing from every menu (drawn in the window under it) | the menu body (15c) | `okayui_windows` |
+| The menu bar's right end (layout list, version, EDIT, FPS) was missing and Play sat off centre: Dear ImGui's one-argument `SameLine(x)` is an x from the window's left, OkayUI's is a gap | `okayui/probe/imgui.h` declares Dear ImGui's `SameLine` in `ImGui`; OkayUI's two-argument form puts the item at that x, also left of the last item | `okayui_windows` (two-argument form) |
+| About 30 menu toggles (`MenuItem(label, nullptr, &flag)`: Show Gizmos, Snap to grid, Auto-scroll ...) always showed a tick and never changed: the pointer became `selected = true` | `MenuItem(label, shortcut, bool*)` | `okayui_windows` |
+| Menu ticks covered the label in Dear ImGui's look | the tick at the right end | by eye |
+| The Dialogue window's side panel (Node, Graph, Problems, Test) was empty: a tab bar inside a tab item did not begin | nested tab bars | `okayui_widgets` |
+| Selectable rows were a frame tall with gaps; `ImGuiSelectableFlags_AllowDoubleClick` had the value of OkayUI's `Selectable_Header` (Behavior Tree palette); a Selectable did not close its combo or popup | Dear ImGui's Selectable rows in its look; flag values moved; a Selectable right in a popup closes it unless `Selectable_DontClosePopups` | `okayui_widgets` |
+| `Text("a\nb")` and `DrawList::AddText` showed '?' for the line break (Animator, Timeline, Build Settings, the launcher's Multiplayer page) | line breaks start a new line | `okayui_widgets` |
+| Centred canvas text cut at the left (Behavior Tree): `Font::CalcTextSizeA` measured with the bitmap font's cell width | the real font's advances | `okayui_port_versions` golden updated (the Versions page line now fits instead of being cut short) |
+| The dock tab icons and the tab list arrow showed through floating windows (stray squares in the Animator, Visual Script, Modeling): drawn on the host's list after every window, and the window stacking was skipped once a frame had more than 256 draw spans | the dock host's list is recorded at the bottom of the stacking order (`GetDockHostDrawList`); the span budget is counted exactly and is 1024 | `okayui_windows` |
+| Dragging a Hierarchy row dropped on the row above the pointer: the drag preview was laid out in the list | a drag source's preview is a tooltip (Dear ImGui's documented behaviour) unless `SourceNoPreviewTooltip` | `okayui_widgets` |
+| A click on a View > Panels row also picked the object under it in the Scene view (`IsWindowHovered` was true under the menu) | `IsWindowHovered` is false under an open menu list or popup | `okayui_windows` |
+| File > Open Project Folder and Import Model showed nothing: the built-in file browser, begun outside every window, got a new id whenever the last window changed and closed after one frame | ids outside every window do not take in the last window's id | `okayui_windows` |
+| The file browser's buttons drew under its box: a modal ignored the height given by `SetNextWindowSize` | a modal keeps a given height and `GetContentRegionAvail` ends at it | `okayui_windows` |
+| `GetItemRect` right after an open `BeginMenu` was empty (the Hierarchy's Order sub-menu test) | it is the menu's row, as in Dear ImGui | `okayui_hierarchy` |
+
+**Checklist** (round 2, Linux, Xvfb, the own platform backend; each opened in both editors with the same script where the Dear ImGui editor
+has the window; pictures outside the repository). works = opens and acts as the Dear ImGui editor's; look = small drawing differences only.
+
+| Window or flow | State |
+|---|---|
+| Open a project gate, Create project (3D Scene) | works |
+| Main window, Hierarchy (rows, icons, select), Inspector (Transform, Mesh Renderer, Color) | works; look (Inspector widths) |
+| Menus: File, Edit, Edit > Appearance (design picker and options), GameObject, View > Panels, Layout list | works |
+| Hierarchy drag and drop (reorder, re-parent) | works (same result as Dear ImGui) |
+| New Project dialog, Open Scene, Open Project Folder, Import Model (built-in browser) | works (fixed in round 2) |
+| Animator, Timeline, Dialogue (+ side panel), Behavior Tree | works (fixed: line breaks, side panel, palette rows, centred text) |
+| Localization, Items/Loot/Recipes, Weapons, Modeling, Build Settings, Lighting, Profiler, Timers, Asset Manager | works; look |
+| Project Settings | works (floats instead of docking next to the Inspector) |
+| Visual Script (in-editor window of this branch; PR #1370 not merged), Script Editor, a plugin window | works |
+| Services, Scene Manager, Net, Save Manager, History, Stats, Crash Log, Audio Mixer, Input, Command Line | works (Services and Stats open as tabs that are not brought forward) |
+| Play / Stop, the Game tab | works (round 1) |
+| Drag from the Project panel to the Scene or an Inspector slot, a file dropped on the window | not tried |
+| Multi-window panels (a tab dragged out into its own OS window) | gap: OkayUI has one OS window |
+| Typing with an input method (IME) | not tried |
+| Windows (MinGW build and run) | unverified: changed files syntax-checked only |
 
 Also found: `okayui/tests/InspectorBodiesFixtures.hpp` gave the curves body pointers to locals that the rows read after the function
 returned (the `inspector_curves` golden changed when unrelated code moved the stack); they are statics now.

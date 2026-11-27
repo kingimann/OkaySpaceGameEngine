@@ -672,7 +672,11 @@ void EndPopup() {
     g_lay = c.lay;   // restore parent layout
 }
 
-bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
+bool BeginPopup(const char* id) {
+    const int pid = hashLabel(id);
+    if (id) if (PopupSlot* p = popupSlot(pid, false); p && p->open && !p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", id);   // (opened by id: the name for IsPopupOpen)
+    return beginPopupBody(pid);
+}
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
     PopupSlot* p = popupSlot((int)id, true);
@@ -684,7 +688,11 @@ bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((
 bool IsPopupOpen(const char* name) {
     if (!name) return false;
     const PopupSlot* p = popupSlot(hashLabel(name), false);
-    return p && p->open;
+    if (p && p->open) return true;
+    // Asked outside every window (after the frame, as tests and hosts do) about a popup opened inside one: its id took in that window, so it
+    // is found by the name it was opened or begun with.
+    if (!g_lay.active) for (const PopupSlot& q : g_popups) if (q.used && q.open && q.name[0] && std::strcmp(q.name, name) == 0) return true;
+    return false;
 }
 
 static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
@@ -790,7 +798,7 @@ bool BeginPopupContextItem(const char* id) {
     // under a window in front, not in a disabled block, not under an open overlay.
     if (g_lay.active && g_rPressed && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
         PopupSlot* p = popupSlot(pid, true);
-        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; std::snprintf(p->name, sizeof p->name, "%s", id ? id : ""); }
     }
     return beginPopupBody(pid);
 }

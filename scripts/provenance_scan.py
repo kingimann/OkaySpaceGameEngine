@@ -268,7 +268,7 @@ def _edge_smoothing(t):
     for rel in ("engine/src/Render/GLRendererShaders.cpp", "engine/include/okay/Render/D3DPostHLSL.hpp"):
         bad += _grep(t, rel, r"dirReduce|rcpDirMin|rgbA|rgbB|FXAA_|1\.0 / 128\.0|0\.0312")
     for p, rel in files(("editor", "okayui", "shared", "player", "launcher")):
-        if not rel.endswith((".cpp", ".hpp", ".h")) or rel == "editor/BuildSettingsModel.hpp" or rel.endswith("FontOwn.h"): continue   # font data is base64
+        if not rel.endswith((".cpp", ".hpp", ".h")) or rel == "editor/BuildSettingsModel.hpp" or rel in ("shared/RobotoFont.h", "shared/JetBrainsMonoFont.h"): continue   # font data is base64
         for i, l in enumerate(lines_of(p), 1):
             if l.strip().startswith(("//", "*", "/*")): continue
             if any("FXAA" in lit for lit in STRLIT.findall(l)): bad.append("%s:%d" % (rel, i))

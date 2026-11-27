@@ -13,14 +13,14 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Animation | 13 | 118 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 35 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Backend | 5 | 25 | [code_index/engine-Backend.md](code_index/engine-Backend.md) |
-| engine-Browser | 15 | 199 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
+| engine-Browser | 15 | 206 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 82 | 520 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 83 | 524 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 83 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
-| engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
+| engine-Graphics | 6 | 37 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
 | engine-Input | 22 | 115 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
 | engine-JavaScript | 2 | 31 | [code_index/engine-JavaScript.md](code_index/engine-JavaScript.md) |
@@ -41,4 +41,4 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-UI | 16 | 78 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
 | okayui | 12 | 644 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 73 | 1111 | [code_index/shared.md](code_index/shared.md) |
+| shared | 75 | 1133 | [code_index/shared.md](code_index/shared.md) |

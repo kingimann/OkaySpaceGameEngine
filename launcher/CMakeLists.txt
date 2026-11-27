@@ -58,7 +58,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     GroupConversation.cpp    # the open group conversation (moved out of main.cpp)
     Multiplayer.cpp       # joining, inviting, presence, server browser, parties, the Multiplayer page (moved out of main.cpp)
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
-    VersionsNet.cpp       # the cancellable curl download behind it
+    VersionsNet.cpp       # the cancellable download behind it (NativeFetch: WinHTTP / our own client)
     VersionsUI.cpp        # the page itself
     CommandLine.cpp       # the Command line page's rules: words, Tab completion, history, running okay (no ImGui; tested by launcher_cli)
     CommandLineUI.cpp     # the Command line page and the "Open command line" action
@@ -80,7 +80,7 @@ endif()
 # compiled straight into the launcher rather than linking the engine.
 list(APPEND OKAY_LAUNCHER_SOURCES
     ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE})

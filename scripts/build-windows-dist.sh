@@ -145,6 +145,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# The Script Editor program (scripteditor/, the editor shows the same one in View > Editors & Tools > Script Editor (Files)).
+[ -f "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" "$OUT_DIR/Tools/"
 # Bytes of the player per engine module (made after the player links; the editor's Build report shows them).
 [ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
@@ -261,7 +263,7 @@ cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engi
 # engine/third_party any more (ufbx was deleted; our own FBX reader is the only one).
 cp CMakeLists.txt "$XBOX_SRC/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
-cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
+cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageDecodeWebp.cpp engine/src/Core/ImageDecodeWebpTables.hpp engine/src/Core/ImageDecodeSvg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
 [ -f "$XBOX_SRC/CMakeLists.txt" ] && [ -f "$XBOX_SRC/platform/xbox_uwp/engine/uwp_own_readers.cmake" ] || { echo "error: xbox-src is missing the root CMakeLists.txt or uwp_own_readers.cmake (the UWP engine reads them)" >&2; exit 1; }
 [ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
@@ -292,6 +294,7 @@ THIRD_PARTY_NOTICES.txt lists the parts written by others and their licences.
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
+  OkaySpaceScriptEditor.exe  the Script Editor on its own: OkaySpaceScriptEditor.exe <project folder>
   okay.exe              the command line: okay new, okay open, okay play, okay vc save ...
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/online/relay.md)

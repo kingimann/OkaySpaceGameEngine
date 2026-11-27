@@ -2,7 +2,7 @@
 
 # Code index: engine-Graphics
 
-Back to the [code index](../code_index.md). 5 headers, 36 names.
+Back to the [code index](../code_index.md). 6 headers, 37 names.
 
 ## `engine/include/okay/Graphics/ColorVision.hpp`
 
@@ -27,6 +27,10 @@ Back to the [code index](../code_index.md). 5 headers, 36 names.
 - `RelativeLuminance` function, line 84: ---- Contrast --------------------------------------------------------------------------------------------------
 - `ContrastRatio` function, line 86: WCAG contrast ratio between two colours, 1 (same) .. 21 (black on white).
 - `EnsureContrast` function, line 90: 'fg' moved towards white or black (whichever reaches it with less change) until its contrast
+
+## `engine/include/okay/Graphics/CoverageRaster.hpp`
+
+- `Coverage` class, line 20
 
 ## `engine/include/okay/Graphics/Font.hpp`
 

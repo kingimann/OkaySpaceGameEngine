@@ -133,7 +133,7 @@ struct Parser {
         switch (t.t) {
             case TT::End: return "the end of the script";
             case TT::Name: return "'" + Utf16To8(t.s) + "'";
-            case TT::Num: return "a number";
+            case TT::Num: case TT::BigInt: return "a number";
             case TT::Str: return "a string";
             case TT::Template: return "a template";
             case TT::PrivateName: return "a #private name";
@@ -517,7 +517,7 @@ struct Parser {
             if (Eq(t.s, "with")) Fail("'with' is not allowed in strict code");
             if (Eq(t.s, "function")) Fail("a function declaration is not allowed here (wrap it in { })");
             if (Eq(t.s, "class") || Eq(t.s, "let") || Eq(t.s, "const")) Fail("a declaration is not allowed here (wrap it in { })");
-            if (Eq(t.s, "import")) Fail("import is not supported");
+            if (Eq(t.s, "import") && !IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
             // a label
             if (IsPAt(pos + 1, P_Colon) && !IsReserved(t.s)) {
                 Node* n = N(NK::Labeled);
@@ -574,7 +574,12 @@ struct Parser {
     Node* ForStmt() {
         const Token& t = Cur();
         Next();
-        if (IsWord("await")) Fail("'for await' is not supported yet");
+        bool isAwait = false;
+        if (IsWord("await")) {   // 14.7.5: for await (... of ...) in async functions
+            if (!InAsync()) Fail("'for await' is only allowed inside an async function");
+            isAwait = true;
+            Next();
+        }
         Expect(P_LParen);
         Node* init = nullptr;
         if (IsP(P_Semi)) {
@@ -584,8 +589,9 @@ struct Parser {
             init = VarDecl(kind, true);
             if (init->list.size() == 1 && !init->list[0]->b && (IsWord("of") || IsWord("in"))) {
                 bool of = IsWord("of");
+                if (isAwait && !of) Fail("'for await' needs 'of'");
                 Next();
-                return ForInOfRest(t, of, init);
+                return ForInOfRest(t, of, init, isAwait);
             }
             for (Node* d : init->list)
                 if (!d->b && (kind == DK_Const || d->a->k != NK::Ident)) Fail("this declaration needs a value");
@@ -594,13 +600,15 @@ struct Parser {
             Node* e = Expression();
             if (IsWord("of") || IsWord("in")) {
                 bool of = IsWord("of");
+                if (isAwait && !of) Fail("'for await' needs 'of'");
                 Next();
-                return ForInOfRest(t, of, ToTarget(e, true));
+                return ForInOfRest(t, of, ToTarget(e, true), isAwait);
             }
             init = N(NK::ExprStmt);
             init->a = e;
         }
         CheckCover();
+        if (isAwait) Fail("'for await' needs 'of'");
         Node* n = ast.NewNode(NK::For, t.line, t.col);
         n->a = init;
         Expect(P_Semi);
@@ -612,8 +620,12 @@ struct Parser {
         n->d = LoopBody();
         return n;
     }
-    Node* ForInOfRest(const Token& t, bool of, Node* head) {
+    Node* ForInOfRest(const Token& t, bool of, Node* head, bool isAwait = false) {
+        // The head's [~In] ends at `in` / `of`: the right side is Expression[+In] (14.7.5) and the body is a
+        // Statement, so the `in` operator is allowed again (the caller's guard is still in scope).
+        NoInGuard ng(*this, false);
         Node* n = ast.NewNode(of ? NK::ForOf : NK::ForIn, t.line, t.col);
+        if (isAwait) n->flags |= NF_Await;
         n->a = head;
         n->b = of ? Assignment() : Expression();
         Expect(P_RParen);
@@ -1027,7 +1039,8 @@ struct Parser {
             }
             if (t.t == TT::Template && (t.tpl == 0 || t.tpl == 1)) {
                 if (chain) Fail("a tagged template can not follow an optional chain");
-                Fail("tagged templates are not supported yet");
+                e = TaggedTemplate(e, t);
+                continue;
             }
             break;
         }
@@ -1077,6 +1090,10 @@ struct Parser {
                 callee = x;
                 continue;
             }
+            if (m.t == TT::Template && (m.tpl == 0 || m.tpl == 1)) {   // new tag`x` (MemberExpression TemplateLiteral)
+                callee = TaggedTemplate(callee, m);
+                continue;
+            }
             if (m.t == TT::Punct && m.p == P_QDot) Fail("an optional chain is not allowed in a 'new' expression");
             break;
         }
@@ -1092,6 +1109,7 @@ struct Parser {
         const Token& t = Cur();
         switch (t.t) {
             case TT::Num: { Node* n = N(NK::Num); n->num = t.n; Next(); return n; }
+            case TT::BigInt: { Node* n = N(NK::BigInt); n->str = t.s; Next(); return n; }
             case TT::Str: { Node* n = N(NK::Str); n->str = t.s; Next(); return n; }
             case TT::Template: return TemplateLit();
             case TT::Regex: {
@@ -1147,7 +1165,20 @@ struct Parser {
                 return N(NK::Super, t);
             }
             if (Eq(s, "new")) return NewExpr();
-            if (Eq(s, "import")) Fail("import is not supported");
+            if (Eq(s, "import")) {   // 13.3.10 import(specifier [, options]): a promise for a module (see OP_ImportCall)
+                if (!IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
+                Node* n = N(NK::ImportCall, t);
+                Next();   // import
+                Next();   // (
+                NoInGuard ng(*this, false);
+                n->a = Assignment();
+                if (Eat(P_Comma) && !IsP(P_RParen)) {
+                    n->b = Assignment();
+                    Eat(P_Comma);
+                }
+                Expect(P_RParen);
+                return n;
+            }
             if (IsReserved(s) && !Eq(s, "let") && !Eq(s, "static") && !Eq(s, "yield"))
                 Fail("unexpected reserved word '" + Utf16To8(s) + "'");
             if (Eq(s, "yield") || Eq(s, "let") || Eq(s, "static")) Fail("'" + Utf16To8(s) + "' is a reserved word in strict code");
@@ -1165,6 +1196,34 @@ struct Parser {
         }
         Ref(n->str);
         return n;
+    }
+
+    // 13.3.11 tagged templates: tag`a${x}b` is the call tag(templateObject, x). The template object node
+    // (NK::TaggedTemplate) carries the cooked strings (undefined for a piece with a bad escape) in `list` and
+    // the raw strings in `b->list`; the compiler makes one frozen object per site (13.2.8.4 GetTemplateObject).
+    Node* TaggedTemplate(Node* tag, const Token& at) {
+        Node* call = ast.NewNode(NK::Call, at.line, at.col);
+        call->a = tag;
+        Node* obj = ast.NewNode(NK::TaggedTemplate, at.line, at.col);
+        obj->b = ast.NewNode(NK::Array, at.line, at.col);
+        call->list.push_back(obj);
+        while (true) {
+            const Token& t = Cur();
+            if (t.t != TT::Template) Unexpected("the rest of the template");
+            Node* cooked = N(t.badEscape ? NK::Hole : NK::Str);
+            cooked->str = t.s;
+            obj->list.push_back(cooked);
+            Node* raw = N(NK::Str);
+            raw->str = t.raw;
+            obj->b->list.push_back(raw);
+            std::uint8_t kind = t.tpl;
+            Next();
+            if (kind == 0 || kind == 3) break;
+            NoInGuard ng(*this, false);
+            call->list.push_back(Assignment());
+            if (Cur().t != TT::Template || (Cur().tpl != 2 && Cur().tpl != 3)) Unexpected("'}' closing the ${ }");
+        }
+        return call;
     }
 
     Node* TemplateLit() {
@@ -1317,6 +1376,7 @@ struct Parser {
     }
 
     void FunctionBody(FuncInfo* fi) {
+        NoInGuard ng(*this, false);   // a body is FunctionBody[~In]-free: `for (var f = function () { a in b }; ;)` is fine
         std::vector<Node*> savedCover;
         savedCover.swap(cover);
         int savedLoop = loopDepth, savedSwitch = switchDepth;
@@ -1416,6 +1476,45 @@ struct Parser {
         return n;
     }
 
+    // The static fields' initializer function (made on first use): static fields and static blocks run in it, in order.
+    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) {
+        FuncInfo*& init = ci->staticFields;
+        if (!init) {
+            init = ast.NewFunc();
+            init->method = true;
+            init->fieldInit = true;
+            init->line = at.line;
+            init->col = at.col;
+            init->name = u"<fields>";
+            init->body = ast.NewNode(NK::Block, at.line, at.col);
+        }
+        return init;
+    }
+    // static { ... }: an arrow function (so `this`, `super` and `new.target` are the static initializer's) called in
+    // place; its `var`s stay inside it as a ClassStaticBlockBody's do.
+    void StaticBlock(ClassInfo* ci, const Token& at) {
+        FuncInfo* init = StaticInit(ci, at);
+        PushFunc(init);
+        FuncInfo* fi = ast.NewFunc();
+        fi->arrow = true;
+        fi->line = at.line;
+        fi->col = at.col;
+        fi->name = u"static";
+        Node* fn = ast.NewNode(NK::Func, at.line, at.col);
+        fn->fn = fi;
+        PushFunc(fi);
+        int savedLoop = loopDepth;
+        FunctionBody(fi);
+        loopDepth = savedLoop;
+        PopFunc();
+        PopFunc();
+        Node* call = ast.NewNode(NK::Call, at.line, at.col);
+        call->a = fn;
+        Node* stmt = ast.NewNode(NK::ExprStmt, at.line, at.col);
+        stmt->a = call;
+        init->body->list.push_back(stmt);
+    }
+
     // class [name] [extends expr] { members } (15.7)
     Node* ClassExpr(bool isExpr) {
         const Token& t = Cur();
@@ -1428,6 +1527,7 @@ struct Parser {
         else if (!isExpr) Unexpected("a class name");
         if (EatWord("extends")) ci->heritage = LeftHandSide();
         n->a = ci->heritage;
+        NoInGuard ng(*this, false);   // ClassBody has no [In] parameter: its keys and fields allow `in`
         Expect(P_LBrace);
         bool derived = ci->heritage != nullptr;
         while (!IsP(P_RBrace)) {
@@ -1438,7 +1538,10 @@ struct Parser {
                 !IsPAt(pos + 1, P_RBrace)) {
                 isStatic = true;
                 Next();
-                if (IsP(P_LBrace)) Fail("static { } blocks are not supported yet");
+                if (IsP(P_LBrace)) {   // 15.7.11 ClassStaticBlock: runs once, in order with the static fields, this = the class
+                    StaticBlock(ci, mt);
+                    continue;
+                }
             }
             bool isAsync = false, isGen = false;
             int accessor = 0;
@@ -1489,6 +1592,7 @@ struct Parser {
             if (m->flags & NF_Computed) FailAt(kt, "computed class field names are not supported yet");
             if (isCtorName) FailAt(kt, "a class field can not be named 'constructor'");
             if (isStatic && Eq(m->str, "prototype")) FailAt(kt, "a class can not have a static member named 'prototype'");
+            if (isStatic) StaticInit(ci, kt);
             FuncInfo*& init = isStatic ? ci->staticFields : ci->instFields;
             if (!init) {
                 init = ast.NewFunc();

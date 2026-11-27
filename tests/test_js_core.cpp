@@ -495,6 +495,10 @@ void RegexLookbehind() {
            "after a head 1\n2");
     // 13.5.1.2: delete on an optional chain, also when it stops early
     Expect("const v = {a: {b: 1}}; console.log(delete v?.a?.b, JSON.stringify(v), delete v?.z?.q, delete v?.a, JSON.stringify(v))", "true {\"a\":{}} true true {}");
+    // \p{...} and the v flag need Unicode data this engine does not carry: a clear SyntaxError, and without u, \p is a plain p
+    ExpectError("new RegExp('\\\\p{L}', 'u')", "Unicode property escapes");
+    ExpectError("new RegExp('a', 'v')", "v flag");
+    Expect("console.log(/\\p{L}/.test('p{L}'))", "true");
 }
 
 // 15.7.11 static blocks, 14.7.5 for await, and newer library methods real pages use (23.1.3.35 toSpliced,

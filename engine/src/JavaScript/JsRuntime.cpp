@@ -2254,6 +2254,13 @@ Resolution Resolve(Runtime& rt, ModuleRec* m, const std::u16string& name) {
     return ResolveExport(rt, m, name, set, 0);
 }
 
+// a module's binding cell (always made with the record; a JavaScript error rather than a C++ exception if not)
+Cell* CellOf(Runtime& rt, ModuleRec* m, const std::u16string& name) {
+    auto it = m->cells.find(name);
+    if (it == m->cells.end()) ModuleSyntaxError(rt, "internal error: '" + m->key + "' has no binding '" + Utf16To8(name) + "'");
+    return it->second;
+}
+
 // 16.2.1.6.2 GetExportedNames
 void ExportedNames(Runtime& rt, ModuleRec* m, std::unordered_set<ModuleRec*>& visited, std::vector<std::u16string>& out,
                    std::unordered_set<std::u16string>& have, int depth) {
@@ -2287,12 +2294,7 @@ ModuleNsObj* Namespace(Runtime& rt, ModuleRec* m) {
     for (const std::u16string& n : names) {
         Resolution r = Resolve(rt, m, n);
         if (r.status != 1) continue;   // ambiguous names are left out (16.2.1.10 step 3.c)
-        Cell* c = nullptr;
-        if (r.binding != kNamespaceBinding) {
-            auto it = r.m->cells.find(r.binding);
-            if (it == r.m->cells.end()) ModuleSyntaxError(rt, "internal error: no binding for the export '" + Utf16To8(n) + "'");
-            c = it->second;
-        }
+        Cell* c = r.binding != kNamespaceBinding ? CellOf(rt, r.m, r.binding) : nullptr;
         ns->entries.push_back(ModuleNsObj::Entry{rt.Intern(n), c, r.m});
     }
     ns->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("Module")), 0);
@@ -2313,7 +2315,7 @@ void Initialize(Runtime& rt, ModuleRec* m) {
     ext.reserve(m->externs.size());
     for (const ModuleExtern& x : m->externs) {
         if (x.kind <= 1) {
-            ext.push_back(m->cells.at(x.name));
+            ext.push_back(CellOf(rt, m, x.name));
             continue;
         }
         if (x.kind == 3) {   // import.meta: an object with no prototype (13.3.12.1)
@@ -2330,7 +2332,7 @@ void Initialize(Runtime& rt, ModuleRec* m) {
             if (i.localName == x.name) im = &i;
         ModuleRec* d = m->deps[(std::size_t)im->req];
         if (im->importName == u"*") {
-            Cell* c = m->cells.at(x.name);
+            Cell* c = CellOf(rt, m, x.name);
             c->v = Value::Obj(Namespace(rt, d));
             ext.push_back(c);
             continue;
@@ -2344,7 +2346,7 @@ void Initialize(Runtime& rt, ModuleRec* m) {
             Cell* c = rt.Alloc<Cell>();
             c->v = Value::Obj(Namespace(rt, r.m));
             ext.push_back(c);
-        } else ext.push_back(r.m->cells.at(r.binding));
+        } else ext.push_back(CellOf(rt, r.m, r.binding));
     }
     Closure* fn = rt.Alloc<Closure>();
     fn->code = m->proto;

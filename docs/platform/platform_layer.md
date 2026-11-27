@@ -1,6 +1,6 @@
 # The platform layer (`okay::platform`) and our own backend
 
-> **What this is:** Stage 1 of replacing SDL2 with our own code (see the roadmap: seam first, own backend side by side and non-default, SDL2 stays).
+> **What this is:** The platform layer. SDL2 left the desktop programs on 2026-11-27; it remains only in the web build (see "Choosing a backend").
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
@@ -17,16 +17,11 @@ launcher off SDL2: `docs/platform/sdl_removal_plan.md`.
 
 ## Choosing a backend
 
-| | |
-|---|---|
-| `-DOKAY_PLATFORM_BACKEND=own` | **default on Linux since 2026-11-25** (round 15). `okay::platform::Default()` is our own backend. SDL2 is still linked (the sdl2 backend stays as the way back). |
-| `-DOKAY_PLATFORM_BACKEND=sdl2` | default on Windows (the Win32 backend has never run on real Windows) and the web (no own backend). `Default()` is the SDL2 backend. |
-
-The environment variable `OKAY_PLATFORM_BACKEND=sdl2|own` set when a program starts overrides the build's choice for that
-process (a value that is neither is ignored), so one binary can be tried on either backend. It changes nothing unless set.
-
-Both backends are built whenever they can be, and `okay::platform::Get(BackendKind::Sdl2 | Own)` returns either one, so
-a test can run the same checks on each. `Default()` falls back to the other backend if the chosen one is not compiled in.
+Since 2026-11-27 (`claude/no-sdl2-2`) there is nothing to choose on the desktop: our own backend is the only one compiled into
+Windows and Linux builds, and no desktop program links SDL2. `OKAY_PLATFORM_BACKEND` (CMake and environment) is kept as a name:
+on the desktop it is always `own`, and an environment value naming a backend the build lacks (`sdl2`) is ignored. The web build
+(Emscripten) still uses the sdl2 backend and the sdl2 painter over Emscripten's own SDL2 port, because there is no own web backend
+yet; `SdlBackend.cpp` and `SdlPainter.cpp` are compiled only there. The rounds below are history.
 
 ## What the audit found (origin/main before this change)
 

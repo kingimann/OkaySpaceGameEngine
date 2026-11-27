@@ -1,21 +1,58 @@
-# Getting the editor and launcher off SDL2: the plan
+# Getting the programs off SDL2: the plan and where it ended
 
-> **What this is:** Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the owner's written approval.
+> **What this is:** The ordered plan for replacing SDL2 with `okay::platform`, and (top section) the state after the deletion.
 >
-> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+> **Status:** Internal record. The section "2026-11-27: SDL2 left the desktop programs" is current; everything below it is the
+> plan as it was written and is kept as history (Dear ImGui, which steps 4 and 5 talk about, was deleted the same day, #1375).
 >
-> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-27 (`claude/no-sdl2-2`).
 
-Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the
-owner's written approval. Never delete SDL2 before our own version is finished and has run on real Windows.
-This page is the ordered list of work, with a plain-words size for each step and what to test on real Windows.
-The numbers come from `docs/sdl_inventory.md` (commit `05feef3b`, regenerate it with `python3 scripts/sdl_inventory.py`).
-Design and audit history of the seam: `docs/platform/platform_layer.md`. Roadmap row: `docs/status/own_code_roadmap.md` (SDL2).
+## 2026-11-27: SDL2 left the desktop programs (`claude/no-sdl2-2`)
 
-All sizes are **judgement, not measurements**. "Small" = an afternoon of agent work. "Medium" = a day or two. "Large" = several days.
-"Very large" = weeks, or an unknown. Waiting for CI is not counted.
+Owner, 2026-11-27: "main goal to remove other third parties that includes the compilers". Rule 17: ours is THE path, no switch.
 
-## Where we are
+**What each program uses now.**
+
+| Program | Window, events, input, GL, clipboard, audio, pads | 2D drawing | SDL left |
+|---|---|---|---|
+| Launcher (`OkaySpace.exe`) | own backend (X11 / Win32) | OpenGL painter, else the software painter (`shared/OwnPainter.hpp`) | none |
+| Editor (`OkayEngine.exe`) | own backend | OpenGL painter, else software; 3D view as before (GL / D3D11 on its own device / software) | none |
+| Player, desktop (`OkaySpacePlayer.exe`) | own backend | software painter (okayui/soft) | none |
+| Browser, Script Editor, Visual Script programs | own backend | OpenGL painter, else software | none |
+| Player, web (Emscripten) | sdl2 backend over Emscripten's SDL2 port | sdl2 painter | `SdlBackend.cpp`, `SdlPainter.cpp`, `-sUSE_SDL=2` |
+
+**Deleted.** `UIPainterSDL.hpp`; `WrapSdl2Window`, `WrapSdl2Renderer`, `CreateSdl2SurfacePainter`, `TranslateSdl2Event`,
+`Event::native`, `Backend::ReportUnmappedEvents`; OkayUI's `EndFrame(SDL_Renderer*)` / `DrawFinishedFrame` and its SDL batch
+types (now `BatchVertex`, `PxRect`, `OkayUI::Tex`), OkayUI's `SdlHost` (`OkayUIRender_SDL.cpp`, `OKAY_UI_OWN_RENDER`) and its test;
+`shared/WindowHandles.hpp`; the SDL_Event feed of `shared/OkayUIHost.hpp`; Settings > Experimental "Our own window layer" and
+"OkayUI own renderer" (nothing to switch back to); `find_package(SDL2)` everywhere; the SDL2 download and `SDL2.dll` in CI, release,
+test builds, `build-windows-dist.sh`, `release-local.sh`, the release assets and Build Game's exports; `okay engine`'s SDL2 search
+and `build-local.ps1 -Sdl2Dir`; `test_painter_bridge_vs_sdl`; the sdl2 halves of the platform, painter and render tests.
+
+**Changed.** The apps' renderer handle is the painter (`okay::pb::Renderer` = `okay::platform::Painter`), textures are
+`okay::ui2d::Tex`, the launcher's windows are `okay::platform::Window*`. Caps Lock comes from `Backend::ModState` (own X11:
+XQueryPointer's mask; Win32: GetKeyState). The Win32 clipboard is not touched before `Init` (as on X11). The UI picture tests
+draw on our own software painter (`tests/ui_soft_render.hpp`).
+
+**Checked before the deletion (on main's CI, not re-run here):** `painter_bridge_vs_sdl` (the bridge against raw SDL calls),
+`okayui_painter` (software painter vs SDL's software renderer: 2.7 % of the classic demo picture differs by more than 2 levels, all
+on shape edges; the launcher look under 3 %), `okayui_render` (painter backend vs reference), `platform_window_sdl2` vs `_own`,
+`platform_displays` (own RandR vs SDL), and the launcher run headless on both backends (the same picture but 8 pixels). After the
+change the UI goldens that were made on SDL's software renderer (`ui_renderer_golden`) are compared against our painter: see the
+branch report for the numbers.
+
+**What remains.**
+1. **Real Windows.** The Win32 backend, the OpenGL painter on WGL and every program were compiled with MinGW only; none has run on
+   real Windows (Wine is broken here). The next test build is the first Windows run: launcher, editor, player, chat window, tray,
+   file drop, IME, two monitors, 125 % / 150 % scaling, sound, pads.
+2. **The web.** An own Emscripten backend (canvas, WebGL 2 context, keyboard / mouse / touch / wheel callbacks, Web Audio, the
+   Gamepad API, clipboard), then delete `SdlBackend.cpp`, `SdlPainter.cpp`, `PainterKind::Sdl2`, `BackendKind::Sdl2` and `-sUSE_SDL=2`.
+3. **The editor's zero-copy D3D11 viewports** needed SDL's Direct3D 11 device; the D3D11 3D renderer now always uses its own device
+   with read-back (slower on Windows until the painter can share a device). The code path is still there, unused.
+4. Installing an editor version from before 2026-11-27 through the launcher's Versions page needs `SDL2.dll` from the version list;
+   the launcher no longer has its own copy to lend.
+
+## Where we were (before 2026-11-27)
 
 | | SDL calls left (`calls / words`) | what they are |
 |---|---|---|

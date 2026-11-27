@@ -848,11 +848,10 @@ void OkayScriptVM::Impl::RegisterSteamBuiltins(BuiltinCtx& c) {
             return Value{(float)Steam::Get().CloudFiles().size()};
         };
         // Steam Workshop (community content).
-        // Ids are 64-bit (real ones have ten digits): a float would round them (#888 F32: 2847193562 became 2847193600).
-        // Publish returns a whole number (Value::Int); an id is read back from a whole number, from text of digits, or
-        // from a float only when it is finite and not negative. Anything else is 0, "no item" (no out-of-range cast).
+        // Ids are 64-bit (real ones have ten digits): a script number is a 32-bit float and would round them (#888 F32:
+        // 2847193562 became 2847193600). Publish returns the id as text of digits; an id is read back from such text, or
+        // from a number only when it is finite and at least 1. Anything else is 0, "no item" (no out-of-range cast).
         auto workshopId = [](const Value& v) -> std::uint64_t {
-            if (const std::int64_t* i = v.IntPtr()) return *i > 0 ? (std::uint64_t)*i : 0;
             if (v.IsString()) {
                 const std::string t = v.AsString();
                 if (t.empty() || t.size() > 20) return 0;
@@ -874,7 +873,7 @@ void OkayScriptVM::Impl::RegisterSteamBuiltins(BuiltinCtx& c) {
             if (a.size() >= 2) it.contentPath = a[1].AsString();
             if (a.size() >= 3) it.description = a[2].AsString();
             const std::uint64_t id = Steam::Get().WorkshopPublish(it);
-            return id <= (std::uint64_t)INT64_MAX ? Value::Int((std::int64_t)id) : Value{std::to_string(id)};
+            return Value{id ? std::to_string(id) : std::string()};   // "" when nothing was published
         };
         b["steam_workshop_subscribe"] = [workshopId](std::vector<Value>& a) {
             const std::uint64_t id = a.empty() ? 0 : workshopId(a[0]);

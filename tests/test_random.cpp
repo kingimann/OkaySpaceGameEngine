@@ -185,9 +185,9 @@ int main() {
     // saturates, the same seed for every spawner and NPC out there.
     {
         // Where the old formula was defined it gives the same seed, so existing levels keep their patterns.
-        for (float x : {0.0f, 1.5f, -10.0f, 40.0f, 58.0f})
-            for (float z : {0.0f, 3.0f, -100.0f})
-                CHECK(Random::PositionSeed(x, z, 7u) == (std::uint32_t)(std::fabs(x) * 73856093.0f + std::fabs(z) * 19349663.0f) + 7u);
+        const float placesNear[][2] = {{0.0f, 0.0f}, {1.5f, 3.0f}, {-10.0f, -100.0f}, {40.0f, 10.0f}, {58.0f, 0.0f}, {0.0f, -221.0f}};
+        for (const auto& xz : placesNear)
+            CHECK(Random::PositionSeed(xz[0], xz[1], 7u) == (std::uint32_t)(std::fabs(xz[0]) * 73856093.0f + std::fabs(xz[1]) * 19349663.0f) + 7u);
         // Far out, nearby places still get different seeds, and the salt still separates components.
         std::map<std::uint32_t, int> seen;
         for (int i = 0; i < 200; ++i) seen[Random::PositionSeed(60.0f + 7.25f * (float)i, 1000.0f + 3.5f * (float)i, 7u)]++;

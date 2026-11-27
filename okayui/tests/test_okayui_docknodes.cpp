@@ -172,7 +172,7 @@ int main() {
                 CHECK(!UI::FindWindowByName("Nope").found);
             }
             // over a docked panel's body the panel itself is hovered
-            s.Move(right->Pos.x + right->Size.x * 0.5f, right->Pos.y + right->Size.y * 0.5f);
+            { const UI::Rect body = UI::GetDockLayout().ContentRect(UI::DockLayoutNodeOf(right->ID)); s.Move(body.x + body.w * 0.5f, body.y + body.h * 0.5f); }
             s.Frames(2, ui);
             g = UI::RefreshContext();
             CHECK(g->HoveredWindow == insp);

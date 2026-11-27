@@ -358,14 +358,11 @@ void FillContextFromWindowTable(Context& c, unsigned hoveredId, unsigned activeI
     c.HoveredWindow = byId(hoveredId);
     // The window the dock space was drawn in (a full-window host, as the editor's) is the topmost window under the strips and the empty
     // nodes: there the dock host is hovered, as in Dear ImGui (the editor's tab menu checks g.HoveredWindow == node->HostWindow).
-    if (c.HoveredWindow && t.spaceOwner != 0 && c.HoveredWindow->ID == t.spaceOwner && t.spaceOwnerFrame + 1 >= GetFrameCount() && t.host.Size.x > 0.0f) {
-        const Vec2 m = GetMousePos();
-        if (m.x >= t.host.Pos.x && m.y >= t.host.Pos.y && m.x < t.host.Pos.x + t.host.Size.x && m.y < t.host.Pos.y + t.host.Size.y) c.HoveredWindow = nullptr;
-    }
-    if (!c.HoveredWindow && t.host.Size.x > 0.0f && !GetFrameInput().blocked) {   // over the dock space (its strips and empty nodes): the host
-        const Vec2 m = GetMousePos();
-        if (m.x >= t.host.Pos.x && m.y >= t.host.Pos.y && m.x < t.host.Pos.x + t.host.Size.x && m.y < t.host.Pos.y + t.host.Size.y) c.HoveredWindow = &t.host;
-    }
+    const ImRect hostRc = t.host.Rect();
+    const Vec2 m = GetMousePos();
+    const bool overDock = hostRc.Max.x > hostRc.Min.x && m.x >= hostRc.Min.x && m.y >= hostRc.Min.y && m.x < hostRc.Max.x && m.y < hostRc.Max.y;
+    if (c.HoveredWindow && t.spaceOwner != 0 && c.HoveredWindow->ID == t.spaceOwner && t.spaceOwnerFrame + 1 >= GetFrameCount() && overDock) c.HoveredWindow = nullptr;
+    if (!c.HoveredWindow && overDock && !GetFrameInput().blocked) c.HoveredWindow = &t.host;   // over the dock space (its strips and empty nodes): the host
     c.ActiveIdWindow = byId(activeId);
     c.CurrentWindow = byId(currentId);
     c.NavWindow = byId(focusedId);

@@ -550,7 +550,8 @@ WindowInfo FindWindowByID(unsigned id) {
     }
     if (!wi.found)   // a docked tab never drawn yet: the window table knows it from the dock layout (FindWindowByName does the same)
         if (const WindowRef* r = FindWindowRefByID(id); r && r->Name[0] && IsWindowDocked(r->Name)) {
-            wi.found = true; wi.docked = true; wi.pos = wi.Pos = r->Pos; wi.size = wi.Size = r->Size; wi.ID = id;
+            const ImRect rc = r->Rect();
+            wi.found = true; wi.docked = true; wi.pos = wi.Pos = rc.Min; wi.size = Vec2{rc.Max.x - rc.Min.x, rc.Max.y - rc.Min.y}; wi.Size = wi.size; wi.ID = id;
             std::snprintf(wi.Name, sizeof wi.Name, "%s", r->Name);
         }
     return wi;

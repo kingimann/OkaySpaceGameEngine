@@ -9276,7 +9276,10 @@ void DrawProject(EditorState& ed) {
         const ImVec2 h0 = ImGui::GetCursorScreenPos();
         const float hh = ImGui::GetTextLineHeight() + 8.0f;
         ImDrawList* hdl = ImGui::GetWindowDrawList();
-        const char* names[4] = {"Name", "Type", "Size", "Date"};
+        const okaypb::ctx::Item sortItems = okaypb::ctx::SortMenu(okaypb::ctx::State{});   // the column names are the Sort menu's (one list)
+        std::string names[4];
+        for (int c = 0; c < 4 && c < (int)sortItems.children.size(); ++c) names[c] = sortItems.children[(size_t)c].label;
+        if (names[3].rfind("Date", 0) == 0) names[3] = "Date";   // "Date Modified" is too wide for its column
         const float offs[5] = {0.0f, typeOff, sizeOff, dateOff, dateOff + kDateCol};
         for (int c = 0; c < 4; ++c) {
             ImGui::SetCursorScreenPos(ImVec2(h0.x + offs[c], h0.y));
@@ -9288,9 +9291,9 @@ void DrawProject(EditorState& ed) {
             const ImU32 tc = ImGui::GetColorU32(on || hv ? ImGuiCol_Text : ImGuiCol_TextDisabled);
             const float tx = h0.x + offs[c] + (c == 0 ? 5.0f : 0.0f), ty = h0.y + (hh - ImGui::GetTextLineHeight()) * 0.5f;
             if (hv) hdl->AddRectFilled(ImVec2(h0.x + offs[c], h0.y), ImVec2(h0.x + offs[c + 1] - 6.0f, h0.y + hh), ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
-            hdl->AddText(ImVec2(tx, ty), tc, names[c]);
+            hdl->AddText(ImVec2(tx, ty), tc, names[c].c_str());
             if (on) {   // a small chevron after the sorted column's name: up for A to Z (Name, Type), down for biggest / newest first
-                const float ax = tx + ImGui::CalcTextSize(names[c]).x + 9.0f, ay = h0.y + hh * 0.5f, a = 3.5f, k = (c >= 2) ? 1.0f : -1.0f;
+                const float ax = tx + ImGui::CalcTextSize(names[c].c_str()).x + 9.0f, ay = h0.y + hh * 0.5f, a = 3.5f, k = (c >= 2) ? 1.0f : -1.0f;
                 hdl->AddLine(ImVec2(ax - a, ay - k * a * 0.5f), ImVec2(ax, ay + k * a * 0.5f), tc, 1.6f);
                 hdl->AddLine(ImVec2(ax, ay + k * a * 0.5f), ImVec2(ax + a, ay - k * a * 0.5f), tc, 1.6f);
             }

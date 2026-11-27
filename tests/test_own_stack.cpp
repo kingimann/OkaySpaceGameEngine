@@ -16,6 +16,10 @@
 #include <set>
 #include <string>
 
+#ifndef OKAY_EXPECT_PLATFORM   // tests/CMakeLists.txt passes the configured OKAY_PLATFORM_BACKEND
+#define OKAY_EXPECT_PLATFORM "sdl2"
+#endif
+
 using namespace okay::ownstack;
 
 static void Unset(const char* name) {
@@ -159,12 +163,12 @@ static void TestBuildDefaults() {
 #  endif
 #elif defined(OKAY_EXPECT_OWN_READERS)   // a default build since 2026-11-17: our own model readers, the rest still the old stack
     CHECK(i.ownReaders.size() == Readers().size() + 1);   // + fbx
-    CHECK(i.platform == "sdl2");
+    CHECK(i.platform == OKAY_EXPECT_PLATFORM);   // the build's OKAY_PLATFORM_BACKEND (own on Linux since #1341)
     CHECK(i.http == ExpectedHttp());
     CHECK(Has(line, "readers=own(fbx,dae,"));
 #else               // a build with the reader options switched OFF: exactly the old stack
     CHECK(i.ownReaders.size() == 1 && i.ownReaders[0] == "fbx");   // FBX is always ours
-    CHECK(i.platform == "sdl2");
+    CHECK(i.platform == OKAY_EXPECT_PLATFORM);   // the build's OKAY_PLATFORM_BACKEND (own on Linux since #1341)
     CHECK(i.http == ExpectedHttp());
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
     CHECK(Has(line, "readers=own(fbx)"));

@@ -3,6 +3,7 @@
 #include "ScriptEditorAppHost.hpp"
 #include "ScriptAssist.hpp"        // LanguageWordsFor, OkayScriptPalette: the editor's words, hover docs and colours (imgui.h before OkayUI's headers)
 #include "ScriptIdeApp.hpp"
+#include "ScriptingDensity.hpp"     // the editor's one Density setting, shared with the Visual Script window
 #include "OkayPanels.hpp"          // DrawAppWindowOkayUI: a whole OkayUI app in an editor window
 #include "PluginRegistry.hpp"      // ScriptEditorPlugins, ScriptProblems: the editor plugins' lint
 #include "PluginScriptApi.hpp"     // ScriptEditorHostApi: what plugins' script_* calls reach
@@ -433,10 +434,22 @@ void DrawScriptEditorApp(okay::editor::EditorState& ed) {
     host.setText = [&app](const std::string& t) { app.SetActiveText(t); };
     host.open = [&app](const std::string& p, int line) { app.OpenFile(p, line); };
     struct HostReset { ~HostReset() { ScriptEditorHostApi() = ScriptEditorHost{}; } } hostReset;
+    // Density: the editor's one setting (editor/ScriptingDensity.hpp, also the Visual Script window's Graph > Density) is the
+    // app's View > Line Spacing, both ways, so the two scripting windows never keep a private copy. A change from either side
+    // goes through scriptui::SetDensity, so main.cpp's TakeDensityChanged saves it with the editor's settings.
+    static int seenDensity = -1;
+    if (oked::scriptui::g_scriptDensity != seenDensity) {
+        seenDensity = oked::scriptui::g_scriptDensity;
+        if (app.Settings().density != seenDensity) { app.Settings().density = seenDensity; app.ApplySettings(); }
+    }
     // the window keeps the old one's title and flag, so saved layouts and the "Scripting" layout still place it
     DrawAppWindowOkayUI("Script Editor", &g_showScriptEditor, "##okayui_script_editor_app",
                         [&app](float x, float y, float w, float h) { app.Frame(x, y, w, h); }, 980.0f, 640.0f,
                         [&app](const std::string& dropped) { if (!scriptide::LanguageForPath(dropped).empty()) app.OpenFile(dropped); });
+    if (app.Settings().density != oked::scriptui::g_scriptDensity) {   // the app's Line Spacing menu was used
+        oked::scriptui::SetDensity(app.Settings().density);
+        seenDensity = oked::scriptui::g_scriptDensity;
+    }
     SyncCodeBuffers(app);
     {   // the code or a field of the app has the keyboard: the editor routes every key to it
         OkayUI::CodeEdit* e = app.ActiveEdit();

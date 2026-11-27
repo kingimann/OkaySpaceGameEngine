@@ -35,7 +35,7 @@ inline Key KeyFromDomCode(const char* code) {
         if (f >= 13 && f <= 24) return (Key)(104 + (f - 13)); // F13..F24 = 0x68..0x73
         return Key::Unknown;
     }
-    static const DomCodeEntry kTable[] = {
+    static const DomCodeEntry kTable[] = {   // dup-allow: a table of DOM key code names; only its shape is like CssColor.hpp's colour names
         {"Enter", 40}, {"Escape", 41}, {"Backspace", 42}, {"Tab", 43}, {"Space", 44},
         {"Minus", 45}, {"Equal", 46}, {"BracketLeft", 47}, {"BracketRight", 48}, {"Backslash", 49},
         {"Semicolon", 51}, {"Quote", 52}, {"Backquote", 53}, {"Comma", 54}, {"Period", 55}, {"Slash", 56},

@@ -305,9 +305,12 @@ void DockSpace(Rect area) {
         }
         if (n && cur != n->active && c.kind != Ctx::WinDrag) c.layout.SetActive(n->tabs[(size_t)cur]);
         const bool hotClose = !underFloat && In(t.close, m);
-        const Vec2 xs = CalcTextSize("x");
-        if (hotClose) dl.AddRectFilled(V(t.close.x, t.close.y + 2.0f), V(t.close.x + t.close.w, t.close.y + t.close.h - 2.0f), ColorMulAlpha(acc, 0.35f));
-        dl.AddText(V(t.close.x + (t.close.w - xs.x) * 0.5f, t.close.y + (t.close.h - xs.y) * 0.5f), hotClose ? txt : dim, "x");
+        {   // the close cross: two strokes, on a soft round chip under the pointer (the design's tab close)
+            const float cx = t.close.x + t.close.w * 0.5f, cy = t.close.y + t.close.h * 0.5f, k = 3.5f;
+            if (hotClose) dl.AddCircleFilled(V(cx, cy), std::min(8.0f, t.close.h * 0.4f), ColorMulAlpha(txt, 0.14f), 20);
+            dl.AddLine(V(cx - k, cy - k), V(cx + k, cy + k), hotClose ? txt : dim, 1.6f);
+            dl.AddLine(V(cx - k, cy + k), V(cx + k, cy - k), hotClose ? txt : dim, 1.6f);
+        }
     }
     // the layout may have changed from a tab click; the content rectangles do not move, so no rebuild is needed
     for (const DockLayout::Node& n : c.layout.Nodes()) {

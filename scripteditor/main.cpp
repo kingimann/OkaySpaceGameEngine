@@ -10,6 +10,7 @@
 // Settings are kept in the settings folder (okay::platform PrefPath "OkaySpace/ScriptEditor", script_editor.json).
 #define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
+#include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"
 #include "ScriptIdeApp.hpp"
 #include "FileDialog.hpp"   // File > Open Folder > Browse...: the system's folder dialog
@@ -51,6 +52,7 @@ int main(int argc, char** argv) {
     desc.maxFrames = frames;
     okayuihost::platform::ProgramHooks hooks;
     hooks.start = [&](okay::platform::Backend& be, okay::platform::Painter&) {
+        OkayUI::design::FollowUserFile();   // the person's design (appearance.json), shared with the launcher and the editor
         OkayUI::UseLauncherLook(true);   // the editor's look: the proportional UI font (the code is in JetBrains Mono)
         scriptide::ScriptIdeApp::Config cfg;
         const std::string data = be.PrefPath("OkaySpace", "ScriptEditor");

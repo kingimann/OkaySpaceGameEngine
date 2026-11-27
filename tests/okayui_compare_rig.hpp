@@ -96,9 +96,17 @@ struct ImGuiRig {
         s.WindowBorderSize = 0.0f;        s.FrameBorderSize = 0.0f;
         s.PopupBorderSize = 1.0f;
         s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
-        okaytheme::ApplySlateMetrics(s);
-        s.WindowBorderSize = 0.0f;
-        okaytheme::ApplySlateColors(s, ImVec4(0.235f, 0.475f, 0.800f, 1.0f));
+        {   // the editor's look in the Slate design, with the accent the comparisons were made with
+            OkayUI::design::Options o; std::snprintf(o.design, sizeof o.design, "Slate");
+            o.customAccent = true; o.accent = OkayUI::design::Rgba{60, 121, 204, 255};
+            const OkayUI::design::Tokens tok = OkayUI::design::Resolve(o);
+            okaytheme::ApplyDesignMetrics(s, tok);
+            // the rounding the comparisons were measured with (the editor's before designs)
+            s.WindowRounding = s.ChildRounding = s.PopupRounding = 8.0f; s.FrameRounding = s.GrabRounding = s.TabRounding = 6.0f; s.ScrollbarRounding = 8.0f;
+            s.FrameBorderSize = 0.0f; s.ChildBorderSize = 1.0f; s.PopupBorderSize = 1.0f;
+            s.WindowBorderSize = 0.0f;
+            okaytheme::ApplyColors(s, okaytheme::PaletteFrom(tok), ImVec4(0.235f, 0.475f, 0.800f, 1.0f));
+        }
         s.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
     }
     ~ImGuiRig() { ImGui::DestroyContext(ctx); }

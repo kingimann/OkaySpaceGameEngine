@@ -789,7 +789,8 @@ int main(int argc, char** argv) {
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
 #include "AppIcon.hpp"
-#include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
+#include "OkayTheme.hpp"   // the design's palette for Dear ImGui (launcher + editor)
+#include "AppearanceUI.hpp"   // Edit > Appearance: the design picker and options (shared with the launcher)
 #include "imgui.h"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
@@ -4299,13 +4300,18 @@ builder::BuildReport g_buildReport;   // per-file size breakdown of the last bui
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
 
-// ---- Editor theme (default: the shared Slate palette) ----------------------
+// ---- Editor theme: the design in force (okay/UI/OkayUIDesign.hpp, shared with the launcher and every OkayUI program) ----
+// Edit > Appearance picks the design and the person's options; they are saved in the per-user appearance.json and every
+// program follows them (design::Poll), so the launcher, the editor, the Script Editor, the browser and Visual Script match.
+static unsigned s_themeRevision = 0;   // the design revision ApplyTheme last applied (another program or Edit > Appearance moved it on)
 void ApplyTheme() {
+    const OkayUI::design::Tokens tok = OkayUI::design::CurrentTokens();
+    g_darkMode = !tok.c.light;
     if (g_darkMode) ImGui::StyleColorsDark();
     else            ImGui::StyleColorsLight();
     ImGuiStyle& s = ImGui::GetStyle();
     // One spacing system for every panel: readable type, room between controls,
-    // and hit targets you can land on. View > UI Scale still scales all of this.
+    // and hit targets you can land on. The design's density and the UI scale scale all of this.
     s.WindowPadding   = ImVec2(16, 12); s.FramePadding = ImVec2(12, 8);
     s.ItemSpacing     = ImVec2(12, 8);  s.ItemInnerSpacing = ImVec2(8, 6);
     s.CellPadding     = ImVec2(10, 6);  s.IndentSpacing = 22.0f;
@@ -4318,10 +4324,10 @@ void ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
-    {   // rounded controls + hairline borders (shared with the launcher), in both modes
-        okaytheme::ApplySlateMetrics(s);
-        s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
-    }
+    okaytheme::ApplyDensity(s, tok);
+    // The design's colours, rounding and borders (shared with the launcher), in both schemes.
+    okaytheme::ApplyDesign(s, tok);
+    s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
     // Panel tabs: a tab's close button shows only while it's hovered,
     // there's no extra "close the whole group" X at the end of each tab strip, the
     // active tab gets a thicker accent overline, and short names ("Game") still
@@ -4329,21 +4335,15 @@ void ApplyTheme() {
     s.TabCloseButtonMinWidthSelected   = 0.0f;
     s.TabCloseButtonMinWidthUnselected = 0.0f;
     s.DockingNodeHasCloseButton = false;
-    s.TabBarOverlineSize = 3.0f;
+    s.TabBarOverlineSize = tok.shape.tabs == OkayUI::design::TabShape::Underline ? 2.0f : 3.0f;
     s.TabBarBorderSize   = 1.0f;
     s.TabMinWidthBase    = 92.0f;
     s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
-    s.TabRounding = 6.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
-    if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
-    ImGui::GetIO().FontGlobalScale = g_uiScale;
+    const float scale = g_uiScale * tok.uiScale;
+    if (scale != 1.0f) s.ScaleAllSizes(scale);
+    ImGui::GetIO().FontGlobalScale = scale * tok.textSize;
 
-    // Light mode keeps ImGui's own light palette (only the metrics above apply).
-    if (!g_darkMode) return;
-
-    // The shared OkaySpace "Slate" palette (same as the launcher and its chat), with the default accent colour.
-    const AccentPreset& ap = kAccents[0];
-    okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
     // The selected tab of every group matches the panel under it (so it reads as
     // "connected"), focused or not; only the overline says which group has focus.
     ImVec4* c = s.Colors;
@@ -4353,8 +4353,7 @@ void ApplyTheme() {
     c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
     c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
     c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
-    // Disabled text was easy to miss on the slate background.
-    c[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
+    s_themeRevision = OkayUI::design::Revision();
 }
 
 // ---- Panel tabs, layouts and the panel switcher ------------------------------
@@ -6745,6 +6744,13 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
     else if (id == "view.bookmarks") DrawCameraBookmarkMenuItems(ed);
     else if (id == "view.rendering") DrawRenderingMenuItems(ed);
     else if (id == "view.layout") DrawLayoutMenuItems();
+    else if (id == "edit.appearance") {   // the design picker and the person's options (shared/AppearanceUI.hpp, as the launcher's Settings)
+        ImGui::TextDisabled("Design");
+        bool changed = okayappearance::DesignPicker(560.0f);
+        ImGui::Separator();
+        changed = okayappearance::Customization(560.0f, true) || changed;
+        if (changed) ApplyTheme();
+    }
     else if (id.rfind("create.", 0) == 0) DrawCreateSlot(ed, id, nullptr);
 }
 
@@ -6803,7 +6809,11 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
         HierSelectMany(ed, all);
     }
     else if (id == "edit.deselect") ed.Select(nullptr);
-    else if (id == "edit.darkmode" || id == "edit.lightmode") { g_darkMode = (id == "edit.darkmode"); ApplyTheme(); SaveSettings(); }
+    else if (id == "edit.darkmode" || id == "edit.lightmode") {   // the design's dark or light scheme (Edit > Appearance has the rest)
+        OkayUI::design::Options o = OkayUI::design::Current();
+        o.scheme = id == "edit.darkmode" ? OkayUI::design::Scheme::Dark : OkayUI::design::Scheme::Light;
+        okayappearance::Commit(o); ApplyTheme(); SaveSettings();
+    }
     else if (id == "edit.projectsettings") g_showProjectSettings = true;
     // GameObject
     else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
@@ -50941,7 +50951,13 @@ int main(int argc, char** argv) {
         g_uiScale = okay::platform::UiScaleFromDpi(winSeam->Dpi());   // snapped to 1.0 / 1.25 / 1.5 ... (1.0 when unknown)
     }
     LoadCustomActions();   // reusable custom instruction/condition library
-    ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
+    // The design and the person's options (appearance.json, shared with the launcher and every OkayUI program). The first start
+    // with designs keeps the editor's light mode when it was chosen.
+    if (!OkayUI::design::FollowUserFile() && !g_darkMode) {
+        OkayUI::design::Options o = OkayUI::design::Current(); o.scheme = OkayUI::design::Scheme::Light;
+        OkayUI::design::Set(o); OkayUI::design::SaveUserFile();
+    }
+    ApplyTheme();   // re-apply now that the saved design and UI scale are loaded
     StartSplashLateStep();   // the sign-in check or the project open is next (or nothing: ready)
     splashTick(nullptr);     // keep the loading frame moving right up to the first real frame (DrawStartSplashOverlay takes over)
 
@@ -51818,6 +51834,7 @@ int main(int argc, char** argv) {
         oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
+            if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design
             ImGui::NewFrame();
         }
         ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs

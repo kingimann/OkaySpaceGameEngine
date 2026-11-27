@@ -1171,12 +1171,12 @@ bool LocalHistory::Record(const std::string& scriptPath, const std::string& text
     for (char c : label) lab += IsIdent(c) ? c : '-';
     char stamp[32];
     std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)timeMs);
+    // Two copies in the same millisecond, whatever their labels: the next free time, so Versions() never has two copies with
+    // one time and its newest-first order does not depend on how the folder lists its files.
     std::int64_t t = timeMs;
-    std::string path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
-    while (fs::exists(path, ec)) {   // two copies in the same millisecond: the next free time
-        std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)++t);
-        path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
-    }
+    for (const auto& v : vs) if (v.time >= t) t = v.time + 1;
+    std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)t);
+    const std::string path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
     {
         std::ofstream f(path, std::ios::binary);
         if (!f) return false;

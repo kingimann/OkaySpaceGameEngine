@@ -3,14 +3,15 @@
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
 #include "ImGuiDropdown.hpp"   // the dropdown look shared with the launcher
+#include "okay/UI/OkayUIDesign.hpp"   // the accent of the design in force
 
 namespace oked {
 
 // The current accent colour, for panels that want to tint their own widgets to
 // match the theme (component headers, the Add Component button, ...).
 ImVec4 AccentCol(float alpha) {
-    const AccentPreset& ap = kAccents[0];
-    return ImVec4(ap.r, ap.g, ap.b, alpha);
+    const OkayUI::design::Rgba a = OkayUI::design::CurrentTokens().c.accent;   // the design's (or the person's) accent
+    return ImVec4(a.r / 255.0f, a.g / 255.0f, a.b / 255.0f, alpha);
 }
 // A tasteful category tint for a component header, derived from its label — so the
 // Inspector groups visually by system (physics/render/audio/UI/animation/script)

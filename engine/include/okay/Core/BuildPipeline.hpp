@@ -180,7 +180,7 @@ struct Report {
     /// (extension, bytes, count) rows, largest first; files without one are "(none)".
     struct TypeRow { std::string ext; std::uintmax_t bytes = 0; int count = 0; };
     std::vector<TypeRow> ByExtension() const;
-    /// The plain-text report (what the editor writes to .okay/build_report.txt and the CLI prints).
+    /// The plain-text report (what the editor writes to Logs/build_report.txt in the project and the CLI prints).
     /// `maxRows` limits the file and excluded lists (0 = all).
     std::string ToText(std::size_t maxRows = 0) const;
 };

@@ -236,6 +236,28 @@ CodePalette DefaultCodePalette() {
     return p;
 }
 
+CodePalette DesignCodePalette() {
+    CodePalette p = DefaultCodePalette();
+    const Theme& t = Style();
+    auto c = [](const unsigned char* v, unsigned a = 255) { return RGBA(v[0], v[1], v[2], a); };
+    if (t.lightScheme) {   // our own light syntax colours, picked for contrast on near-white
+        p.text[CodeColor_Default] = RGBA(36, 41, 46);    p.text[CodeColor_Keyword] = RGBA(160, 32, 150); p.text[CodeColor_Type] = RGBA(0, 112, 120);
+        p.text[CodeColor_Function] = RGBA(52, 80, 180);  p.text[CodeColor_Known] = RGBA(140, 90, 0);    p.text[CodeColor_Member] = RGBA(110, 56, 150);
+        p.text[CodeColor_Number] = RGBA(170, 64, 0);     p.text[CodeColor_String] = RGBA(30, 116, 52);  p.text[CodeColor_Char] = RGBA(30, 116, 52);
+        p.text[CodeColor_Comment] = RGBA(100, 106, 114); p.text[CodeColor_Punct] = RGBA(64, 68, 74);    p.text[CodeColor_Preproc] = RGBA(100, 100, 100);
+        p.findMatch = RGBA(240, 190, 60, 110); p.bracketMatch = RGBA(0, 0, 0, 40);
+        p.errorLine = RGBA(200, 40, 40, 36); p.errorUnderline = c(t.danger);
+    }
+    p.background = c(t.field); p.gutter = c(t.field);
+    p.lineNumber = c(t.textFaint); p.lineNumberCurrent = c(t.text);
+    p.caret = c(t.text); p.selection = c(t.selection, t.selection[3]); p.selectionInactive = c(t.selection, t.selection[3] / 2u);
+    p.currentLine = c(t.ink, t.lightScheme ? 10 : 14);
+    p.breakpoint = c(t.accent);
+    p.scrollTrack = RGBA(0, 0, 0, 0); p.scrollThumb = c(t.ink, 46); p.scrollThumbHot = c(t.ink, 90);
+    p.indentGuide = c(t.textFaint, 60); p.fold = c(t.textFaint);
+    return p;
+}
+
 // ================================================================================================
 // Text, positions
 // ================================================================================================
@@ -2293,8 +2315,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             }
             if (header) {
                 const float cx = view_.x - foldW_ * 0.5f - 1.0f, cy = y + lineH_ * 0.5f, k = std::max(2.0f, foldW_ * 0.22f);
-                if (folded) dl.AddTriangleFilled(Vec2{cx - k * 0.6f, cy - k}, Vec2{cx - k * 0.6f, cy + k}, Vec2{cx + k * 0.8f, cy}, foldCol);
-                else dl.AddTriangleFilled(Vec2{cx - k, cy - k * 0.6f}, Vec2{cx + k, cy - k * 0.6f}, Vec2{cx, cy + k * 0.8f}, ColorMulAlpha(foldCol, 0.6f));
+                DrawChevron(dl, Vec2{cx, cy}, k * 1.8f, folded ? 0 : 1, folded ? foldCol : ColorMulAlpha(foldCol, 0.6f), 1.5f);
             }
         }
     }

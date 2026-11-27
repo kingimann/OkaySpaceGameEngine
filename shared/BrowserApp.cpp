@@ -355,7 +355,7 @@ int BrowserApp::OpenUrl(const std::string& url, bool activate, bool fromActive) 
 }
 
 void BrowserApp::Pump() { m->pump(); }
-void BrowserApp::Frame(float x, float y, float w, float h) { m->frameIn(x, y, w, h); }
+void BrowserApp::Frame(float x, float y, float w, float h) { S::browserlook::FollowDesign(); m->frameIn(x, y, w, h); }
 bool BrowserApp::WantsQuit() const { return m->quit; }
 void BrowserApp::SetAutoplay(bool on) { m->autoplay = on; }
 void BrowserApp::Save() { if (m->store.Dirty()) m->save(); m->site.Save((std::int64_t)std::time(nullptr)); }

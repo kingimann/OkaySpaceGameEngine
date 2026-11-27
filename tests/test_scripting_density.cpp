@@ -121,8 +121,13 @@ int main() {
         CHECK(vs.find("ScriptingDensity.hpp") != std::string::npos && pal.find("ScriptingDensity.hpp") != std::string::npos);
         CHECK(vs.find("scriptui::Current()") != std::string::npos && pal.find("scriptui::Current()") != std::string::npos);
         CHECK(vs.find("292.0f * z") == std::string::npos);          // the old fixed node size is gone
-        CHECK(mn.find("scriptui::Current()") != std::string::npos && mn.find("TakeDensityChanged") != std::string::npos);
-        CHECK(vs.find("DrawDensityMenu") != std::string::npos && mn.find("DrawDensityMenu") != std::string::npos);
+        CHECK(mn.find("TakeDensityChanged") != std::string::npos);   // the editor saves a change from either window
+        CHECK(vs.find("DrawDensityMenu") != std::string::npos);
+        // The Script editor window is the shared ScriptIdeApp since #1357 (its old Dear ImGui window in main.cpp is gone): the
+        // editor's host keeps the app's Line Spacing and this one Density the same, both ways, through SetDensity.
+        const std::string host = Slurp("editor/ScriptEditorAppHost.cpp");
+        CHECK(host.find("ScriptingDensity.hpp") != std::string::npos && host.find("scriptui::g_scriptDensity") != std::string::npos);
+        CHECK(host.find("scriptui::SetDensity(app.Settings().density)") != std::string::npos && host.find("ApplySettings()") != std::string::npos);
     }
 #endif
     TEST_MAIN_RESULT();

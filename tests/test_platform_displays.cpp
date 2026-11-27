@@ -108,7 +108,6 @@ void PureChecks() {
 
 void XvfbChecks() {
     if (!std::getenv("DISPLAY")) { std::cout << "SKIP: no $DISPLAY (run through tests/run_under_xvfb.sh)\n"; std::exit(77); }
-    setenv("SDL_VIDEODRIVER", "x11", 1);
     Backend* own = Get(BackendKind::Own);
     if (!own || !own->Init(InitFlags{true, false, false})) { std::cout << "SKIP: own backend cannot open the display\n"; std::exit(77); }
     const int n = own->DisplayCount();

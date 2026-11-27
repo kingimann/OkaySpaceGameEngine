@@ -1,16 +1,14 @@
 // Headless pictures (software renderer, same UI pass as the game; not a real window) of UI library slice 4: the themes side by side, the
 // icon sheet, the style sheet, and a picture of every screen. They are written to <build>/tests/ui_library4/ (and to a folder given as the
 // first argument or in the OKAY_SHOT_DIR environment variable; pictures are never kept in the repository). Written for this engine; no other project's code or art.
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/UILibrary.hpp"
 #include "okay/UI/UILayoutUpdate.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Components/UINavigation.hpp"
-#include <SDL.h>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
@@ -23,34 +21,9 @@ namespace {
 
 struct Shot { bool ok = false; Image img{1, 1}; };
 
-// One software renderer for the whole process, as the player has one: the glyph atlas texture of a font is made for the first renderer and kept
-// (UIPainterSDL.hpp SDLFontAtlas), so a second renderer would draw no text. Every picture is drawn into the top-left corner of one big surface.
-struct Canvas3x { SDL_Surface* surf = nullptr; SDL_Renderer* ren = nullptr; };
-Canvas3x& Big() {
-    static Canvas3x c = [] {
-        Canvas3x k;
-        k.surf = SDL_CreateRGBSurfaceWithFormat(0, 3840, 2160, 32, SDL_PIXELFORMAT_ABGR8888);
-        k.ren = k.surf ? SDL_CreateSoftwareRenderer(k.surf) : nullptr;
-        return k;
-    }();
-    return c;
-}
-
 Shot Render(int width, int height, const std::function<void(Scene&)>& build, bool pixelFont = false) {
     Shot out;
-    Canvas3x& big = Big();
-    SDL_Renderer* ren = big.ren;
-    SDL_Surface* surf = big.surf;
-    if (!ren || width > 3840 || height > 2160) return out;
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_Rect all{0, 0, 3840, 2160};
-    SDL_RenderSetViewport(ren, &all);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(ren, 18, 22, 32, 255);
-    SDL_RenderClear(ren);
-    SDL_Rect vp{0, 0, width, height};
-    SDL_RenderSetViewport(ren, &vp);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    if (width > 3840 || height > 2160) return out;
     Scene scene("shot");
     scene.physicsEnabled = false;
     scene.uiFont = pixelFont ? "pixel" : "";   // the default UI font is the smooth TrueType face; "pixel" (the old 8x8 bitmap) is only the opt-in look
@@ -59,15 +32,7 @@ Shot Render(int width, int height, const std::function<void(Scene&)>& build, boo
     UICanvas::Set((float)width, (float)height);
     UpdateUILayouts(scene);
     scene.Update(0.016f);
-    ui2d::SDLPainter painter(ren, &cache, "");
-    ui2d::RenderSceneUI(scene, painter, width, height);
-    SDL_RenderPresent(ren);
-    out.img = Image(width, height);
-    for (int y = 0; y < height; ++y) {
-        const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
-        for (int x = 0; x < width; ++x) out.img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
-    }
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    if (!okaytest::SoftRenderSceneUI(scene, width, height, out.img, false, 18, 22, 32)) return out;
     int drawn = 0;
     const unsigned char* px = out.img.Data();
     for (int i = 0; i < width * height; ++i) if (px[i * 4] != 18 || px[i * 4 + 1] != 22 || px[i * 4 + 2] != 32) ++drawn;

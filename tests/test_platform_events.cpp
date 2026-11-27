@@ -1,16 +1,9 @@
 // okay::platform event queue, no display needed: PushEvent / PollEvent round trips on every compiled-in backend, PumpEvents
-// keeping order, the sdl2 backend's `native` pointer, unmapped events, render resets and CharForKey. SDL's own queue works
-// without a video driver, so this runs anywhere. (Real window events are in test_platform_window.cpp.)
+// keeping order, and CharForKey. The queue works without a display, so this runs anywhere. (Real window events are in test_platform_window.cpp.)
 #include "test_framework.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <string>
 #include <vector>
-#if defined(__has_include)
-#if __has_include(<SDL.h>)
-#include <SDL.h>
-#define OKAY_TEST_HAVE_SDL 1
-#endif
-#endif
 
 using namespace okay::platform;
 
@@ -23,8 +16,7 @@ std::vector<Event> DrainAll(Backend& b) {
     return v;
 }
 
-// One poll. (SDL 2.30.0's own SDL_PollEvent misses an event pushed just after the queue emptied; the sdl2 backend avoids that,
-// and the stress test below proves it: no retries anywhere in this file.)
+// One poll (no retries anywhere in this file: the stress test below proves none are needed).
 bool PollRetry(Backend& b, Event& e) { return b.PollEvent(e); }
 
 Event Mk(EventType t) { Event e; e.type = t; e.windowId = 7; return e; }
@@ -143,68 +135,5 @@ int main() {
         }
     }
 
-#ifdef OKAY_TEST_HAVE_SDL
-    if (IsCompiledIn(BackendKind::Sdl2)) {
-        Backend* b = Get(BackendKind::Sdl2);
-        std::cout << "[sdl2] native pointer, unmapped events, render resets, flipped wheel\n";
-        DrainAll(*b);
-        SDL_Event e;
-        // A mapped event carries the SDL record it came from.
-        SDL_zero(e); e.type = SDL_KEYDOWN; e.key.keysym.scancode = SDL_SCANCODE_Q; e.key.keysym.sym = SDLK_q; e.key.windowID = 3;
-        CHECK(SDL_PushEvent(&e) == 1);
-        Event r;
-        CHECK(PollRetry(*b, r));
-        CHECK(r.type == EventType::KeyDown && r.key == Key::Q);
-        const SDL_Event* n = (const SDL_Event*)r.native;
-        CHECK(n != nullptr);
-        if (n) CHECK(n->type == SDL_KEYDOWN && n->key.keysym.sym == SDLK_q && n->key.windowID == 3);
-
-        // An event the seam has no type for is dropped by default ...
-        SDL_zero(e); e.type = SDL_WINDOWEVENT; e.window.event = SDL_WINDOWEVENT_ENTER; e.window.windowID = 3;
-        CHECK(SDL_PushEvent(&e) == 1);
-        CHECK(!b->PollEvent(r));
-        // ... and returned as Other, with `native`, once asked for. (Dear ImGui's backend needs ENTER and LEAVE.)
-        b->ReportUnmappedEvents(true);
-        CHECK(SDL_PushEvent(&e) == 1);
-        CHECK(PollRetry(*b, r));
-        CHECK(r.type == EventType::Other);
-        n = (const SDL_Event*)r.native;
-        CHECK(n && n->type == SDL_WINDOWEVENT && n->window.event == SDL_WINDOWEVENT_ENTER && n->window.windowID == 3);
-        b->ReportUnmappedEvents(false);
-
-        // Render device resets (the D3D11 device lost) have their own types.
-        SDL_zero(e); e.type = SDL_RENDER_TARGETS_RESET;
-        CHECK(SDL_PushEvent(&e) == 1);
-        SDL_zero(e); e.type = SDL_RENDER_DEVICE_RESET;
-        CHECK(SDL_PushEvent(&e) == 1);
-        std::vector<Event> rs;
-        rs = DrainAll(*b);
-        CHECK(rs.size() == 2);
-        if (rs.size() == 2) CHECK(rs[0].type == EventType::RenderTargetsReset && rs[1].type == EventType::RenderDeviceReset);
-
-        // A flipped (natural scrolling) wheel keeps its meaning through PushEvent and back; the raw SDL value is recoverable.
-        SDL_zero(e); e.type = SDL_MOUSEWHEEL; e.wheel.y = 3; e.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
-        CHECK(SDL_PushEvent(&e) == 1);
-        CHECK(PollRetry(*b, r));
-        CHECK(r.type == EventType::MouseWheel && r.wheelFlipped && r.wheelY == -3.0f);
-        Event again = r;
-        CHECK(b->PushEvent(again));
-        CHECK(PollRetry(*b, r));
-        CHECK(r.wheelFlipped && r.wheelY == -3.0f);
-        n = (const SDL_Event*)r.native;
-        CHECK(n && n->wheel.y == 3 && n->wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
-
-        // A dropped file's path survives, and the SDL string is freed (run under ASan / valgrind to see a leak).
-        Event drop; drop.type = EventType::DropFile; drop.text = "/a/b c.okayscene";
-        CHECK(b->PushEvent(drop));
-        CHECK(PollRetry(*b, r));
-        CHECK(r.type == EventType::DropFile && r.text == "/a/b c.okayscene");
-        // Text longer than SDL's 32-byte text event is cut, not overrun.
-        Event longText; longText.type = EventType::TextInput; longText.text = std::string(80, 'x');
-        CHECK(b->PushEvent(longText));
-        CHECK(PollRetry(*b, r));
-        CHECK(r.type == EventType::TextInput && r.text.size() == 31);
-    }
-#endif
     TEST_MAIN_RESULT();
 }

@@ -1,5 +1,5 @@
 // okay::platform without a display: the registry, timers, audio devices and
-// controllers on every backend that is compiled in (sdl2 and own side by side),
+// controllers on every backend that is compiled in (own on the desktop; sdl2 exists only in the web build),
 // plus the own backend's evdev mapping fed through a pipe. Windows, events,
 // GL and the clipboard need an X server: see test_platform_window.cpp.
 #include "test_framework.hpp"
@@ -21,10 +21,6 @@
 #include <vector>
 
 #if defined(__has_include)
-#if __has_include(<SDL_scancode.h>)
-#include <SDL_scancode.h>
-#define OKAY_TEST_HAVE_SDL_HEADERS 1
-#endif
 #endif
 
 using namespace okay::platform;
@@ -265,17 +261,12 @@ void TestKeyNumbering() {
     CHECK((int)Key::Return == 40 && (int)Key::Escape == 41 && (int)Key::Space == 44);
     CHECK((int)Key::F1 == 58 && (int)Key::F12 == 69 && (int)Key::Right == 79 && (int)Key::Up == 82);
     CHECK((int)Key::LCtrl == 224 && (int)Key::RGui == 231);
-#ifdef OKAY_TEST_HAVE_SDL_HEADERS
-    CHECK((int)Key::A == SDL_SCANCODE_A && (int)Key::Z == SDL_SCANCODE_Z);
-    CHECK((int)Key::N0 == SDL_SCANCODE_0 && (int)Key::N1 == SDL_SCANCODE_1);
-    CHECK((int)Key::Return == SDL_SCANCODE_RETURN && (int)Key::Escape == SDL_SCANCODE_ESCAPE);
-    CHECK((int)Key::Backspace == SDL_SCANCODE_BACKSPACE && (int)Key::Tab == SDL_SCANCODE_TAB);
-    CHECK((int)Key::F1 == SDL_SCANCODE_F1 && (int)Key::F12 == SDL_SCANCODE_F12);
-    CHECK((int)Key::Left == SDL_SCANCODE_LEFT && (int)Key::Down == SDL_SCANCODE_DOWN);
-    CHECK((int)Key::KpEnter == SDL_SCANCODE_KP_ENTER && (int)Key::Delete == SDL_SCANCODE_DELETE);
-    CHECK((int)Key::LShift == SDL_SCANCODE_LSHIFT && (int)Key::RAlt == SDL_SCANCODE_RALT);
-    CHECK((int)Key::PageUp == SDL_SCANCODE_PAGEUP && (int)Key::Home == SDL_SCANCODE_HOME);
-#endif
+    // More of the USB HID Usage Tables' keyboard page (HID Usage Tables 1.12, section 10), written out by hand.
+    CHECK((int)Key::Backspace == 42 && (int)Key::Tab == 43);
+    CHECK((int)Key::Left == 80 && (int)Key::Down == 81);
+    CHECK((int)Key::KpEnter == 88 && (int)Key::Delete == 76);
+    CHECK((int)Key::LShift == 225 && (int)Key::RAlt == 230);
+    CHECK((int)Key::PageUp == 75 && (int)Key::Home == 74);
 }
 
 } // namespace
@@ -302,8 +293,7 @@ int main(int argc, char** argv) {
     CHECK(TicksMs32() >= (uint32_t)t0);
     CHECK(PerfFrequency() > 0);
 
-    // Headless: SDL's dummy audio driver, ALSA's null device.
-    setenv("SDL_AUDIODRIVER", "dummy", 1);
+    // Headless: ALSA's null device.
     setenv("OKAY_ALSA_DEVICE", "null", 1);
 
     int ran = 0;

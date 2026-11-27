@@ -53,7 +53,7 @@ BackendKind DefaultKind() {
         BackendKind k = BackendKind::Sdl2;
 #endif
         BackendKind fromEnv;
-        if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
+        if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv) && IsCompiledIn(fromEnv)) k = fromEnv;   // (a backend this build lacks is ignored)
         else if (const char* o = std::getenv("OKAY_OWN_PLATFORM")) {   // short switch: 1 / true / yes / on = own
             const std::string v = o;
             if (v == "1" || v == "true" || v == "yes" || v == "on") k = BackendKind::Own;

@@ -1,5 +1,6 @@
 #include "OkayUI_ContextState.hpp"
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -1834,44 +1835,66 @@ struct ParaLines {
 // Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks. With Dear ImGui's text rows (TextRowHeight > 0)
 // the lines of one paragraph are one text line apart (no item spacing between them), and the lines after the first fill the width
 // from the left edge (`maxRest`) even when the first one began after another item on its line.
+// Dear ImGui's wrapping: the text's own spaces are kept, each word is measured once (whole-pixel advances, as Dear ImGui's wrap measures),
+// a line breaks before the word that does not fit, the spaces at the break are dropped, and '\n' always breaks. `line` gets each line
+// (at most 500 bytes) and answers the width for the next one. Lines are measured at `scale` (a text scale).
+void imguiWrap(const char* text, float maxW, float scale, const std::function<float(const char*)>& line) {
+    if (!text) return;
+    char out[512];
+    const char* q = text;
+    while (*q) {
+        const char* r = q; const char* fitEnd = nullptr; float w = 0.0f;
+        while (*r && *r != '\n') {
+            const char* we = r;
+            while (*we == ' ') ++we;
+            while (*we && *we != ' ' && *we != '\n') ++we;
+            char piece[512]; int k = 0;
+            for (const char* c = r; c < we && k < 500; ++c) piece[k++] = *c;
+            piece[k] = 0;
+            const float add = fMeasureWhole(piece, scale);
+            if (fitEnd && w + add > maxW) break;
+            w += add; fitEnd = we; r = we;
+        }
+        const char* end = fitEnd ? fitEnd : r;
+        int k = 0;
+        for (const char* c = q; c < end && k < 500; ++c) out[k++] = *c;
+        out[k] = 0;
+        maxW = line(out);
+        q = end;
+        while (*q == ' ') ++q;
+        if (*q == '\n') ++q;
+    }
+}
+// The size of `text` drawn at `scale`, wrapped at `wrapW` (<= 0: only at '\n'), Dear ImGui's CalcTextSize with a wrap width: the
+// widest line, and one text line per line.
+Vec2 wrappedTextSize(const char* text, float wrapW, float scale) {
+    if (!text || !*text) return Vec2{0.0f, fH() * scale};
+    float w = 0.0f; int n = 0;
+    imguiWrap(text, wrapW > 0.0f ? wrapW : 1.0e9f, scale, [&](const char* l) {
+        w = std::max(w, l[0] ? fMeasure(l) * scale : 0.0f); ++n; return wrapW > 0.0f ? wrapW : 1.0e9f; });
+    if (text[std::strlen(text) - 1] == '\n') ++n;   // a final line break starts an empty line
+    return Vec2{w, (float)std::max(n, 1) * fH() * scale};
+}
 void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest) {
     char line[512]; int n = 0;
     const char* p = text;
     const bool imguiRows = g_textRowH != 0.0f;
     bool first = true;
     ParaLines para(col);   // OkayUI's own rows: the lines of a paragraph one text pitch apart (main's ParaLines)
+    float firstX = 0.0f;
     auto emit = [&](const char* l) {
         if (!imguiRows) { para.Add(l); first = false; return; }
-        if (!first) { g_lay.cy = g_lay.prevY + g_lay.prevH; g_lay.pendingSameLine = false; }
+        if (!first) {
+            if (g_imguiCoords) SetCursorScreenPos(Vec2{firstX, g_lay.prevY + g_lay.prevH});   // Dear ImGui: every line starts where the text began
+            else { g_lay.cy = g_lay.prevY + g_lay.prevH; g_lay.pendingSameLine = false; }
+        }
         textLine(l, col);
-        if (first && imguiRows && maxRest > 0.0f) maxW = maxRest;
+        if (first) firstX = g_lay.prevX;
+        if (first && imguiRows && maxRest > 0.0f && !g_imguiCoords) maxW = maxRest;
         first = false;
     };
-    if (imguiRows) {   // Dear ImGui's wrapping: the text's own spaces are kept, each word is measured once, a line breaks before the word
-                       // that does not fit, and the spaces at the break are dropped
-        const char* q = text;
-        while (*q) {
-            const char* r = q; const char* fitEnd = nullptr; float w = 0.0f;
-            while (*r && *r != '\n') {
-                const char* we = r;
-                while (*we == ' ') ++we;
-                while (*we && *we != ' ' && *we != '\n') ++we;
-                char piece[512]; int k = 0;
-                for (const char* c = r; c < we && k < 500; ++c) piece[k++] = *c;
-                piece[k] = 0;
-                const float add = fMeasureWhole(piece, g_theme.textScale);   // whole-pixel advances, as Dear ImGui's wrap measures
-                if (fitEnd && w + add > maxW) break;
-                w += add; fitEnd = we; r = we;
-            }
-            const char* end = fitEnd ? fitEnd : r;
-            int k = 0;
-            for (const char* c = q; c < end && k < 500; ++c) line[k++] = *c;
-            line[k] = 0;
-            emit(line);
-            q = end;
-            while (*q == ' ') ++q;
-            if (*q == '\n') ++q;
-        }
+    if (imguiRows) {   // Dear ImGui's wrapping (imguiWrap)
+        imguiWrap(text, maxW, g_theme.textScale, [&](const char* l) { emit(l); return maxW; });
         return;
     }
     // A paragraph that fits on one line is one line (most calls): measured once.

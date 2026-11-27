@@ -319,11 +319,17 @@ Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char*
     return Vec2{best * cw, (float)lines * size};
 }
 
-void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const ImVec4*) const {
+void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float wrapWidth, const ImVec4* clip) const {
     if (!text || !finite1(fontSize) || fontSize <= 0.0f) return;
     char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
     if (n > sizeof buf - 1) n = sizeof buf - 1;
     std::memcpy(buf, text, n); buf[n] = 0;
+    if ((finite1(wrapWidth) && wrapWidth > 0.0f) || std::strchr(buf, '\n')) {   // Dear ImGui's wrapped text: one line under the other, fontSize apart
+        float y = pos.y;
+        const float wrapAt = finite1(wrapWidth) && wrapWidth > 0.0f ? wrapWidth : 1.0e9f;
+        imguiWrap(buf, wrapAt, fontSize / 8.0f, [&](const char* l) { if (l[0]) AddText(font, fontSize, Vec2{pos.x, y}, col, l, nullptr, 0.0f, clip); y += fontSize; return wrapAt; });
+        return;
+    }
     const Font* f = font ? font : GetFont();
     if (f && f->ttf) {   // a user font: draw with it for this call at `fontSize` pixels
         const Font* prev = GetFont(); SetFont(f); const float saved = g_theme.textScale; g_theme.textScale = fontSize / 8.0f;

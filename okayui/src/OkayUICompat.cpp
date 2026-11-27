@@ -5,6 +5,7 @@
 #include "okay/UI/OkayUICompat.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
+#include "OkayUIInternal.hpp"   // wrappedTextSize
 
 #include <cmath>
 #include <cstdarg>
@@ -287,13 +288,14 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV,
     nextNum(fmt, flags); return DragFloat(label, v, speed, minV, maxV);
 }
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char* fmt, int flags) { nextNum(fmt, flags); return DragInt(label, v, speed, minV, maxV); }
-Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float) {
+// With a wrap width, or line breaks in the text: Dear ImGui's measure of the wrapped lines (the widest line, a text line per line).
+Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float wrapWidth) {
     if (!text) return Vec2{0, 0};
-    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
-    if (n > sizeof buf - 1) n = sizeof buf - 1;
-    std::memcpy(buf, text, n); buf[n] = 0;
-    if (hideAfterHash) { const char* e = FindRenderedTextEnd(buf); buf[e - buf] = 0; }
-    return CalcTextSize(static_cast<const char*>(buf));
+    std::string buf(text, textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text));
+    if (hideAfterHash) buf.resize((std::size_t)(FindRenderedTextEnd(buf.c_str()) - buf.c_str()));
+    if ((std::isfinite(wrapWidth) && wrapWidth > 0.0f) || buf.find('\n') != std::string::npos)
+        return ui_core::wrappedTextSize(buf.c_str(), std::isfinite(wrapWidth) ? wrapWidth : 0.0f, Style().textScale);
+    return CalcTextSize(buf.c_str());
 }
 bool Combo(const char* label, int* current, const char* zs, int) {
     const char* items[64]; int count = 0;

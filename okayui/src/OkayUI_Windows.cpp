@@ -583,7 +583,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
 
     // Frame + clip to the region.
     if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
-    else if (trim && !outline && colorIsSet(Col_ChildBg) && g_theme.colors[Col_ChildBg][3] > 0)   // Dear ImGui's form: a child without a border still fills Col_ChildBg (rounded by ChildRounding)
+    else if (g_imguiCoords && trim && !outline && colorIsSet(Col_ChildBg) && g_theme.colors[Col_ChildBg][3] > 0)   // Dear ImGui's rules (UseImGuiCoordinates): a child without a border still fills Col_ChildBg (rounded by ChildRounding)
         rrect(rx, ry, rw, rh, childRnd(), g_theme.colors[Col_ChildBg]);
     if (outline) {   // a stroked outline (filling under it would cost a whole child's area twice on a CPU rasteriser)
         const float rd = childRnd();

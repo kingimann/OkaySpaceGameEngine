@@ -17,6 +17,7 @@
 // launcher's Browser page draws (sidebar > Browser); this file is only the program's window around it.
 #define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
+#include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"
 #include "BrowserApp.hpp"
 #include "Process.hpp"   // tools/okay-cli: SelfPath (where this program is, to find the player beside it)
@@ -71,55 +72,39 @@ int main(int argc, char** argv) {
         else if (!a.empty() && a[0] != '-') starts.push_back(a);
     }
 
-    okay::platform::Backend* be = okay::platform::Default();
-    if (!be || !be->Init(okay::platform::InitFlags())) {
-        std::fprintf(stderr, "[browser] no platform backend: %s\n", be ? be->LastError().c_str() : "none");
-        return 1;
-    }
-    okay::platform::WindowDesc wd;
-    wd.title = "OkaySpace Browser";
-    wd.width = 1180;
-    wd.height = 800;
-    wd.resizable = true;
-    std::unique_ptr<okay::platform::Window> win;
-    std::unique_ptr<okay::platform::Painter> painter;
-    std::string err;
-    if (!okayuihost::platform::OpenWindow(*be, wd, win, painter, err)) { std::fprintf(stderr, "[browser] %s\n", err.c_str()); be->Shutdown(); return 1; }
-
-    br::BrowserApp::Config cfg;
-    okay::platform::Painter* p = painter.get();
-    cfg.textures.make = [p](const std::uint8_t* rgba, int w, int h) -> void* {
-        okay::platform::TextureDesc d;
-        d.width = w; d.height = h; d.scale = okay::platform::ScaleMode::Linear;
-        return p->CreateTexture(d, rgba);
+    std::unique_ptr<br::BrowserApp> app;
+    okayuihost::platform::ProgramDesc desc;
+    desc.tag = "browser";
+    desc.window.title = "OkaySpace Browser";
+    desc.window.width = 1180;
+    desc.window.height = 800;
+    desc.window.resizable = true;
+    okayuihost::platform::ProgramHooks hooks;
+    hooks.start = [&](okay::platform::Backend& be, okay::platform::Painter& painter) {
+        br::BrowserApp::Config cfg;
+        okay::platform::Painter* p = &painter;
+        cfg.textures.make = [p](const std::uint8_t* rgba, int w, int h) -> void* {
+            okay::platform::TextureDesc d;
+            d.width = w; d.height = h; d.scale = okay::platform::ScaleMode::Linear;
+            return p->CreateTexture(d, rgba);
+        };
+        cfg.textures.destroy = [p](void* t) { p->DestroyTexture(t); };
+        cfg.runner.dataRoot = be.PrefPath("OkaySpace", "Browser");   // the launcher's Browser page uses the same folder and profile
+        cfg.runner.playerExe = FindPlayer();
+        cfg.profilePath = cfg.runner.dataRoot.empty() ? std::string() : cfg.runner.dataRoot + "profile.json";
+        cfg.switchedOff = SwitchedOff();
+        cfg.quitItem = true;
+        std::fprintf(stderr, "[browser] data %s, player %s\n", cfg.runner.dataRoot.c_str(), cfg.runner.playerExe.empty() ? "(not found: games cannot run)" : cfg.runner.playerExe.c_str());
+        app.reset(new br::BrowserApp(cfg));
+        for (const std::string& s : starts)
+            if (app->OpenTyped(s, app->TabCount() == 0) < 0) app->OpenUrl("about:newtab", app->TabCount() == 0);
+        if (app->TabCount() == 0) app->OpenTyped(std::string());
+        app->SetAutoplay(autoplay);
+        OkayUI::design::FollowUserFile();   // the person's design (appearance.json), shared with the launcher and the editor
+        UI::UseLauncherLook(true);
+        return true;
     };
-    cfg.textures.destroy = [p](void* t) { p->DestroyTexture(t); };
-    cfg.runner.dataRoot = be->PrefPath("OkaySpace", "Browser");   // the launcher's Browser page uses the same folder and profile
-    cfg.runner.playerExe = FindPlayer();
-    cfg.profilePath = cfg.runner.dataRoot.empty() ? std::string() : cfg.runner.dataRoot + "profile.json";
-    cfg.switchedOff = SwitchedOff();
-    cfg.quitItem = true;
-    std::fprintf(stderr, "[browser] data %s, player %s\n", cfg.runner.dataRoot.c_str(), cfg.runner.playerExe.empty() ? "(not found: games cannot run)" : cfg.runner.playerExe.c_str());
-
-    std::unique_ptr<br::BrowserApp> app(new br::BrowserApp(cfg));
-    for (const std::string& s : starts)
-        if (app->OpenTyped(s, app->TabCount() == 0) < 0) app->OpenUrl("about:newtab", app->TabCount() == 0);
-    if (app->TabCount() == 0) app->OpenTyped(std::string());
-    app->SetAutoplay(autoplay);
-
-    UI::UseLauncherLook(true);
-    {   // the frame loop (and its OkayUI host, which uses the painter) ends before the painter does
-        okayuihost::platform::FrameLoop loop(*be, *painter);
-        std::string shownTitle;
-        while (!app->WantsQuit() && loop.Frame([&] {
-            app->Frame(0, 0, (float)loop.GetHost().DisplayWidth(), (float)loop.GetHost().DisplayHeight());
-            const std::string title = app->WindowTitle();   // the window's title: the page's title
-            if (title != shownTitle) { win->SetTitle(title); shownTitle = title; }
-        })) {}
-        app.reset();   // saves the profile, stops running games and frees the textures while the painter still exists
-    }
-    painter.reset();
-    win.reset();
-    be->Shutdown();
-    return 0;
+    // the window's title is the page's; the end saves the profile, stops running games and frees the textures while the painter exists
+    okayuihost::platform::AppHooks(hooks, app);
+    return okayuihost::platform::RunProgram(desc, hooks);
 }

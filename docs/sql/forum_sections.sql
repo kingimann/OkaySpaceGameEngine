@@ -26,10 +26,20 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- Staff may verify players (the trigger from profile_extras.sql otherwise
--- keeps `verified` unchanged for players).
+-- keeps `verified` unchanged for players). The "staff verify players" policy
+-- below opens the whole row to staff, so this trigger also refuses any change
+-- to SOMEONE ELSE's profile other than `verified` when it comes straight from a
+-- client (current_user anon / authenticated); the server's own functions
+-- (security definer) and the SQL editor are not affected.
 create or replace function public.profiles_keep_verified() returns trigger
 language plpgsql as $$
 begin
+  if tg_op = 'UPDATE' and current_user::text in ('authenticated', 'anon')
+     and auth.uid() is distinct from old.id
+     and (to_jsonb(new) - 'verified') is distinct from (to_jsonb(old) - 'verified') then
+    raise exception 'Staff can only change whether a player is verified, not their profile'
+      using errcode = 'insufficient_privilege';
+  end if;
   if coalesce(auth.role(), '') in ('authenticated', 'anon') and not public.is_staff(auth.uid()) then
     if tg_op = 'INSERT' then
       new.verified := false;

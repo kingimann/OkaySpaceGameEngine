@@ -520,7 +520,7 @@ int ActionList::RunMoreOps2(const Item& it, const std::string& op, Scene* scene,
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         // ---- PlayFab (Azure PlayFab) — cloud login, leaderboards, saves ----
-        // Blocking HTTP via the system curl: run these from one-shot triggers
+        // Blocking HTTP (WinHTTP / our own client, NativeHttp.hpp): run these from one-shot triggers
         // (On Start / On Message), not every frame.
         else if (op == "playfab_login") {   // titleId customId (customId can be $textvar)
             PlayFab& pf = PlayFab::Get();

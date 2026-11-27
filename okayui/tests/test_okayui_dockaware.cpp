@@ -51,6 +51,8 @@ int main() {
         const int before = aShown; UI::GetDockLayout().SetActive("Beta");
         frame(); frame();
         CHECK(bShown >= 2 && aShown == before);
+        // SetWindowFocus on a docked window whose tab is hidden chooses its tab (as the editor's Play does for the Game view)
+        { const int a0 = aShown; UI::SetWindowFocus("Alpha"); frame(); frame(); CHECK(aShown >= a0 + 2); UI::GetDockLayout().SetActive("Beta"); frame(); }
         // closing a tab through the dock: the window leaves the layout and *p_open goes false
         for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Gamma###g") {
             const int cx = (int)(t.rect.x + t.rect.w - 6.0f), cy = (int)(t.rect.y + t.rect.h * 0.5f);
@@ -68,6 +70,60 @@ int main() {
         s.Frame([&] { UI::DockSpace(UI::Rect{0, 0, 800, 500}); if (UI::Begin("Alpha2", nullptr, 0)) ++plain; UI::End(); });
         CHECK(plain == 1 && !UI::IsWindowDocked("Alpha2"));
         UI::ResetState(); CHECK(!UI::DockAwareBegin());   // ResetState switches it off
+    }
+    {   // Dear ImGui's rule: ConfigFlags_DockingEnable on the IO docks a laid-out window by its plain Begin, without SetDockAwareBegin
+        Reset(); Sim s(800, 500); BuildTwo();
+        CHECK(!UI::DockAwareBegin());
+        UI::GetIO().ConfigFlags |= UI::ConfigFlags_DockingEnable;
+        int aShown = 0, bShown = 0;
+        for (int i = 0; i < 3; ++i) s.Frame([&] {
+            UI::DockSpace(UI::Rect{0, 0, 800, 500});
+            if (UI::Begin("Alpha", nullptr, 0)) { ++aShown; UI::Text("a"); } UI::End();
+            if (UI::Begin("Beta", nullptr, 0)) { ++bShown; UI::Text("b"); } UI::End();
+        });
+        CHECK(aShown >= 3 && bShown == 0 && UI::IsWindowDocked("Alpha"));
+        const UI::WindowInfo wa = UI::FindWindowByName("Alpha");
+        CHECK(wa.found && wa.docked && wa.size.x > 300.0f);
+        UI::GetIO().ConfigFlags &= ~UI::ConfigFlags_DockingEnable;   // and without it: a plain window again
+        int plain = 0;
+        s.Frame([&] { UI::DockSpace(UI::Rect{0, 0, 800, 500}); if (UI::Begin("Alpha", nullptr, 0)) ++plain; UI::End(); });
+        CHECK(plain == 1);
+    }
+    {   // "###": the host docks "Console###Console"; the window's title then carries a count ("Console  [x 3]###Console"). Same window, still docked.
+        Reset(); Sim s(800, 500);
+        UI::DockBuilderRemoveNode(kSpace); UI::DockBuilderAddNode(kSpace, UI::DockNode_DockSpace); UI::DockBuilderSetNodeSize(kSpace, UI::Vec2{800, 500});
+        UI::DockBuilderDockWindow("Console###Console", kSpace); UI::DockBuilderFinish(kSpace);
+        UI::SetDockAwareBegin(true);
+        std::string title = "Console###Console"; int shown = 0;
+        auto f = [&] { s.Frame([&] { UI::DockSpace(UI::Rect{0, 0, 800, 500}); if (UI::Begin(title.c_str(), nullptr, 0)) ++shown; UI::End(); }); };
+        f(); f();
+        title = "Console  [x 3]###Console"; f(); f();
+        CHECK(UI::GetDockLayout().Contains(title) && !UI::GetDockLayout().Contains("Console###Console"));
+        CHECK(UI::IsWindowDocked(title.c_str()) && shown == 4);
+        title = "Console###Console"; f();
+        CHECK(UI::GetDockLayout().Contains(title) && UI::GetDockLayout().WindowCount() == 1 && shown == 5);
+        CHECK(UI::GetID("Console  [x 3]###Console") == UI::GetID("Console###Console") && UI::GetID("a##x") != UI::GetID("b##x"));
+        CHECK(!UI::DockAdoptTitle("Other###Other") && !UI::DockAdoptTitle(nullptr));
+        std::string why; CHECK(UI::GetDockLayout().Validate(&why));
+        UI::SetDockAwareBegin(false);
+    }
+    {   // a docked window that is not submitted (the editor's Asset Manager while it is switched off) has no tab, and its leaf shows another window
+        Reset(); Sim s(800, 500); BuildTwo(); UI::SetDockAwareBegin(true);
+        UI::GetDockLayout().SetActive("Beta");
+        bool betaOn = false; int aShown = 0, bShown = 0;
+        auto f = [&] { s.Frame([&] {
+            UI::DockSpace(UI::Rect{0, 0, 800, 500});
+            if (UI::Begin("Alpha", nullptr, 0)) ++aShown; UI::End();
+            if (betaOn) { if (UI::Begin("Beta", nullptr, 0)) ++bShown; UI::End(); }
+            if (UI::Begin("Gamma###g", nullptr, 0)) {} UI::End();
+        }); };
+        for (int i = 0; i < 4; ++i) f();
+        bool betaTab = false; for (const UI::DockTabInfo& t : UI::GetDockTabs()) betaTab |= t.window == "Beta";
+        CHECK(!betaTab && aShown >= 2 && bShown == 0);   // no tab for Beta; Alpha fills the leaf
+        betaOn = true; f(); f();
+        betaTab = false; for (const UI::DockTabInfo& t : UI::GetDockTabs()) betaTab |= t.window == "Beta";
+        CHECK(betaTab);                                   // submitted again: its tab is back
+        UI::SetDockAwareBegin(false);
     }
     {   // popups and child regions inside a routed window; a window that asks to close itself
         Reset(); Sim s(800, 500); BuildTwo(); UI::SetDockAwareBegin(true);

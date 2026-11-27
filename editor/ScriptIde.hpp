@@ -1,6 +1,6 @@
 #pragma once
 // ScriptIde: the Script Editor's workspace model, with no GUI (no Dear ImGui, no OkayUI, no SDL), so tests/test_script_ide.cpp
-// runs it headless. The Script Editor window (DrawScriptEditor in editor/main.cpp) and its IDE panels (editor/ScriptIdeUi.cpp)
+// runs it headless. The Script Editor (shared/ScriptIdeApp.hpp: the program and the editor's Script Editor window)
 // draw it; this file only decides.
 //
 //  - Fuzzy matching (FuzzyScore) for Quick Open, Search Everywhere, the command palette and autocomplete.
@@ -206,6 +206,13 @@ struct CaretCall { std::string name; int argIndex = 0; };
 CaretCall CallAtCaret(const std::string& text, std::size_t caretOffset);
 /// Byte offset of a 1-based line and 0-based column.
 std::size_t OffsetOf(const std::string& text, int line, int col);
+/// Format Document for brace languages (OkayScript, C#, the fallback): every line re-indented by its brace depth, 4 spaces a level,
+/// counting only braces that are code (not in strings, comments or $"...{x}..." holes); trailing blanks dropped; a line that starts
+/// with '}' sits at its block's level.
+std::string ReindentByBraces(const std::string& text);
+/// Join lines: line `first` (1-based) and the next `count` lines become one, each joined line's leading blanks replaced by one
+/// space (none before a ')' ']' '}' ',' ';' or after a '(' '[' '{'). Lines past the end are ignored.
+std::string JoinLines(const std::string& text, int first, int count = 1);
 
 // ---- templates ----------------------------------------------------------------------------------------------------------
 struct ScriptTemplate { std::string id, title, body; };
@@ -213,6 +220,33 @@ struct ScriptTemplate { std::string id, title, body; };
 /// The first is the language's starter (okay::StarterScriptSource).
 std::vector<ScriptTemplate> TemplatesFor(const std::string& language);
 std::string FillTemplate(const std::string& body, const std::string& name);
+
+// ---- snippets and reference ---------------------------------------------------------------------------------------------------
+/// A piece of code Insert puts at the caret: its group, title, what it does, the code and its language.
+struct Snippet { std::string group, title, description, body, language; };
+/// Insert > Behaviour Template (plain-English OkayScript behaviours, "Basics" to "Multiplayer") and the C# snippets (group "C#").
+const std::vector<Snippet>& BuiltinSnippets();
+/// Help > C# Quick Reference: rows of {code, what it does}.
+const std::vector<std::pair<std::string, std::string>>& CSharpQuickReference();
+/// What Insert > API Command puts at the caret for a function: its whole signature when it is a plain call ("move(x, y)"), else
+/// the name and "(".
+std::string CallTemplate(const std::string& name, const std::string& signature);
+
+// ---- new script files -----------------------------------------------------------------------------------------------------
+/// The file extension of a script language, without the dot: "lua", "js", "cs", else "okay".
+std::string ExtensionFor(const std::string& language);
+/// A file stem as a class name: letters, digits and '_' kept, anything else '_', "_" before a leading digit, "NewScript" for "".
+std::string ClassIdentifier(const std::string& stem);
+/// Rename the first `class <X>` of a script to `newName` (the class follows the file's name); the text as it is when it has none.
+std::string RenameScriptClass(const std::string& src, const std::string& newName);
+/// The language's starter script (okay::StarterScriptSource) with its class named after the file stem.
+std::string StarterScriptNamed(const std::string& language, const std::string& stem);
+/// What New Script makes of a typed name: letters, digits and '_' only, a trailing "okay" left by a typed ".okay" dropped, and
+/// "Script" before a name that is empty or starts with a digit.
+std::string ScriptStem(const std::string& typed);
+/// Where a new script, or a script with no file yet, is saved: <project>/Assets/Scripts/<stem>.<extension> ("Assets/Scripts/..."
+/// relative when there is no project). '/' separators.
+std::string DefaultScriptPath(const std::string& projectDir, const std::string& stem, const std::string& language);
 
 // ---- local history ------------------------------------------------------------------------------------------------------
 struct HistoryVersion { std::string file; std::int64_t time = 0; std::string label; std::size_t bytes = 0; };

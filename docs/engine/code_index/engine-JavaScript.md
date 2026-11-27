@@ -6,36 +6,36 @@ Back to the [code index](../code_index.md). 2 headers, 31 names.
 
 ## `engine/include/okay/JavaScript/JavaScript.hpp`
 
-- `Tag` enum, line 39
-- `Value` struct, line 51
-- `SameValue` function, line 85: SameValue (spec 7.2.10) and SameValueZero (7.2.11) and IsStrictlyEqual (7.2.16).
-- `SameValueZero` function, line 86
-- `StrictEquals` function, line 87
-- `Kind` enum, line 89
-- `GcObj` struct, line 91
-- `String` struct, line 101
-- `Symbol` struct, line 111
-- `Cell` struct, line 119: A captured variable (the spec's binding in an environment record that a closure keeps alive).
-- `PropFlag` enum, line 126: Property attributes (spec 6.1.7.1).
-- `Prop` struct, line 135
-- `Cls` enum, line 144: What kind of object (the spec's ordinary and exotic objects, plus our internal ones).
-- `Object` struct, line 149
-- `ArrayObj` struct, line 169: Arrays and argument objects: a dense element part plus the length (spec 10.4.2).
-- `BoxObj` struct, line 182: Primitive wrappers (Boolean, Number, String, Symbol objects) and other one-value objects.
-- `NativeFunc` struct, line 192
-- `Closure` struct, line 202
-- `BoundFunc` struct, line 213
-- `HostObj` struct, line 222: Engine objects (the game binding): what they are is up to their host class.
-- `HostClass` struct, line 232: How engine objects behave: get / set return true when they handled the key.
-- `CallArgs` struct, line 240
-- `JsThrow` struct, line 250: A JavaScript exception is being thrown; the value is Runtime::exception.
-- `JsTerminate` struct, line 252: The run stopped (budget, memory, too deep): try/catch can not catch this.
-- `SyntaxError` struct, line 256
-- `ErrorType` enum, line 261
-- `Runtime` class, line 264: A JavaScript engine instance: its own heap, globals and budget.
-- `Utf8To16` function, line 487: UTF-8 <-> UTF-16 (lone surrogates become U+FFFD in UTF-8).
-- `Utf16To8` function, line 488
-- `AsciiTo16` function, line 489
+- `Tag` enum, line 40
+- `Value` struct, line 53
+- `SameValue` function, line 89: SameValue (spec 7.2.10) and SameValueZero (7.2.11) and IsStrictlyEqual (7.2.16).
+- `SameValueZero` function, line 90
+- `StrictEquals` function, line 91
+- `Kind` enum, line 93
+- `GcObj` struct, line 95
+- `String` struct, line 105
+- `Symbol` struct, line 115
+- `Cell` struct, line 124: A captured variable (the spec's binding in an environment record that a closure keeps alive).
+- `PropFlag` enum, line 131: Property attributes (spec 6.1.7.1).
+- `Prop` struct, line 140
+- `Cls` enum, line 149: What kind of object (the spec's ordinary and exotic objects, plus our internal ones).
+- `Object` struct, line 164
+- `ArrayObj` struct, line 185: Arrays and argument objects: a dense element part plus the length (spec 10.4.2).
+- `BoxObj` struct, line 198: Primitive wrappers (Boolean, Number, String, Symbol objects) and other one-value objects.
+- `NativeFunc` struct, line 208
+- `Closure` struct, line 218
+- `BoundFunc` struct, line 229
+- `HostObj` struct, line 238: Engine objects (the game binding): what they are is up to their host class.
+- `HostClass` struct, line 248: How engine objects behave: get / set return true when they handled the key.
+- `CallArgs` struct, line 256
+- `JsThrow` struct, line 266: A JavaScript exception is being thrown; the value is Runtime::exception.
+- `JsTerminate` struct, line 268: The run stopped (budget, memory, too deep): try/catch can not catch this.
+- `SyntaxError` struct, line 272
+- `ErrorType` enum, line 277
+- `Runtime` class, line 280: A JavaScript engine instance: its own heap, globals and budget.
+- `Utf8To16` function, line 542: UTF-8 <-> UTF-16 (lone surrogates become U+FFFD in UTF-8).
+- `Utf16To8` function, line 543
+- `AsciiTo16` function, line 544
 
 ## `engine/include/okay/JavaScript/JavaScriptVM.hpp`
 

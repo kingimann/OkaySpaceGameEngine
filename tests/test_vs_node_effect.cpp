@@ -3,7 +3,7 @@
 // returns one constant fails). Nodes that read the scene (their only inputs are objects) are
 // proven by test_vs_gameplay_library, which compares a scene with the node against an empty one.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsTypes.hpp"

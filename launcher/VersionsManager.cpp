@@ -15,6 +15,7 @@
 
 #include "OfficialGame.hpp"   // the strict JSON reader and the bundled SHA-256
 #include "TestBuild.hpp"      // test builds (four-number versions): the real list ignores them, the dev list keeps only them
+#include "okay/Backend/SupabaseRoutes.hpp"   // the releases bucket's public route (the updater's address; never follows a provider switch)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okayversions {
@@ -198,7 +199,9 @@ std::string ReleasesBucketBase(std::string_view envOverride, std::string_view bu
     if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
     while (!s.empty() && s.back() == '/') s.pop_back();
     if (IsGitHubUrl(s)) return {};                                  // never GitHub, even by mistake
-    const std::string base = s + "/storage/v1/object/public/releases/";
+    // The Supabase provider's public route for the releases bucket, always: installed launchers and editors have this address
+    // built in, so it never follows the backend setting (OKAY_BACKEND / backend.json). docs/platform/okay_backend.md, section 17.
+    const std::string base = s + okay::backend::supabase::routes::StoragePublic("releases", "");
     return IsAcceptableUrl(base + "x") ? base : std::string();
 }
 

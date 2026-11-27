@@ -1518,6 +1518,36 @@ add_test(NAME okay_backend_golden_auth COMMAND test_okay_backend_golden_auth)
 add_executable(test_okay_backend_golden_db test_okay_backend_golden_db.cpp)
 target_link_libraries(test_okay_backend_golden_db PRIVATE okay::engine)
 add_test(NAME okay_backend_golden_db COMMAND test_okay_backend_golden_db)
+# OkayBackend round 4: every Storage and Functions request (chat attachments and media library, workshop uploads, the
+# launcher's Official game admin tab, "Delete my account", the session ticket) must send byte-identical requests, file bodies
+# and time limits included, to the golden texts recorded before the move, and the Supabase provider called directly the
+# same; the updater's releases address must keep its exact text and never follow the backend setting. Fake server only.
+# Small on purpose: the shared account (Account.cpp) and the version list reader are compiled in, not the whole engine.
+add_executable(test_okay_backend_golden_storage test_okay_backend_golden_storage.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Platform/Account/Account.cpp)
+target_compile_features(test_okay_backend_golden_storage PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_storage PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared
+    ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_okay_backend_golden_storage PRIVATE Threads::Threads ${CMAKE_DL_LIBS} okay::crypto)
+if(WIN32)
+    target_link_libraries(test_okay_backend_golden_storage PRIVATE shell32)
+endif()
+add_test(NAME okay_backend_golden_storage COMMAND test_okay_backend_golden_storage)
+# OkayBackend round 5: every table request and database function call of the community headers, part 1 (Profiles, Friends,
+# BlockList, Privacy's ProfilesGet, Invites, Parties) must send byte-identical requests to the golden texts recorded before the
+# move, and the Supabase provider called directly the same. Fake server only. Header-only, like test_okay_backend.
+add_executable(test_okay_backend_golden_community1 test_okay_backend_golden_community1.cpp)
+target_compile_features(test_okay_backend_golden_community1 PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_community1 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_community1 COMMAND test_okay_backend_golden_community1)
+# OkayBackend round 6: every table request and database function call of the community headers, part 2 (Messages: direct
+# messages, group chats, reactions, typing and read marks, search, edit history, pins; Servers: servers, channels, members,
+# likes, owner management; both with the text form of ProfilesGet) must send byte-identical requests to the golden texts
+# recorded before the move, and the Supabase provider called directly the same. Fake server only. Header-only.
+add_executable(test_okay_backend_golden_community2 test_okay_backend_golden_community2.cpp)
+target_compile_features(test_okay_backend_golden_community2 PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_community2 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_community2 COMMAND test_okay_backend_golden_community2)
 # OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
 # header order, the transports, reading token claims. Header-only, no network.
 add_executable(test_okay_backend test_okay_backend.cpp)
@@ -1645,6 +1675,8 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_executable(test_own_switches test_own_switches.cpp)
 target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME own_switches COMMAND test_own_switches)
+# The configured okay::platform default (cmake/OkayPlatform.cmake: own on Linux since #1341, sdl2 elsewhere): the default-build check expects it.
+target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_PLATFORM="${OKAY_PLATFORM_BACKEND}")
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
@@ -3992,18 +4024,35 @@ set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
 
 # Our own PNM decoder (P1 to P6; Core/ImageDecode): hand-computed fixtures, rejections, truncations, routing off by default (OKAY_OWN_PNM=1).
 add_executable(test_image_pnm test_image_pnm.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
 target_include_directories(test_image_pnm PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 add_test(NAME image_pnm COMMAND test_image_pnm)
 
 # Hostile-input + mutation fuzz of the image decoders (lying header fields, PNG with valid CRCs, decompression bombs, memory and time budgets).
 # Standalone: only the decoder sources, so it also builds under -fsanitize=address,undefined.
 add_executable(test_image_hostile test_image_hostile.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
-target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_image_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME image_hostile COMMAND test_image_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(image_hostile PROPERTIES TIMEOUT 600)
+
+# Our own WebP decoder (Core/ImageDecodeWebp, RFC 9649 + RFC 6386): lossless and lossy files made by the test-only
+# encoders in webp_test_encoder.hpp, alpha, the extended format, animation, malformed files. Standalone: decoder sources only.
+add_executable(test_image_webp test_image_webp.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
+target_include_directories(test_image_webp PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME image_webp COMMAND test_image_webp)
+set_tests_properties(image_webp PROPERTIES TIMEOUT 300)
+
+# Our own SVG renderer (Core/ImageDecodeSvg, W3C SVG 1.1 / 2): hand-written documents against worked-out pixels and areas
+# (sizing, path grammar, shapes, transforms, fill rules, strokes, gradients, CSS, use, clip paths, entities) and hostile ones.
+add_executable(test_image_svg test_image_svg.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
+target_include_directories(test_image_svg PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME image_svg COMMAND test_image_svg)
+set_tests_properties(image_svg PROPERTIES TIMEOUT 300)
 
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
@@ -4482,22 +4531,25 @@ add_executable(test_launcher_nav_layout test_launcher_nav_layout.cpp)
 target_include_directories(test_launcher_nav_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)
 # The launcher's page layouts (launcher/PageLayout.hpp): Marketplace, Community and Notifications at three window sizes and
-# UI scale 1.0 / 1.5, with the launcher's own font when its Dear ImGui is in the build (launcher_imgui), else a stand-in width.
+# UI scale 1.0 / 1.5, with the launcher's own font as OkayUI draws it (the launcher is OkayUI only), else a stand-in width.
 add_executable(test_launcher_page_layout test_launcher_page_layout.cpp)
-target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)   # engine/include: shared/EmbeddedFonts.hpp reads okay/Core/Base64.hpp
 target_compile_features(test_launcher_page_layout PRIVATE cxx_std_17)
-if(TARGET launcher_imgui)
-    target_link_libraries(test_launcher_page_layout PRIVATE launcher_imgui)
-    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
+if(TARGET okay_ui)
+    target_include_directories(test_launcher_page_layout BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's, as in the launcher
+    target_link_libraries(test_launcher_page_layout PRIVATE okay_ui)
+    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1 OKAY_ON_OKAYUI=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
+set_tests_properties(launcher_page_layout PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 # The launcher's themes (shared/OkayTheme.hpp): text contrast in every theme, the themes differ, and no hard-coded colour in
-# launcher/ (it reads the sources). Needs only imgui.h (launcher_imgui brings it when the launcher is built).
-if(TARGET launcher_imgui)
+# launcher/ (it reads the sources). Needs only imgui.h: OkayUI's, as in the launcher.
+if(TARGET okay_ui)
     add_executable(test_launcher_theme test_launcher_theme.cpp)
+    target_include_directories(test_launcher_theme BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
     target_include_directories(test_launcher_theme PRIVATE ${CMAKE_SOURCE_DIR}/shared)
-    target_link_libraries(test_launcher_theme PRIVATE launcher_imgui)
-    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(test_launcher_theme PRIVATE okay_ui)   # (the palettes come from OkayUI's designs, okay/UI/OkayUIDesign.hpp)
+    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_ON_OKAYUI=1)
     target_compile_features(test_launcher_theme PRIVATE cxx_std_17)
     add_test(NAME launcher_theme COMMAND test_launcher_theme)
 endif()
@@ -4680,7 +4732,7 @@ add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4693,7 +4745,7 @@ add_executable(test_blend_modifiers test_blend_modifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)
 target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4724,7 +4776,7 @@ add_executable(test_batchb_hostile test_batchb_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/DxfReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/LwoReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_batchb_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4745,7 +4797,7 @@ okay_batchc_reader_test(md3 Md3Reader.cpp)
 okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
 okay_batchc_reader_test(b3d B3dReader.cpp)
 # the .x reader unpacks MSZIP with the engine's own inflate
-okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
@@ -4753,7 +4805,7 @@ add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/XFileReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4778,7 +4830,7 @@ okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
 # Binary OGRE skeletons (.skeleton): hand-built binary fixtures compared with the XML form; real files with OKAY_MODEL_CORPUS
 okay_batchd_reader_test(ogre_skelbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
-okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)
 okay_batchd_reader_test(nff NffReader.cpp)
 add_executable(test_batchd_hostile test_batchd_hostile.cpp
@@ -4788,7 +4840,7 @@ add_executable(test_batchd_hostile test_batchd_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_batchd_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchd_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchd_hostile COMMAND test_batchd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4802,7 +4854,7 @@ add_executable(test_batchd_budget test_batchd_budget.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_batchd_budget PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4950,7 +5002,7 @@ add_executable(test_gap_readers test_gap_readers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/ZaeReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/ColladaReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_gap_readers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_gap_readers PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME gap_readers COMMAND test_gap_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -5017,7 +5069,7 @@ set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
 # measured with a counting operator new). Standalone: the image decoder sources only.
 add_executable(test_png_hint test_png_hint.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp)
 target_include_directories(test_png_hint PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 add_test(NAME png_hint COMMAND test_png_hint)
 if(UNIX AND NOT APPLE)

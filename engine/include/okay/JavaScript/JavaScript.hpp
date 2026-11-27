@@ -34,6 +34,7 @@ struct Symbol;
 struct Object;
 struct Proto;
 struct Cell;
+struct BigIntV;
 class Runtime;
 
 enum class Tag : std::uint8_t {
@@ -46,6 +47,7 @@ enum class Tag : std::uint8_t {
     Object,
     Empty,      ///< internal: an array hole or a let/const binding not initialized yet
     Internal,   ///< internal: a Cell or an iterator record on the value stack
+    BigInt,     ///< a BigInt (6.1.6.2): an immutable BigIntV
 };
 
 struct Value {
@@ -65,6 +67,7 @@ struct Value {
     static Value Obj(Object* o) { Value v; v.t = Tag::Object; v.p = reinterpret_cast<GcObj*>(o); return v; }
     static Value EmptyV() { Value v; v.t = Tag::Empty; return v; }
     static Value Internal(GcObj* o) { Value v; v.t = Tag::Internal; v.p = o; return v; }
+    static Value Big(BigIntV* b) { Value v; v.t = Tag::BigInt; v.p = reinterpret_cast<GcObj*>(b); return v; }
 
     bool IsUndef() const { return t == Tag::Undefined; }
     bool IsNull() const { return t == Tag::Null; }
@@ -75,7 +78,8 @@ struct Value {
     bool IsSym() const { return t == Tag::Symbol; }
     bool IsObj() const { return t == Tag::Object; }
     bool IsEmpty() const { return t == Tag::Empty; }
-    bool IsGc() const { return t == Tag::String || t == Tag::Symbol || t == Tag::Object || t == Tag::Internal; }
+    bool IsBig() const { return t == Tag::BigInt; }
+    bool IsGc() const { return t == Tag::String || t == Tag::Symbol || t == Tag::Object || t == Tag::Internal || t == Tag::BigInt; }
     String* S() const { return reinterpret_cast<String*>(p); }
     Symbol* Y() const { return reinterpret_cast<Symbol*>(p); }
     Object* O() const { return reinterpret_cast<Object*>(p); }
@@ -86,7 +90,7 @@ bool SameValue(const Value& a, const Value& b);
 bool SameValueZero(const Value& a, const Value& b);
 bool StrictEquals(const Value& a, const Value& b);
 
-enum class Kind : std::uint8_t { String, Symbol, Object, Cell, Proto };
+enum class Kind : std::uint8_t { String, Symbol, Object, Cell, Proto, BigInt };
 
 struct GcObj {
     GcObj* gcNext = nullptr;
@@ -111,6 +115,7 @@ struct String : GcObj {
 struct Symbol : GcObj {
     String* desc = nullptr;     ///< nullptr = no description
     bool registered = false;    ///< made by Symbol.for
+    bool priv = false;          ///< a Private Name (6.2.12): the key of #private class elements, never an own key
     Symbol() : GcObj(Kind::Symbol) {}
     void Trace(Runtime& rt) override;
 };
@@ -144,19 +149,30 @@ struct Prop {
 enum class Cls : std::uint8_t {
     Ordinary, Array, Arguments, Closure, Native, Bound, Error, BoolBox, NumberBox, StringBox, SymbolBox,
     Map, Set, Generator, Promise, ArrayIter, MapIter, SetIter, StringIter, RegExpLike, Host, IterRecord, ForIn,
+    DateBox,   ///< a Date (21.4): a BoxObj whose prim is the time value
+    WeakMap, WeakSet, WeakRef, FinalizationRegistry,
+    BigIntBox,   ///< Object(1n): a BoxObj around a BigInt
+    Intl,        ///< an Intl.NumberFormat / DateTimeFormat / ... object (JsLibNumber.cpp)   ///< WeakObj (26.1, 26.2, 24.3, 24.4)
+    ArrayBuffer, ///< an ArrayBuffer or SharedArrayBuffer (25.1, 25.2): a BufferObj
+    TypedArray,  ///< an integer-indexed exotic object (10.4.5, 23.2): a TypedArrayObj
+    DataView,    ///< a DataView (25.3): a DataViewObj
+    Proxy,       ///< a proxy exotic object (10.5): a ProxyObj
+    Opaque,      ///< an internal object with no script-visible behaviour (TextEncoder / TextDecoder state, module jobs)
+    ModuleNs,    ///< a module namespace exotic object (10.4.6): a ModuleNsObj
 };
 
 struct Object : GcObj {
     Cls cls;
     bool extensible = true;
     bool lazy = false;   ///< a function whose name / length / prototype are made on first look
+    std::uint8_t proxyFn = 0;   ///< a proxy: 1 its target is callable, 2 also a constructor (10.5.15 ProxyCreate)
     Object* proto = nullptr;
     std::vector<Prop> props;
     std::unique_ptr<std::unordered_map<GcObj*, std::uint32_t>> index;   ///< key -> props position, for big objects
     explicit Object(Cls c = Cls::Ordinary) : GcObj(Kind::Object), cls(c) {}
     void Trace(Runtime& rt) override;
     std::size_t Bytes() const override;
-    bool IsCallable() const { return cls == Cls::Closure || cls == Cls::Native || cls == Cls::Bound; }
+    bool IsCallable() const { return cls == Cls::Closure || cls == Cls::Native || cls == Cls::Bound || proxyFn != 0; }
     /// Own property by key (no lazy step, no exotic part), or nullptr.
     Prop* FindRaw(GcObj* key);
     const Prop* FindRaw(GcObj* key) const { return const_cast<Object*>(this)->FindRaw(key); }
@@ -269,7 +285,8 @@ public:
     Runtime& operator=(const Runtime&) = delete;
 
     // ---- running code
-    /// Compile a script. On success `fn` is the script's top-level function.
+    /// Compile a script. On success `fn` is the script's top-level function. Never throws: a memory stop while
+    /// compiling comes back as false with err->line = -1 and the stop's message.
     bool Compile(const std::string& source, const std::string& chunk, Value& fn, SyntaxError* err);
     /// Every syntax error the parser reports (it stops at the first one).
     std::vector<SyntaxError> CheckSyntax(const std::string& source, const std::string& chunk);
@@ -281,6 +298,10 @@ public:
     /// new fn(...args) from the host, with the same error handling as CallHost.
     bool ConstructHost(const Value& fn, const std::vector<Value>& args, Value* result, std::string* err);
     void* userData = nullptr;   ///< for the host (the game-script glue keeps its state here)
+    /// Classic page scripts (the browser): code without "use strict" (and outside classes) is sloppy about one thing,
+    /// assigning an undeclared name creates a global property (6.2.5.6 PutValue step 5.b). Off by default: game
+    /// scripts stay fully strict.
+    bool sloppyScripts = false;
     /// Call from library code: throws JsThrow / JsTerminate. The result is kept for the current native call.
     Value Call(const Value& fn, const Value& thisv, const Value* args, int argc);
     Value Call(const Value& fn, const Value& thisv, std::initializer_list<Value> args) {
@@ -299,8 +320,28 @@ public:
     std::size_t memoryLimit = 256u << 20;
     bool gcStress = false;          ///< collect at every safe point (tests: finds values that are not kept)
     std::size_t BytesInUse() const { return bytes_; }
+    std::uint64_t Collections() const { return collections_; }   ///< how many times the collector has run
     std::function<void(const std::string&)> printSink;   ///< console.log; nullptr = nowhere
     std::function<void(HostObj*)> onHostFree;            ///< an engine object is about to be freed
+    /// import(specifier): return a promise for the module namespace. Unset (game scripts): the promise is
+    /// rejected with a TypeError, so `try { await import(x) } catch {}` code still runs.
+    std::function<Value(Runtime&, const std::string& specifier)> importHook;
+
+    // ---- modules (16.2)
+    /// How the host finds modules. resolve: the key (a URL or a path) of `specifier` imported by `referrer` (a module's
+    /// key, or a script's chunk name). fetch: the source text for a key. Both return false with a reason to refuse.
+    /// initMeta (optional): fill a module's import.meta object (by default it gets `url` = the key). With resolve and
+    /// fetch set, import() loads modules through them (importHook is then not used). Loading is synchronous.
+    struct ModuleLoader {
+        std::function<bool(const std::string& specifier, const std::string& referrer, std::string& key, std::string& why)> resolve;
+        std::function<bool(const std::string& key, std::string& source, std::string& why)> fetch;
+        std::function<void(Runtime& rt, const std::string& key, Object* meta)> initMeta;
+    };
+    ModuleLoader modules;
+    /// Load, link and run a module (and every module it imports), then the promise jobs. On failure `err` is the
+    /// message (a syntax or link error, the host's refusal, or the module's exception). `ns` gets the module namespace.
+    /// A module still waiting on a top-level await when the jobs run out stays pending (true is returned).
+    bool RunModule(const std::string& source, const std::string& key, std::string* err, Value* ns = nullptr);
 
     // ---- values
     String* NewString(std::u16string s);
@@ -329,13 +370,14 @@ public:
     std::u16string ToU16(const Value& v) { return ToString(v)->s; }
     std::string ToUtf8(const Value& v);
     Value ToPrimitive(const Value& v, int hint);   ///< hint 0 default, 1 number, 2 string
-    Value ToNumeric(const Value& v) { return Value::Num(ToNumber(v)); }
+    Value ToNumeric(const Value& v);   ///< 7.1.3: a Number or a BigInt
     Object* ToObject(const Value& v);
     GcObj* ToPropertyKey(const Value& v);          ///< an atom or a symbol
     std::uint64_t LengthOf(const Value& obj);      ///< LengthOfArrayLike
     bool IsCallable(const Value& v) const { return v.IsObj() && v.O()->IsCallable(); }
     bool IsConstructor(const Value& v) const;
-    bool IsArray(const Value& v) const { return v.IsObj() && v.O()->cls == Cls::Array; }
+    /// 7.2.2 IsArray: sees through proxies (a revoked one is a TypeError).
+    bool IsArray(const Value& v);
     bool LooseEquals(const Value& a, const Value& b);
     const char* TypeOf(const Value& v) const;
     bool InstanceOf(const Value& v, const Value& target);
@@ -373,10 +415,17 @@ public:
         bool writable = false, enumerable = false, configurable = false;
     };
     bool DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d);
+    /// DefinePropertyOrThrow with every field given (value and the three flags).
+    void DefineFullData(Object* o, GcObj* key, const Value& v, std::uint8_t flags);
     /// [[OwnPropertyKeys]] in spec order: indices ascending, then strings, then symbols.
     std::vector<GcObj*> OwnKeys(Object* o, bool strings = true, bool symbols = false);
     bool SetPrototype(Object* o, Object* proto);
     bool PreventExtensions(Object* o);
+    /// [[GetPrototypeOf]] and [[IsExtensible]] (proxies run their traps).
+    Object* GetPrototypeOf(Object* o);
+    bool IsExtensible(Object* o);
+    /// [[Set]] with a receiver (10.1.9.2 OrdinarySetWithOwnDescriptor); false when it was refused (no throw for that).
+    bool SetWithReceiver(Object* o, GcObj* key, const Value& v, const Value& receiver);
     void MakeLazyProps(Object* o);   ///< a function's name, length and prototype
     GcObj* IndexKey(std::uint32_t i);   ///< the atom for an index
 
@@ -436,13 +485,16 @@ public:
            *iteratorProto = nullptr, *arrayIterProto = nullptr, *mapIterProto = nullptr, *setIterProto = nullptr,
            *stringIterProto = nullptr, *generatorProto = nullptr, *generatorFnProto = nullptr, *asyncFnProto = nullptr,
            *mapProto = nullptr, *setProto = nullptr, *promiseProto = nullptr, *promiseCtor = nullptr,
-           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr, *regexpProto = nullptr;
+           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr, *regexpProto = nullptr,
+           *dateProto = nullptr, *bigintProto = nullptr;
     Object* errorProtos[8] = {};
     Symbol *symIterator = nullptr, *symAsyncIterator = nullptr, *symToPrimitive = nullptr, *symToStringTag = nullptr,
-           *symHasInstance = nullptr;
+           *symHasInstance = nullptr, *symSpecies = nullptr;
     struct Atoms;
     std::unique_ptr<Atoms> atoms;   ///< common keys ("length", "prototype", ...)
     std::unordered_map<std::u16string, Symbol*> symbolRegistry;
+    /// WeakMap / WeakSet / WeakRef / FinalizationRegistry objects: the collector clears their dead keys.
+    std::vector<Object*> weakObjs;
 
     struct Impl;   ///< the bytecode machine's state (JsInterpreter.cpp)
     std::unique_ptr<Impl> vm;
@@ -452,6 +504,7 @@ private:
     void InitIntrinsics();
     GcObj* gcList_ = nullptr;
     std::size_t bytes_ = 0, gcThreshold_ = 4u << 20;
+    std::uint64_t collections_ = 0;
     std::uint64_t budget_ = 0, left_ = ~0ull;
     std::unordered_map<std::u16string_view, String*> atomTable_;
     std::vector<Value> refs_;
@@ -478,7 +531,9 @@ public:
     std::vector<Value>& Scratch() { return scratch_; }
     bool GcDue() const { return gcStress || bytes_ > gcThreshold_; }
     void CountBytes(std::ptrdiff_t n) { bytes_ = (std::size_t)((std::ptrdiff_t)bytes_ + n); if (bytes_ > memoryLimit) MemoryFull(); }
-    [[noreturn]] void MemoryFull();
+    /// Over the memory limit: stops the running script (JsTerminate). When no script is running (the host making
+    /// values between calls) it returns, and the next call stops at its first allocation instead.
+    void MemoryFull();
     std::uint64_t& BudgetLeft() { return left_; }
     [[noreturn]] void BudgetOut();
 };

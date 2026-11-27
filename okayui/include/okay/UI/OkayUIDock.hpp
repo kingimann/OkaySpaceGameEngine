@@ -77,6 +77,9 @@ public:
     /// Remove the window from the layout altogether (a closed tab).
     bool Close(const std::string& window);
     bool SetActive(const std::string& window);       // choose its tab
+    /// Give a window a new name in place (its tab, floating entry and minimum size keep their places). False when `from` is unknown, `to` is
+    /// not a good name or is already in the layout.
+    bool Rename(const std::string& from, const std::string& to);
     bool MoveTab(const std::string& window, int index);   // reorder inside its leaf
     bool SetFloatingRect(const std::string& window, Rect rect, bool markDirty = false);
     bool TakeDirty(const std::string& window, Rect* rect);   // true once after the host should place a floating window
@@ -135,6 +138,10 @@ private:
 // ---- the dock space in the OkayUI context ---------------------------------------------------------------------------
 /// The layout the calls below drive (and that tests inspect or edit).
 DockLayout& GetDockLayout();
+/// Dear ImGui's "###" rule for dock windows: a title "Text###id" names the same window whatever its text, so a layout entry with the same
+/// "###id" part ("Console###Console" docked by the host, then begun as "Console  [x 3]###Console") is renamed to the title. True when the title
+/// is in the layout afterwards. A title without "###" is only looked up.
+bool DockAdoptTitle(const char* title);
 /// Forget the layout and any drag in progress (OkayUI::ResetState calls this).
 void DockReset();
 /// Lay the dock out in `area` (clipped to the display when the host gave Input::displayW/H), draw the node backgrounds, tab strips

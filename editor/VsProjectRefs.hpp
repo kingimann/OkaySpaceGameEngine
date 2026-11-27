@@ -4,7 +4,7 @@
 //     tabs' unsaved text wins over the file on disk). Each hit names the file and the block, so a click opens it there.
 //   - Bookmarks: blocks marked to come back to (Ctrl+B on the canvas), per graph file, kept in okay_vs_bookmarks.txt.
 // Files are read with the editor's own reader (VsEditGraph::fromText), so a hit is exactly a block the editor shows.
-// Included from inside VisualScriptEditor.hpp after the graph model. Written for this project.
+// Included from inside VisualScriptModel.hpp after the graph model. Written for this project.
 #include <algorithm>
 #include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include <filesystem>

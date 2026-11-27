@@ -59,7 +59,7 @@ struct IRig {
     }
     void Type(const std::string& t) { sim.Type(t); Frame(); }
     void Enter() { sim.Press(Key_Enter); Frame(); }
-    const Bitmap& Draw() { return sim.Draw(30, 33, 41); }
+    const Bitmap& Draw() { const unsigned char* p = UI::Style().panel; return sim.Draw(p[0], p[1], p[2]); }   // on the design's panel colour, as the host draws it
     inspfix::Obj& O() { return scene.Shown(); }
 };
 
@@ -109,7 +109,7 @@ struct BRig {
     }
     UI::Rect R(const char* label) const { const int k = Row(label); return k >= 0 && k < (int)res.rows.size() ? res.rows[(std::size_t)k] : UI::Rect{}; }
     bool Clicked(const char* label) const { for (const std::string& c : v.clicked) if (c == label) return true; return false; }
-    const Bitmap& Draw() { return sim.Draw(30, 33, 41); }
+    const Bitmap& Draw() { const unsigned char* p = UI::Style().panel; return sim.Draw(p[0], p[1], p[2]); }   // on the design's panel colour, as the host draws it
 };
 
 int main() {

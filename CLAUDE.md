@@ -179,6 +179,14 @@ then this file gets updated. Keep this file short and true.
       notice work is only for assets that stay (fonts, images and data).
     - Third-party code that is already here (listed in `docs/status/THIRD_PARTY.md` and `docs/status/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
+    - **No new third-party dependencies, not even data or tools.** (Owner, 2026-11-26: "im trying to not depend on third
+      party", "if we can create our own system", "even if it takes a long time".) Build our own system wherever one can be built,
+      however long it takes. Do not add third-party data tables (for example Unicode, CLDR or time-zone databases) when the feature can be
+      left out or written by hand from the spec text; leave the feature out and list it instead. Data that a file format's own
+      specification defines and that cannot be decoded without it (the RFC 7932 Brotli dictionary, the RFC 6386 VP8 tables)
+      is asked for one by one and recorded. Agents do not install or run other projects' programs or libraries (node,
+      ffmpeg, Pillow, CairoSVG and so on), not even to compare outputs in the scratchpad: check against the spec and hand-worked
+      values instead.
     - **Flag possible IP conflicts.** (Owner, 2026-11-26: "Implement systems independently using publicly documented
       standards, mathematical principles and technical specifications. Do not copy proprietary source code or incorporate
       third-party code without identifying its source and license. Flag potential intellectual property conflicts.")

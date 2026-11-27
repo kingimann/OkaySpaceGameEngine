@@ -2,7 +2,7 @@
 // negative, NaN, an empty list, and a value of the wrong kind. Flow nodes do
 // not take an object target; a missing object is not one of their inputs.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"

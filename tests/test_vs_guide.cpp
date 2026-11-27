@@ -3,7 +3,7 @@
 // mistakes, a next step), next-step suggestions that really fit, a "Try this node" graph that loads and runs, an
 // intent heading, and the renamed titles keep their old name as a search word and keep graphs loading unchanged.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Scene.hpp"

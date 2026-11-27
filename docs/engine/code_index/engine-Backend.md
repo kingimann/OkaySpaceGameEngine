@@ -2,7 +2,7 @@
 
 # Code index: engine-Backend
 
-Back to the [code index](../code_index.md). 5 headers, 25 names.
+Back to the [code index](../code_index.md). 8 headers, 39 names.
 
 ## `engine/include/okay/Backend/Auth.hpp`
 
@@ -13,26 +13,49 @@ Back to the [code index](../code_index.md). 5 headers, 25 names.
 
 ## `engine/include/okay/Backend/Backend.hpp`
 
-- `ProviderKind` enum, line 33: Which provider serves the programs.
-- `ProviderKindName` function, line 35
-- `ParseProviderKind` function, line 45: "supabase", "local" or "auto" in any letter case, spaces and line ends around it ignored. Anything else is Auto, so a
-- `Config` struct, line 57: The backend configuration in force, and where the choice came from ("OKAY_BACKEND", "backend.json" or "default").
-- `LoadConfig` function, line 64: Read the configuration: 'envValue' (the OKAY_BACKEND variable, null when unset) wins; then "provider" in
+- `ProviderKind` enum, line 37: Which provider serves the programs.
+- `ProviderKindName` function, line 39
+- `ParseProviderKind` function, line 49: "supabase", "local" or "auto" in any letter case, spaces and line ends around it ignored. Anything else is Auto, so a
+- `Config` struct, line 61: The backend configuration in force, and where the choice came from ("OKAY_BACKEND", "backend.json" or "default").
+- `LoadConfig` function, line 68: Read the configuration: 'envValue' (the OKAY_BACKEND variable, null when unset) wins; then "provider" in
 
 ## `engine/include/okay/Backend/Database.hpp`
 
-- `DbRequest` struct, line 32: One database request as a provider receives it: the method, the resource ("table?query", no leading "/"), the body
-- `ValueText` enum, line 43: How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
-- `Return` enum, line 46: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
-- `IsValue` enum, line 49: The values PostgREST's "is" operator accepts.
-- `Query` class, line 56: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
-- `Database` class, line 186: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
+- `DbRequest` struct, line 33: One database request as a provider receives it: the method, the resource ("table?query", no leading "/"), the body
+- `ValueText` enum, line 46: How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
+- `Return` enum, line 49: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
+- `IsValue` enum, line 52: The values PostgREST's "is" operator accepts.
+- `Query` class, line 59: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
+- `Database` class, line 213: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
+
+## `engine/include/okay/Backend/Functions.hpp`
+
+- `FunctionCall` struct, line 20: A call to make: the function's name and its JSON body. The request-building code (AccountData, AntiCheatBackend) returns
+- `Functions` class, line 26: The Functions calls every provider answers. A function the server does not have answers 404.
+
+## `engine/include/okay/Backend/Storage.hpp`
+
+- `UploadOptions` struct, line 24: How an upload is stored.
+- `ListOptions` struct, line 30: One page of a listing: the objects and folders directly under 'prefix' (a folder path ending in "/", or ""), sorted.
+- `Storage` class, line 39: The Storage calls every provider answers.
 
 ## `engine/include/okay/Backend/Supabase.hpp`
 
-- `SplitHeaders` function, line 30: Extra header lines, one per line ("x-upsert: true\ncache-control: max-age=30"). Blank lines and stray quotes are dropped.
-- `Auth` class, line 63: The Auth calls on Supabase. Holds the address, the publishable key and the transport it sends through (the transport
-- `Database` class, line 212: The Database calls on Supabase (PostgREST): a table request goes to "/rest/v1/<table>?<query>", a function to
+- `SplitHeaders` function, line 36: Extra header lines, one per line ("x-upsert: true\ncache-control: max-age=30"). Blank lines and stray quotes are dropped.
+- `Auth` class, line 69: The Auth calls on Supabase. Holds the address, the publishable key and the transport it sends through (the transport
+- `DirectSend` struct, line 220: The Database calls on Supabase (PostgREST): a table request goes to "/rest/v1/<table>?<query>", a function to
+- `Database` class, line 233
+- `Storage` class, line 263: The Storage calls on Supabase: an object at "/storage/v1/object/<bucket>/<path>", its public read under
+- `Functions` class, line 332: The Functions calls on Supabase: POST "/functions/v1/<name>" with the JSON body. AccountService passes its ApiTimed (the
+
+## `engine/include/okay/Backend/SupabaseRoutes.hpp`
+
+- `StorageObjectRoot` function, line 19: The start every Storage object route shares ("/storage/v1/object/"). Also how the launcher recognises a link to a stored
+- `StorageObject` function, line 21: One object, for an upload or a single removal: "/storage/v1/object/<bucket>/<path>".
+- `StorageBucket` function, line 25: The bucket itself, for removing several objects in one request: "/storage/v1/object/<bucket>".
+- `StoragePublic` function, line 27: A public read: "/storage/v1/object/public/<bucket>/<path>" (with 'path' "", the bucket's public folder, ending in "/").
+- `StorageList` function, line 31: A listing: "/storage/v1/object/list/<bucket>".
+- `Function` function, line 33: An Edge Function: "/functions/v1/<name>".
 
 ## `engine/include/okay/Backend/Transport.hpp`
 
@@ -42,4 +65,4 @@ Back to the [code index](../code_index.md). 5 headers, 25 names.
 - `Transport` class, line 60: Where requests go. Send never sends a request twice by itself.
 - `HttpTransport` class, line 67: The network, through okay::http::Send. A body file is sent as the body when one is given.
 - `HookTransport` class, line 77: A test function (method, url, header lines, body) answers instead of the network while one is set; with none, the
-- `RecordingTransport` class, line 95: Tests: every request is kept in 'sent' (in order) and answered by 'answer' (no answer when it is empty). Nothing
+- `RecordingTransport` class, line 100: Tests: every request is kept in 'sent' (in order) and answered by 'answer' (no answer when it is empty). Nothing

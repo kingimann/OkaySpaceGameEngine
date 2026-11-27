@@ -12,7 +12,8 @@
 // the empty string stops (22.2.2.3.1 RepeatMatcher's empty check). Every step of the
 // machine is charged to the run budget, so a pattern that backtracks exponentially
 // ("catastrophic backtracking") stops with the budget error instead of freezing.
-// Lookbehind is not supported.
+// Lookbehind (22.2.2.4 with direction backward) is compiled with its body reversed: its characters,
+// classes and backreferences step to the left of the position and its groups save their end first.
 #include "JsInternal.hpp"
 #include <algorithm>
 #include <cmath>
@@ -153,7 +154,14 @@ struct PatternParser {
             if (!Eat(u')')) Fail("a lookahead is missing its ')'");
             atom = std::move(n);   // a lookahead may be quantified in Annex B; we treat it as an atom
         } else if (c == u'(' && Peek(1) == u'?' && Peek(2) == u'<' && (Peek(3) == u'=' || Peek(3) == u'!')) {
-            Fail("lookbehind (?<= ) and (?<! ) are not supported");
+            bool neg = Peek(3) == u'!';
+            i += 4;
+            auto n = Node(NK_Look);
+            n->flag = neg;
+            n->min = 1;   // backward
+            n->kids.push_back(Disjunction());
+            if (!Eat(u')')) Fail("a lookbehind is missing its ')'");
+            return n;   // 22.2.1: a lookbehind can not be quantified
         } else if (c == u'(') {
             ++i;
             auto g = Node(NK_Group);
@@ -238,12 +246,7 @@ struct PatternParser {
         return r;
     }
 
-    int Hex(char16_t c) const {
-        if (c >= u'0' && c <= u'9') return c - u'0';
-        if (c >= u'a' && c <= u'f') return c - u'a' + 10;
-        if (c >= u'A' && c <= u'F') return c - u'A' + 10;
-        return -1;
-    }
+    int Hex(char16_t c) const { return HexDigitValue(c); }
 
     // \d \D \s \S \w \W as ranges (into `cls`); false when c is not one of them.
     bool ClassEscape(char16_t c, RxClass& cls) {
@@ -322,7 +325,8 @@ struct PatternParser {
                 if (c == u'-' && inClass) return u'-';
                 if (prog.unicode && !(c == u'^' || c == u'$' || c == u'\\' || c == u'.' || c == u'*' || c == u'+' || c == u'?' ||
                                       c == u'(' || c == u')' || c == u'[' || c == u']' || c == u'{' || c == u'}' || c == u'|' || c == u'/'))
-                    Fail("unknown escape with the u flag");
+                    Fail(c == u'p' || c == u'P' ? "Unicode property escapes (\\p{...}) are not supported (no Unicode data in this engine)"
+                                                : "unknown escape with the u flag");
                 --i;
                 return ReadCodePoint();   // an identity escape
         }
@@ -414,19 +418,24 @@ struct Emitter {
         prog.code.push_back(RxInst{op, a, b});
     }
     std::uint32_t Here() const { return (std::uint32_t)prog.code.size(); }
+    bool back = false;   ///< inside a lookbehind: match right to left (b = 1 on the consuming instructions)
 
     void Gen(const RxNode* n) {
+        const std::uint32_t dir = back ? 1 : 0;
         switch (n->k) {
             case NK_Empty: return;
-            case NK_Char: Emit(RX_Char, n->c); return;
-            case NK_Any: Emit(RX_Any); return;
-            case NK_Class: Emit(RX_Class, n->c); return;
+            case NK_Char: Emit(RX_Char, n->c, dir); return;
+            case NK_Any: Emit(RX_Any, 0, dir); return;
+            case NK_Class: Emit(RX_Class, n->c, dir); return;
             case NK_Bol: Emit(RX_Bol); return;
             case NK_Eol: Emit(RX_Eol); return;
             case NK_WordB: Emit(n->flag ? RX_NotWordB : RX_WordB); return;
-            case NK_BackRef: Emit(RX_BackRef, n->c); return;
+            case NK_BackRef: Emit(RX_BackRef, n->c, dir); return;
             case NK_Seq:
-                for (const auto& k : n->kids) Gen(k.get());
+                if (back)
+                    for (std::size_t k = n->kids.size(); k-- > 0;) Gen(n->kids[k].get());
+                else
+                    for (const auto& k : n->kids) Gen(k.get());
                 return;
             case NK_Alt: {
                 std::vector<std::uint32_t> ends;
@@ -444,16 +453,19 @@ struct Emitter {
                 return;
             }
             case NK_Group:
-                if (n->flag) Emit(RX_Save, n->c * 2);
+                if (n->flag) Emit(RX_Save, n->c * 2 + (back ? 1 : 0));
                 Gen(n->kids[0].get());
-                if (n->flag) Emit(RX_Save, n->c * 2 + 1);
+                if (n->flag) Emit(RX_Save, n->c * 2 + (back ? 0 : 1));
                 return;
             case NK_Look: {
                 std::uint32_t at = Here();
                 Emit(RX_Look, 0, n->flag ? 1 : 0);
+                bool saved = back;
+                back = n->min == 1;   // a lookbehind's body runs right to left, a lookahead's left to right
                 Gen(n->kids[0].get());
+                back = saved;
                 Emit(RX_Match);
-                prog.code[at].a = Here();   // where matching continues after the lookahead
+                prog.code[at].a = Here();   // where matching continues after the lookaround
                 return;
             }
             case NK_Repeat: {
@@ -546,6 +558,29 @@ struct Machine {
         return c;
     }
 
+    // The character just before pos and its length (a whole surrogate pair with the u flag).
+    std::uint32_t Before(int pos, int& len) const {
+        char16_t c = s[(std::size_t)pos - 1];
+        if (p.unicode && c >= 0xDC00 && c <= 0xDFFF && pos >= 2 && s[(std::size_t)pos - 2] >= 0xD800 && s[(std::size_t)pos - 2] <= 0xDBFF) {
+            len = 2;
+            return 0x10000 + ((s[(std::size_t)pos - 2] - 0xD800) << 10) + (c - 0xDC00);
+        }
+        len = 1;
+        return c;
+    }
+    // The next character in the instruction's direction; false at the edge of the input.
+    bool Step(const RxInst& in, int pos, std::uint32_t& c, int& len) const {
+        if (in.b) {
+            if (pos <= 0) return false;
+            c = Before(pos, len);
+            len = -len;
+            return true;
+        }
+        if (pos >= (int)s.size()) return false;
+        c = At(pos, len);
+        return true;
+    }
+
     void Tick() {
         if ((++steps & 63) == 0) rt.Charge(16);
     }
@@ -575,27 +610,27 @@ struct Machine {
             bool ok = true;
             switch (in.op) {
                 case RX_Char: {
-                    if (pos >= n) { ok = false; break; }
                     int len;
-                    std::uint32_t c = At(pos, len);
+                    std::uint32_t c;
+                    if (!Step(in, pos, c, len)) { ok = false; break; }
                     if (Canon(p, c) != Canon(p, in.a)) { ok = false; break; }
                     pos += len;
                     ++pc;
                     break;
                 }
                 case RX_Any: {
-                    if (pos >= n) { ok = false; break; }
                     int len;
-                    std::uint32_t c = At(pos, len);
+                    std::uint32_t c;
+                    if (!Step(in, pos, c, len)) { ok = false; break; }
                     if (!p.dotAll && IsLineTerm(c)) { ok = false; break; }
                     pos += len;
                     ++pc;
                     break;
                 }
                 case RX_Class: {
-                    if (pos >= n) { ok = false; break; }
                     int len;
-                    std::uint32_t c = At(pos, len);
+                    std::uint32_t c;
+                    if (!Step(in, pos, c, len)) { ok = false; break; }
                     if (!InClass(p, p.classes[in.a], c)) { ok = false; break; }
                     pos += len;
                     ++pc;
@@ -655,10 +690,11 @@ struct Machine {
                     int a = caps[g * 2], b = caps[g * 2 + 1];
                     if (a < 0 || b < 0) { ++pc; break; }
                     int len = b - a;
-                    if (pos + len > n) { ok = false; break; }
+                    int from = in.b ? pos - len : pos;   // backward: the text just before pos must equal the group
+                    if (from < 0 || from + len > n) { ok = false; break; }
                     for (int k = 0; k < len && ok; ++k)
-                        if (Canon(p, s[(std::size_t)(a + k)]) != Canon(p, s[(std::size_t)(pos + k)])) ok = false;
-                    if (ok) { pos += len; ++pc; }
+                        if (Canon(p, s[(std::size_t)(a + k)]) != Canon(p, s[(std::size_t)(from + k)])) ok = false;
+                    if (ok) { pos = in.b ? from : pos + len; ++pc; }
                     break;
                 }
                 case RX_LoopStart:
@@ -685,6 +721,7 @@ std::shared_ptr<RegexProg> CompilePattern(const std::u16string& pattern, const s
         bool* slot = f == u'i' ? &prog->icase : f == u'm' ? &prog->multiline : f == u's' ? &prog->dotAll : f == u'u' ? &prog->unicode
                    : f == u'g' ? &prog->global : f == u'y' ? &prog->sticky : nullptr;
         if (f == u'd') continue;
+        if (f == u'v') { err = "the v flag (unicode sets) is not supported"; return nullptr; }
         if (!slot) { err = "unknown regular expression flag '" + Utf16To8(std::u16string(1, f)) + "'"; return nullptr; }
         if (*slot) { err = "the flag '" + Utf16To8(std::u16string(1, f)) + "' is given twice"; return nullptr; }
         *slot = true;

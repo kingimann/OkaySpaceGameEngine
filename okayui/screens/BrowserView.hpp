@@ -12,6 +12,7 @@
 // with a ring, and text selection (PageKeys).
 #include "okay/Browser/Browser.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 
 #include <functional>
 #include <string>
@@ -52,7 +53,13 @@ struct BrowserViewResult {
 /// Web fonts (@font-face) the host loaded: a TrueType face made by OkayUI::AddFontTtf, under its family name (lower-case), weight
 /// and style. Text whose font-family names a registered family is measured and drawn with it (the closest weight and style;
 /// a bold face when there is one, else the default bold look). The default font otherwise.
-void RegisterWebFont(const std::string& family, int weight, bool italic, const OkayUI::Font* font);
+/// A font's vertical size in em (CSS sizes text by the em; OkayUI sizes a font by its line, ascent - descent): the line and the
+/// ascent per em. The default (1, 0.8) is what the layout assumes, so text drawn with it is as before.
+struct FontEm { float linePerEm = 1.0f; float ascentPerEm = 0.8f; };
+/// The em of a TrueType / OpenType file (its head unitsPerEm and hhea ascent / descent); false (and `out` unchanged) when the
+/// bytes are not a font we read or its numbers are not believable.
+bool FontEmOf(const std::uint8_t* data, std::size_t size, FontEm& out);
+void RegisterWebFont(const std::string& family, int weight, bool italic, const OkayUI::Font* font, const FontEm& em = FontEm());
 void ClearWebFonts();
 
 /// Text measured with OkayUI's current font, for the layout.
@@ -138,19 +145,28 @@ namespace browserlook {
 inline constexpr OkayUI::Color32 Rgb(int r, int g, int b, int a = 255) {
     return (OkayUI::Color32)r | ((OkayUI::Color32)g << 8) | ((OkayUI::Color32)b << 16) | ((OkayUI::Color32)a << 24);
 }
-inline constexpr OkayUI::Color32 kStrip = Rgb(24, 27, 34);        ///< behind the tabs
-inline constexpr OkayUI::Color32 kToolbar = Rgb(44, 48, 58);      ///< the active tab, the toolbar and the bookmarks bar
-inline constexpr OkayUI::Color32 kTabHover = Rgb(35, 39, 48);     ///< an inactive tab under the pointer
-inline constexpr OkayUI::Color32 kField = Rgb(29, 32, 40);        ///< the address bar
-inline constexpr OkayUI::Color32 kFieldHover = Rgb(35, 38, 47);
-inline constexpr OkayUI::Color32 kHover = Rgb(62, 67, 80);        ///< a toolbar button under the pointer
-inline constexpr OkayUI::Color32 kPressed = Rgb(74, 80, 96);      ///< ... held down
-inline constexpr OkayUI::Color32 kText = Rgb(232, 236, 243);
-inline constexpr OkayUI::Color32 kTextDim = Rgb(150, 158, 175);
-inline constexpr OkayUI::Color32 kIconOff = Rgb(96, 102, 116);    ///< a button that cannot be used now
-inline constexpr OkayUI::Color32 kAccent = Rgb(66, 150, 250);     ///< focus rings, the bookmarked star, the loading bar
-inline constexpr OkayUI::Color32 kWarn = Rgb(240, 120, 100);      ///< "Not secure"
-inline constexpr OkayUI::Color32 kDivider = Rgb(62, 67, 80);
+inline OkayUI::Color32 kStrip = Rgb(24, 27, 34);        ///< behind the tabs
+inline OkayUI::Color32 kToolbar = Rgb(44, 48, 58);      ///< the active tab, the toolbar and the bookmarks bar
+inline OkayUI::Color32 kTabHover = Rgb(35, 39, 48);     ///< an inactive tab under the pointer
+inline OkayUI::Color32 kField = Rgb(29, 32, 40);        ///< the address bar
+inline OkayUI::Color32 kFieldHover = Rgb(35, 38, 47);
+inline OkayUI::Color32 kHover = Rgb(62, 67, 80);        ///< a toolbar button under the pointer
+inline OkayUI::Color32 kPressed = Rgb(74, 80, 96);      ///< ... held down
+inline OkayUI::Color32 kText = Rgb(232, 236, 243);
+inline OkayUI::Color32 kTextDim = Rgb(150, 158, 175);
+inline OkayUI::Color32 kIconOff = Rgb(96, 102, 116);    ///< a button that cannot be used now
+inline OkayUI::Color32 kAccent = Rgb(66, 150, 250);     ///< focus rings, the bookmarked star, the loading bar
+inline OkayUI::Color32 kWarn = Rgb(240, 120, 100);      ///< "Not secure"
+inline OkayUI::Color32 kDivider = Rgb(62, 67, 80);
+/// The chrome follows the design in force (okay/UI/OkayUIDesign.hpp): called at the start of each browser frame.
+inline void FollowDesign() {
+    const OkayUI::Theme& t = OkayUI::Style();
+    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
+    kStrip = c(t.track); kToolbar = c(t.raised); kTabHover = mix(t.track, t.raised, 0.5f); kField = c(t.field); kFieldHover = c(t.bgHover);
+    kHover = c(t.bgHover); kPressed = c(t.bgDown); kText = c(t.text); kTextDim = c(t.textDim); kIconOff = c(t.textFaint);
+    kAccent = c(t.accent); kWarn = c(t.danger); kDivider = mix(t.raised, t.text, 0.16f);
+}
 }
 
 /// Toolbar icons, drawn with lines (no picture files): centred on (cx, cy), about `size` px across, into the current window

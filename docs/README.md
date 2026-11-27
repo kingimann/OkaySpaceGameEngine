@@ -83,7 +83,7 @@ How to build a game with the editor and the ready-made parts.
 - [In-game UI](ui/in_game_ui.md) and [ui_catalogue.md](ui_catalogue.md) (every UI component, style and icon).
 
 **Multiplayer and online**
-- [Multiplayer](online/multiplayer.md), [Relay](online/relay.md), [Dedicated servers](online/dedicated-server.md), [Anti-cheat](online/anticheat.md).
+- [Multiplayer](online/multiplayer.md), [Relay](online/relay.md), [Dedicated servers](online/dedicated-server.md), [Anti-cheat](online/anticheat.md), [OkayAntiCheat audit and design](online/okay_anticheat.md).
 - [Accounts](online/accounts.md), [Supabase backend](online/supabase-backend.md) (accounts, cloud saves, leaderboards), [Voice server](audio/voice-server.md).
 
 **Exporting a game**
@@ -118,8 +118,8 @@ How the code is built, how the work is shared, and the replacement work.
 - [own_code_roadmap.md](status/own_code_roadmap.md): the plan and state for each library.
 - [THIRD_PARTY.md](status/THIRD_PARTY.md): what is ours and what is still outside code or assets.
 - [own_flip_proposal.md](status/own_flip_proposal.md) and [own_stack_rollout.md](status/own_stack_rollout.md): which own parts became the default, and in what order.
-- UI: [OkayUI toolkit](ui/own_ui_toolkit.md), [OkayUI code editor](ui/own_ui_code_editor.md), [imgui_port_report.md](imgui_port_report.md).
-- Platform: [Platform layer](platform/platform_layer.md), [SDL removal plan](platform/sdl_removal_plan.md), [sdl_inventory.md](sdl_inventory.md), [Own HTTP client](platform/own_http.md), [OkayBackend design](platform/okay_backend.md), [OkayBackend audit](platform/okay_backend_audit.md).
+- UI: [OkayUI toolkit](ui/own_ui_toolkit.md), [OkayUI designs](ui/okayui_design.md), [OkayUI code editor](ui/own_ui_code_editor.md), [imgui_port_report.md](imgui_port_report.md).
+- Platform: [Platform layer](platform/platform_layer.md), [SDL removal plan](platform/sdl_removal_plan.md), [sdl_inventory.md](sdl_inventory.md), [Own HTTP client](platform/own_http.md), [OkayBackend design](platform/okay_backend.md), [OkayBackend audit](platform/okay_backend_audit.md), [OkayBackend admin dashboard design](platform/okay_backend_admin.md).
 - Tools: [Own build tool](platform/own_build_plan.md), [okay-cc](platform/own_compiler_plan.md), [okay-ms](platform/own_msvc_plan.md).
 - Models: [Model import](content/model_import.md), [Own model readers](content/model_readers.md), [Real-file tests](content/model_corpus.md), [Speed](content/own_readers_speed.md), [What is left](content/own_readers_remaining.md).
 - Sound and pictures: [Own WAV decoder](audio/own_wav_decoder.md), [Own texture library](rendering/own_texture_library.md).

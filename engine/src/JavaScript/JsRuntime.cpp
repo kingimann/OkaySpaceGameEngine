@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <iterator>
+#include <unordered_map>
 
 namespace okay::js {
 
@@ -24,6 +26,7 @@ bool SameValueZero(const Value& a, const Value& b) {
         case Tag::Bool: return a.b == b.b;
         case Tag::Number: return a.n == b.n || (std::isnan(a.n) && std::isnan(b.n));
         case Tag::String: return a.p == b.p || a.S()->s == b.S()->s;
+        case Tag::BigInt: return a.p == b.p || BigEquals(a, b);
         default: return a.p == b.p;
     }
 }
@@ -73,6 +76,7 @@ std::size_t KeyHash::operator()(const Value& v) const {
             }
             return s->hash;
         }
+        case Tag::BigInt: return BigHash(v);
         case Tag::Bool: return v.b ? 3 : 5;
         case Tag::Undefined: return 7;
         case Tag::Null: return 11;
@@ -140,6 +144,11 @@ void PromiseObj::Trace(Runtime& rt) {
             if (r.derived) rt.Mark(r.derived);
             if (r.awaiter) rt.Mark(r.awaiter);
         }
+}
+void WeakObj::Trace(Runtime& rt) {
+    Object::Trace(rt);   // keys and targets are weak; WeakMap values are marked by Collect's ephemeron pass
+    for (const Cell& c : cells) rt.MarkValue(c.held);
+    rt.MarkValue(cleanup);
 }
 void MapObj::Trace(Runtime& rt) {
     Object::Trace(rt);
@@ -344,6 +353,9 @@ static std::string WithWhere(Runtime& rt, const std::string& why) {
 }
 void Runtime::Terminate(const std::string& why) { throw JsTerminate{WithWhere(*this, why)}; }
 void Runtime::MemoryFull() {
+    // the host (a browser dispatching an event, the engine setting a global) allocates outside any call: a throw
+    // there would escape into code that does not expect one, so the stop waits for the next script call
+    if (vm && vm->nframes == 0 && vm->nativeDepth == 0) return;
     bytes_ = memoryLimit;   // stays over the limit until a collection measures again
     throw JsTerminate{WithWhere(*this, "the script used more memory than allowed (" + std::to_string(memoryLimit >> 20) + " MB)")};
 }
@@ -415,6 +427,7 @@ bool Runtime::ToBoolean(const Value& v) const {
         case Tag::Bool: return v.b;
         case Tag::Number: return !(v.n == 0 || std::isnan(v.n));
         case Tag::String: return !v.S()->s.empty();
+        case Tag::BigInt: return !BigIsZero(v);
         default: return true;
     }
 }
@@ -557,12 +570,24 @@ double Runtime::ToNumber(const Value& v) {
         case Tag::Bool: return v.b ? 1 : 0;
         case Tag::String: return StringToNumber(v.S()->s);
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a number");
+        case Tag::BigInt: ThrowType("a BigInt can not be mixed with Numbers here; use Number(x) or BigInt(x)");
         case Tag::Object: {
             Value p = ToPrimitive(v, 1);
             return ToNumber(p);
         }
         default: return NAN;
     }
+}
+
+// 7.1.3 ToNumeric: a primitive's Number, or the BigInt itself
+Value Runtime::ToNumeric(const Value& v) {
+    if (v.IsBig()) return v;
+    if (v.IsObj()) {
+        Value p = ToPrimitive(v, 1);
+        if (p.IsBig()) return p;
+        return Value::Num(ToNumber(p));
+    }
+    return Value::Num(ToNumber(v));
 }
 
 double Runtime::ToIntegerOrInfinity(const Value& v) {
@@ -596,6 +621,7 @@ String* Runtime::ToString(const Value& v) {
         case Tag::Null: return atoms->null_;
         case Tag::Bool: return v.b ? atoms->true_ : atoms->false_;
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a string automatically (use String(sym))");
+        case Tag::BigInt: return NewString(BigToString(*this, v, 10));
         case Tag::Object: {
             Value p = ToPrimitive(v, 2);
             Keep(p);
@@ -636,11 +662,11 @@ Object* Runtime::ToObject(const Value& v) {
             ThrowType(std::string("can not turn ") + (v.IsNull() ? "null" : "undefined") + " into an object");
         default: break;
     }
-    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : Cls::SymbolBox;
+    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : v.IsBig() ? Cls::BigIntBox : Cls::SymbolBox;
     BoxObj* b = Alloc<BoxObj>();
     b->cls = c;
     b->prim = v;
-    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : symbolProto;
+    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : v.IsBig() ? bigintProto : symbolProto;
     return b;
 }
 
@@ -676,7 +702,20 @@ bool Runtime::IsConstructor(const Value& v) const {
     }
     if (o->cls == Cls::Native) return static_cast<NativeFunc*>(o)->ctor;
     if (o->cls == Cls::Bound) return IsConstructor(Value::Obj(static_cast<BoundFunc*>(o)->target));
+    if (o->cls == Cls::Proxy) return (o->proxyFn & 2) != 0;
     return false;
+}
+
+bool Runtime::IsArray(const Value& v) {
+    if (!v.IsObj()) return false;
+    Object* o = v.O();
+    for (int depth = 0; o->cls == Cls::Proxy; ++depth) {   // 7.2.2 step 3: through the proxy to its target
+        ProxyObj* p = static_cast<ProxyObj*>(o);
+        if (!p->handler) ThrowType("Array.isArray: the proxy was revoked");
+        if (depth > Impl::kMaxProxyDepth) ThrowRange("too much recursion (proxies nested too deeply)");
+        o = p->target;
+    }
+    return o->cls == Cls::Array;
 }
 
 const char* Runtime::TypeOf(const Value& v) const {
@@ -687,6 +726,7 @@ const char* Runtime::TypeOf(const Value& v) const {
         case Tag::Number: return "number";
         case Tag::String: return "string";
         case Tag::Symbol: return "symbol";
+        case Tag::BigInt: return "bigint";
         case Tag::Object: return v.O()->IsCallable() ? "function" : "object";
         default: return "undefined";
     }
@@ -698,14 +738,21 @@ bool Runtime::LooseEquals(const Value& a, const Value& b) {
     if (a.IsNullish() && b.IsNullish()) return true;
     if (a.IsNum() && b.IsStr()) return a.n == StringToNumber(b.S()->s);
     if (a.IsStr() && b.IsNum()) return StringToNumber(a.S()->s) == b.n;
+    if (a.IsBig() && b.IsStr()) {   // 7.2.14 steps 6-7: the string read as a BigInt
+        Value n;
+        return StringToBigInt(*this, b.S()->s, n) && BigEquals(a, n);
+    }
+    if (a.IsStr() && b.IsBig()) return LooseEquals(b, a);
     if (a.IsBool()) return LooseEquals(Value::Num(a.b ? 1 : 0), b);
     if (b.IsBool()) return LooseEquals(a, Value::Num(b.b ? 1 : 0));
-    if ((a.IsNum() || a.IsStr() || a.IsSym()) && b.IsObj()) {
+    if (a.IsBig() && b.IsNum()) return BigCompareNum(a, b.n) == 0;
+    if (a.IsNum() && b.IsBig()) return BigCompareNum(b, a.n) == 0;
+    if ((a.IsNum() || a.IsStr() || a.IsSym() || a.IsBig()) && b.IsObj()) {
         Value p = ToPrimitive(b, 0);
         Keep(p);
         return LooseEquals(a, p);
     }
-    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym())) {
+    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym() || b.IsBig())) {
         Value p = ToPrimitive(a, 0);
         Keep(p);
         return LooseEquals(p, b);
@@ -729,7 +776,8 @@ bool Runtime::InstanceOf(const Value& v, const Value& target) {
     Value p = Get(target, atoms->prototype);
     if (!p.IsObj()) ThrowType("the 'prototype' of the right side of 'instanceof' is not an object");
     int guard = 0;
-    for (Object* o = v.O()->proto; o; o = o->proto) {
+    Keep(p);
+    for (Object* o = GetPrototypeOf(v.O()); o; o = GetPrototypeOf(o)) {
         if (o == p.O()) return true;
         if (++guard > 100000) break;
     }
@@ -826,6 +874,31 @@ static bool ExoticOwn(Runtime& rt, Object* o, GcObj* key, Prop& out, bool& found
             }
             return false;
         }
+        case Cls::ModuleNs: {   // 10.4.6.5 [[GetOwnProperty]]: a string key is an export (or nothing); symbols are ordinary
+            if (key->kind != Kind::String) return false;
+            const ModuleNsObj::Entry* e = static_cast<ModuleNsObj*>(o)->Find(key);
+            found = e != nullptr;
+            if (e) {
+                out.key = key;
+                out.v = ModuleNamespaceGet(rt, *e);
+                out.get = out.set = nullptr;
+                out.flags = kWritable | kEnumerable;
+            }
+            return true;
+        }
+        case Cls::TypedArray: {   // 10.4.5.1 [[GetOwnProperty]]
+            double n;
+            if (!CanonicalNumericKey(rt, key, n)) return false;
+            TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+            found = ValidIntegerIndex(t, n);
+            if (found) {
+                out.key = key;
+                out.v = TypedArrayGet(rt, t, n);
+                out.get = out.set = nullptr;
+                out.flags = kDefault;
+            }
+            return true;
+        }
         case Cls::Host: {
             HostObj* h = static_cast<HostObj*>(o);
             if (h->hostClass < rt.hostClasses.size() && rt.hostClasses[h->hostClass].get && key->kind == Kind::String) {
@@ -845,6 +918,7 @@ static bool ExoticOwn(Runtime& rt, Object* o, GcObj* key, Prop& out, bool& found
 }
 
 bool Runtime::GetOwnProperty(Object* o, GcObj* key, Prop& out) {
+    if (o->cls == Cls::Proxy) return ProxyGetOwnProperty(*this, static_cast<ProxyObj*>(o), key, out);
     bool found = false;
     if (ExoticOwn(*this, o, key, out, found)) return found;
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
@@ -871,12 +945,18 @@ Value Runtime::Get(const Value& base, GcObj* key, const Value& receiver) {
         case Tag::Number: o = numberProto; break;
         case Tag::Bool: o = booleanProto; break;
         case Tag::Symbol: o = symbolProto; break;
+        case Tag::BigInt: o = bigintProto; break;
         default:
             ThrowType("can not read '" + KeyText(*this, key) + "' of " + (base.IsNull() ? "null" : "undefined"));
     }
     int guard = 0;
     for (; o; o = o->proto) {
         if (o->cls != Cls::Ordinary) {
+            if (o->cls == Cls::TypedArray) {   // 10.4.5.4: a numeric key never reaches the prototype
+                double n;
+                if (CanonicalNumericKey(*this, key, n)) return TypedArrayGet(*this, static_cast<TypedArrayObj*>(o), n);
+            }
+            if (o->cls == Cls::Proxy) return ProxyGet(*this, static_cast<ProxyObj*>(o), key, receiver);
             Prop ex;
             bool found = false;
             if (ExoticOwn(*this, o, key, ex, found)) {
@@ -901,6 +981,7 @@ Value Runtime::GetIndex(const Value& obj, std::uint32_t i) {
         ArrayObj* a = static_cast<ArrayObj*>(obj.O());
         if (i < a->elems.size() && !a->elems[i].IsEmpty()) return a->elems[i];
     }
+    if (obj.IsObj() && obj.O()->cls == Cls::TypedArray) return TypedArrayGet(*this, static_cast<TypedArrayObj*>(obj.O()), (double)i);
     return Get(obj, IndexKey(i));
 }
 
@@ -1032,6 +1113,18 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
                 if (ExoticOwn(*this, o, key, ex, found) && found) ThrowType("the characters of a String are read-only");
                 break;
             }
+            case Cls::Proxy:
+                if (!ProxySet(*this, static_cast<ProxyObj*>(o), key, v, base)) ThrowType("the proxy refused to set '" + KeyText(*this, key) + "'");
+                return;
+            case Cls::ModuleNs: ThrowType("can not set '" + KeyText(*this, key) + "': a module namespace is read-only");   // 10.4.6.9
+            case Cls::TypedArray: {   // 10.4.5.5 [[Set]] with the typed array as the receiver: no error for a bad index
+                double n;
+                if (CanonicalNumericKey(*this, key, n)) {
+                    TypedArraySet(*this, static_cast<TypedArrayObj*>(o), n, v);
+                    return;
+                }
+                break;
+            }
             default:
                 if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
                 break;
@@ -1051,10 +1144,19 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
     }
     // the prototype chain: setters and read-only properties (10.1.9.2 OrdinarySetWithOwnDescriptor)
     Object* q = o ? o->proto
-                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto : symbolProto;
+                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto
+                  : base.IsBig() ? bigintProto : symbolProto;
     int guard = 0;
     for (; q; q = q->proto) {
         if (q->cls != Cls::Ordinary) {
+            if (q->cls == Cls::Proxy) {   // the rest of the chain is the proxy's [[Set]] with our receiver
+                if (!ProxySet(*this, static_cast<ProxyObj*>(q), key, v, base)) ThrowType("the proxy refused to set '" + KeyText(*this, key) + "'");
+                return;
+            }
+            if (q->cls == Cls::TypedArray) {   // 10.4.5.5 step 1.b.ii: an index that is not valid there is a quiet no-op
+                double n;
+                if (CanonicalNumericKey(*this, key, n) && !ValidIntegerIndex(static_cast<TypedArrayObj*>(q), n)) return;
+            }
             Prop ex;
             bool found = false;
             if (ExoticOwn(*this, q, key, ex, found)) {
@@ -1108,6 +1210,10 @@ void Runtime::PutIndex(const Value& obj, std::uint32_t i, const Value& v) {
             return;
         }
     }
+    if (obj.IsObj() && obj.O()->cls == Cls::TypedArray) {
+        TypedArraySet(*this, static_cast<TypedArrayObj*>(obj.O()), (double)i, v);
+        return;
+    }
     Put(obj, IndexKey(i), v);
 }
 
@@ -1133,6 +1239,12 @@ bool Runtime::HasOwn(Object* o, GcObj* key) {
 bool Runtime::HasProperty(Object* o, GcObj* key) {
     int guard = 0;
     for (; o; o = o->proto) {
+        if (o->cls == Cls::Proxy) return ProxyHas(*this, static_cast<ProxyObj*>(o), key);
+        if (o->cls == Cls::ModuleNs && key->kind == Kind::String) return static_cast<ModuleNsObj*>(o)->Find(key) != nullptr;   // 10.4.6.7
+        if (o->cls == Cls::TypedArray) {   // 10.4.5.2 [[HasProperty]]
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) return ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
+        }
         if (HasOwn(o, key)) return true;
         if (++guard > 100000) ThrowRange("the prototype chain is too long");
     }
@@ -1169,6 +1281,15 @@ bool Runtime::Delete(Object* o, GcObj* key) {
             break;
         }
         case Cls::Host: return true;
+        case Cls::Proxy: return ProxyDelete(*this, static_cast<ProxyObj*>(o), key);
+        case Cls::ModuleNs:   // 10.4.6.10
+            if (key->kind == Kind::String) return static_cast<ModuleNsObj*>(o)->Find(key) == nullptr;
+            break;
+        case Cls::TypedArray: {   // 10.4.5.6 [[Delete]]
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) return !ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
+            break;
+        }
         default:
             if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
             break;
@@ -1180,6 +1301,17 @@ bool Runtime::Delete(Object* o, GcObj* key) {
     return true;
 }
 
+// DefinePropertyOrThrow with a complete data descriptor, through the object's [[DefineOwnProperty]]
+void Runtime::DefineFullData(Object* o, GcObj* key, const Value& v, std::uint8_t flags) {
+    Descriptor d;
+    d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+    d.value = v;
+    d.writable = flags & kWritable;
+    d.enumerable = flags & kEnumerable;
+    d.configurable = flags & kConfigurable;
+    if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+}
+
 void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t flags) {
     if (o->cls == Cls::Array || o->cls == Cls::Arguments) {
         std::int64_t i = KeyIndex(key);
@@ -1189,18 +1321,17 @@ void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t fla
             return;
         }
         if (i >= 0 || key == atoms->length) {
-            Descriptor d;
-            d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
-            d.value = v;
-            d.writable = flags & kWritable;
-            d.enumerable = flags & kEnumerable;
-            d.configurable = flags & kConfigurable;
-            if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+            DefineFullData(o, key, v, flags);
             return;
         }
     }
     if (o->cls == Cls::Host) {
         Put(Value::Obj(o), key, v);
+        return;
+    }
+    double tn;
+    if (o->cls == Cls::Proxy || (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn))) {
+        DefineFullData(o, key, v, flags);   // the exotic [[DefineOwnProperty]] decides (a proxy's trap, a typed array's rules)
         return;
     }
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
@@ -1234,7 +1365,9 @@ void Runtime::DefineIndex(Object* o, std::uint32_t i, const Value& v) {
 void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* setter, std::uint8_t flags) {
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
     if ((o == arrayProto || o == objectProto) && KeyIndex(key) >= 0) arrayProtoHasIndex_ = true;
-    if ((o->cls == Cls::Array || o->cls == Cls::Arguments) && (KeyIndex(key) >= 0 || key == atoms->length)) {
+    double tn;
+    if (((o->cls == Cls::Array || o->cls == Cls::Arguments) && (KeyIndex(key) >= 0 || key == atoms->length)) ||
+        (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn)) || o->cls == Cls::Proxy) {
         Descriptor d;
         d.hasEnumerable = d.hasConfigurable = true;
         d.enumerable = flags & kEnumerable;
@@ -1260,7 +1393,29 @@ void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* sett
 
 // 10.1.6.3 ValidateAndApplyPropertyDescriptor (for ordinary objects; arrays turn the element into a property)
 bool Runtime::DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d) {
+    if (o->cls == Cls::Proxy) return ProxyDefineOwnProperty(*this, static_cast<ProxyObj*>(o), key, d);
+    if (o->cls == Cls::ModuleNs && key->kind == Kind::String) {   // 10.4.6.6: only a no-op redefinition succeeds
+        Prop cur;
+        if (!GetOwnProperty(o, key, cur)) return false;
+        if ((d.hasConfigurable && d.configurable) || (d.hasEnumerable && !d.enumerable) || d.hasGet || d.hasSet ||
+            (d.hasWritable && !d.writable))
+            return false;
+        return !d.hasValue || SameValue(d.value, cur.v);
+    }
     if (o->lazy) MakeLazyProps(o);
+    if (o->cls == Cls::TypedArray) {   // 10.4.5.3 [[DefineOwnProperty]]
+        double n;
+        if (CanonicalNumericKey(*this, key, n)) {
+            TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+            if (!ValidIntegerIndex(t, n)) return false;
+            if (d.hasConfigurable && !d.configurable) return false;
+            if (d.hasEnumerable && !d.enumerable) return false;
+            if (d.hasGet || d.hasSet) return false;
+            if (d.hasWritable && !d.writable) return false;
+            if (d.hasValue) TypedArraySet(*this, t, n, d.value);
+            return true;
+        }
+    }
     if ((o == arrayProto || o == objectProto) && KeyIndex(key) >= 0) arrayProtoHasIndex_ = true;
     bool isArr = o->cls == Cls::Array || o->cls == Cls::Arguments;
     if (isArr) {
@@ -1358,6 +1513,14 @@ bool Runtime::DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d) {
 
 // 10.1.11.1 OrdinaryOwnPropertyKeys
 std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
+    if (o->cls == Cls::Proxy) {
+        std::vector<GcObj*> all = ProxyOwnKeys(*this, static_cast<ProxyObj*>(o));
+        if (strings && symbols) return all;
+        std::vector<GcObj*> out;
+        for (GcObj* k : all)
+            if ((k->kind == Kind::String) ? strings : symbols) out.push_back(k);
+        return out;
+    }
     if (o->lazy) MakeLazyProps(o);
     std::vector<GcObj*> out;
     std::vector<std::pair<std::uint32_t, GcObj*>> idx;
@@ -1369,6 +1532,12 @@ std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
         } else if (o->cls == Cls::StringBox) {
             const std::u16string& s = static_cast<BoxObj*>(o)->prim.S()->s;
             for (std::uint32_t i = 0; i < s.size(); ++i) out.push_back(IndexKey(i));
+        } else if (o->cls == Cls::ModuleNs) {   // 10.4.6.11: the export names, already in order
+            for (const ModuleNsObj::Entry& e : static_cast<ModuleNsObj*>(o)->entries) out.push_back(e.name);
+        } else if (o->cls == Cls::TypedArray) {   // 10.4.5.7 [[OwnPropertyKeys]]: the indices first
+            const std::uint64_t n = static_cast<TypedArrayObj*>(o)->Length();
+            Charge(n);
+            for (std::uint64_t i = 0; i < n; ++i) out.push_back(IndexKey((std::uint32_t)i));
         } else if (o->cls == Cls::Host) {
             HostObj* h = static_cast<HostObj*>(o);
             if (h->hostClass < hostClasses.size() && hostClasses[h->hostClass].keys)
@@ -1386,23 +1555,90 @@ std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
     }
     if (symbols)
         for (const Prop& p : o->props)
-            if (p.key->kind == Kind::Symbol) out.push_back(p.key);
+            if (p.key->kind == Kind::Symbol && !static_cast<Symbol*>(p.key)->priv) out.push_back(p.key);
     return out;
 }
 
+// 10.1.2.1 OrdinarySetPrototypeOf (the cycle check stops at a proxy, as step 8.c.i says)
 bool Runtime::SetPrototype(Object* o, Object* proto) {
+    if (o->cls == Cls::Proxy) return ProxySetPrototypeOf(*this, static_cast<ProxyObj*>(o), proto);
     if (o->proto == proto) return true;
     if (!o->extensible) return false;
-    for (Object* p = proto; p; p = p->proto)
+    for (Object* p = proto; p; p = p->proto) {
         if (p == o) return false;
+        if (p->cls == Cls::Proxy) break;
+    }
     o->proto = proto;
     return true;
 }
 
 bool Runtime::PreventExtensions(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyPreventExtensions(*this, static_cast<ProxyObj*>(o));
     if (o->lazy) MakeLazyProps(o);
     o->extensible = false;
     return true;
+}
+
+Object* Runtime::GetPrototypeOf(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyGetPrototypeOf(*this, static_cast<ProxyObj*>(o));
+    return o->proto;
+}
+
+bool Runtime::IsExtensible(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyIsExtensible(*this, static_cast<ProxyObj*>(o));
+    return o->extensible;
+}
+
+// 10.1.9.2 OrdinarySetWithOwnDescriptor, walking the chain with each object's own [[GetOwnProperty]]; a proxy on
+// the way takes over with its [[Set]]. Put is the fast form of this for receiver == the object.
+bool Runtime::SetWithReceiver(Object* o, GcObj* key, const Value& v, const Value& receiver) {
+    if (o->cls == Cls::ModuleNs) return false;   // 10.4.6.9
+    int guard = 0;
+    Prop own;
+    bool found = false;
+    for (Object* q = o; q; q = q->proto) {
+        if (q->cls == Cls::Proxy) return ProxySet(*this, static_cast<ProxyObj*>(q), key, v, receiver);
+        if (q->cls == Cls::TypedArray) {   // 10.4.5.5
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) {
+                TypedArrayObj* t = static_cast<TypedArrayObj*>(q);
+                if (receiver.IsObj() && receiver.O() == q) {
+                    TypedArraySet(*this, t, n, v);
+                    return true;
+                }
+                if (!ValidIntegerIndex(t, n)) return true;
+            }
+        }
+        if (GetOwnProperty(q, key, own)) {
+            found = true;
+            break;
+        }
+        if (++guard > 100000) ThrowRange("the prototype chain is too long");
+    }
+    if (found && (own.flags & kAccessor)) {
+        if (!own.set) return false;
+        Value arg = v;
+        Call(Value::Obj(own.set), receiver, &arg, 1);
+        return true;
+    }
+    if (found && !(own.flags & kWritable)) return false;
+    if (!receiver.IsObj()) return false;
+    Object* r = receiver.O();
+    Keep(r);
+    Prop existing;
+    if (GetOwnProperty(r, key, existing)) {
+        if (existing.flags & kAccessor) return false;
+        if (!(existing.flags & kWritable)) return false;
+        Descriptor d;
+        d.hasValue = true;
+        d.value = v;
+        return DefineOwnProperty(r, key, d);
+    }
+    Descriptor d;   // 7.3.5 CreateDataProperty
+    d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+    d.value = v;
+    d.writable = d.enumerable = d.configurable = true;
+    return DefineOwnProperty(r, key, d);
 }
 
 // ============================================================ globals and references
@@ -1441,6 +1677,7 @@ void Runtime::Mark(GcObj* o) {
 }
 
 void Runtime::Collect() {
+    ++collections_;
     gray_.clear();
     for (Value* v = vm->stack; v < vm->sp; ++v) MarkValue(*v);
     for (int i = 0; i < vm->nframes; ++i) {
@@ -1462,20 +1699,75 @@ void Runtime::Collect() {
     Object* intr[] = {objectProto, functionProto, arrayProto, stringProto, numberProto, booleanProto, symbolProto,
                       errorProto, iteratorProto, arrayIterProto, mapIterProto, setIterProto, stringIterProto,
                       generatorProto, generatorFnProto, asyncFnProto, mapProto, setProto, promiseProto, promiseCtor,
-                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, vm->arrayValues, vm->arrayIterNext,
+                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, dateProto, bigintProto, vm->arrayValues, vm->arrayIterNext,
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
-    for (Symbol* s : {symIterator, symAsyncIterator, symToPrimitive, symToStringTag, symHasInstance}) if (s) Mark(s);
+    for (Symbol* s : {symIterator, symAsyncIterator, symToPrimitive, symToStringTag, symHasInstance, symSpecies}) if (s) Mark(s);
+    for (Object* o : vm->moreIntrinsics) if (o) Mark(o);
+    for (const auto& m : vm->moduleList) {
+        if (m->proto) Mark(m->proto);
+        if (m->fn) Mark(m->fn);
+        if (m->ns) Mark(m->ns);
+        if (m->done) Mark(m->done);
+        MarkValue(m->error);
+        for (const auto& kv : m->cells) Mark(kv.second);
+    }
     for (auto& kv : symbolRegistry) Mark(kv.second);
     String** a = reinterpret_cast<String**>(atoms.get());
     for (std::size_t i = 0; i < sizeof(Atoms) / sizeof(String*); ++i) if (a[i]) Mark(a[i]);
     for (String* s : indexAtoms_) if (s) Mark(s);
-    while (!gray_.empty()) {
-        GcObj* o = gray_.back();
-        gray_.pop_back();
-        o->Trace(*this);
+    // WeakMap entries are ephemerons: a value is reachable when its map and its key are. Entries whose key is not
+    // marked yet wait in `pending` under the key; when the key is traced, its values are marked. Each live
+    // WeakMap is scanned once, so the pass is linear in the number of entries.
+    std::unordered_multimap<GcObj*, Value> pending;
+    std::vector<char> scanned(weakObjs.size(), 0);
+    auto drain = [&]() {
+        while (!gray_.empty()) {
+            GcObj* o = gray_.back();
+            gray_.pop_back();
+            o->Trace(*this);
+            if (!pending.empty()) {
+                auto range = pending.equal_range(o);
+                for (auto it = range.first; it != range.second; ++it) MarkValue(it->second);
+                pending.erase(range.first, range.second);
+            }
+        }
+    };
+    drain();
+    for (bool more = true; more;) {
+        more = false;
+        for (std::size_t i = 0; i < weakObjs.size(); ++i) {
+            Object* w = weakObjs[i];
+            if (scanned[i] || !w->marked || w->cls != Cls::WeakMap) continue;
+            scanned[i] = 1;
+            more = true;
+            for (const auto& e : static_cast<WeakObj*>(w)->entries) {
+                if (!e.second.IsGc()) continue;
+                if (e.first->marked) MarkValue(e.second);
+                else pending.emplace(e.first, e.second);
+            }
+            drain();
+        }
     }
+    // clear what died: dead weak objects leave the list, dead keys and targets leave the live ones
+    std::size_t keep = 0;
+    for (Object* w : weakObjs) {
+        if (!w->marked) continue;
+        WeakObj* wo = static_cast<WeakObj*>(w);
+        for (auto it = wo->entries.begin(); it != wo->entries.end();)
+            it = it->first->marked ? std::next(it) : wo->entries.erase(it);
+        if (wo->target && !wo->target->marked) wo->target = nullptr;
+        std::size_t c = 0;
+        for (WeakObj::Cell& cell : wo->cells) {
+            if (!cell.target->marked) continue;   // its target died: the cleanup callback is not run (9.10 allows that)
+            if (cell.token && !cell.token->marked) cell.token = nullptr;
+            wo->cells[c++] = cell;
+        }
+        wo->cells.resize(c);
+        weakObjs[keep++] = w;
+    }
+    weakObjs.resize(keep);
     Sweep();
 }
 
@@ -1510,8 +1802,12 @@ void Runtime::Sweep() {
         }
     }
     bytes_ = live;
-    gcThreshold_ = std::max<std::size_t>(4u << 20, live * 2);
-    if (gcThreshold_ > memoryLimit) gcThreshold_ = memoryLimit - memoryLimit / 8;
+    // The next run comes after the heap doubles, but never later than halfway into the room that is left, and never
+    // sooner than 1/64 of the limit more: a heap close to its limit used to sit above a fixed threshold and collect at
+    // every safe point (each run walks the whole heap), which looked like a hang on big pages.
+    const std::size_t room = memoryLimit > live ? memoryLimit - live : 0;
+    const std::size_t latest = live + std::max(room / 2, memoryLimit / 64);
+    gcThreshold_ = std::min(std::max<std::size_t>(4u << 20, live * 2), latest);
 }
 
 // ============================================================ console.log formatting
@@ -1535,6 +1831,7 @@ std::string Runtime::Display(const Value& v, int depth) {
             return "Symbol(" + (s->desc ? Utf16To8(s->desc->s) : std::string()) + ")";
         }
         case Tag::Object: break;
+        case Tag::BigInt: return Utf16To8(BigToString(*this, v, 10)) + "n";
         default: return ToUtf8(v);
     }
     Object* o = v.O();
@@ -1554,6 +1851,9 @@ std::string Runtime::Display(const Value& v, int depth) {
         if (m.IsStr() && !m.S()->s.empty()) s += ": " + Utf16To8(m.S()->s);
         return s;
     }
+    if (o->cls == Cls::DateBox) return DateDisplay(o);
+    if (o->cls == Cls::TypedArray) return TypedArrayDisplay(*this, o, depth);
+    if (o->cls == Cls::BigIntBox) return "[BigInt: " + Display(static_cast<BoxObj*>(o)->prim, depth + 1) + "]";
     if (o->cls == Cls::BoolBox || o->cls == Cls::NumberBox || o->cls == Cls::StringBox)
         return "[" + std::string(o->cls == Cls::BoolBox ? "Boolean" : o->cls == Cls::NumberBox ? "Number" : "String") + ": " +
                inner(static_cast<BoxObj*>(o)->prim) + "]";
@@ -1703,6 +2003,7 @@ void Runtime::InitIntrinsics() {
     symToPrimitive = wk("Symbol.toPrimitive");
     symToStringTag = wk("Symbol.toStringTag");
     symHasInstance = wk("Symbol.hasInstance");
+    symSpecies = wk("Symbol.species");
     InstallObjectLib(*this);
     InstallFunctionLib(*this);
     InstallErrorLib(*this);
@@ -1710,10 +2011,18 @@ void Runtime::InitIntrinsics() {
     InstallStringLib(*this);
     InstallNumberLib(*this);
     InstallMathLib(*this);
+    InstallBigIntLib(*this);
+    InstallDateLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
+    InstallWeakLib(*this);
+    InstallBinaryLib(*this);
+    InstallProxyLib(*this);
+    InstallTextCodingLib(*this);
+    InstallStructuredClone(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
+    InstallIntlLib(*this);
 }
 
 // ============================================================ compiling and running
@@ -1729,13 +2038,31 @@ bool Runtime::Compile(const std::string& source, const std::string& chunk, Value
         if (err) *err = e;
         return false;
     }
-    Proto* p = CompileScript(*this, ast, chunk, e);
+    Proto* p = nullptr;
+    try {   // the API reports every failure as false: a memory stop here (interning names) must not escape
+        p = CompileScript(*this, ast, chunk, e);
+    } catch (const JsTerminate& t) {
+        e = SyntaxError{};
+        e.line = -1;   // not a syntax error: Run reports the message as it is
+        e.message = t.why;
+    } catch (const JsThrow&) {
+        e = SyntaxError{};
+        e.line = -1;
+        e.message = ExceptionText(exception);
+        exception = Value();
+    }
     if (!p) {
         if (err) *err = e;
         return false;
     }
     vm->scripts.push_back(p);
-    Closure* c = Alloc<Closure>();
+    Closure* c;
+    try {
+        c = Alloc<Closure>();
+    } catch (const JsTerminate& t) {
+        if (err) { *err = SyntaxError{}; err->line = -1; err->message = t.why; }
+        return false;
+    }
     c->code = p;
     c->proto = functionProto;
     fn = Value::Obj(c);
@@ -1750,7 +2077,15 @@ std::vector<SyntaxError> Runtime::CheckSyntax(const std::string& source, const s
     if (!Parse(toks, ast, e)) return {e};
     // the compiler finds the rest (redeclarations, break targets); throw its output away
     Runtime* self = this;
-    Proto* p = CompileScript(*self, ast, chunk, e);
+    Proto* p = nullptr;
+    try {
+        p = CompileScript(*self, ast, chunk, e);
+    } catch (const JsTerminate&) {
+        return {};   // out of memory while checking: no syntax error to report
+    } catch (const JsThrow&) {
+        exception = Value();
+        return {};
+    }
     if (!p) return {e};
     return {};
 }
@@ -1759,13 +2094,470 @@ bool Runtime::Run(const std::string& source, const std::string& chunk, std::stri
     Value fn;
     SyntaxError se;
     if (!Compile(source, chunk, fn, &se)) {
-        if (err) *err = chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
+        if (err) *err = se.line < 0 ? se.message : chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
         return false;
     }
     Value r;
     if (!CallHost(fn, Value(), {}, &r, err)) return false;
     if (exported) *exported = r;
     return true;
+}
+
+// ============================================================ modules (16.2)
+// Written from ECMA-262 16.2.1.5 (Cyclic Module Records: Link and Evaluate), 16.2.1.6 (Source Text Module Records:
+// ParseModule, GetExportedNames, ResolveExport, InitializeEnvironment), 16.2.1.10 GetModuleNamespace, 10.4.6 (module
+// namespace exotic objects), 13.3.10 import() and 13.3.12 import.meta. Our choices: the host's resolve and fetch are
+// synchronous; modules run one after another in dependency order (a module waiting on a top-level await holds up the
+// ones after it, where the spec may run independent ones in between); a function a module exports is made when that
+// module starts to run, not when it is linked (in a cycle, a call before that sees undefined). Loading, linking and the
+// export searches are loops or bounded recursions (kMaxResolveDepth), so a long chain of modules is not a deep native
+// recursion; every module and every export step charges the budget.
+void ModuleNsObj::Trace(Runtime& rt) {
+    Object::Trace(rt);
+    for (const Entry& e : entries) {
+        rt.Mark(e.name);
+        if (e.cell) rt.Mark(e.cell);
+    }
+}
+const ModuleNsObj::Entry* ModuleNsObj::Find(GcObj* key) const {
+    if (key->kind != Kind::String) return nullptr;
+    const std::u16string& k = static_cast<String*>(key)->s;
+    std::size_t lo = 0, hi = entries.size();
+    while (lo < hi) {
+        const std::size_t mid = (lo + hi) / 2;
+        const std::u16string& n = entries[mid].name->s;
+        if (n == k) return &entries[mid];
+        if (n < k) lo = mid + 1;
+        else hi = mid;
+    }
+    return nullptr;
+}
+
+namespace {
+
+const std::u16string kNamespaceBinding = u"*namespace*";
+constexpr std::size_t kMaxModules = 20000;
+constexpr int kMaxResolveDepth = 1000;
+
+[[noreturn]] void ModuleSyntaxError(Runtime& rt, const std::string& msg) { rt.ThrowError(ErrorType::SyntaxError, msg); }
+
+ModuleRec* ParseModuleRecord(Runtime& rt, const std::string& key, const std::string& source) {
+    Runtime::Impl& M = *rt.vm;
+    if (M.moduleList.size() >= kMaxModules) rt.ThrowRange("too many modules (" + std::to_string(kMaxModules) + ")");
+    rt.Charge(64 + source.size() / 64);
+    std::vector<Token> toks;
+    SyntaxError e;
+    Ast ast;
+    if (!Tokenize(source, toks, e) || !Parse(toks, ast, e, true))
+        ModuleSyntaxError(rt, key + ":" + std::to_string(e.line) + ": " + e.message);
+    std::vector<ModuleExtern> externs;
+    Proto* p = CompileModule(rt, ast, key, e, externs);
+    if (!p) ModuleSyntaxError(rt, key + ":" + std::to_string(e.line) + ": " + e.message);
+    M.scripts.push_back(p);
+    auto rec = std::make_unique<ModuleRec>();
+    rec->key = key;
+    rec->info = std::move(*ast.module);
+    rec->externs = std::move(externs);
+    rec->proto = p;
+    rec->index = (std::uint32_t)M.moduleList.size();
+    ModuleRec* m = rec.get();
+    M.moduleList.push_back(std::move(rec));
+    M.moduleMap[key] = m;
+    // the cells other modules link to: exported bindings (var and function start undefined, the rest not initialized)
+    // and namespace imports (filled in when linked)
+    for (const ModuleExtern& x : m->externs) {
+        if (x.kind == 3) continue;
+        bool nsImport = false;
+        if (x.kind == 2) {
+            for (const ModuleInfo::Import& im : m->info.imports) nsImport |= im.localName == x.name && im.importName == u"*";
+            if (!nsImport) continue;
+        }
+        Cell* c = rt.Alloc<Cell>();
+        c->v = x.kind == 1 ? Value::EmptyV() : Value();
+        m->cells[x.name] = c;
+    }
+    return m;
+}
+
+ModuleRec* FetchModule(Runtime& rt, const std::string& key) {
+    auto it = rt.vm->moduleMap.find(key);
+    if (it != rt.vm->moduleMap.end()) return it->second;
+    std::string source, why;
+    if (!rt.modules.fetch || !rt.modules.fetch(key, source, why)) rt.ThrowType("can not load the module '" + key + "': " + why);
+    return ParseModuleRecord(rt, key, source);
+}
+
+// 16.2.1.5.1 LoadRequestedModules, as a work list: every module of the graph is loaded once
+ModuleRec* LoadGraph(Runtime& rt, const std::string& key, const std::string* source) {
+    auto it = rt.vm->moduleMap.find(key);
+    ModuleRec* root = it != rt.vm->moduleMap.end() ? it->second : source ? ParseModuleRecord(rt, key, *source) : FetchModule(rt, key);
+    std::vector<ModuleRec*> work;   // the modules whose imports are not found yet
+    work.push_back(root);
+    while (!work.empty()) {
+        ModuleRec* m = work.back();
+        work.pop_back();
+        if (m->deps.size() == m->info.requests.size()) continue;
+        m->deps.clear();   // a load that failed half way is done again
+        for (const std::u16string& req : m->info.requests) {
+            const std::string spec = Utf16To8(req);
+            std::string k, why;
+            if (!rt.modules.resolve || !rt.modules.resolve(spec, m->key, k, why))
+                rt.ThrowType("can not load the module '" + spec + "' (imported by " + m->key + "): " + why);
+            const bool known = rt.vm->moduleMap.count(k) > 0;
+            ModuleRec* d = FetchModule(rt, k);
+            m->deps.push_back(d);
+            if (!known) work.push_back(d);
+        }
+    }
+    return root;
+}
+
+struct Resolution {
+    ModuleRec* m = nullptr;
+    std::u16string binding;
+    int status = 0;   ///< 0 not found, 1 found, 2 ambiguous
+};
+struct ResolveSet {
+    std::unordered_set<std::u16string> seen;   ///< "index:name"
+};
+
+// 16.2.1.6.3 ResolveExport
+Resolution ResolveExport(Runtime& rt, ModuleRec* m, const std::u16string& name, ResolveSet& set, int depth) {
+    if (depth > kMaxResolveDepth) ModuleSyntaxError(rt, "the exports of '" + m->key + "' are re-exported through too many modules");
+    rt.Charge(1);
+    if (!set.seen.insert(AsciiTo16(std::to_string(m->index).c_str()) + u":" + name).second) return {};   // a circular request
+    for (const ModuleInfo::Export& e : m->info.exports)
+        if (!e.localName.empty() && e.exportName == name) return Resolution{m, e.localName, 1};
+    for (const ModuleInfo::Export& e : m->info.exports) {
+        if (e.req < 0 || e.exportName.empty() || e.exportName != name) continue;
+        ModuleRec* d = m->deps[(std::size_t)e.req];
+        if (e.importName == u"*") return Resolution{d, kNamespaceBinding, 1};
+        return ResolveExport(rt, d, e.importName, set, depth + 1);
+    }
+    if (name == u"default") return {};   // export * does not pass on a default
+    Resolution star;
+    for (const ModuleInfo::Export& e : m->info.exports) {
+        if (e.req < 0 || !e.exportName.empty()) continue;
+        Resolution r = ResolveExport(rt, m->deps[(std::size_t)e.req], name, set, depth + 1);
+        if (r.status == 2) return r;
+        if (r.status != 1) continue;
+        if (star.status == 0) star = r;
+        else if (r.m != star.m || r.binding != star.binding) {
+            star.status = 2;
+            return star;
+        }
+    }
+    return star;
+}
+Resolution Resolve(Runtime& rt, ModuleRec* m, const std::u16string& name) {
+    ResolveSet set;
+    return ResolveExport(rt, m, name, set, 0);
+}
+
+// a module's binding cell (always made with the record; a JavaScript error rather than a C++ exception if not)
+Cell* CellOf(Runtime& rt, ModuleRec* m, const std::u16string& name) {
+    auto it = m->cells.find(name);
+    if (it == m->cells.end()) ModuleSyntaxError(rt, "internal error: '" + m->key + "' has no binding '" + Utf16To8(name) + "'");
+    return it->second;
+}
+
+// 16.2.1.6.2 GetExportedNames
+void ExportedNames(Runtime& rt, ModuleRec* m, std::unordered_set<ModuleRec*>& visited, std::vector<std::u16string>& out,
+                   std::unordered_set<std::u16string>& have, int depth) {
+    if (depth > kMaxResolveDepth) ModuleSyntaxError(rt, "the exports of '" + m->key + "' are re-exported through too many modules");
+    if (!visited.insert(m).second) return;
+    for (const ModuleInfo::Export& e : m->info.exports) {
+        rt.Charge(1);
+        if (!e.exportName.empty() && have.insert(e.exportName).second) out.push_back(e.exportName);
+    }
+    for (const ModuleInfo::Export& e : m->info.exports) {
+        if (e.req < 0 || !e.exportName.empty()) continue;
+        std::vector<std::u16string> star;
+        std::unordered_set<std::u16string> none;
+        ExportedNames(rt, m->deps[(std::size_t)e.req], visited, star, none, depth + 1);
+        for (std::u16string& n : star)
+            if (n != u"default" && have.insert(n).second) out.push_back(std::move(n));
+    }
+}
+
+// 16.2.1.10 GetModuleNamespace
+ModuleNsObj* Namespace(Runtime& rt, ModuleRec* m) {
+    if (m->ns) return m->ns;
+    std::unordered_set<ModuleRec*> visited;
+    std::vector<std::u16string> names;
+    std::unordered_set<std::u16string> have;
+    ExportedNames(rt, m, visited, names, have, 0);
+    std::sort(names.begin(), names.end());
+    ModuleNsObj* ns = rt.Alloc<ModuleNsObj>();
+    ns->proto = nullptr;
+    ns->extensible = false;
+    for (const std::u16string& n : names) {
+        Resolution r = Resolve(rt, m, n);
+        if (r.status != 1) continue;   // ambiguous names are left out (16.2.1.10 step 3.c)
+        Cell* c = r.binding != kNamespaceBinding ? CellOf(rt, r.m, r.binding) : nullptr;
+        ns->entries.push_back(ModuleNsObj::Entry{rt.Intern(n), c, r.m});
+    }
+    ns->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("Module")), 0);
+    m->ns = ns;
+    return ns;
+}
+
+// 16.2.1.6.4 InitializeEnvironment: check the re-exports, find each import's cell, make the module function
+void Initialize(Runtime& rt, ModuleRec* m) {
+    for (const ModuleInfo::Export& e : m->info.exports) {
+        if (e.req < 0 || e.exportName.empty() || e.importName == u"*") continue;
+        Resolution r = Resolve(rt, m, e.exportName);
+        if (r.status != 1)
+            ModuleSyntaxError(rt, m->key + ": the re-export '" + Utf16To8(e.exportName) + "' " +
+                                      (r.status == 2 ? "is ambiguous" : "is not exported by '" + m->deps[(std::size_t)e.req]->key + "'"));
+    }
+    std::vector<Cell*> ext;
+    ext.reserve(m->externs.size());
+    for (const ModuleExtern& x : m->externs) {
+        if (x.kind <= 1) {
+            ext.push_back(CellOf(rt, m, x.name));
+            continue;
+        }
+        if (x.kind == 3) {   // import.meta: an object with no prototype (13.3.12.1)
+            Object* meta = rt.NewObject(nullptr);
+            if (rt.modules.initMeta) rt.modules.initMeta(rt, m->key, meta);
+            else rt.DefineData(meta, rt.Intern("url"), Value::Str(rt.NewStringUtf8(m->key)));
+            Cell* c = rt.Alloc<Cell>();
+            c->v = Value::Obj(meta);
+            ext.push_back(c);
+            continue;
+        }
+        const ModuleInfo::Import* im = nullptr;
+        for (const ModuleInfo::Import& i : m->info.imports)
+            if (i.localName == x.name) im = &i;
+        ModuleRec* d = m->deps[(std::size_t)im->req];
+        if (im->importName == u"*") {
+            Cell* c = CellOf(rt, m, x.name);
+            c->v = Value::Obj(Namespace(rt, d));
+            ext.push_back(c);
+            continue;
+        }
+        Resolution r = Resolve(rt, d, im->importName);
+        if (r.status != 1)
+            ModuleSyntaxError(rt, m->key + ":" + std::to_string(im->line) + ": the module '" + d->key + "' " +
+                                      (r.status == 2 ? "has more than one export named '" : "does not provide an export named '") +
+                                      Utf16To8(im->importName) + "'");
+        if (r.binding == kNamespaceBinding) {
+            Cell* c = rt.Alloc<Cell>();
+            c->v = Value::Obj(Namespace(rt, r.m));
+            ext.push_back(c);
+        } else ext.push_back(CellOf(rt, r.m, r.binding));
+    }
+    Closure* fn = rt.Alloc<Closure>();
+    fn->code = m->proto;
+    fn->proto = rt.functionProto;
+    fn->ups = std::move(ext);
+    m->fn = fn;
+    m->state = ModuleRec::Linked;
+}
+
+// every module reachable from root, dependencies first (a post-order walk with an explicit stack)
+std::vector<ModuleRec*> PostOrder(ModuleRec* root) {
+    std::vector<ModuleRec*> order;
+    std::unordered_set<ModuleRec*> seen{root};
+    std::vector<std::pair<ModuleRec*, std::size_t>> stack{{root, 0}};
+    while (!stack.empty()) {
+        auto& top = stack.back();
+        if (top.second < top.first->deps.size()) {
+            ModuleRec* d = top.first->deps[top.second++];
+            if (seen.insert(d).second) stack.push_back({d, 0});
+            continue;
+        }
+        order.push_back(top.first);
+        stack.pop_back();
+    }
+    return order;
+}
+
+// 16.2.1.5.1 Link: a failure leaves the modules of this pass unlinked
+void Link(Runtime& rt, ModuleRec* root) {
+    std::vector<ModuleRec*> linked;
+    try {
+        for (ModuleRec* m : PostOrder(root)) {
+            if (m->state != ModuleRec::Loaded) continue;
+            Initialize(rt, m);
+            linked.push_back(m);
+        }
+    } catch (...) {
+        for (ModuleRec* m : linked) {
+            m->state = ModuleRec::Loaded;
+            m->fn = nullptr;
+        }
+        throw;
+    }
+}
+
+// One evaluation (16.2.1.5.3): the modules in order; an async one (top-level await) continues the job when it settles.
+struct EvalJob : Object {
+    std::vector<ModuleRec*> order;
+    std::size_t next = 0;
+    PromiseObj* result = nullptr;
+    ModuleRec* root = nullptr;
+    EvalJob() : Object(Cls::Opaque) {}
+    void Trace(Runtime& rt) override {
+        Object::Trace(rt);
+        if (result) rt.Mark(result);
+    }
+};
+
+void RunEval(Runtime& rt, EvalJob* job);
+
+void ModuleFailed(Runtime& rt, ModuleRec* m, const Value& why) {
+    m->state = ModuleRec::Errored;
+    m->error = why;
+    if (m->done) RejectPromise(rt, m->done, why);
+}
+
+Value EvalSettled(Runtime& rt, CallArgs& a, bool ok) {
+    NativeFunc* f = a.callee;
+    EvalJob* job = static_cast<EvalJob*>(f->slots[0].O());
+    ModuleRec* m = rt.vm->moduleList[(std::size_t)f->slots[1].n].get();
+    const bool waitOnly = f->slots[2].b;
+    if (!waitOnly) {
+        if (ok) {
+            m->state = ModuleRec::Evaluated;
+            ResolvePromise(rt, m->done, Value());
+            ++job->next;
+        } else ModuleFailed(rt, m, a[0]);
+    }
+    RunEval(rt, job);
+    return Value();
+}
+
+void WhenSettled(Runtime& rt, EvalJob* job, PromiseObj* p, ModuleRec* m, bool waitOnly) {
+    p->handled = true;
+    std::vector<Value> slots = {Value::Obj(job), Value::Num(m->index), Value::Bool(waitOnly)};
+    NativeFunc* onOk = rt.NewNative([](Runtime& rt, CallArgs& a) { return EvalSettled(rt, a, true); }, "", 1, slots);
+    NativeFunc* onFail = rt.NewNative([](Runtime& rt, CallArgs& a) { return EvalSettled(rt, a, false); }, "", 1, slots);
+    Value then = rt.Get(Value::Obj(p), rt.atoms->then);
+    rt.Call(then, Value::Obj(p), {Value::Obj(onOk), Value::Obj(onFail)});
+}
+
+void RunEval(Runtime& rt, EvalJob* job) {
+    rt.Keep(job);
+    while (job->next < job->order.size()) {
+        ModuleRec* m = job->order[job->next];
+        rt.Charge(1);
+        if (m->state == ModuleRec::Evaluated) { ++job->next; continue; }
+        if (m->state == ModuleRec::Errored) {
+            RejectPromise(rt, job->result, m->error);
+            return;
+        }
+        if (m->state == ModuleRec::Evaluating) {   // another import is running it (a top-level await): wait for that
+            WhenSettled(rt, job, m->done, m, true);
+            return;
+        }
+        if (m->state != ModuleRec::Linked) {
+            RejectPromise(rt, job->result, Value::Obj(rt.NewError(ErrorType::TypeError, "the module '" + m->key + "' is not linked")));
+            return;
+        }
+        bool depFailed = false;
+        for (ModuleRec* d : m->deps)
+            if (d->state == ModuleRec::Errored) {
+                ModuleFailed(rt, m, d->error);
+                depFailed = true;
+                break;
+            }
+        if (depFailed) continue;   // the loop sees it errored and rejects
+        m->state = ModuleRec::Evaluating;
+        m->done = NewPromise(rt);
+        m->done->handled = true;
+        Value r;
+        try {
+            r = rt.Call(Value::Obj(m->fn), Value(), nullptr, 0);
+        } catch (const JsThrow&) {
+            Value e = rt.exception;
+            rt.exception = Value();
+            ModuleFailed(rt, m, e);
+            continue;
+        }
+        if (!r.IsObj() || r.O()->cls != Cls::Promise) {
+            m->state = ModuleRec::Evaluated;
+            ResolvePromise(rt, m->done, Value());
+            ++job->next;
+            continue;
+        }
+        PromiseObj* p = static_cast<PromiseObj*>(r.O());
+        if (p->state == 1) {
+            m->state = ModuleRec::Evaluated;
+            ResolvePromise(rt, m->done, Value());
+            ++job->next;
+            continue;
+        }
+        if (p->state == 2) {
+            p->handled = true;
+            ModuleFailed(rt, m, p->result);
+            continue;
+        }
+        WhenSettled(rt, job, p, m, false);
+        return;
+    }
+    ResolvePromise(rt, job->result, Value::Obj(Namespace(rt, job->root)));
+}
+
+void StartEval(Runtime& rt, ModuleRec* root, PromiseObj* result) {
+    EvalJob* job = rt.Alloc<EvalJob>();
+    job->proto = nullptr;
+    job->order = PostOrder(root);
+    job->result = result;
+    job->root = root;
+    RunEval(rt, job);
+}
+
+Value ImportJob(Runtime& rt, CallArgs& a) {   // a job: the rest of import() (16.2.1.9 ContinueDynamicImport)
+    NativeFunc* f = a.callee;
+    PromiseObj* p = static_cast<PromiseObj*>(f->slots[2].O());
+    const std::string spec = Utf16To8(f->slots[0].S()->s), referrer = Utf16To8(f->slots[1].S()->s);
+    try {
+        std::string key, why;
+        if (!rt.modules.resolve(spec, referrer, key, why)) rt.ThrowType("can not load the module '" + spec + "': " + why);
+        ModuleRec* root = LoadGraph(rt, key, nullptr);
+        Link(rt, root);
+        StartEval(rt, root, p);
+    } catch (const JsThrow&) {
+        Value e = rt.exception;
+        rt.exception = Value();
+        RejectPromise(rt, p, e);
+    }
+    return Value();
+}
+
+} // namespace
+
+Value ModuleNamespaceGet(Runtime& rt, const ModuleNsObj::Entry& e) {
+    if (!e.cell) return Value::Obj(Namespace(rt, e.module));
+    if (e.cell->v.IsEmpty()) rt.ThrowError(ErrorType::ReferenceError, "'" + Utf16To8(e.name->s) + "' is used before it is initialized");
+    return e.cell->v;
+}
+
+void DynamicImport(Runtime& rt, PromiseObj* p, const std::string& specifier, const std::string& referrer) {
+    NativeFunc* job = rt.NewNative(ImportJob, "", 0,
+                                   {Value::Str(rt.NewStringUtf8(specifier)), Value::Str(rt.NewStringUtf8(referrer)), Value::Obj(p)});
+    PromiseObj* ready = PromiseResolveValue(rt, Value());
+    Value then = rt.Get(Value::Obj(ready), rt.atoms->then);
+    rt.Call(then, Value::Obj(ready), {Value::Obj(job)});
+}
+
+bool Runtime::RunModule(const std::string& source, const std::string& key, std::string* err, Value* ns) {
+    Value out;
+    const bool ok = HostEntry(*this, [&]() {
+        ModuleRec* root = LoadGraph(*this, key, &source);
+        Link(*this, root);
+        PromiseObj* result = NewPromise(*this);
+        result->handled = true;
+        Keep(result);
+        StartEval(*this, root, result);
+        RunJobs();
+        if (result->state == 2) Throw(result->result);   // the module (or one it imports) failed
+        return result->state == 1 ? result->result : Value();   // pending: still waiting on a top-level await
+    }, &out, err);
+    if (ok && ns) *ns = out;
+    return ok;
 }
 
 } // namespace okay::js

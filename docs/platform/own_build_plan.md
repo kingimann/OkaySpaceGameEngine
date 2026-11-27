@@ -344,7 +344,7 @@ How to try it (Linux, g++, SDL2 and libsodium dev headers, about 2 GB of disk fo
 It runs `okay-build native` (writes a manifest from the source tree), builds `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math` (340 steps, Debug `-O0 -g0`) with no CMake or Ninja, and runs `test_math`. You should see `15 checks, 0 failures`. Delete the tree afterwards.
 
 What this found and fixed:
-- The generated manifest missed the `shared/` include directory (`AntiCheatChecks.hpp`, `RobotoFontOwn.h`), so `Net/RelayServer.cpp` did not compile. `native` now adds `shared` to the include list when the folder exists. (CMake adds it per file; we add it for the whole engine target, which is a small difference in include paths and no difference in the result.)
+- The generated manifest missed the `shared/` include directory (`AntiCheatChecks.hpp`, `RobotoFont.h`), so `Net/RelayServer.cpp` did not compile. `native` now adds `shared` to the include list when the folder exists. (CMake adds it per file; we add it for the whole engine target, which is a small difference in include paths and no difference in the result.)
 - After a build that restored objects from the cache, every later no-op re-read those object files (the saved size+mtime no longer matched), about 300 ms for 52 objects. The saved stamps are now refreshed when the bytes still match (`refreshStamps`), also on a no-op run.
 
 Result: the okay-build `test_math` printed `15 checks, 0 failures`, the same as the CMake/Ninja `test_math` built from the same tree. Not compared: object files byte for byte (the two builds use different flag sets, for example CMake adds `-DOKAY_DEFAULT_ACCOUNT_*` and per-file options), so only the final run result was compared.

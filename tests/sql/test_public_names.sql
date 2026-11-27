@@ -239,13 +239,14 @@ select t.ok('activity: a stranger cannot read my rows',
 reset role;
 
 -- ======================= updates on every covered table ======================
--- Even a direct (superuser) update of the name column gets the public name back.
+-- Even a direct (superuser) update of the name column gets the public name back
+-- (admin_log is append-only since admin.sql round A2: there the update is refused instead).
 select t.ok('update: ' || c.tbl || '.' || c.name_col || ' cannot be set to an email',
-  t.try(format('update public.%I set %I = ''alice@example.test'' where %I = %L', c.tbl, c.name_col, c.id_col,
-               '00000000-0000-0000-0000-0000000000a1')) = 'ok'
+  (x.r = 'ok' or (c.tbl = 'admin_log' and x.r like '42501:%append-only%'))
   and t.val(format('select string_agg(distinct %I, '','') from public.%I where %I = %L', c.name_col, c.tbl, c.id_col,
-                   '00000000-0000-0000-0000-0000000000a1')) in ('alice', '<null>'))
-  from t.cov c;
+                   '00000000-0000-0000-0000-0000000000a1')) in ('alice', '<null>'), x.r)
+  from t.cov c, lateral (select t.try(format('update public.%I set %I = ''alice@example.test'' where %I = %L', c.tbl, c.name_col,
+                                             c.id_col, '00000000-0000-0000-0000-0000000000a1')) as r) x;
 select t.ok('update: changing the author id also changes the name',
   t.try($$update public.forum_posts set author = '00000000-0000-0000-0000-0000000000c3' where body = 'hello'$$) = 'ok'
   and t.val($$select author_name from public.forum_posts where body = 'hello'$$) = 'carol');

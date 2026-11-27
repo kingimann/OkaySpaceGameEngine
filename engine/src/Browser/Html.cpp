@@ -479,7 +479,9 @@ struct Builder {
         }
         if (In(tag, kBlockEnd)) {
             if (!InScope(tag, nullptr)) return;
-            GenerateImpliedEnd(nullptr);
+            // "generate implied end tags, except for HTML elements with the same tag name as the token": </dd> and </dt> must not
+            // pop their own element here (they are implied-end elements), or the pop below runs past it to <html>
+            GenerateImpliedEnd(tag.c_str());
             PopUntil(tag);
             return;
         }

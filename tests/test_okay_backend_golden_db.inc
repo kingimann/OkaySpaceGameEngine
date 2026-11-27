@@ -2,6 +2,7 @@
 // Matchmaking.hpp, MatchResults.hpp and Matchmaker.cpp before they moved onto okay::backend::Database; the engine's log lines removed).
 // Never edit by hand: a change here means the programs send something new.
 // Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_db.cpp).
+// dup-allow-begin: recorded request texts; the same header lines repeat in every request (comment lines only, outside the texts)
 static const char* const kGolden[][2] = {
     {"username_available", R"GOLD(=> 1
 => 0
@@ -562,3 +563,4 @@ Content-Type: application/json
 ---
 )GOLD"},
 };
+// dup-allow-end

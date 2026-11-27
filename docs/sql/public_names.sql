@@ -138,9 +138,13 @@ begin
                    'for each row execute function public.okay_set_public_name(%L, %L)',
                    trg, t.id_col, t.name_col, t.tbl, t.id_col, t.name_col);
     -- One-off clean-up (fires the trigger too, which sets the same value).
+    -- admin_log is append-only (admin.sql); this rename of old names is the one
+    -- change it lets through, for this transaction only.
+    if t.tbl = 'admin_log' then perform set_config('okay.admin_log_maintenance', 'on', true); end if;
     execute format('update public.%I set %I = case when %I is null then null '
                    'else public.public_name_for(%I) end '
                    'where (%I is null and %I is not null) or position(''@'' in %I) > 0',
                    t.tbl, t.name_col, t.id_col, t.id_col, t.name_col, t.id_col, t.name_col);
+    perform set_config('okay.admin_log_maintenance', 'off', true);
   end loop;
 end $$;

@@ -1,6 +1,6 @@
 // The start screen: the cards (one plain sentence each), when it shows, how it is laid out, and what is remembered.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "VisualScriptStart.hpp"
 #include "VisualScriptUsagePrefs.hpp"
 #include "VisualScriptGlossary.hpp"

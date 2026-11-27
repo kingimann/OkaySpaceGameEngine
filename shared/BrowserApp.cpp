@@ -193,8 +193,10 @@ struct BrowserApp::Impl {
             kept.push_back(in);
             const std::vector<std::uint8_t>& bytes = kept.back();
             const std::string name = face.family + " " + std::to_string(face.weight) + (face.italic ? " italic" : "");   // one name per face
+            S::FontEm em;
+            S::FontEmOf(bytes.data(), bytes.size(), em);   // its em, so font-size sizes the em as in CSS (the default when unread)
             if (const UI::Font* f = UI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, name.c_str()))
-                S::RegisterWebFont(face.family, face.weight, face.italic, f);
+                S::RegisterWebFont(face.family, face.weight, face.italic, f, em);
             else std::fprintf(stderr, "[browser] web font '%s' (weight %d) not loaded: OkayUI's font store is full or the file is not a font\n",
                               face.family.c_str(), face.weight);
         });
@@ -353,7 +355,7 @@ int BrowserApp::OpenUrl(const std::string& url, bool activate, bool fromActive) 
 }
 
 void BrowserApp::Pump() { m->pump(); }
-void BrowserApp::Frame(float x, float y, float w, float h) { m->frameIn(x, y, w, h); }
+void BrowserApp::Frame(float x, float y, float w, float h) { S::browserlook::FollowDesign(); m->frameIn(x, y, w, h); }
 bool BrowserApp::WantsQuit() const { return m->quit; }
 void BrowserApp::SetAutoplay(bool on) { m->autoplay = on; }
 void BrowserApp::Save() { if (m->store.Dirty()) m->save(); m->site.Save((std::int64_t)std::time(nullptr)); }

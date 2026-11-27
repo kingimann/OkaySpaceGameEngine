@@ -255,7 +255,8 @@ bool AssetPathPicker(std::string& value, const char* kind) {
     const ImU32 col = ImGui::GetColorU32(over ? ImGuiCol_Text : ImGuiCol_TextDisabled);
     {   // a small drop-down arrow: "choose from a list"
         const float cx = mx.x - 12.0f, cy = (mn.y + mx.y) * 0.5f;
-        dl->AddTriangleFilled(ImVec2(cx - 4.0f, cy - 2.0f), ImVec2(cx + 4.0f, cy - 2.0f), ImVec2(cx, cy + 3.0f), col);
+        dl->AddLine(ImVec2(cx - 4.0f, cy - 2.0f), ImVec2(cx, cy + 2.0f), col, 1.6f);   // a chevron (the design's arrow)
+        dl->AddLine(ImVec2(cx, cy + 2.0f), ImVec2(cx + 4.0f, cy - 2.0f), col, 1.6f);
     }
     if (over) ImGui::SetTooltip("Choose a file from the project (or right-click)");
     static bool wantPicker = false;

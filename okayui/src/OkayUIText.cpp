@@ -2,6 +2,8 @@
 // highlighting and the auto-indent turned off. The editor object (text, caret, undo, scroll) is kept per label in a small table; the
 // caller's buffer is the truth: if it changes behind the box's back the editor takes the new text. See docs/ui/own_ui_toolkit.md section 4.34.
 #include "okay/UI/OkayUICodeEdit.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // FindRenderedTextEnd, Col_TextLink
+#include "OkayUIInternal.hpp"           // the frame's input (Enter, for InputText_EnterReturnsTrue)
 
 #include <algorithm>
 #include <cmath>
@@ -86,6 +88,7 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsign
     box.frame = now;
     CodeEdit& ed = *box.ed;
     ed.SetReadOnly((flags & InputText_ReadOnly) != 0);
+    ed.SetWordWrap((flags & InputText_WordWrap) != 0);
     ed.SetPalette(TextBoxPalette());
     if (box.last != buf) {   // changed behind our back (or the first sight of it)
         ed.SetText(buf);
@@ -96,9 +99,18 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsign
     float w = size.x > 0.0f && std::isfinite(size.x) ? size.x : GetContentRegionAvail().x - lw;
     const float h = size.y > 0.0f && std::isfinite(size.y) ? size.y : GetFrameHeight() * 5.0f;
     w = std::max(32.0f, w);
+    // InputText_EnterReturnsTrue (Dear ImGui's documented behaviour): the box answers true on its validate key instead of on every edit, and
+    // that key does not break the line. The validate key is Enter with InputText_CtrlEnterForNewLine (Ctrl+Enter breaks the line), else Ctrl+Enter.
+    if (ui_core::g_focusNextField) { ui_core::g_focusNextField = false; ui_core::g_focusSelectAll = false; ed.Focus(); }   // SetKeyboardFocusHere: this box
+    bool validated = false;
+    if ((flags & InputText_EnterReturnsTrue) && ed.Focused() && ui_core::g_in.enter) {
+        const bool ctrl = ui_core::g_in.ctrl;
+        if ((flags & InputText_CtrlEnterForNewLine) ? !ctrl : ctrl) { validated = true; ui_core::g_in.enter = false; }
+    }
     PushID(name);
     const bool edited = ed.Draw("##multiline", w, std::max(24.0f, h));
     PopID();
+    if (validated) ui_core::g_in.enter = true;
     if (lw > 0.0f) { const Rect r = GetItemRect(); GetWindowDrawList().AddText(Vec2{r.x + r.w + 8.0f, r.y + (std::min(r.h, GetFrameHeight()) - CalcTextSize(name).y) * 0.5f}, GetColorU32(Col_Text), name); }   // the label, to the right
 
     bool changed = false;
@@ -119,7 +131,35 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsign
             changed = true;
         }
     }
-    return changed;
+    return (flags & InputText_EnterReturnsTrue) ? validated : changed;
+}
+
+bool ScrollTextBoxToEnd(const char* label) {
+    PushID(label ? label : "");
+    const unsigned id = GetID("##multiline");
+    PopID();
+    for (Box& b : g_boxes) if (b.ed && b.id == id) { b.ed->SetScroll(b.ed->ScrollX(), 1.0e9f); return true; }   // clamped to the end
+    return false;
+}
+
+// Written by us from Dear ImGui's documented behaviour of TextLink (a text that looks and acts as a link); no code from any other project.
+bool TextLink(const char* label) {
+    const char* text = label ? label : "";
+    const char* end = FindRenderedTextEnd(text);
+    const std::string shown(text, (std::size_t)(end - text));
+    const Vec2 sz = CalcTextSize(shown.c_str());
+    const Vec2 p = GetCursorScreenPos();
+    const bool clicked = InvisibleButton(text[0] ? text : "##textlink", std::max(1.0f, sz.x), std::max(1.0f, sz.y));
+    const bool hovered = IsItemHovered();
+    const Color32 c = GetColorU32((Col)Col_TextLink);
+    const DrawList& dl = GetWindowDrawList();
+    dl.AddText(p, c, shown.c_str());
+    if (hovered) {
+        const float y = p.y + sz.y - 1.0f;
+        dl.AddLine(Vec2{p.x, y}, Vec2{p.x + sz.x, y}, c, 1.0f);
+        SetMouseCursor(MouseCursor_Hand);
+    }
+    return clicked;
 }
 
 } // namespace OkayUI

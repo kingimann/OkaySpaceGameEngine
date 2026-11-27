@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -816,6 +817,311 @@ std::string FillTemplate(const std::string& body, const std::string& name) {
     return out;
 }
 
+// ---- formatting and joining ---------------------------------------------------------------------------------------------------
+std::string ReindentByBraces(const std::string& src) {
+    const std::vector<char> code = scripttext::CodeMask(src);
+    std::string out;
+    out.reserve(src.size() + 64);
+    int depth = 0;
+    for (std::size_t ls = 0; ls <= src.size();) {
+        std::size_t le = src.find('\n', ls);
+        if (le == std::string::npos) le = src.size();
+        std::size_t a = ls, b = le;
+        while (a < b && (src[a] == ' ' || src[a] == '\t')) ++a;
+        while (b > a && (src[b - 1] == ' ' || src[b - 1] == '\t' || src[b - 1] == '\r')) --b;
+        int net = 0, leadClose = 0;
+        bool sawOther = false;
+        for (std::size_t i = a; i < b; ++i) {
+            if (!code[i]) { sawOther = true; continue; }
+            if (src[i] == '{') { ++net; sawOther = true; }
+            else if (src[i] == '}') { --net; if (!sawOther) ++leadClose; }
+            else if (src[i] != ' ' && src[i] != '\t') sawOther = true;
+        }
+        const int indent = std::max(0, depth - leadClose);
+        if (b > a) out.append((std::size_t)indent * 4, ' ');
+        out.append(src, a, b - a);
+        depth = std::max(0, depth + net);
+        if (le == src.size()) break;
+        out += '\n';
+        ls = le + 1;
+    }
+    return out;
+}
+
+std::string JoinLines(const std::string& text, int first, int count) {
+    if (first < 1 || count < 1) return text;
+    std::size_t at = OffsetOf(text, first, 0);
+    std::string out = text;
+    for (int k = 0; k < count; ++k) {
+        const std::size_t nl = out.find('\n', at);
+        if (nl == std::string::npos) break;
+        std::size_t end = nl + 1;
+        while (end < out.size() && (out[end] == ' ' || out[end] == '\t')) ++end;
+        std::size_t start = nl;
+        while (start > at && (out[start - 1] == ' ' || out[start - 1] == '\t')) --start;
+        const bool tight = end >= out.size() || out[end] == '\n' || std::strchr(")]},;", out[end]) != nullptr || start == at ||
+                           std::strchr("([{", out[start - 1]) != nullptr;
+        out.replace(start, end - start, tight ? "" : " ");
+    }
+    return out;
+}
+
+// ---- snippets and reference ---------------------------------------------------------------------------------------------------
+// The editor's own behaviour templates and C# snippets (moved here from the Script Editor window in editor/main.cpp, unchanged).
+const std::vector<Snippet>& BuiltinSnippets() {
+    struct Snip { const char* group; const char* name; const char* desc; const char* text; };
+    static const Snip snips[] = {
+            // ---- Basics ----
+            {"Basics", "One-line script (bare)", "No functions needed - a bare script runs every frame.",
+                "spin(90)\n"},
+            {"Basics", "New script (start + update)", "The two lifecycle functions with comments.",
+                "// Runs once when this object wakes up.\nstart() {\n    \n}\n\n// Runs every frame. dt = seconds since the last frame.\nupdate(dt) {\n    \n}\n"},
+            {"Basics", "start() - runs once", "Setup code that runs a single time.",
+                "start() {\n    \n}\n"},
+            {"Basics", "update(dt) - every frame", "Code that runs each frame.",
+                "update(dt) {\n    \n}\n"},
+            {"Basics", "on_collision(other) - when hit", "Runs when this object collides.",
+                "on_collision(other) {\n    \n}\n"},
+            // ---- Movement ----
+            {"Movement", "Move with WASD / arrows", "The WHOLE script is one line (runs every frame).",
+                "on_key_move(5)   // WASD / arrows, speed 5\n"},
+            {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
+                "if (key_down(\"space\")) jump(8)   // no braces needed for one line\n"},
+            {"Movement", "Shoot on a cooldown", "Fire at most a few times a second — cooldown() gates the rate.",
+                "update(dt) {\n    if (mouse(0) && cooldown(\"shoot\", 0.25)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+            {"Movement", "Follow the player", "One line: walk toward the object named Player.",
+                "follow(\"Player\", 3)\n"},
+            {"Movement", "Smooth follow", "Glides toward Player with easing (softer than follow).",
+                "smooth_follow(\"Player\", 4)\n"},
+            {"Movement", "Platformer controller", "A whole side-scroller in one line: A/D move, W/Up jump (needs a Rigidbody2D).",
+                "platformer(6, 10)\n"},
+            {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
+                "spin(90)\n"},
+            {"Movement", "Key event -> function", "Call your own function the frame a key is pressed.",
+                "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n}\n"},
+            {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
+                "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+            // ---- Gameplay ----
+            {"Gameplay", "Health + take damage", "A hp value that drops on collision and dies at 0.",
+                "start() {\n    hp = 100\n}\n\non_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
+            {"Gameplay", "Collect coin (+score)", "One line + remove: add_score does the shared score.",
+                "on_collision(other) {\n    add_score(1)\n    destroy()\n}\n"},
+            {"Gameplay", "Spawn on a timer", "One line with timer() - no accumulator needed.",
+                "if (timer(\"spawn\", 2)) {\n    spawn(\"examples/node_playground/marker.okayprefab\", pos_x(), pos_y())\n}\n"},
+            {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
+                "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        print(\"Game over\")\n    }\n}\n"},
+            {"Gameplay", "When the player is close", "Prints a line while this object is within 3 units of Player.",
+                "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        print(\"Player is close\")\n    }\n}\n"},
+            {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
+                "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"examples/node_playground/marker.okayprefab\", i * 2, 0)\n    }\n}\n"},
+            // ---- HUD (on-screen UI from script) ----
+            {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
+                "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
+            // ---- Logic (building blocks) ----
+            {"Logic", "if / else", "A branch.",
+                "if (/* condition */) {\n    \n} else {\n    \n}\n"},
+            {"Logic", "for loop", "Repeat a fixed number of times.",
+                "for (i = 0; i < 10; i = i + 1) {\n    \n}\n"},
+            {"Logic", "while loop", "Repeat while a condition holds.",
+                "while (/* condition */) {\n    \n}\n"},
+            // ---- Data (save / share) ----
+            {"Data", "Shared variable (set / get)", "Read/write a value any script can see.",
+                "set(\"score\", get(\"score\") + 1)\n"},
+            {"Data", "Save & load to disk", "Persist a value between play sessions.",
+                "save(\"coins\", get(\"coins\"))\ncoins = load(\"coins\", 0)\n"},
+            // ---- Enemy AI ----
+            {"Enemy AI", "Chase, stop in range", "One line: chase with a stop distance.",
+                "follow(\"Player\", 2, 1)   // chase, stop 1 unit away\n"},
+            {"Enemy AI", "Patrol between two points", "One line: walk back and forth.",
+                "patrol(-4, 0, 4, 0, 2)   // (-4,0) to (4,0) at speed 2\n"},
+            {"Enemy AI", "Orbit the player", "One line: circle a named object.",
+                "orbit(\"Player\", 3, 90)   // radius 3, 90 deg/sec\n"},
+            {"Enemy AI", "Flee from the player", "One line: run away from a named object.",
+                "flee(\"Player\", 3)\n"},
+            // ---- Abilities ----
+            {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
+                "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+            {"Abilities", "Delay then act (once)", "Wait 3 seconds after start, then do something.",
+                "start() {\n    t = 0\n    done = 0\n}\n\nupdate(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
+            // ---- Effects ----
+            {"Effects", "Flash red when hit", "One call: turn red then fade back.",
+                "on_collision(other) {\n    flash(1, 0, 0)\n}\n"},
+            {"Effects", "Shake when hit", "One call: a quick decaying shake.",
+                "on_collision(other) {\n    shake(0.4, 0.3)\n}\n"},
+            {"Effects", "Explode when hit", "One call: burst particles + remove this object.",
+                "on_collision(other) {\n    explode(30)\n}\n"},
+            {"Effects", "Pulse forever (scale)", "One-line juice (bare script).",
+                "pulse(0.2, 3)\n"},
+            // ---- Camera ----
+            {"Camera", "Camera follows me", "One line: keep the camera centered on this object.",
+                "set_cam(pos_x(), pos_y())\n"},
+            // ---- Input ----
+            {"Input", "Restart level on R", "Reload the current scene.",
+                "update(dt) {\n    if (key_down(\"r\")) {\n        reload_scene()\n    }\n}\n"},
+            {"Input", "Next scene on N", "Advance to the next scene in the build list.",
+                "update(dt) {\n    if (key_down(\"n\")) {\n        load_next_scene()\n    }\n}\n"},
+            {"Input", "Toggle a menu with M", "Show / hide an object named Menu.",
+                "start() {\n    shown = 0\n}\n\nupdate(dt) {\n    if (key_down(\"m\")) {\n        shown = 1 - shown\n        if (shown == 1) { activate(\"Menu\") } else { deactivate(\"Menu\") }\n    }\n}\n"},
+            {"Input", "Pause toggle on P", "Flip a shared 'paused' flag other scripts read.",
+                "update(dt) {\n    if (key_down(\"p\")) {\n        set(\"paused\", 1 - get(\"paused\"))\n    }\n}\n"},
+            // ---- Platformer ----
+            {"Platformer", "Run + jump", "Move left/right and jump with Space (needs a Rigidbody).",
+                "update(dt) {\n    move(axis_x() * 5 * dt, 0)\n    if (key_down(\"space\")) {\n        jump(9)\n    }\n}\n"},
+            // ---- Mini-games ----
+            {"Mini-games", "Pong paddle (W/S)", "Move a paddle up/down and clamp it on screen.",
+                "update(dt) {\n    if (key(\"w\")) { move(0, 5 * dt, 0) }\n    if (key(\"s\")) { move(0, -5 * dt, 0) }\n    keep_in_box(-8, -4, -8, 4)   // fixed x, clamp y\n}\n"},
+            {"Mini-games", "Bouncing ball", "Launch once, then bounce off the walls forever.",
+                "start() {\n    set_velocity(4, 3)\n}\n\nupdate(dt) {\n    bounce_in_box(-8, -5, 8, 5)\n}\n"},
+            {"Mini-games", "Stay on screen", "One line: clamp this object to the play area.",
+                "keep_in_box(-8, -5, 8, 5)\n"},
+            {"Mini-games", "Wrap around edges", "One line: leave one side, appear on the other (asteroids).",
+                "wrap_in_box(-8, -5, 8, 5)\n"},
+            // ---- Juice (tweens) ----
+            {"Juice", "Pop in on start", "Scale up from nothing with an overshoot.",
+                "start() {\n    set_scale(0)\n    tween_scale(1, 0.4, \"out_back\")\n}\n"},
+            {"Juice", "Fade in on start", "Start invisible, fade to full over half a second.",
+                "start() {\n    set_color(1, 1, 1, 0)\n    tween_fade(1, 0.5)\n}\n"},
+            {"Juice", "Punch on click", "A quick squash-and-settle when clicked.",
+                "update(dt) {\n    if (mouse_down(0)) {\n        tween_punch_scale(0.3, 0.3)\n    }\n}\n"},
+            // ---- Multiplayer ----
+            {"Multiplayer", "Host (H) or Join (J)", "Start a server or connect to localhost.",
+                "update(dt) {\n    if (key_down(\"h\")) { net_host(7777) }\n    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 7777) }\n}\n"},
+            {"Multiplayer", "Connection status HUD", "Show online / offline on screen.",
+                "update(dt) {\n    ui_begin(\"Net\", 20, 20, 200, 70)\n    if (net_connected()) {\n        ui_text(\"Connected\")\n    } else {\n        ui_text(\"Offline\")\n    }\n    ui_end()\n}\n"},
+            // ---- Motion (math) ----
+            {"Motion", "Move in a circle", "Orbit the origin using sin/cos.",
+                "start() {\n    ang = 0\n}\n\nupdate(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
+            {"Motion", "Bob up and down", "One line: hover around the start height.",
+                "bob(0.5, 2)\n"},
+            {"Motion", "Pulse size (juice)", "One line: gently grow and shrink forever.",
+                "pulse(0.2, 3)\n"},
+            {"Effects", "Blink (invincible look)", "One line: flash the graphics on/off.",
+                "blink(8)\n"},
+            {"Motion", "Wander randomly", "One line: roam in random directions.",
+                "wander(2)\n"},
+            {"Movement", "Face the player", "One line: always look at the object named Player.",
+                "face(\"Player\")\n"},
+            {"Movement", "Move to a spot", "One line: walk to a point and stop there.",
+                "move_to(0, 5, 3)   // go to (0,5) at speed 3\n"},
+            {"Spawning", "Spawn a ring (wave)", "Spawn N enemies in a ring around you, once.",
+                "start() {\n    spawn_wave(\"examples/node_playground/marker.okayprefab\", 8, 3)\n}\n"},
+            {"Abilities", "Auto-fire at the player", "Fire a bullet at the player twice a second.",
+                "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"examples/node_playground/shot.okayprefab\", 6)\n}\n"},
+            {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
+                "start() {\n    s = 1\n}\n\nupdate(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
+            // ---- Enemy AI (more) ----
+            {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
+                "update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
+            {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
+                "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"examples/node_playground/marker.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
+            // ---- Gameplay (more) ----
+            {"Gameplay", "Regenerate health (capped)", "Heal over time up to 100.",
+                "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
+            {"Gameplay", "Win at 10 points", "Load the Win scene once score reaches 10.",
+                "update(dt) {\n    if (get(\"score\") >= 10) {\n        load_scene(\"Win\")\n    }\n}\n"},
+            {"Gameplay", "Remember spawn, respawn on R", "Snap back to the start position.",
+                "start() {\n    sx = pos_x()\n    sy = pos_y()\n}\n\nupdate(dt) {\n    if (key_down(\"r\")) {\n        set_pos(sx, sy)\n    }\n}\n"},
+            {"Gameplay", "Count a shared timer", "Add up elapsed time in a shared variable.",
+                "update(dt) {\n    set(\"time\", get(\"time\") + dt)\n}\n"},
+    };
+    static const std::pair<const char*, const char*> kCs[] = {
+            {"Public Field",      "public float speed = 5f;\n"},
+            {"Start + Update",    "void Start()\n{\n}\n\nvoid Update()\n{\n}\n"},
+            {"Coroutine",         "IEnumerator Routine()\n{\n    yield return new WaitForSeconds(1f);\n}\n"},
+            {"Trigger Handler",   "void OnTriggerEnter2D(Collider2D other)\n{\n    if (other.CompareTag(\"Player\"))\n    {\n    }\n}\n"},
+            {"Collision Handler", "void OnCollisionEnter(Collision other)\n{\n    Debug.Log(other.name);\n}\n"},
+            {"GetComponent",      "var rb = GetComponent<Rigidbody2D>();\n"},
+            {"List",              "List<int> items = new List<int>();\n"},
+            {"Dictionary",        "Dictionary<string, int> scores = new Dictionary<string, int>();\n"},
+            {"foreach Loop",      "foreach (var item in items)\n{\n}\n"},
+            {"Enum",              "public enum State { Idle, Run, Jump }\n"},
+            {"Auto Property",     "public int Lives { get; set; } = 3;\n"},
+            {"Repeating Timer",   "InvokeRepeating(\"Tick\", 1f, 1f);\n"},
+    };
+    static const std::vector<Snippet> all = [] {
+        std::vector<Snippet> v;
+        for (const Snip& s : snips) v.push_back(Snippet{s.group, s.name, s.desc, s.text, "okayscript"});
+        for (const auto& c : kCs) v.push_back(Snippet{"C#", c.first, "", c.second, "csharp"});
+        return v;
+    }();
+    return all;
+}
+
+const std::vector<std::pair<std::string, std::string>>& CSharpQuickReference() {
+    static const char* kRows[][2] = {
+            {"public float speed = 5;  [Header(\"Move\")]", "Inspector fields + a heading for them"},
+            {"int lives = 3;  float t;  bool on;  string name;", "typed: int drops decimals, wrong kinds are errors"},
+            {"const float G = 9.8;  static int alive;", "never changes / shared by every object"},
+            {"void Start() / Update() / FixedUpdate() / OnDestroy()", "lifecycle (Time.deltaTime inside)"},
+            {"transform.position += Vector3.up * 2;", "Vector3 maths, transform.Translate/Rotate"},
+            {"Input.GetAxis(\"Horizontal\"), GetKeyDown(KeyCode.Space)", "input"},
+            {"List<int>, Dictionary<string,int>, int[]", "collections + Add/Remove/Count/..."},
+            {"xs.Where(x => x > 2).Select(x => x * 10)", "lambdas + LINQ-style helpers"},
+            {"(int)f, $\"hp {hp}\", s.ToUpper(), n.ToString(\"F2\")", "casts, strings"},
+            {"enum State { Idle, Run }  switch (state) { case State.Run: }", "enums + switch"},
+            {"IEnumerator Blink() { yield return new WaitForSeconds(1); }", "coroutines (StartCoroutine)"},
+            {"GetComponent<Rigidbody2D>().velocity = v;", "components: Rigidbody(2D), Animator, Renderer, Text, AudioSource"},
+            {"void OnTriggerEnter2D(Collider2D other) { other.CompareTag(..) }", "physics events"},
+            {"Destroy(gameObject, 2), Instantiate(prefab, pos, rot)", "objects"},
+            {"Invoke(\"Fire\", 1), InvokeRepeating(..), Debug.Log(..)", "timers + logging"},
+    };
+    static const std::vector<std::pair<std::string, std::string>> rows = [] {
+        std::vector<std::pair<std::string, std::string>> v;
+        for (const auto& r : kRows) v.emplace_back(r[0], r[1]);
+        return v;
+    }();
+    return rows;
+}
+
+std::string CallTemplate(const std::string& name, const std::string& sig) {
+    if (sig.rfind(name + "(", 0) == 0 && !sig.empty() && sig.back() == ')' && sig.find('|') == std::string::npos &&
+        sig.find("->") == std::string::npos && sig.find("...") == std::string::npos)
+        return sig;
+    return name + "(";
+}
+
+// ---- new script files -----------------------------------------------------------------------------------------------------
+std::string ExtensionFor(const std::string& language) {
+    return language == "lua" ? "lua" : language == "javascript" ? "js" : language == "csharp" ? "cs" : "okay";
+}
+
+std::string ClassIdentifier(const std::string& stem) {
+    std::string id;
+    for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (id.empty()) return "NewScript";
+    if (std::isdigit((unsigned char)id[0])) id = "_" + id;
+    return id;
+}
+
+std::string RenameScriptClass(const std::string& src, const std::string& newName) {
+    const std::size_t p = src.find("class ");
+    if (p == std::string::npos) return src;
+    std::size_t s = p + 6;
+    while (s < src.size() && std::isspace((unsigned char)src[s])) ++s;
+    std::size_t e = s;
+    while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+    if (e == s) return src;
+    return src.substr(0, s) + newName + src.substr(e);
+}
+
+std::string StarterScriptNamed(const std::string& language, const std::string& stem) {
+    return RenameScriptClass(okay::StarterScriptSource(language), ClassIdentifier(stem));
+}
+
+std::string ScriptStem(const std::string& typed) {
+    std::string stem;
+    for (char c : typed) if (std::isalnum((unsigned char)c) || c == '_') stem += c;
+    if (stem.size() > 5 && stem.compare(stem.size() - 4, 4, "okay") == 0) stem.erase(stem.size() - 4);
+    if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
+    return stem;
+}
+
+std::string DefaultScriptPath(const std::string& projectDir, const std::string& stem, const std::string& language) {
+    std::string dir = projectDir;
+    while (!dir.empty() && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+    return (dir.empty() ? std::string() : dir + "/") + "Assets/Scripts/" + stem + "." + ExtensionFor(language);
+}
+
 // ---- local history --------------------------------------------------------------------------------------------------------
 LocalHistory::LocalHistory(std::string projectDir, std::size_t maxPerFile, std::size_t maxBytes)
     : dir_(std::move(projectDir)), maxPerFile_(maxPerFile), maxBytes_(maxBytes) {}
@@ -865,12 +1171,12 @@ bool LocalHistory::Record(const std::string& scriptPath, const std::string& text
     for (char c : label) lab += IsIdent(c) ? c : '-';
     char stamp[32];
     std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)timeMs);
+    // Two copies in the same millisecond, whatever their labels: the next free time, so Versions() never has two copies with
+    // one time and its newest-first order does not depend on how the folder lists its files.
     std::int64_t t = timeMs;
-    std::string path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
-    while (fs::exists(path, ec)) {   // two copies in the same millisecond: the next free time
-        std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)++t);
-        path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
-    }
+    for (const auto& v : vs) if (v.time >= t) t = v.time + 1;
+    std::snprintf(stamp, sizeof(stamp), "%013lld", (long long)t);
+    const std::string path = (fs::path(folder) / (std::string(stamp) + "_" + lab + ".txt")).generic_string();
     {
         std::ofstream f(path, std::ios::binary);
         if (!f) return false;

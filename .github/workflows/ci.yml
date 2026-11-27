@@ -220,10 +220,12 @@ jobs:
         run: |
           cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON -DOKAY_EDITOR_ON_OKAYUI=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-editor -j "$(bash scripts/ci_jobs.sh 4)"
           ./build-editor/bin/OkayEngine --selftest
+          # the same editor built on OkayUI (no Dear ImGui; docs/ui/own_ui_toolkit.md section 32): it must keep building and pass the same self-test
+          ./build-editor/bin/OkayEngineOkayUI --selftest
 
       - name: Upload editor
         uses: actions/upload-artifact@v6
@@ -621,7 +623,7 @@ jobs:
   windows-cross:
     name: Cross-compile Windows build (MinGW)
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # build jobs are now capped by memory (2 on a 16 GB runner, build-windows-dist.sh), so cold builds take longer; a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
+    timeout-minutes: 150  # 120 was too short for a build with almost nothing cached: PR #1356 changed widely included backend headers and was cancelled at 92% (the editor's large files) on 2026-11-27. Build jobs are now capped by memory (2 on a 16 GB runner, build-windows-dist.sh), so cold builds take longer; a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -894,6 +896,7 @@ jobs:
 
       - name: Install Playwright and Chromium (test tools only; nothing of them ships)
         run: |
+          bash scripts/ci-apt-mirror.sh   # a broken outside apt source (e.g. Microsoft's, 403 on 2026-11-27) must not fail --with-deps
           mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm install --no-audit --no-fund playwright@1.63.0
           npx --prefix "$RUNNER_TEMP/pw" playwright install --with-deps chromium
 

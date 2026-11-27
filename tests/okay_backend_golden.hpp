@@ -6,6 +6,7 @@
 
 #include "test_framework.hpp"
 #include "okay/Backend/Transport.hpp"   // RecordingTransport, FromHttp
+#include "okay/Backend/Supabase.hpp"    // supabase::Database (DbRecorder)
 #include "okay/Platform/Account/AccountDetail.hpp"   // detail::RandomHex
 #include "okay/Core/Base64.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // okay::http::Result
@@ -86,6 +87,13 @@ inline void SaveSession(const std::filesystem::path& dir, const std::string& use
     std::ofstream f(dir / "session.txt", std::ios::trunc | std::ios::binary);
     f << user << "\n" << token << "\n" << refresh << "\n";
 }
+/// A new account service on `dir` signed in as `user` (user id "u1": the subject of Tok(1); refresh token "r1"), sending
+/// every request to `f` (rounds 5 and 6).
+template <class Account>
+std::unique_ptr<Account> SignedInAccount(const std::filesystem::path& dir, Fake& f, const std::string& user) {
+    SaveSession(dir, user, Tok(1), "r1");
+    return MakeAccount<Account>(dir, f);
+}
 
 /// Only the request blocks of a golden text, in order.
 inline std::string RequestsOf(const std::string& golden) {
@@ -154,6 +162,12 @@ struct Recorder {
     }
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
+};
+
+/// Part 2 for Database flows (rounds 5 and 6): the Supabase provider's Database sending straight to the recorder with the
+/// made-up address and key, signed in with Tok(1) (user id "u1").
+struct DbRecorder : Recorder {
+    okay::backend::supabase::Database Db() { return okay::backend::supabase::Database(kUrl, kKey, rec, Tok(1)); }
 };
 
 /// Part 2: the requests a provider sent through `r` must be exactly the request blocks of the golden text `want`, and the

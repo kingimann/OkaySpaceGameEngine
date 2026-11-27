@@ -1842,6 +1842,10 @@ bool Parser::parse_unary(Node* out) {
                 }
             }
         }
+        // ns::f(args) reduced to the bare name of a function template: never a member of the class being read (Round 34,
+        // GLDevice.cpp's member TextureSize calling `table::TextureSize(m_textures, ...)`; before "no member function
+        // TextureSize with 4 arguments").
+        bool qualified_fn = false;
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLt))) {
             // std::min(a, b): a function template of a namespace is registered by its bare name.
             const size_t first = name.find("::");
@@ -1863,7 +1867,10 @@ bool Parser::parse_unary(Node* out) {
                     use_template = !plain_takes && func_template_takes(suffix, n);
                 }
             }
-            if (use_template) name = suffix;
+            if (use_template) {
+                name = suffix;
+                qualified_fn = true;
+            }
         }
         // std::filesystem::path(p) names the class even where a local `path` is visible ([basic.lookup.qual]).
         bool ns_class = false;
@@ -2053,7 +2060,8 @@ bool Parser::parse_unary(Node* out) {
         };
         // (Not for ns::C(args), ns_class: a name written with a namespace is no member, Round 33: AccountService.hpp's
         // member Storage() returning okay::backend::supabase::Storage(...).)
-        if (cur_class >= 0 && !ns_class && !local_visible(name) && colons == std::string::npos && enclosing(cur_class) >= 0 &&
+        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos &&
+            enclosing(cur_class) >= 0 &&
             find_field_named(structs[static_cast<size_t>(cur_class)], name) < 0) {
             // In a member function of a nested class: a static member of an enclosing class is found by its plain name
             // ([class.nest] 1, [basic.lookup.unqual] 8), after the nested class's own members.
@@ -2073,7 +2081,7 @@ bool Parser::parse_unary(Node* out) {
                         return parse_postfix(out);
                 }
         }
-        if (cur_class >= 0 && !ns_class && !local_visible(name) && colons == std::string::npos) {
+        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
                 return parse_postfix(out);

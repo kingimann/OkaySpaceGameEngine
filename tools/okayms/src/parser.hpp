@@ -934,6 +934,130 @@ struct Parser {
             u = full + (colons == std::string::npos ? std::string() : u.substr(colons));
         }
     }
+    // `int gl_render::GpuTextureCategory() { ... }` at namespace scope: the definition of a function declared in a
+    // namespace, named with its qualifiers ([namespace.memdef] 2, [dcl.meaning] 1; Round 34, GLRendererResources.cpp:118,
+    // before "expected ';'"). The tokens become `namespace gl_render { int GpuTextureCategory() { ... } }`, so the
+    // definition is read inside its namespace as if written there. Only where every open brace is a namespace's (or an
+    // extern "C" block's), only when each qualifier is a namespace name, and only for a definition (the ')' is followed by
+    // a body). Own simplification: names in the return type are looked up inside the namespace too (a wider lookup).
+    void open_qualified_namespace_definitions() {
+        std::set<std::string> ns_names_seen;
+        for (size_t i = 0; i + 1 < tokens.size(); ++i)
+            if (tokens[i].kind == TNamespace && tokens[i + 1].kind == TIdent) ns_names_seen.insert(tokens[i + 1].text);
+        if (ns_names_seen.empty()) return;
+        std::vector<Token> out;
+        out.reserve(tokens.size() + 64);
+        std::vector<bool> open_is_ns;  // per open brace: a namespace or extern "C" block
+        size_t decl_start_out = 0;     // index in `out` where the current declaration starts
+        std::vector<std::pair<size_t, int>> closes;  // (index of the body's '}' in tokens, namespaces to close)
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            bool all_ns = true;
+            for (bool b : open_is_ns) all_ns = all_ns && b;
+            if (all_ns && t.kind == TIdent && ns_names_seen.count(t.text) > 0 && i + 3 < tokens.size() &&
+                tokens[i + 1].kind == TColonColon && i > 0 &&
+                (tokens[i - 1].kind == TIdent || tokens[i - 1].kind == TStar || tokens[i - 1].kind == TAmp ||
+                 tokens[i - 1].kind == TGt || tokens[i - 1].kind == TInt || tokens[i - 1].kind == TVoid ||
+                 tokens[i - 1].kind == TChar || tokens[i - 1].kind == TFloat || tokens[i - 1].kind == TDouble ||
+                 tokens[i - 1].kind == TLong || tokens[i - 1].kind == TShort || tokens[i - 1].kind == TUnsigned ||
+                 tokens[i - 1].kind == TSigned) &&
+                !(tokens[i - 1].kind == TIdent && (tokens[i - 1].text == "return" || tokens[i - 1].text == "new" ||
+                                                   tokens[i - 1].text == "using" || tokens[i - 1].text == "typename" ||
+                                                   tokens[i - 1].text == "namespace"))) {
+                // ns1 :: ns2 :: name (
+                std::vector<std::string> quals;
+                size_t k = i;
+                while (k + 2 < tokens.size() && tokens[k].kind == TIdent && ns_names_seen.count(tokens[k].text) > 0 &&
+                       tokens[k + 1].kind == TColonColon && tokens[k + 2].kind == TIdent) {
+                    quals.push_back(tokens[k].text);
+                    k += 2;
+                }
+                size_t body = 0;
+                if (!quals.empty() && k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TLParen) {
+                    // The parameter list, then up to a '{' with no '=', ',' or ';' on the way: a definition.
+                    int depth = 0;
+                    size_t p = k + 1;
+                    for (; p < tokens.size() && tokens[p].kind != TEnd; ++p) {
+                        if (tokens[p].kind == TLParen) ++depth;
+                        else if (tokens[p].kind == TRParen && --depth == 0) break;
+                    }
+                    for (++p; p < tokens.size(); ++p) {
+                        const Tok pk = tokens[p].kind;
+                        if (pk == TLBrace) {
+                            body = p;
+                            break;
+                        }
+                        if (pk == TAssign || pk == TComma || pk == TSemi || pk == TEnd || pk == TRBrace || pk == TColon) break;
+                    }
+                }
+                if (body != 0) {
+                    size_t end = body;
+                    for (int depth = 0; end < tokens.size() && tokens[end].kind != TEnd; ++end) {
+                        if (tokens[end].kind == TLBrace) ++depth;
+                        else if (tokens[end].kind == TRBrace && --depth == 0) break;
+                    }
+                    if (end < tokens.size() && tokens[end].kind == TRBrace) {
+                        std::vector<Token> opener;
+                        for (const std::string& q : quals) {
+                            Token ns = t;
+                            ns.kind = TNamespace;
+                            ns.text = "namespace";
+                            ns.nsq = false;
+                            ns.qual.clear();
+                            Token name = ns;
+                            name.kind = TIdent;
+                            name.text = q;
+                            Token lb = ns;
+                            lb.kind = TLBrace;
+                            lb.text = "{";
+                            opener.push_back(ns);
+                            opener.push_back(name);
+                            opener.push_back(lb);
+                        }
+                        out.insert(out.begin() + static_cast<std::ptrdiff_t>(decl_start_out), opener.begin(), opener.end());
+                        closes.push_back({end, static_cast<int>(quals.size())});
+                        for (size_t q = 0; q < quals.size(); ++q) open_is_ns.push_back(true);
+                        i = k - 1;  // the qualifiers are dropped; the name is next
+                        continue;
+                    }
+                }
+            }
+            out.push_back(t);
+            if (t.kind == TLBrace) {
+                bool ns = false;
+                for (size_t h = i; h > 0;) {
+                    --h;
+                    const Tok hk = tokens[h].kind;
+                    if (hk == TNamespace) {
+                        ns = true;
+                        break;
+                    }
+                    if (hk == TString && h > 0 && tokens[h - 1].kind == TIdent && tokens[h - 1].text == "extern" && h + 1 == i) {
+                        ns = true;
+                        break;
+                    }
+                    if (hk != TIdent && hk != TColonColon) break;
+                }
+                open_is_ns.push_back(ns);
+            } else if (t.kind == TRBrace) {
+                if (!open_is_ns.empty()) open_is_ns.pop_back();
+                if (!closes.empty() && closes.back().first == i) {
+                    for (int q = 0; q < closes.back().second; ++q) {
+                        Token rb = t;
+                        rb.kind = TRBrace;
+                        rb.text = "}";
+                        out.push_back(rb);
+                        if (!open_is_ns.empty()) open_is_ns.pop_back();
+                    }
+                    closes.pop_back();
+                }
+            }
+            bool now_ns = true;
+            for (bool b : open_is_ns) now_ns = now_ns && b;
+            if (now_ns && (t.kind == TSemi || t.kind == TLBrace || t.kind == TRBrace)) decl_start_out = out.size();
+        }
+        tokens = std::move(out);
+    }
     void strip_namespace_qualifiers() {
         for (size_t i = 0; i + 1 < tokens.size(); ++i) {
             if (tokens[i].kind != TNamespace) continue;
@@ -9723,6 +9847,7 @@ struct Parser {
         expand_alias_templates();
         lower_cxx_spellings();
         expand_namespace_aliases();
+        open_qualified_namespace_definitions();
         strip_namespace_qualifiers();
         // Room for the call operators of generic lambdas, which are added after the end (parse_lambda): the vector must
         // not move while it is read.

@@ -293,6 +293,95 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Names of the engine's GL and RHI files (Round 34): two functions each with a local `struct Cand` (ShadowSetup.hpp and
+// Mesh.hpp; [class.local]: two classes; before, the lambda of the second named the first's, "unknown field key", and
+// std::vector<Cand> was one instance for both), `table::TextureSize(...)` called from a member function of that name
+// (GLDevice.cpp; [namespace.qual]; before "no member function TextureSize with 4 arguments"), and a function of a
+// namespace defined with its qualified name (`int gl_render::Cat() {...}`, GLRendererResources.cpp:118;
+// [namespace.memdef] 2; before "expected ';'").
+static void r34_names(Tally& tally) {
+    std::printf("r34_names\n");
+    okayms_test::run_both(kRun, tally, "names", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <utility>
+#include <vector>
+inline int g() {
+  struct Cand { double a; double b; int t1; };
+  std::vector<Cand> v;
+  v.push_back({1.0, 2.0, 4});
+  v.push_back({0.5, 2.0, 9});
+  std::sort(v.begin(), v.end(), [](const Cand& x, const Cand& y) { return x.a < y.a; });
+  return v[0].t1;
+}
+int f() {
+  struct Cand { int index; float key; };
+  std::vector<Cand> cands;
+  for (int i = 0; i < 4; ++i) cands.push_back({i, (float)(10 - i * 3 % 7)});
+  std::stable_sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.key < b.key; });
+  int r = 0;
+  for (const Cand& c : cands) r = r * 10 + c.index;
+  return r;
+}
+namespace rhi { namespace table {
+template <class Map> bool TextureSize(const Map& m, int id, int& w, int& h) { w = m.w + id; h = m.h; return true; }
+} }
+namespace rhi {
+struct M { int w; int h; };
+struct Base { virtual bool TextureSize(int id, int& w, int& h) const = 0; };
+struct Dev : Base {
+  M m_textures{3, 4};
+  bool TextureSize(int id, int& w, int& hh) const override { return table::TextureSize(m_textures, id, w, hh); }
+};
+}
+namespace gl_render { int Cat(); int Two(int a); }
+int gl_render::Cat() { static const int id = 7; return id; }
+int gl_render::Two(int a) { return a * 2 + Cat(); }
+namespace okay { namespace r { int Three(); } }
+int okay::r::Three() { return 3; }
+int entry(void) {
+  CK(1, g() == 9);
+  CK(2, f() == 2130);
+  rhi::Dev d;
+  int w = 0, h = 0;
+  CK(3, d.TextureSize(10, w, h) && w == 13 && h == 4);
+  CK(4, gl_render::Cat() == 7 && gl_render::Two(5) == 17 && okay::r::Three() == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Our own <GL/gl.h> (OpenGL 1.1 types, enumerants and the opengl32.dll functions, from the OpenGL 1.1 specification):
+// a file that uses it compiles, the functions are imports (__imp_ names), and the enumerants have the specification's
+// values. Compile only (no GL context under Wine here).
+static void r34_gl_header(Tally& tally) {
+    std::printf("r34_gl_header\n");
+    okayms::CompileInput in;
+    in.source = R"OKMS(
+#include <GL/gl.h>
+int check(void) {
+  if (GL_TEXTURE_2D != 0x0DE1 || GL_RGBA != 0x1908 || GL_UNSIGNED_BYTE != 0x1401 || GL_COLOR_BUFFER_BIT != 0x4000) return 1;
+  if (sizeof(GLenum) != 4 || sizeof(GLboolean) != 1 || sizeof(GLclampd) != 8) return 2;
+  return 0;
+}
+void frame(GLuint tex) {
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  const GLubyte* v = glGetString(GL_VERSION);
+  (void)v;
+}
+)OKMS";
+    in.include_paths.push_back("stdinc");
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, compiled.ok());
+    if (!compiled.ok()) {
+        std::fprintf(stderr, "  gl.h: %s\n", compiled.error.c_str());
+        return;
+    }
+    CHECK(tally, okayms_test::has_symbol(compiled.value.object, "__imp_glClear"));
+    CHECK(tally, okayms_test::has_symbol(compiled.value.object, "__imp_glGetString"));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -304,5 +393,7 @@ int main(int argc, char** argv) {
     r34_lookup(tally);
     r34_narrow_spill(tally);
     r34_loop_registers(tally);
-    return tally.finish(7);
+    r34_names(tally);
+    r34_gl_header(tally);
+    return tally.finish(9);
 }

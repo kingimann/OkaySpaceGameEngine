@@ -275,7 +275,7 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-PopupCtx g_popupStack[4];
+PopupCtx g_popupStack[kPopupStackMax];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
 extern int g_ncards;         // defined with the card stack below (reset here in BeginFrame)
@@ -1865,6 +1865,7 @@ Context* RefreshContext() {
 }
 void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
 float GetTreeNodeToLabelSpacing() {
+    if (g_framedWidgets) return textH() + framePadXNow() * 2.0f;   // Dear ImGui's: the font size and twice FramePadding.x (its tree nodes in that look)
     if (g_look) return 24.0f;
     return 4.0f + fCharW() * g_theme.textScale * 1.5f;
 }
@@ -2739,6 +2740,11 @@ static bool InputInt_raw(const char* label, int* value, int step) {
 // applied (the colours as set colours, see SetStyleColor; the window and frame rounding, the window padding, the border width and the
 // font scale to the theme). The other fields are filled in for reading; a write to them is not used. Written by us from Dear ImGui's
 // documented behaviour (ImGuiStyle is read by every widget, so a write changes how the UI draws); no code from any other project.
+namespace ui_core {
+float g_styleIndent = 21.0f;   // the style's IndentSpacing (a GetStyle() write; Dear ImGui's default 21): how far a tree node indents in Dear ImGui's look
+float styleIndentSpacing() { return g_styleIndent; }
+float framePadXNow() { return g_framePadX >= 0.0f ? g_framePadX : 8.0f; }
+}
 namespace {
 StyleInfo g_styleOut;           // what GetStyle() returned
 StyleInfo g_styleSeen;          // what it held when it was returned (to see what a caller changed)
@@ -2759,6 +2765,7 @@ void ApplyStyleWrites() {
     if (o.FrameBorderSize != w.FrameBorderSize) g_theme.borderPx = Sane(o.FrameBorderSize, 0.0f, 16.0f, g_theme.borderPx);
     else if (o.WindowBorderSize != w.WindowBorderSize) g_theme.borderPx = Sane(o.WindowBorderSize, 0.0f, 16.0f, g_theme.borderPx);
     if (o.FontScale != w.FontScale) g_theme.textScale = Sane(o.FontScale, 0.25f, 16.0f, g_theme.textScale);
+    if (o.IndentSpacing != w.IndentSpacing) g_styleIndent = Sane(o.IndentSpacing, 0.0f, 200.0f, g_styleIndent);   // the tree nodes of Dear ImGui's look
     g_styleSeen = g_styleOut;
 }
 // IO::FontGlobalScale (Dear ImGui: every font drawn this much larger): the theme's text scale follows it, applied at frame start.
@@ -2775,11 +2782,12 @@ StyleInfo& GetStyle() {
     const float rh = rowH(), th = textH();
     s.Alpha = 1.0f;
     s.WindowPadding = Vec2{g_theme.windowPadding, g_theme.windowPadding};
-    s.FramePadding = Vec2{8.0f, (rh - th) * 0.5f};
+    s.FramePadding = Vec2{framePadXNow(), (rh - th) * 0.5f};
     s.ItemSpacing = Vec2{g_lay.spacingX, g_lay.spacingY};
     s.ItemInnerSpacing = Vec2{g_lay.spacingX * 0.5f, g_lay.spacingY};
     s.CellPadding = Vec2{6.0f, 3.0f};
     s.ScrollbarSize = kScrollbarW;
+    s.IndentSpacing = styleIndentSpacing();
     s.WindowRounding = g_theme.windowRounding; s.ChildRounding = childRnd(); s.FrameRounding = g_theme.rounding;
     s.WindowBorderSize = g_theme.borderPx; s.ChildBorderSize = g_theme.borderPx; s.FrameBorderSize = g_theme.borderPx;
     s.FontScale = g_theme.textScale;
@@ -3297,9 +3305,58 @@ bool ColorButton(const char* id, const float rgba[4], float size) { return Color
 // ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags);
 static bool colorEditRow(const char* label, float* c, int n, int flags) { return noteEdit(colorEditRow_ed(label, c, n, flags)); }
+namespace { bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format, bool logScale); }
+// The colour picker under a ColorEdit's swatch at (sx, sy, swatch h): opened by its click, closed like any popup.
+static bool colorEditPicker(int id, bool swatchClicked, float sx, float sy, float h, float w, float* c, int n, int flags) {
+    if (flags & ColorEdit_NoPicker) return false;
+    bool changed = false;
+    const int pkey = id ^ 0x7c1c;
+    if (swatchClicked) {
+        PopupSlot* p = popupSlot(pkey, true);
+        if (p) { p->open = true; p->x = sx; p->y = sy + h + 2.0f; p->w = std::max(240.0f, std::min(300.0f, w)); p->modal = false; g_openPopupThisFrame = pkey; }
+    }
+    if (beginPopupBody(pkey)) {
+        float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+        if (ColorPicker4("##picker", tmp, flags | ColorEdit_NoLabel)) { for (int i = 0; i < n; ++i) c[i] = tmp[i]; changed = true; }
+        EndPopup();
+    }
+    return changed;
+}
+// Dear ImGui's ColorEdit3/4 as it documents and shows it (StyleVar_FramedWidgets): a drag cell per channel, 0..255 (0..1 numbers with
+// ColorEdit_Float or ColorEdit_HDR, HDR not held to 1), each with a colour marker on its left edge (R, G, B, A), then the swatch (a click
+// opens the picker), then the label. The row is as wide as the item width.
+static bool colorEditFramed(const char* label, float* c, int n, int flags) {
+    const int id = hashLabel(label);
+    const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f;
+    const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
+    const float lw = showLabel ? visW(label) + gap : 0.0f;
+    const float w = availW(), swatch = h;
+    float cellsW = w - lw - swatch - gap; if (cellsW < 24.0f * (float)n) cellsW = 24.0f * (float)n;
+    const bool asFloat = (flags & (ColorEdit_Float | ColorEdit_HDR)) != 0;
+    float v[4] = {0, 0, 0, 1};
+    for (int i = 0; i < n; ++i) v[i] = asFloat ? c[i] : std::floor(clamp01(c[i]) * 255.0f + 0.5f);
+    char cellsId[192]; std::snprintf(cellsId, sizeof cellsId, "##%s#channels", label ? label : "");
+    SetNextItemWidth(cellsW);
+    bool changed = fmtDragCells(cellsId, v, n, asFloat ? 0.01f : 1.0f, 0.0f, (flags & ColorEdit_HDR) ? 0.0f : (asFloat ? 1.0f : 255.0f), asFloat ? "%.3f" : "%.0f", false);
+    if (changed) for (int i = 0; i < n; ++i) c[i] = asFloat ? v[i] : clamp01(std::floor(v[i] + 0.5f) / 255.0f);
+    const float x = g_lay.prevX, y = g_lay.prevY;
+    const float cw = (cellsW - gap * (float)(n - 1)) / (float)n;
+    static const unsigned char kMarker[4][4] = {{230, 70, 70, 255}, {90, 200, 90, 255}, {80, 130, 240, 255}, {200, 200, 200, 255}};
+    for (int i = 0; i < n; ++i) quad(x + (float)i * (cw + gap), y, 3.0f, h, kMarker[i]);
+    const float sx = x + cellsW + gap;
+    float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+    const bool swatchClicked = Button(id ^ 0x5a5a, sx, y, swatch, h, "");
+    drawSwatch(sx, y, swatch, h, rgba, flags);
+    if (showLabel) drawText(sx + swatch + gap, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h; g_lastId = id;   // GetItemRect: the whole row
+    if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
+    changed = colorEditPicker(id, swatchClicked, sx, y, h, w, c, n, flags) || changed;
+    return changed;
+}
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
     if (!g_lay.active || !c) return false;
     if (n == 3 || (flags & ColorEdit_NoAlpha)) { n = 3; flags |= ColorEdit_NoAlpha; }
+    if (g_framedWidgets && !(flags & (ColorEdit_Hex | ColorEdit_NoInputs))) return colorEditFramed(label, c, n, flags);
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
     const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
@@ -3347,19 +3404,7 @@ static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
         }
     }
     if (showLabel) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
-    // the picker popup, anchored under the swatch
-    if (!(flags & ColorEdit_NoPicker)) {
-        const int pkey = id ^ 0x7c1c;
-        if (swatchClicked) {
-            PopupSlot* p = popupSlot(pkey, true);
-            if (p) { p->open = true; p->x = x; p->y = y + h + 2.0f; p->w = std::max(240.0f, std::min(300.0f, w)); p->modal = false; g_openPopupThisFrame = pkey; }
-        }
-        if (beginPopupBody(pkey)) {
-            float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
-            if (ColorPicker4("##picker", tmp, flags | ColorEdit_NoLabel)) { for (int i = 0; i < n; ++i) c[i] = tmp[i]; changed = true; }
-            EndPopup();
-        }
-    }
+    changed = colorEditPicker(id, swatchClicked, x, y, h, w, c, n, flags) || changed;   // the picker popup, anchored under the swatch
     return changed;
 }
 static bool ColorEdit4_raw(const char* label, float rgba[4], int flags) { return colorEditRow(label, rgba, 4, flags); }
@@ -3703,28 +3748,60 @@ void ResetState() {
 bool Checkbox(const char* label, bool* value) { return noteEdit(Checkbox_raw(label, value)); }
 bool RadioButton(const char* label, int* value, int option) { return noteEdit(RadioButton_raw(label, value, option)); }
 bool ToggleSwitch(const char* label, bool* value) { return noteEdit(ToggleSwitch_raw(label, value)); }
-bool SliderFloat(const char* label, float* value, float minV, float maxV) { return noteEdit(SliderFloat_raw(label, value, minV, maxV)); }
-bool SliderInt(const char* label, int* value, int minV, int maxV) { return noteEdit(SliderInt_raw(label, value, minV, maxV)); }
+// With StyleVar_FramedWidgets (Dear ImGui's look, the editor and launcher on OkayUI) the plain calls draw Dear ImGui's framed widgets: Dear ImGui's
+// SliderFloat / DragFloat with no format show "%.3f", SliderInt "%d" (its documented defaults); a pending SetNextNumberFormat is used instead.
+namespace {
+struct FramedFmt { NextNumber n; const char* fmt; bool log; explicit FramedFmt(const char* dflt) : n(takeNextNumber()), fmt(n.has ? n.fmt : dflt), log(n.logarithmic) {} };
+}
+bool SliderFloat(const char* label, float* value, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloat(label, value, minV, maxV, f.fmt, f.log); }
+    return noteEdit(SliderFloat_raw(label, value, minV, maxV));
+}
+bool SliderInt(const char* label, int* value, int minV, int maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%d"); return FramedSliderInt(label, value, minV, maxV, f.fmt); }
+    return noteEdit(SliderInt_raw(label, value, minV, maxV));
+}
 bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) { return noteEdit(VSliderFloat_raw(label, w, h, value, minV, maxV)); }
 bool Knob(const char* label, float* value, float minV, float maxV, float size) { return noteEdit(Knob_raw(label, value, minV, maxV, size)); }
 // With InputText_EnterReturnsTrue the return value is the Enter, not an edit: TextField marks the edits itself.
 bool InputText(const char* label, char* buf, int cap, unsigned flags) { const bool r = InputText_raw(label, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
 bool InputInt(const char* label, int* value, int step) { return noteEdit(InputInt_raw(label, value, step)); }
 bool Combo(const char* label, const char* const* items, int count, int* current) { return noteEdit(Combo_raw(label, items, count, current)); }
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) { return noteEdit(DragFloat_raw(label, v, speed, minV, maxV)); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 1, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat_raw(label, v, speed, minV, maxV));
+}
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV) { return noteEdit(DragInt_raw(label, v, speed, minV, maxV)); }
-bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) { return noteEdit(DragFloat2_raw(label, v, speed, minV, maxV)); }
-bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) { return noteEdit(DragFloat3_raw(label, v, speed, minV, maxV)); }
-bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) { return noteEdit(DragFloat4_raw(label, v, speed, minV, maxV)); }
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 2, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat2_raw(label, v, speed, minV, maxV));
+}
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 3, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat3_raw(label, v, speed, minV, maxV));
+}
+bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedDragFloatN(label, v, 4, speed, minV, maxV, f.fmt, f.log); }
+    return noteEdit(DragFloat4_raw(label, v, speed, minV, maxV));
+}
 bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return noteEdit(DragInt2_raw(label, v, speed, minV, maxV)); }
 bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return noteEdit(DragInt3_raw(label, v, speed, minV, maxV)); }
 bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return noteEdit(DragInt4_raw(label, v, speed, minV, maxV)); }
 bool DragIntRange2(const char* label, int* lo, int* hi, float speed, int minV, int maxV) { return noteEdit(DragIntRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) { return noteEdit(DragFloatRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) { const bool r = InputTextWithHint_raw(label, hint, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
-bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return noteEdit(SliderFloat2_raw(label, v, minV, maxV)); }
-bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return noteEdit(SliderFloat3_raw(label, v, minV, maxV)); }
-bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return noteEdit(SliderFloat4_raw(label, v, minV, maxV)); }
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 2, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat2_raw(label, v, minV, maxV));
+}
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 3, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat3_raw(label, v, minV, maxV));
+}
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV) {
+    if (g_framedWidgets) { const FramedFmt f("%.3f"); return FramedSliderFloatN(label, v, 4, minV, maxV, f.fmt); }
+    return noteEdit(SliderFloat4_raw(label, v, minV, maxV));
+}
 bool InputFloat(const char* label, float* value, float step) { return noteEdit(InputFloat_raw(label, value, step)); }
 bool ColorEdit4(const char* label, float rgba[4], int flags) { return noteEdit(ColorEdit4_raw(label, rgba, flags)); }
 bool ColorEdit3(const char* label, float rgb[3], int flags) { return noteEdit(ColorEdit3_raw(label, rgb, flags)); }
@@ -4093,6 +4170,7 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_childRounding),
     OKAYUI_CTX_VAR(ui_core::g_framedWidgets),
     OKAYUI_CTX_VAR(ui_core::g_framePadX),
+    OKAYUI_CTX_VAR(ui_core::g_styleIndent),
     OKAYUI_CTX_VAR(ui_core::g_framePadY),
     OKAYUI_CTX_VAR(ui_core::g_grp),
     OKAYUI_CTX_VAR(ui_core::g_grpTop),

@@ -81,7 +81,16 @@ float menuRowH() { return g_curMenu.rowH > 0.0f ? g_curMenu.rowH : rowH(); }
 // The open list starts at `y` (level with its row, or under its bar button). Moved up when last frame's height would run past the
 // display's bottom (Input::displayH), as Dear ImGui keeps a menu inside its viewport; taller than the display, it starts at the top
 // and scrolls. Sets itemStartY (the visible top), virtTop and itemY (row 0, scroll included).
-void menuListBegin(int id, float y) {
+void menuBodyBegin();
+void menuListBegin(int id, float y, bool nested) {
+    // As wide as last frame's widest row or widget (Dear ImGui fits a menu to its content); kept inside the display.
+    float* wide = floatState(id ^ 0x6d1c0d, 0.0f);
+    g_curMenu.widthSlot = wide; g_curMenu.wantW = 0.0f;
+    if (*wide > g_curMenu.w) {
+        g_curMenu.w = *wide;
+        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW)
+            g_curMenu.x = nested ? std::max(0.0f, g_curMenu.bx - g_curMenu.w) : std::max(0.0f, g_dispW - g_curMenu.w);
+    }
     float* full = floatState(id ^ 0x6d1a0b, 0.0f);
     float* scroll = floatState(id ^ 0x6d1b0c, 0.0f);
     g_curMenu.heightSlot = full; g_curMenu.scrollSlot = scroll;
@@ -111,6 +120,70 @@ void menuListBegin(int id, float y) {
         popoverBox(g_curMenu.x, top - 4.0f, g_curMenu.w, bh + 8.0f, pick(Col_PopupBg, g_theme.overlay));
         g_toOverlay = wasOverlay;
     }
+    menuBodyBegin();
+}
+// The open list's body: a popup-window layout at the list (Dear ImGui's menus are popup windows), so any widget drawn between BeginMenu and
+// EndMenu is laid out in the list, below the rows before it, drawn on top, unclipped by the window under it, and takes the pointer by the
+// popup rules. Its rows keep their own cursor (itemY); menuRowSync keeps the two in step.
+void menuBodyBegin() {
+    g_curMenu.body = false;
+    if (g_popupTop >= kPopupStackMax) return;
+    PopupCtx& c = g_popupStack[g_popupTop++];
+    c = PopupCtx{};
+    c.lay = g_lay; c.id = g_curMenu.menuId; c.x = g_curMenu.x; c.y = g_curMenu.itemStartY; c.w = g_curMenu.w;
+    c.hSlot = g_curMenu.heightSlot; c.wSlot = g_curMenu.widthSlot; c.padX = g_curMenu.textInset; c.padY = 0.0f; c.exact = false;
+    c.menu = true; c.wasOverlay = g_toOverlay;
+    c.clipBase = g_clipBase; g_clipBase = g_clipTop; overlayClipOff();
+    g_toOverlay = true;
+    g_curMenu.body = true;
+    const float ox = g_curMenu.x + g_curMenu.textInset;
+    g_lay.active = true;
+    g_lay.ox = ox; g_lay.oy = g_curMenu.itemY;
+    g_lay.winX = g_curMenu.x; g_lay.winY = g_curMenu.itemStartY; g_lay.winW = g_curMenu.w;
+    g_lay.winH = g_curMenu.heightSlot ? *g_curMenu.heightSlot : 0.0f; g_lay.baseX = g_curMenu.x; g_lay.baseY = g_curMenu.itemStartY;
+    g_lay.cx = ox; g_lay.cy = g_curMenu.itemY;
+    g_lay.contentW = g_curMenu.w - 2.0f * g_curMenu.textInset;
+    g_lay.indent = 0.0f; g_lay.seed = g_curMenu.menuId;
+    g_lay.pendingSameLine = false; g_lay.hasLineTop = false;
+    g_lay.prevX = ox; g_lay.prevY = g_curMenu.itemY; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_lay.maxRight = g_curMenu.x;
+    if (g_dispH > 0.0f) g_lay.bottom = g_dispH;   // a menu reaches down to the display's bottom at most
+}
+// The body ends (EndMenu): the list's height and width for next frame take in the widgets, the layout of what the menu was opened from
+// comes back.
+void menuBodyEnd() {
+    if (!g_curMenu.body || g_popupTop <= 0 || !g_popupStack[g_popupTop - 1].menu) return;
+    g_curMenu.itemY = std::max(g_curMenu.itemY, g_lay.cy - g_lay.spacingY * 0.5f);   // widgets after the last row
+    const float wide = std::max(g_curMenu.wantW, g_lay.maxRight > g_curMenu.x ? g_lay.maxRight - g_curMenu.x + g_curMenu.textInset : 0.0f);
+    if (g_curMenu.widthSlot) *g_curMenu.widthSlot = wide;
+    PopupCtx& c = g_popupStack[--g_popupTop];
+    while (g_clipTop > g_clipBase) PopClipRect();   // a child left open inside the list
+    g_clipBase = c.clipBase;
+    g_toOverlay = c.wasOverlay;
+    if (g_popupTop > 0) overlayClipToStack(); else overlayClipOff();
+    g_lay = c.lay;
+    g_curMenu.body = false;
+}
+// A row of the list (MenuItem, a sub-menu's row, a menu separator) is about to take the row cursor: it goes under any widget drawn since
+// the last row. `after` (once the row is placed): the widgets that follow go under it.
+void menuRowSync(bool after) {
+    if (!g_curMenu.body) return;
+    if (!after) { g_curMenu.itemY = std::max(g_curMenu.itemY, g_lay.cy - g_lay.spacingY * 0.5f); return; }
+    g_lay.cy = g_curMenu.itemY; g_lay.cx = g_lay.ox; g_lay.pendingSameLine = false; g_lay.hasLineTop = false;
+}
+// The width a row of the list needs: its label, a gap and its shortcut, the arrow of a sub-menu, the insets.
+void menuRowWant(const char* label, const char* shortcut, bool arrow) {
+    float w = g_curMenu.textInset * 2.0f + (label ? visW(label) : 0.0f);
+    if (shortcut && shortcut[0]) w += labelW(shortcut) + 24.0f;
+    if (arrow) w += 20.0f;
+    if (w > g_curMenu.wantW) g_curMenu.wantW = w;
+}
+// Close every menu of the open chain (and the popup a chain opened from a popup's row started from), as picking an item does.
+void closeMenuChain() {
+    *openState(g_curMenu.menuId, false) = false;
+    for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false;
+    for (int i = 0; i < g_menuDepth; ++i)
+        if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
 }
 // A row of the open list: a soft rounded highlight inset from the box's edges (or, in an unboxed first frame, the row's own
 // background with the highlight on it).
@@ -185,7 +258,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.rowH = h;   // the popup's own row height (a text line and the item spacing)
         g_curMenu.textInset = (g_popupPadX >= 0.0f ? g_popupPadX : g_lay.spacingX * 0.5f + 4.0f);
         if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);   // no room on the right: the left
-        menuListBegin(id, y);
+        menuListBegin(id, y, true);
         menuKeysBegin(id, true);
         return true;
     }
@@ -193,9 +266,13 @@ bool BeginMenu(const char* label) {
         if (g_menuDepth >= 4) return false;
         const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
         bool* open = openState(id, false);
+        menuRowSync(false);
+        menuRowWant(label, nullptr, true);
         const float h = menuRowH(), s = g_theme.textScale;
         const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
         g_curMenu.itemY += h;
+        menuRowSync(true);
+        g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h; g_lastId = id; g_prevInOverlay = true;
         const bool shown = menuRowShown(y, h);
         const bool ih = shown && hitOverlay(x, y, w, h);
         const int ord = g_curMenu.n++;
@@ -225,7 +302,8 @@ bool BeginMenu(const char* label) {
         if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
         g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
-        menuListBegin(id, y);
+        g_curMenu.body = false; g_curMenu.widthSlot = nullptr; g_curMenu.wantW = 0.0f;
+        menuListBegin(id, y, true);
         menuKeysBegin(id, true);
         return true;
     }
@@ -254,7 +332,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.active = true; g_curMenu.menuId = id;
         g_curMenu.x = x; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
-        menuListBegin(id, y + h);
+        menuListBegin(id, y + h, false);
         menuKeysBegin(id, false);
     } else kbSlot(id)->idx = -1;
     return *open;
@@ -315,9 +393,12 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     // With StyleVar_FramedWidgets: Dear ImGui's menu row (one text line, the highlight reaching half the item spacing past it).
     if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) return popupMenuItem(label, shortcut, selected, enabled);
     if (!g_lay.active || !g_curMenu.active || !label) return false;
+    menuRowSync(false);
+    menuRowWant(label, shortcut, false);
     const float h = menuRowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
     g_curMenu.itemY += h;
+    menuRowSync(true);
     const int iid = hashLabel(label) ^ g_curMenu.menuId;
     const bool shown = menuRowShown(y, h);
     const bool ih = shown && enabled && hitOverlay(x, y, w, h);
@@ -331,16 +412,11 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     const bool ksel = kb && kb->idx == ord && enabled && !kb->childOpen;
     if (ksel && !shown && kb->keyMoved) menuRowReveal(y, h);
     bool clicked = false;
-    if (ksel && g_curMenu.activate) {   // Enter on the highlighted item
-        clicked = true; *openState(g_curMenu.menuId, false) = false;
-        for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false;
-    }
+    if (ksel && g_curMenu.activate) clicked = true;   // Enter on the highlighted item
     if (g_active == iid) {
-        if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
+        if (g_released) { if (ih) clicked = true; g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
-    if (clicked)   // a chain of sub-menus opened from a popup's row: the popup closes as well, as a context menu does
-        for (int i = 0; i < g_menuDepth; ++i)
-            if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
+    if (clicked) closeMenuChain();   // the whole chain closes (and a popup it was opened from, as a context menu does)
     if (!shown) return clicked;
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     const bool wasOverlay = g_toOverlay;   // a sub-menu of a popup: the popup's rows after it must stay on top
@@ -363,8 +439,10 @@ bool MenuItem(const char* label, const char* shortcut, bool selected, bool enabl
 
 void MenuSeparator() {
     if (!g_lay.active || !g_curMenu.active) return;
+    menuRowSync(false);
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
     g_curMenu.itemY += h;
+    menuRowSync(true);
     if (!menuRowShown(y, h)) return;
     const bool wasOverlay = g_toOverlay;
     g_toOverlay = true;
@@ -375,6 +453,7 @@ void MenuSeparator() {
 
 void EndMenu() {
     if (!g_curMenu.active) { if (g_popupSubOpen > 0) { --g_popupSubOpen; TreePop(); } return; }
+    menuBodyEnd();
     const bool nested = g_menuDepth > 0;
     // A press outside both the menu button (or the sub-menu's row) and its item list closes the menu.
     // The list as drawn: from its visible top to its last row, or the band it scrolls in.
@@ -476,7 +555,9 @@ void OpenPopup(const char* id) {
 }
 
 void CloseCurrentPopup() {
-    if (g_popupTop > 0) { PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) p->open = false; }
+    if (g_popupTop <= 0) return;
+    if (g_popupStack[g_popupTop - 1].menu && g_curMenu.active) { closeMenuChain(); return; }   // inside a menu's list: the menus close, as in Dear ImGui
+    PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) p->open = false;
 }
 
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
@@ -485,7 +566,7 @@ bool ui_core::beginPopupBody(int id) {
     // Depth guard first: past the popup-stack capacity the parent layout cannot
     // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
     // state that was never saved and stomp another popup's measured height.
-    if (g_popupTop >= 4) return false;
+    if (g_popupTop >= kPopupStackMax) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
     p->drawn = g_frameCount;

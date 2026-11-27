@@ -619,6 +619,75 @@ void TestRegionInsideWindow() {
     CHECK(innerClicks == 1 && afterClicks == 1);
 }
 
+// A menu is a popup window of any widgets (Dear ImGui's BeginMenu): the editor's Edit > Appearance sub-menu holds a design picker made of
+// text, buttons, sliders and a separator. They used to be laid out in the window under the menu (drawn at its edge, under the list); now
+// they go into the list, below the rows before them, take clicks, keep the menu open, and the list grows to fit them.
+void TestMenuOfWidgets() {
+    RUN_SUITE("windows: a menu's list lays out any widgets (a popup window of widgets)");
+    Reset();
+    Sim sim(900, 600);
+    UI::Rect undo{}, sub{}, label{}, wide{}, slider{}, after{}, outer{}, editBtn{}; UI::Vec2 wpos{};
+    bool editOpen = false, subOpen = false; int wideClicks = 0, afterClicks = 0; float v = 0.25f;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 400), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            wpos = UI::GetWindowPos();
+            if (UI::BeginMenuBar()) {
+                editOpen = UI::BeginMenu("Edit");
+                if (editOpen) {
+                    UI::MenuItem("Undo"); undo = UI::GetItemRect();
+                    subOpen = UI::BeginMenu("Appearance");
+                    sub = UI::GetItemRect();
+                    if (subOpen) {
+                        UI::TextDisabled("Design"); label = UI::GetItemRect();
+                        if (UI::Button("a wide design card", V(420, 40))) ++wideClicks;
+                        wide = UI::GetItemRect();
+                        UI::Separator();
+                        UI::SliderFloat("Corner roundness", &v, 0.0f, 1.0f); slider = UI::GetItemRect();
+                        if (UI::MenuItem("After the widgets")) ++afterClicks;
+                        after = UI::GetItemRect();
+                        UI::EndMenu();
+                    }
+                    UI::EndMenu();
+                }
+                editBtn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::Button("content"); outer = UI::GetItemRect();
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(editBtn), CenterY(editBtn), ui);   // the bar's menu
+    sim.Frames(2, ui);
+    CHECK(editOpen);
+    if (!editOpen) return;
+    sim.Move(CenterX(sub), CenterY(sub)); sim.Frames(3, ui);
+    CHECK(subOpen);
+    if (!subOpen) return;
+    // laid out in the sub-menu's list, to the right of the Edit list, from its row down
+    CHECK(label.x >= sub.x + sub.w - 1.0f);
+    CHECK(wide.x >= sub.x + sub.w - 1.0f && wide.y >= label.y + label.h - 0.5f);
+    CHECK(slider.y >= wide.y + wide.h - 0.5f);
+    CHECK(after.y >= slider.y + slider.h - 0.5f);           // a row after the widgets goes under them
+    CHECK(after.w >= 420.0f);                               // the list grew to fit the wide widget
+    // the widget takes the click and the menu stays open (only picking an item closes it)
+    sim.Move(CenterX(sub) + 2.0f, CenterY(sub)); sim.Frame(ui);
+    sim.Move(CenterX(wide), CenterY(wide)); sim.Frame(ui);
+    sim.Down(); sim.Frame(ui); sim.Up(); sim.Frames(2, ui);
+    CHECK(wideClicks == 1);
+    CHECK(editOpen && subOpen);
+    // drawn on top: the button's centre is not the window's background colour under the list
+    const Bitmap& b = sim.Draw(12, 14, 20);
+    CHECK(PixelAt(b, (int)CenterX(wide), (int)CenterY(wide)) != PixelAt(b, (int)(wpos.x + 300), (int)(wpos.y + 380)));
+    // picking the row after the widgets closes the whole chain
+    sim.Move(CenterX(after), CenterY(after)); sim.Frame(ui);
+    sim.Down(); sim.Frame(ui); sim.Up(); sim.Frames(2, ui);
+    CHECK(afterClicks == 1);
+    CHECK(!editOpen);
+    (void)undo;
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -633,5 +702,6 @@ int main() {
     TestChildClipInPopup();
     TestSizeAxisZeroFits();
     TestRegionInsideWindow();
+    TestMenuOfWidgets();
     TEST_MAIN_RESULT();
 }

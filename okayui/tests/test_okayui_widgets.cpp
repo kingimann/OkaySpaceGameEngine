@@ -3,6 +3,7 @@
 // ProgressBar with a size and an indeterminate bar. Headless: synthetic input through the test kit Sim, pixels through the software backend.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // GetStyle, GetTreeNodeToLabelSpacing
 
 #include <cmath>
 #include <cstring>
@@ -517,11 +518,75 @@ void TestFuzz() {
 
 } // namespace
 
+// Dear ImGui's look (StyleVar_FramedWidgets with StyleVar_TextRowHeight -1, how the editor and launcher on OkayUI draw every frame):
+// an unframed tree node is one text line tall (the editor's Hierarchy rows were a whole frame tall), its label starts
+// GetTreeNodeToLabelSpacing() from its left edge (the editor draws each row's type icon at that spacing's arrow part: the icon covered
+// the name), children indent by the style's IndentSpacing; the plain SliderFloat / SliderInt / DragFloat calls draw the framed widgets
+// with the value inside (they used to stay OkayUI's thin sliders, unlike the calls with a format).
+void TestImGuiLookTree() {
+    RUN_SUITE("Dear ImGui's look: tree node rows, label spacing, indent; plain sliders are framed");
+    Rig r; UI::Rect n1, c1, n2, sl; float spacing = 0.0f, fontH = 0.0f; bool open = false; float v = 0.5f; int iv = 3;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::GetStyle().IndentSpacing = 30.0f;
+        spacing = UI::GetTreeNodeToLabelSpacing(); fontH = UI::GetFontSize();
+        UI::SetNextItemOpen(true);
+        open = UI::TreeNodeEx("parent", 0); n1 = UI::GetItemRect();
+        if (open) { UI::TreeNodeEx("child", UI::TreeNode_Leaf | UI::TreeNode_NoTreePushOnOpen); c1 = UI::GetItemRect(); UI::TreePop(); }
+        UI::TreeNodeEx("leaf", UI::TreeNode_Leaf | UI::TreeNode_NoTreePushOnOpen); n2 = UI::GetItemRect();
+        UI::SliderFloat("slide", &v, 0.0f, 1.0f); sl = UI::GetItemRect();
+        UI::SliderInt("count", &iv, 0, 10);
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    CHECK(open);
+    CHECK(std::fabs(n1.h - fontH) <= 1.0f);                            // a text line tall, not a frame
+    CHECK(std::fabs(spacing - (fontH + 2.0f * UI::GetStyle().FramePadding.x)) <= 0.5f);   // the font size and twice FramePadding.x
+    CHECK(std::fabs((c1.x - n1.x) - 30.0f) <= 0.5f);                   // the style's IndentSpacing
+    CHECK(std::fabs(n2.x - n1.x) <= 0.5f);                             // TreePop took the same 30 back
+    CHECK(sl.h > fontH + 2.0f);                                       // a framed slider: a frame tall
+    // the framed slider puts its value in the frame (pixels of the text colour inside it); a click sets the value from the pointer
+    r.Click(sl.x + 4.0f, CenterY(sl));
+    CHECK(v < 0.1f);
+}
+
+// Dear ImGui's ColorEdit4 in its look: a drag cell per channel (0..255) with a colour marker on its left edge, the swatch after the
+// cells, then the label; dragging a cell changes that channel by one step a pixel (the editor's Inspector Color field showed sliders).
+void TestImGuiLookColorEdit() {
+    RUN_SUITE("Dear ImGui's look: ColorEdit4 is channel cells, markers, swatch, label");
+    Rig r; float c[4] = {0.2f, 0.6f, 1.0f, 1.0f}; UI::Rect rc;
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::SetNextItemWidth(440); UI::ColorEdit4("Color", c); rc = UI::GetItemRect();
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    const Bitmap b = r.sim.Draw(12, 14, 20);
+    int swatch = 0, marker = 0, swatchX = 100000;
+    for (int y = (int)rc.y; y < (int)(rc.y + rc.h); ++y)
+        for (int x = (int)rc.x; x < (int)(rc.x + rc.w); ++x) {
+            const unsigned p = PixelAt(b, x, y);
+            if (p == Rgba(51, 153, 255)) { ++swatch; swatchX = std::min(swatchX, x); }
+            if (p == Rgba(230, 70, 70) && x < rc.x + 10) ++marker;
+        }
+    CHECK(swatch > (int)(rc.h * rc.h * 0.4f));                         // the swatch in the colour
+    CHECK(swatchX > rc.x + rc.w * 0.5f);                               // after the cells
+    CHECK(marker > 4);                                                 // the red marker on the first cell's left edge
+    // drag the first cell 20 pixels to the right: red goes up about 20 steps of 255
+    const float cx = rc.x + 30.0f, cy = CenterY(rc);
+    r.Frames(20); r.sim.Move(cx, cy); r.Frame(); r.sim.Down(); r.Frame();
+    r.sim.Move(cx + 20.0f, cy); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(c[0] > 0.2f + 10.0f / 255.0f && c[0] < 0.2f + 30.0f / 255.0f);
+    CHECK(c[1] == 0.6f && c[2] == 1.0f && c[3] == 1.0f);
+}
+
 int main() {
     TestMultiline();
     TestHintArrowProgress();
     TestSelectable();
     TestTreeFlags();
+    TestImGuiLookTree();
+    TestImGuiLookColorEdit();
     TestPlots();
     TestFuzz();
     TEST_MAIN_RESULT();

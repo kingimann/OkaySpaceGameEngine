@@ -220,6 +220,9 @@ float fMeasure(const char* s);
 // twice that (Dear ImGui's frame height). Checkbox and RadioButton boxes follow it too (boxSize).
 extern float g_framePadY;
 extern float g_framePadX;   // a pushed StyleVar_FramePadding (x), < 0: none
+float framePadXNow();         // FramePadding.x as GetStyle() reports it: the pushed one, else 8
+float styleIndentSpacing();   // IndentSpacing as GetStyle() reports it (a write to it is kept): the tree nodes' indent in Dear ImGui's look
+extern float g_styleIndent;
 // StyleVar_ScrollbarSize (< 0 = none pushed: OkayUI's own 10-pixel bars): the width of the scroll bars of children and scrolling tables.
 // A pushed size also gives Dear ImGui's proportions: the bar inside a framed child's outline and its grab 2 pixels in on every side.
 extern float g_sbSize;
@@ -377,6 +380,11 @@ struct CurMenu {
     float* heightSlot = nullptr;                 // the list's full height last frame
     float* scrollSlot = nullptr;                 // its scroll offset in pixels
     bool boxed = false;                          // the list's popover box was drawn (from last frame's height): rows draw only their highlight
+    // The list is a popup window of any widgets, as Dear ImGui's menus are: while it is open the layout is the list's (a PopupCtx with
+    // `menu` set), so Text, sliders, a child ... drawn between BeginMenu and EndMenu go into the list under the rows before them.
+    bool body = false;
+    float* widthSlot = nullptr;                  // the width the list needed last frame (its widest row or widget): it grows to fit
+    float wantW = 0.0f;                          // this frame's widest row (label, shortcut, arrow)
 };
 extern CurMenu g_curMenu;
 extern CurMenu g_menuStack[4];
@@ -401,8 +409,10 @@ extern ChildSave g_childStack[8];
 constexpr float kScrollbarW = 10.0f;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
                   float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0;
-                  int clipBase = 0; };   // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
-extern PopupCtx g_popupStack[4];
+                  int clipBase = 0;      // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
+                  bool menu = false, wasOverlay = false; };   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
+constexpr int kPopupStackMax = 8;   // popups and open menu lists, nested
+extern PopupCtx g_popupStack[kPopupStackMax];
 extern int g_popupTop;
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
                  bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0; char title[64] = {0};   // title: for WindowRef::Name

@@ -24,6 +24,28 @@
 namespace okaylcli {
 namespace fs = std::filesystem;
 
+// ---- git for a project --------------------------------------------------------------------------------------------
+
+std::vector<std::string> GitArgv(const std::string& git, const std::string& folder, const GitStep& step) {
+    std::vector<std::string> argv = {git.empty() ? std::string("git") : git, "-C", folder};
+    argv.insert(argv.end(), step.begin(), step.end());
+    return argv;
+}
+
+int RunGitSteps(const std::string& folder, const std::vector<GitStep>& steps, const std::string& git) {
+    int rc = -1;
+    for (const GitStep& step : steps) {
+        const okaycli::RunResult r = okaycli::Run(GitArgv(git, folder, step), std::string(), true);
+        rc = r.started ? r.exitCode : -1;
+    }
+    return rc;
+}
+
+bool GitWorks(const std::string& git) {
+    const okaycli::RunResult r = okaycli::Run({git.empty() ? std::string("git") : git, "--version"}, std::string(), true);
+    return r.started && r.exitCode == 0;
+}
+
 // ---- words and arguments ------------------------------------------------------------------------------------------
 // SplitWords, Classify, Complete, History and the output lines: tools/okay-cli/CommandInput.cpp (shared with the editor).
 

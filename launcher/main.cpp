@@ -36,6 +36,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "CommandLine.hpp"    // the Projects page's Git buttons: git with an argument list, no shell (RunGitSteps)
 #include "BrowserPage.hpp"   // the Browser page (sidebar > Browser): the browser program's browser inside the launcher
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
@@ -564,26 +565,17 @@ bool        g_gitWantRescan = false;  // re-list projects after a clone/pull
 
 static bool GitAvailable() {
     static int cached = -1;
-    if (cached < 0)
-        cached = (RunCmd(
-#if defined(_WIN32)
-            "git --version >nul 2>&1"
-#else
-            "git --version >/dev/null 2>&1"
-#endif
-            , true) == 0) ? 1 : 0;
+    if (cached < 0) cached = okaylcli::GitWorks() ? 1 : 0;
     return cached == 1;
 }
 
-struct GitJob { std::vector<std::string> cmds; std::string okMsg, failMsg; bool rescan = false; };
+// git runs with an argument list (launcher/CommandLine.hpp RunGitSteps, okaycli::Run): no shell, so a commit message,
+// URL or folder name is never read as a command (#888 F50).
+struct GitJob { std::string folder; std::vector<okaylcli::GitStep> steps; std::string okMsg, failMsg; bool rescan = false; };
 
 static int GitWorker(void* data) {
     GitJob* job = (GitJob*)data;
-    int rc = 0;
-    for (std::size_t i = 0; i < job->cmds.size(); ++i) {
-        int c = RunCmd(job->cmds[i], true);
-        if (i + 1 == job->cmds.size()) rc = c;   // the last command decides success
-    }
+    const int rc = okaylcli::RunGitSteps(job->folder, job->steps);   // the last step decides success
     okay::thr::LockMutex(g_gitMutex);
     g_gitBusy = false;
     g_gitResultReady = true;
@@ -606,8 +598,6 @@ static bool StartGit(GitJob* job) {
     if (t) okay::thr::DetachThread(t); else { okay::thr::LockMutex(g_gitMutex); g_gitBusy = false; okay::thr::UnlockMutex(g_gitMutex); delete job; return false; }
     return true;
 }
-static std::string GitQ(const std::string& s) { return "\"" + s + "\""; }
-static std::string GitC(const std::string& dir) { return "git -C " + GitQ(dir) + " "; }
 
 // Extract a .zip into destDir, best-effort, using whatever's on the system.
 bool ExtractZip(const std::string& zip, const std::string& destDir) {
@@ -1896,7 +1886,8 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
     }
     if (gitInit && GitAvailable()) {
         GitJob* j = new GitJob();
-        j->cmds = { GitC(root.string()) + "init" };
+        j->folder = root.string();
+        j->steps = { {"init"} };
         j->okMsg = "Started a Git repository in " + finalName;
         j->failMsg = "Couldn't start a Git repository in " + finalName;
         if (!StartGit(j)) Toast("Git is busy — the project was created without a repository", 2);
@@ -15176,7 +15167,8 @@ int main(int argc, char** argv) {
                         if (nm.empty()) nm = "ClonedProject";
                         std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
                         GitJob* j = new GitJob();
-                        j->cmds   = { GitC(npLoc) + "clone " + GitQ(url) + " " + GitQ(nm) };
+                        j->folder = npLoc;
+                        j->steps  = { {"clone", "--", url, nm} };
                         j->okMsg  = "Cloned " + nm + " with Git";
                         j->failMsg= "Clone failed — check the URL and your Git sign-in";
                         j->rescan = true;
@@ -15340,7 +15332,8 @@ int main(int argc, char** argv) {
                             if (hasGit) {
                                 if (ImGui::MenuItem("Git: Pull", nullptr, false, !g_gitBusy)) {
                                     GitJob* j = new GitJob();
-                                    j->cmds = { GitC(root) + "pull" };
+                                    j->folder = root;
+                                    j->steps = { {"pull"} };
                                     j->okMsg = "Pulled latest for " + pr.name;
                                     j->failMsg = "Pull failed for " + pr.name;
                                     j->rescan = true; StartGit(j);
@@ -15674,9 +15667,8 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
                 if (ImGui::Button("Commit & Push", ImVec2(okl::FitButtonW("Commit & Push", okl::UiPx(150.0f)), 0)) && gitCommitMsg[0]) {
                     GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitCommitRoot) + "add -A",
-                                GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
-                                GitC(gitCommitRoot) + "push" };
+                    j->folder = gitCommitRoot;
+                    j->steps = { {"add", "-A"}, {"commit", "-m", gitCommitMsg}, {"push"} };
                     j->okMsg = "Pushed " + gitCommitName + " to its Git server";
                     j->failMsg = "Push failed — is a Git remote set up?";
                     StartGit(j);
@@ -15695,12 +15687,9 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##purl", "https://example.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
                 if (ImGui::Button("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0)) && gitPublishUrl[0]) {
                     GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitPublishRoot) + "init",
-                                GitC(gitPublishRoot) + "add -A",
-                                GitC(gitPublishRoot) + "commit -m " + GitQ("Initial commit"),
-                                GitC(gitPublishRoot) + "branch -M main",
-                                GitC(gitPublishRoot) + "remote add origin " + GitQ(gitPublishUrl),
-                                GitC(gitPublishRoot) + "push -u origin main" };
+                    j->folder = gitPublishRoot;
+                    j->steps = { {"init"}, {"add", "-A"}, {"commit", "-m", "Initial commit"}, {"branch", "-M", "main"},
+                                 {"remote", "add", "--", "origin", gitPublishUrl}, {"push", "-u", "origin", "main"} };
                     j->okMsg = "Published " + gitPublishName + " to its Git server";
                     j->failMsg = "Publish failed — check the URL and your Git sign-in";
                     StartGit(j);

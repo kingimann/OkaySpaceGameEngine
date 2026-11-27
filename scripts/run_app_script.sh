@@ -2,7 +2,7 @@
 # Run the launcher or the editor headless on a private Xvfb display with a test script (shared/TestHooks.hpp), on one or both platform backends.
 # The program must be built with -DOKAY_ENABLE_TEST_HOOKS=ON (never a release build).
 #   scripts/run_app_script.sh <program> <script> <outdir> [seconds-limit] [backend ...]
-# For each backend (default: own; sdl2 exists only in the web build now) it starts the program with OKAY_TEST_SCRIPT=<script> and OKAY_PLATFORM_BACKEND=<backend>, waits for it to leave by itself,
+# For each backend (own, the only one since 2026-11-27) it starts the program with OKAY_TEST_SCRIPT=<script> and OKAY_PLATFORM_BACKEND=<backend>, waits for it to leave by itself,
 # and checks that it exited with code 0 (or the code of the script's `exit N`; pass EXPECT_EXIT=N). Pictures the script saves with `shot NAME.png` land in
 # <outdir>/<backend>/ (outside the repository). With two backends it then compares every picture of one with the other (ImageMagick `compare`, per-pixel
 # fuzz 4 percent): MAX_DIFF_PIXELS (default 0) differing pixels allowed per picture. Exit 0 = all good. Environment: APP_ARGS (program arguments, the editor

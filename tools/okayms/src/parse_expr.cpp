@@ -1696,6 +1696,19 @@ bool Parser::parse_unary(Node* out) {
             const auto alias = global_alias.find(name);
             if (alias != global_alias.end()) name = alias->second;
         }
+        if (is(TLParen) && !member_call && !from_global && !local_visible(name) && first_func(name) == nullptr &&
+            !(cur_class >= 0 && member_hides(name, TLParen))) {
+            // g(args) where g is a variable at namespace scope holding a function pointer ([expr.call] 1; Round 33,
+            // BehaviorTreeRunner.cpp's g_pauseHook): a call through its value, with the arguments converted for the
+            // pointer's parameters (a reference parameter gets an address) as for a local pointer.
+            const auto alias = global_alias.find(name);
+            const std::string gname = alias != global_alias.end() ? alias->second : name;
+            for (const Global& g : globals)
+                if (g.name == gname && g.type.func_id >= 0 && g.type.pointers == 1 && !g.type.is_array()) {
+                    *out = node_name(gname);
+                    return parse_postfix(out);
+                }
+        }
         if (is(TLt) && !local_visible(name)) {
             // std::is_same_v<A, B>: a variable template (kept by its bare name, like function templates).
             std::string bare = name;

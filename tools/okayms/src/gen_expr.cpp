@@ -961,7 +961,17 @@ bool Gen::gen_expr(const Node& node) {
         }
         Local* fp_local = node.text.empty() ? nullptr : find_local(node);
         if (fp_local != nullptr && fp_local->type.func_id < 0) fp_local = nullptr;
-        const bool indirect = node.text.empty() || fp_local != nullptr;
+        // A global (or namespace-scope) variable that holds a function pointer, called by its name ([expr.call] 1;
+        // Round 33, BehaviorTreeRunner.cpp's `g_pauseHook(*this, nodeId)`): its value is the target. Before, "unknown
+        // function".
+        Global* fp_global = nullptr;
+        if (fp_local == nullptr && !node.text.empty() && find_func(node.text) == nullptr) {
+            fp_global = find_global(node.text);
+            if (fp_global != nullptr && !(fp_global->type.func_id >= 0 && fp_global->type.pointers == 1 &&
+                                          !fp_global->type.is_array()))
+                fp_global = nullptr;
+        }
+        const bool indirect = node.text.empty() || fp_local != nullptr || fp_global != nullptr;
         FuncDecl* fn = nullptr;
         FuncType sig;
         int callee_slot = 0;
@@ -983,6 +993,18 @@ bool Gen::gen_expr(const Node& node) {
                 return false;
             }
             sig = (*func_types)[static_cast<size_t>(fp_local->type.func_id)];
+            callee_slot = spill();
+            if (!error.empty()) return false;
+        } else if (fp_global != nullptr) {
+            Node name;
+            name.kind = Node::Name;
+            name.text = node.text;
+            if (!gen_expr(name)) return false;
+            if (func_types == nullptr || static_cast<size_t>(fp_global->type.func_id) >= func_types->size()) {
+                error = "call target is not a function";
+                return false;
+            }
+            sig = (*func_types)[static_cast<size_t>(fp_global->type.func_id)];
             callee_slot = spill();
             if (!error.empty()) return false;
         } else if (indirect) {

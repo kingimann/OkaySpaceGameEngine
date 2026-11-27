@@ -636,6 +636,49 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Raw string literals ([lex.string] 1, [lex.pptoken] 3.1; SceneSerializerInternal.hpp, Browser/Script.cpp,
+// InputAsset.cpp, NetBuildSync.cpp; before, "expected ';'"): R"delim(...)delim" with quotes, backslashes, newlines and a
+// macro name inside (not expanded), the u8 prefix, and the line numbers after one; and a call through a function pointer
+// held by a variable at namespace scope ([expr.call] 1; BehaviorTreeRunner.cpp's g_pauseHook; before, "unknown
+// function"), also from a member function with a reference argument.
+static void r33_raw_strings(Tally& tally) {
+    std::printf("r33_raw_strings\n");
+    okayms_test::run_both(kRun, tally, "raw_strings", R"OKMS(
+#define JS 1
+static int len(const char* s) { int n = 0; while (s[n]) ++n; return n; }
+int first_line = __LINE__;
+const char* k1 = R"JS(a'b "q" \n
+JS // not a macro here
+)JS";
+const char* k2 = R"(x)";
+const char* k3 = u8R"z(()")z";
+int after_line = __LINE__;
+namespace okay {
+struct Runner { using PauseHook = void (*)(Runner&, int); int last = 0; void Note(int id); static void Set(PauseHook h); };
+namespace { Runner::PauseHook g_pauseHook = nullptr; }
+void Runner::Set(PauseHook h) { g_pauseHook = h; }
+void Runner::Note(int id) { if (g_pauseHook) g_pauseHook(*this, id); }
+}
+typedef int (*Fn)(int);
+Fn g_f = nullptr;
+int twice(int x) { return 2 * x; }
+void hook(okay::Runner& r, int id) { r.last = id; }
+int entry(void) {
+  CK(1, len(k1) == 34 && k1[1] == '\'' && k1[4] == '"' && k1[8] == '\\' && k1[10] == '\n');
+  CK(2, len(k2) == 1 && k2[0] == 'x');
+  CK(3, len(k3) == 3 && k3[2] == '"');
+  CK(4, after_line - first_line == 6);
+  g_f = twice;
+  CK(5, g_f(3) == 6);
+  okay::Runner r;
+  okay::Runner::Set(hook);
+  r.Note(7);
+  CK(6, r.last == 7);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -654,5 +697,6 @@ int main(int argc, char** argv) {
     r33_return_convert(tally);
     r33_aggregates(tally);
     r33_eh_block(tally);
-    return tally.finish(14);
+    r33_raw_strings(tally);
+    return tally.finish(15);
 }

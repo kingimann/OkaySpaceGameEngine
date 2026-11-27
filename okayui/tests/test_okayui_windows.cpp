@@ -770,6 +770,37 @@ void TestDockHostListUnderFloating() {
     CHECK(PixelAt(b, (int)(fpos.x + fsize.x * 0.5f), (int)(fpos.y + fsize.y - 10)) != red);   // inside it: under the window
 }
 
+// IsWindowHovered under an open menu list: the list is hovered, not the window under it (Dear ImGui's rule). The editor's Scene view
+// asks IsWindowHovered as a fallback for its clicks, and picked the object under a View > Panels row while that row was clicked.
+void TestWindowHoveredUnderMenu() {
+    RUN_SUITE("windows: a window under an open menu list is not hovered there");
+    Reset();
+    Sim sim(600, 400);
+    UI::Rect btn{}, row{}; bool open = false, belowHovered = false;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(0, 0), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(600, 400), UI::Cond_FirstUseEver);
+        if (UI::Begin("Host", nullptr, UI::Window_MenuBar)) {
+            if (UI::BeginMenuBar()) {
+                open = UI::BeginMenu("View");
+                if (open) { UI::MenuItem("Panels"); row = UI::GetItemRect(); UI::MenuItem("Layout"); UI::EndMenu(); }
+                btn = UI::GetItemRect();
+                UI::EndMenuBar();
+            }
+            UI::BeginChild("scene", V(0, 0));
+            belowHovered = UI::IsWindowHovered();
+            UI::EndChild();
+        }
+        UI::End();
+    };
+    sim.Frames(2, ui);
+    sim.Click(CenterX(btn), CenterY(btn), ui); sim.Frames(2, ui);
+    CHECK(open);
+    sim.Move(CenterX(row), CenterY(row)); sim.Frames(2, ui);
+    CHECK(open && !belowHovered);
+    sim.Move(500, 300); sim.Frames(2, ui);                    // away from the list
+    CHECK(belowHovered);
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -788,5 +819,6 @@ int main() {
     TestSameLineOffset();
     TestMenuItemToggle();
     TestDockHostListUnderFloating();
+    TestWindowHoveredUnderMenu();
     TEST_MAIN_RESULT();
 }

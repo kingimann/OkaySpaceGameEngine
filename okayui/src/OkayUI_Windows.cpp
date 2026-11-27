@@ -457,8 +457,15 @@ Vec2 GetWindowSize() { if (innerWin()) return Vec2{g_lay.winW, g_lay.winH}; retu
 float GetWindowWidth() { return GetWindowSize().x; }
 float GetWindowHeight() { return GetWindowSize().y; }
 bool IsWindowHovered() {
-    return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
-           && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
+    if (!g_curWin.valid || g_in.blocked || !pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
+        || coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id)) return false;
+    // An open menu list, combo list or popup over the pointer (last frame's) is what is hovered, not the window under it, as in Dear ImGui:
+    // the editor's Scene view took the click that picked a View > Panels row and selected the object under it.
+    if (g_popupTop == 0) {
+        for (int i = 0; i < g_ovPrevN; ++i) if (g_ovPrev[i].modal || pointIn(g_in.mouseX, g_in.mouseY, g_ovPrev[i].x, g_ovPrev[i].y, g_ovPrev[i].w, g_ovPrev[i].h)) return false;
+        for (int i = 0; i < g_popPrevN; ++i) if (pointIn(g_in.mouseX, g_in.mouseY, g_popPrev[i].x, g_popPrev[i].y, g_popPrev[i].w, g_popPrev[i].h)) return false;
+    }
+    return true;
 }
 bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
 bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }

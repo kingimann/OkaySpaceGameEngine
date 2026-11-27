@@ -395,7 +395,7 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) return popupMenuItem(label, shortcut, selected, enabled);
     if (!g_lay.active || !g_curMenu.active || !label) return false;
     menuRowSync(false);
-    menuRowWant(label, shortcut, false);
+    menuRowWant(label, shortcut, selected && g_framedWidgets);   // (a tick at the right end needs the room an arrow does)
     const float h = menuRowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
     g_curMenu.itemY += h;
@@ -424,10 +424,13 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     g_toOverlay = true;
     const float in = g_curMenu.textInset;
     menuRowBg(x, y, w, h, ih || ksel);
-    if (selected) { const float tk = std::min(h - 6.0f, in + 2.0f); tickMark(x + (in - tk) * 0.5f + 1.0f, y + (h - tk) * 0.5f, tk, g_theme.accent); }   // a tick marks a checked item
+    if (selected) {   // a tick marks a checked item: in the left inset, or at the right end in Dear ImGui's look (the inset there is too narrow: it covered the label)
+        const float tk = g_framedWidgets ? std::min(h - 6.0f, textH()) : std::min(h - 6.0f, in + 2.0f);
+        tickMark(g_framedWidgets ? x + w - in - tk : x + (in - tk) * 0.5f + 1.0f, y + (h - tk) * 0.5f, tk, g_theme.accent);
+    }
     drawText(x + in, y + (h - textH()) * 0.5f, VisLabel(label).b, s, col);
     if (shortcut && shortcut[0]) {   // right-aligned, faint; skipped when it would run into the label
-        const float sw = labelW(shortcut), sx = x + w - sw - in;
+        const float sw = labelW(shortcut), sx = x + w - sw - in - (selected && g_framedWidgets ? textH() + 6.0f : 0.0f);
         if (sx > x + in + visW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textFaint));
     }
     g_toOverlay = wasOverlay;

@@ -3,6 +3,8 @@
 
 #include "okay/UI/OkayUICompat.hpp"   // BeginChild with flags: a page with no padding
 #include "okay/Browser/Profile.hpp"   // the site badge, the address shown, the error pages
+#include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher look's font, for its em
+#include "okay/Graphics/TtfRaster.hpp"   // the font's em and line (ttf::Face)
 
 #include <algorithm>
 #include <cfloat>
@@ -29,7 +31,7 @@ std::string ShortUrl(const std::string& url, std::size_t max) {
 }
 
 // ---- web fonts ----
-struct WebFace { int weight; bool italic; const UI::Font* font; };
+struct WebFace { int weight; bool italic; const UI::Font* font; FontEm em; };
 std::map<std::string, std::vector<WebFace>>& Faces() { static std::map<std::string, std::vector<WebFace>> f; return f; }
 
 // The registered face for a font-family list ("'My Font', Arial, sans-serif"): the first family that has one, the closest weight.
@@ -65,23 +67,68 @@ bool FaceIsBold(const br::FontSpec& spec, const UI::Font* f) {
 
 } // namespace
 
-void RegisterWebFont(const std::string& family, int weight, bool italic, const UI::Font* font) {
+void RegisterWebFont(const std::string& family, int weight, bool italic, const UI::Font* font, const FontEm& em) {
     if (!font || family.empty()) return;
-    Faces()[family].push_back({weight, italic, font});
+    Faces()[family].push_back({weight, italic, font, em});
 }
 void ClearWebFonts() { Faces().clear(); }
 
-// OkayUI's text scale 1 is an 8 px line, so a font size of `px` is the scale px / 8 (what DrawList::AddText with a font size
-// does). Measuring and drawing both set it, so the width the layout used is the width that is drawn. A web font is made the
-// current font first (OkayUI then sizes it by the same scale).
+bool FontEmOf(const std::uint8_t* data, std::size_t size, FontEm& out) {
+    okay::ttf::Face face;
+    if (!data || !face.Load(data, size, 0) || face.UnitsPerEm() <= 0) return false;
+    int asc = 0, desc = 0, gap = 0;
+    face.VMetrics(asc, desc, gap);
+    if (asc - desc <= 0 || asc <= 0) return false;
+    const float upem = (float)face.UnitsPerEm();
+    // a font whose line is not within 0.5 to 3 em is not trusted (a broken table would make text huge or invisible)
+    const float line = (float)(asc - desc) / upem, ascent = (float)asc / upem;
+    if (!(line >= 0.5f && line <= 3.0f && ascent > 0.2f && ascent <= line)) return false;
+    out.linePerEm = line;
+    out.ascentPerEm = ascent;
+    return true;
+}
+
+namespace {
+
+// The em of the font text is drawn with when no web font is chosen: the launcher look's TrueType font (read once from its
+// file), else OkayUI's 8x8 bitmap font, whose cell is taken as the em (the layout's own proportions, nothing changes).
+const FontEm& DefaultEm() {
+    static FontEm ttf;
+    static bool read = false;
+    static const FontEm bitmap;
+    if (!UI::LauncherLook()) return bitmap;
+    if (!read) {
+        read = true;
+        std::vector<unsigned char> bytes;
+        if (!okay::EmbeddedUIFontData(bytes) || !FontEmOf(bytes.data(), bytes.size(), ttf)) ttf = FontEm();
+    }
+    return ttf;
+}
+const FontEm& EmOf(const UI::Font* web) {
+    if (web) for (const auto& kv : Faces()) for (const WebFace& w : kv.second) if (w.font == web) return w.em;
+    return DefaultEm();
+}
+
+} // namespace
+
+// OkayUI sizes a font by its line (ascent - descent, "pixel height"); its text scale 1 is an 8 px line. CSS sizes text by the em
+// (CSS Fonts 4, font-size: the em square), and a font's line is usually 1.1 to 1.3 em, so a font size of `px` is the scale
+// px x linePerEm / 8 (scaling by px / 8 drew text about 15% too small). Measuring and drawing both set it, so the width the
+// layout used is the width that is drawn. A web font is made the current font first (OkayUI then sizes it by the same scale).
+// `k` is the scale for DrawList::AddText; `shift` moves the drawn text so its baseline is where the layout put it (0.8 em
+// below the em box's top, Layout.cpp) rather than the font's ascent below it.
 struct TextScaleFor {
     float saved;
     const UI::Font* savedFont = nullptr;
     bool fontSet = false;
+    float k = 1.0f, shift = 0.0f;
     explicit TextScaleFor(float px, const UI::Font* font = nullptr) : saved(0.0f) {
         if (font) { savedFont = UI::GetFont(); UI::SetFont(font); fontSet = true; }
+        const FontEm& em = EmOf(font);
+        k = px * em.linePerEm / 8.0f;
+        shift = px * (0.8f - em.ascentPerEm);
         saved = UI::Style().textScale;
-        UI::Style().textScale = px / 8.0f;
+        UI::Style().textScale = k;
     }
     ~TextScaleFor() {
         UI::Style().textScale = saved;
@@ -108,8 +155,9 @@ namespace {
 void DrawText(const UI::DrawList* dl, float x, float y, const br::FontSpec& f, UI::Color32 col, const std::string& text) {
     const UI::Font* web = WebFontFor(f);
     const TextScaleFor scale(f.size, web);
-    dl->AddText(UI::Vec2(x, y), col, text.c_str(), f.size / 8.0f);
-    if (f.bold && !FaceIsBold(f, web)) dl->AddText(UI::Vec2(x + std::max(1.0f, f.size / 24.0f), y), col, text.c_str(), f.size / 8.0f);
+    y += scale.shift;
+    dl->AddText(UI::Vec2(x, y), col, text.c_str(), scale.k);
+    if (f.bold && !FaceIsBold(f, web)) dl->AddText(UI::Vec2(x + std::max(1.0f, f.size / 24.0f), y), col, text.c_str(), scale.k);
 }
 
 // A form control's inside (its box and border are drawn by the page): the value, a check mark, a list arrow, a button label.
@@ -122,6 +170,9 @@ void DrawControl(const UI::DrawList* dl, const br::LayoutResult& page, const br:
     br::FontSpec f = c.font;
     f.size *= z;
     const float w = c.w * z, h = c.h * z;
+    // appearance: none (CSS UI 4, 7.2): the page draws the control with its own CSS; no native check mark, dot or list arrow
+    const bool native = !page.controls[(std::size_t)c.control].appearanceNone;
+    if (!native && (k == br::ControlKind::Checkbox || k == br::ControlKind::Radio)) return;
     switch (k) {
     case br::ControlKind::Checkbox: {
         const float s = std::min(w, h);
@@ -142,9 +193,10 @@ void DrawControl(const UI::DrawList* dl, const br::LayoutResult& page, const br:
         break;
     }
     case br::ControlKind::Select: {
-        UI::PushClipRect(cx, cy, std::max(0.0f, w - h), h);
+        UI::PushClipRect(cx, cy, std::max(0.0f, native ? w - h : w), h);
         DrawText(dl, cx + 2, cy + (h - f.size) * 0.5f, f, col, c.text);
         UI::PopClipRect();
+        if (!native) break;
         const float ax = cx + w - h * 0.7f, ay = cy + h * 0.42f, as = h * 0.22f;
         dl->AddLine(UI::Vec2(ax - as, ay), UI::Vec2(ax, ay + as), col, 1.5f);
         dl->AddLine(UI::Vec2(ax, ay + as), UI::Vec2(ax + as, ay), col, 1.5f);
@@ -531,10 +583,52 @@ const br::Node* NodeAt(const br::LayoutResult& page, float px, float py, int lin
     const br::Node* best = nullptr;
     int bestDepth = -1;
     for (const br::BoxInfo& b : page.boxes) {
-        if (!b.node || px < b.x || py < b.y || px >= b.x + b.w || py >= b.y + b.h) continue;
+        if (!b.node || b.noHit || px < b.x || py < b.y || px >= b.x + b.w || py >= b.y + b.h) continue;   // pointer-events: none: under it
         if (b.depth >= bestDepth) { best = b.node; bestDepth = b.depth; }
     }
     return best;
+}
+
+// The page's cursor property (CSS UI 4, 5.1) as OkayUI's shape; Auto is `automatic` (what the host shows by itself there).
+UI::MouseCursor CursorShape(br::Cursor c, UI::MouseCursor automatic) {
+    switch (c) {
+    case br::Cursor::Default: return UI::MouseCursor_Arrow;
+    case br::Cursor::None: return UI::MouseCursor_None;
+    case br::Cursor::Pointer: return UI::MouseCursor_Hand;
+    case br::Cursor::Text: return UI::MouseCursor_TextInput;
+    case br::Cursor::Move: return UI::MouseCursor_ResizeAll;
+    case br::Cursor::NotAllowed: return UI::MouseCursor_NotAllowed;
+    case br::Cursor::Wait: return UI::MouseCursor_Wait;
+    case br::Cursor::Progress: return UI::MouseCursor_Progress;
+    case br::Cursor::ResizeNS: return UI::MouseCursor_ResizeNS;
+    case br::Cursor::ResizeEW: return UI::MouseCursor_ResizeEW;
+    case br::Cursor::ResizeNESW: return UI::MouseCursor_ResizeNESW;
+    case br::Cursor::ResizeNWSE: return UI::MouseCursor_ResizeNWSE;
+    default: return automatic;
+    }
+}
+// The cursor the page asks for at page point (px, py): its form control's, else its link's (a hand by default), else the
+// innermost box's. `found` false: the page says nothing (auto everywhere): the view leaves the cursor as it is.
+UI::MouseCursor PageCursorAt(const br::LayoutResult& page, float px, float py, int ci, int link, bool& found) {
+    found = true;
+    if (ci >= 0 && (std::size_t)ci < page.controls.size()) {
+        const br::ControlBox& c = page.controls[(std::size_t)ci];
+        const bool typable = c.node && br::FormState::IsTypable(*c.node);
+        if (c.cursor != br::Cursor::Auto || typable) return CursorShape(c.cursor, typable ? UI::MouseCursor_TextInput : UI::MouseCursor_Arrow);
+    }
+    if (link >= 0) {
+        for (const br::LinkArea& a : page.areas)
+            if (a.link == link && px >= a.x && px < a.x + a.w && py >= a.y && py < a.y + a.h) return CursorShape(a.cursor, UI::MouseCursor_Hand);
+        return UI::MouseCursor_Hand;
+    }
+    const br::BoxInfo* best = nullptr;
+    for (const br::BoxInfo& b : page.boxes) {
+        if (!b.node || b.noHit || px < b.x || py < b.y || px >= b.x + b.w || py >= b.y + b.h) continue;
+        if (!best || b.depth >= best->depth) best = &b;
+    }
+    if (best && best->cursor != br::Cursor::Auto) return CursorShape(best->cursor, UI::MouseCursor_Arrow);
+    found = false;
+    return UI::MouseCursor_Arrow;
 }
 
 } // namespace
@@ -704,7 +798,7 @@ bool TextPlaceAt(const br::LayoutResult& page, float px, float py, int& cmd, int
     float bestDx = FLT_MAX;
     for (std::size_t i = 0; i < page.cmds.size(); ++i) {
         const br::DrawCmd& c = page.cmds[i];
-        if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed || c.text.empty()) continue;
+        if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed || c.text.empty() || c.noSelect) continue;   // user-select: none
         const float lineH = std::max(c.h * 1.25f, 1.0f);
         if (py >= c.y - c.h * 0.15f && py < c.y + lineH) {
             const float dx = px < c.x ? c.x - px : px > c.x + c.w ? px - (c.x + c.w) : 0.0f;
@@ -837,7 +931,7 @@ std::string SelectedPageText(const br::LayoutResult& page, const PageKeys& k) {
     float lastY = -FLT_MAX;
     for (int i = std::max(0, a); i <= b && i < (int)page.cmds.size(); ++i) {
         const br::DrawCmd& c = page.cmds[(std::size_t)i];
-        if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed) continue;
+        if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed || c.noSelect) continue;
         const std::size_t from = i == a ? std::min((std::size_t)ac, c.text.size()) : 0, to = i == b ? std::min((std::size_t)bc, c.text.size()) : c.text.size();
         if (to <= from) continue;
         if (lastY != -FLT_MAX && std::fabs(c.y - lastY) > c.h * 0.5f) {
@@ -1107,7 +1201,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 UI::PushClipRect(origin.x, viewTop, viewW, viewH);
                 for (int i = std::max(0, a); i <= b && i < (int)page.cmds.size(); ++i) {
                     const br::DrawCmd& c = page.cmds[(std::size_t)i];
-                    if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed) continue;
+                    if (c.kind != br::DrawCmd::Text || c.clip >= 0 || c.fixed || c.noSelect) continue;
                     const std::size_t from = i == a ? std::min((std::size_t)ac, c.text.size()) : 0, to = i == b ? std::min((std::size_t)bc, c.text.size()) : c.text.size();
                     if (to <= from) continue;
                     const float x0 = c.x + measure.Width(c.text.substr(0, from), c.font), x1 = c.x + measure.Width(c.text.substr(0, to), c.font);
@@ -1263,8 +1357,13 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 const int link = br::LinkAt(page, pmx, pmy, &boxScroll, pageScroll);
                 const bool isLabel = link >= 0 && (std::size_t)link < page.linkNodes.size() && page.linkNodes[(std::size_t)link] &&
                                      page.linkNodes[(std::size_t)link]->name == "label";
+                {   // the page's cursor property where the pointer is (a link's hand unless the page says otherwise)
+                    bool said = false;
+                    const UI::MouseCursor shape = PageCursorAt(page, pmx, pmy, br::ControlAt(page, pmx, pmy, &boxScroll, pageScroll),
+                                                               link >= 0 && link < (int)page.links.size() && !isLabel ? link : -1, said);
+                    if (said) UI::SetMouseCursor(shape);
+                }
                 if (link >= 0 && link < (int)page.links.size() && !isLabel) {
-                    UI::SetMouseCursor(UI::MouseCursor_Hand);
                     res.hoverHref = page.links[(std::size_t)link];
                     if (!controlTook && UI::IsMouseClicked(0)) { res.linkClicked = link; res.linkInNewTab = UI::GetFrameInput().ctrl; }
                     else if (UI::IsMouseClicked(2)) { res.linkClicked = link; res.linkInNewTab = true; }
@@ -1301,7 +1400,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     if ((kin.ctrl && UI::IsKeyPressed(UI::KeyId_A, false)) || kin.selectAll) {
                         int first = -1, last = -1;
                         for (std::size_t i = 0; i < page.cmds.size(); ++i)
-                            if (page.cmds[i].kind == br::DrawCmd::Text && page.cmds[i].clip < 0 && !page.cmds[i].fixed) { if (first < 0) first = (int)i; last = (int)i; }
+                            if (page.cmds[i].kind == br::DrawCmd::Text && page.cmds[i].clip < 0 && !page.cmds[i].fixed && !page.cmds[i].noSelect) { if (first < 0) first = (int)i; last = (int)i; }
                         if (first >= 0) { nav->selFromCmd = first; nav->selFromChar = 0; nav->selToCmd = last; nav->selToChar = (int)page.cmds[(std::size_t)last].text.size(); }
                     }
                     if (((kin.ctrl && UI::IsKeyPressed(UI::KeyId_C, false)) || kin.copy) && nav->HasSelection())

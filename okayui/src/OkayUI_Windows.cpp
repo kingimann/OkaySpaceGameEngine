@@ -549,11 +549,7 @@ WindowInfo FindWindowByID(unsigned id) {
         break;
     }
     if (!wi.found)   // a docked tab never drawn yet: the window table knows it from the dock layout (FindWindowByName does the same)
-        if (const WindowRef* r = FindWindowRefByID(id); r && r->Name[0] && IsWindowDocked(r->Name)) {
-            const ImRect rc = r->Rect();
-            wi.found = true; wi.docked = true; wi.pos = wi.Pos = rc.Min; wi.size = Vec2{rc.Max.x - rc.Min.x, rc.Max.y - rc.Min.y}; wi.Size = wi.size; wi.ID = id;
-            std::snprintf(wi.Name, sizeof wi.Name, "%s", r->Name);
-        }
+        if (const WindowRef* r = FindWindowRefByID(id); r && r->Name[0] && IsWindowDocked(r->Name)) { wi = FindWindowByName(r->Name); wi.ID = id; }
     return wi;
 }
 bool AnyWindowFocused() { return g_focusWin != 0; }

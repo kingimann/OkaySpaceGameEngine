@@ -398,6 +398,8 @@ BACKEND_PATTERNS = [
     # is on the calling line, the route is the provider's. Counted so a moved site stays in the inventory.
     (re.compile(r'(?:\.|->)From\(\s*"([A-Za-z_]\w*)"'), "Database", "okay::backend"),
     (re.compile(r'(?:\.|->)Rpc\(\s*"([A-Za-z_]\w*)"'), "RPC", "okay::backend"),
+    # A function name passed in a variable (Invites' and Parties' own Rpc helpers, round 5): counted as "(dynamic)".
+    (re.compile(r'Db\(\)\s*\.\s*Rpc\(\s*(?=[A-Za-z_])()'), "RPC", "okay::backend"),
     # Calls through OkayBackend's Storage and Functions (round 4): the bucket or function name is on the calling line. The
     # Supabase provider's public route used directly (the updater's address, links the launcher recognises) counts too.
     (re.compile(r'Storage\(\)\s*\.\s*(?:Upload|ReadPublic|List|Remove|RemoveObject|PublicUrl)\(\s*"([a-z][\w-]*)"'), "Storage",

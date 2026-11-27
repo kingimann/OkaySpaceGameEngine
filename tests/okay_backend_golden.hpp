@@ -1,20 +1,23 @@
-// Shared pieces of the OkayBackend golden request tests (tests/test_okay_backend_golden_auth.cpp, round 2, and
-// tests/test_okay_backend_golden_db.cpp, round 3; docs/platform/okay_backend.md section 10.1): a fake server that writes
+// Shared pieces of the OkayBackend golden request tests (tests/test_okay_backend_golden_auth.cpp, round 2,
+// tests/test_okay_backend_golden_db.cpp, round 3, and the later rounds; docs/platform/okay_backend.md section 10.1): a fake server that writes
 // down every request in one text form and answers from a queue, made-up tokens, and reading the request blocks back out of a
 // golden text. No request ever leaves the process. The address, key and tokens are made up.
 #pragma once
 
 #include "test_framework.hpp"
 #include "okay/Backend/Transport.hpp"   // RecordingTransport, FromHttp
+#include "okay/Platform/Account/AccountDetail.hpp"   // detail::RandomHex
 #include "okay/Core/Base64.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // okay::http::Result
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -60,6 +63,22 @@ inline okay::http::Result Http(long status, const std::string& body) {
     okay::http::Result r; r.reached = true; r.status = status; r.body = body; return r;
 }
 inline okay::http::Result NoAnswer(const std::string& why) { okay::http::Result r; r.error = why; return r; }
+
+/// Points an account service's test transport (AccountService::SetTransportForTest) at the fake server `f`, which must
+/// outlive it. (A template so this header needs no account service.)
+template <class Account>
+void HookTo(Account& account, Fake& f) {
+    account.SetTransportForTest([&f](const std::string& m, const std::string& u, const std::vector<std::string>& h, const std::string& b) {
+        return f.Answer(m, u, h, b);
+    });
+}
+/// A new account service on `dir` with the made-up address and key, sending every request to `f`.
+template <class Account>
+std::unique_ptr<Account> MakeAccount(const std::filesystem::path& dir, Fake& f) {
+    auto a = std::make_unique<Account>(dir, kUrl, kKey);
+    HookTo(*a, f);
+    return a;
+}
 
 /// A signed-in session file, as the launcher writes it.
 inline void SaveSession(const std::filesystem::path& dir, const std::string& user, const std::string& token, const std::string& refresh) {
@@ -167,6 +186,25 @@ void RunProviderFlows(const std::vector<std::pair<const char*, std::function<voi
         if (also) also(flow.first, want, p);
     }
     CHECK(same == flows.size());
+}
+
+/// A whole golden test after RUN_SUITE: part 1 (RunScenarios) in a fresh folder under the temp folder; then, unless it is
+/// printing the texts, `between` (the test's own checks on part 1) and part 2 (RunProviderFlows; every flow must have sent
+/// something); the folder is removed. True when it printed (the caller returns 0 then).
+template <class Run, std::size_t N>
+bool RunGolden(const char* testFile, const char* folder, const std::vector<Scenario>& all,
+               const std::vector<std::pair<const char*, std::function<void(Run&)>>>& flows, const char* const (&golden)[N][2],
+               const std::function<void()>& between = {}) {
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / (std::string(folder) + "_" + okay::account::detail::RandomHex(8));
+    const bool print = std::getenv("OKAY_GOLDEN_PRINT") != nullptr;
+    RunScenarios(testFile, all, golden, root, print);
+    if (!print) {
+        if (between) between();
+        RunProviderFlows<Run>(flows, golden, [](const char*, const char*, Run& p) { CHECK(!p.rec.sent.empty()); });
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    return print;
 }
 
 } // namespace golden

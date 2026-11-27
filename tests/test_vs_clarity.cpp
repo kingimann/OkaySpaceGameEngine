@@ -2,7 +2,7 @@
 // "connects to / comes from" text on pin tooltips, which is generated from the
 // same PinCompatible rule the editor uses to refuse a wire.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 
 #include <cstring>
 #include <set>

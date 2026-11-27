@@ -1,11 +1,11 @@
-// The Visual Script panel's per-frame work (editor/VisualScriptEditor.hpp). The owner's okay_editor_perf.log (2026-11-25) shows
+// The Visual Script panel's per-frame work (the editor's Visual Script window, now the Visual Script app over editor/VisualScriptModel.hpp). The owner's okay_editor_perf.log (2026-11-25) shows
 // UI.VisualScript at 263-352 ms in single frames, again and again. The graph checker (a full parse of the graph text, a look on disk
 // for every prefab a node names, then the whole OkayScript export) ran whenever the graph's text changed, and dragging a node changes
 // its position line in every frame of the drag. Here a 600-node graph is dragged for 120 frames: the checker must run once (for the
 // first frame), not 120 times; editing a value still re-checks. A Play Clip / Load Scene / Play Music node's dropdown walked the whole
 // Assets folder every frame; now one walk per 2 s. Work counts are the bounds; the times are printed for the report.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include <Okay.hpp>
 
 #include <chrono>

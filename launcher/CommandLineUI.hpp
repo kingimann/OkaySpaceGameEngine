@@ -40,6 +40,9 @@ void Tick();
 /// One row above the page: a button for each program of its own that is installed (host.programs; none: nothing is drawn).
 /// The program starts in the page's project folder.
 void DrawProgramsRow(const Host& host);
+/// Starts one of host.programs (found by FindPrograms) in a window of its own, without a shell, in the picked project's
+/// folder, and toasts the result. The Command line page's row and the launcher's side menu both use it.
+bool OpenProgram(const Host& host, const FoundProgram& p);
 /// The page body, under the launcher's section header.
 void DrawPage(const Host& host);
 /// Ends every tab's shell and running command. Call before the launcher closes.

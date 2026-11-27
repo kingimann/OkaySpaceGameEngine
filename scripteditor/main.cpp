@@ -13,6 +13,7 @@
 #include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"
 #include "ScriptIdeApp.hpp"
+#include "OkayUIAppKit.hpp"   // ParseProgramArgs: the programs' command line
 #include "FileDialog.hpp"   // File > Open Folder > Browse...: the system's folder dialog
 #include "okay/Platform/Painter.hpp"
 #include "okay/Platform/Platform.hpp"
@@ -27,20 +28,12 @@
 int main(int argc, char** argv) {
     std::vector<std::string> paths;
     int frames = 0;
-    for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a == "--help" || a == "-h") {
-            std::printf("Usage: %s [FOLDER | FILE ...] [--frames N]\n"
-                        "  FOLDER     open this folder as the project (its scripts in the tree)\n"
-                        "  FILE       open this file in a tab\n"
-                        "  --frames N end after N frames (a start-and-quit check)\n", argv[0]);
-            return 0;
-        }
-        if (a == "--frames" && i + 1 < argc) {
-            const long n = std::strtol(argv[++i], nullptr, 10);
-            frames = n < 1 ? 1 : (n > 1000000 ? 1000000 : (int)n);
-        } else if (!a.empty() && a[0] != '-') paths.push_back(a);
-    }
+    if (!okayuiapp::ParseProgramArgs(argc, argv,
+                                     "Usage: %s [FOLDER | FILE ...] [--frames N]\n"
+                                     "  FOLDER     open this folder as the project (its scripts in the tree)\n"
+                                     "  FILE       open this file in a tab\n"
+                                     "  --frames N end after N frames (a start-and-quit check)\n", paths, frames))
+        return 0;
 
     std::unique_ptr<scriptide::ScriptIdeApp> app;
     okayuihost::platform::ProgramDesc desc;

@@ -1,7 +1,7 @@
 // Plain words: every node in the add-node palette has a short unique name, a one-line description and an example,
 // and none of them uses a programming word a beginner would not know.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "VisualScriptGlossary.hpp"
 #include "VisualScriptPanelWords.hpp"
 #include "okay/VisualScript/VsApi.hpp"

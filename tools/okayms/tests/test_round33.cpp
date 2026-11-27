@@ -324,7 +324,9 @@ int entry(void) {
 // shared_ptr<ArrayObj>> named ArrayObj two ways), `new Outer::Inner()` ([expr.new]), an unnamed reference parameter in a
 // function returning a class (`std::string Text(js::Runtime&, js::HostObj* h)`, [dcl.ambig.res] 1: it was read as an
 // object with constructor arguments), and a member of a class template instance compiled later with its own parameter
-// pack ([temp.variadic] 5: std::function<Value(Runtime&, const std::string&)> expanded three arguments).
+// pack ([temp.variadic] 5: std::function<Value(Runtime&, const std::string&)> expanded three arguments); and
+// `class Camera* cam` in a member declaration declares Camera in the namespace, not in the class ([dcl.type.elab] 2.2:
+// Character.hpp's FinishTwoHands made a nested class that hid okay::Camera in Character's members).
 static void r33_decls(Tally& tally) {
     std::printf("r33_decls\n");
     okayms_test::run_both(kRun, tally, "decls", std::string(kAlloc) + R"OKMS(
@@ -362,7 +364,17 @@ struct Hooks {
   struct Mods { std::function<void(Hooks& rt, const std::string& key, int* meta)> initMeta; } modules;
 };
 int run_hook(Hooks& h) { std::string s = "abc"; Value r = h.importHook(h, s); return r.t; }
+namespace okay {
+struct Character { int Finish(class Camera* cam, int d); int Near(Camera* cam); };
+class Camera;
+class Camera { public: float nearClip = 0.5f; int id = 4; };
+int Character::Finish(Camera* cam, int d) { return cam->id + d; }
+int Character::Near(Camera* cam) { Camera* c = cam; return (int)(c->nearClip * 10.0f); }
+}
 int entry(void) {
+  okay::Camera camera;
+  okay::Character ch;
+  CK(5, ch.Finish(&camera, 1) == 5 && ch.Near(&camera) == 5);
   okay::VM vm;
   okay::js::Runtime r;
   CK(1, okay::js::f(r) == 4 && okay::g(*vm.p) == 2 && okay::js::f(vm.p->rt) == 4);

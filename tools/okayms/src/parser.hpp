@@ -2298,20 +2298,27 @@ struct Parser {
                 return false;
             }
             int id = find_struct(name);
-            if (id >= 0 && is(TSemi) && !open_structs.empty() && structs[static_cast<size_t>(id)].parent != open_structs.back())
+            if (is(TSemi) && (!open_structs.empty() || cur_locals == nullptr)) {
+                // `struct Impl;` declares a class of the scope it is written in ([dcl.type.elab] 2): that scope's own class
+                // of the name if it has one, else a new one, even when another class or namespace has one (Round 33:
+                // Runtime's Impl was taken for JavaScriptVM's, and okay::script's ArrayObj for js's).
+                const int scope_parent = open_structs.empty() ? -1 : open_structs.back();
                 id = -1;
-            // `struct ArrayObj;` in okay::script beside js's ArrayObj: a class of this namespace (Round 33).
-            if (id >= 0 && is(TSemi) && open_structs.empty() && cur_locals == nullptr &&
-                (structs[static_cast<size_t>(id)].parent >= 0 || structs[static_cast<size_t>(id)].ns != current_ns))
-                id = -1;  // `struct Impl;` in a class declares that class's own Impl ([dcl.type.elab] 2), even when another
-                          // class has one (Round 33: Runtime's Impl was taken for JavaScriptVM's)
+                for (size_t k = 0; k < structs.size(); ++k)
+                    if (structs[k].name == name && structs[k].parent == scope_parent &&
+                        (scope_parent >= 0 || structs[k].ns == current_ns))
+                        id = static_cast<int>(k);
+            }
             if (id < 0) {
                 // class X; or struct X *p; before X is defined: an incomplete class, completed by its definition later.
                 StructDef fwd;
                 fwd.name = name;
                 fwd.incomplete = true;
                 fwd.ns = current_ns;
-                if (!open_structs.empty()) {
+                // `class Camera* cam` in a member declaration (not `class X;`) declares X in the namespace around the
+                // class ([dcl.type.elab] 2.2, [basic.scope.pdecl] 7; Round 33: Character.hpp's FinishTwoHands made a
+                // nested Character::Camera that was never defined, and `Camera* cam` in Character's members found it).
+                if (!open_structs.empty() && is(TSemi)) {
                     // class X; inside a class: decorated Inner@Outer already, as its definition will be (Round 33: two
                     // declared nested classes of one name, Runtime::Impl and JavaScriptVM::Impl, were both "Impl", so
                     // unique_ptr<Impl> of one was the instance of the other).

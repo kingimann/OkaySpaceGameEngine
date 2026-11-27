@@ -31,9 +31,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
-option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
+option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor" OFF)
 option(OKAY_ENABLE_TEST_HOOKS "Compile scripted input and screenshots (OKAY_TEST_SCRIPT, shared/TestHooks.hpp) into the launcher and editor for headless test runs. Never for a release." OFF)
-option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
+option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_REQUIRE_SODIUM "RELEASE builds: configuring FAILS unless libsodium is found and OKAY_OWN_CRYPTO is OFF (never silently fall back to our own unreviewed crypto; CLAUDE.md rule 18)" OFF)
 if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
@@ -41,7 +41,7 @@ if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
 endif()
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 # The launcher and the editor are drawn by OkayUI only (our own UI toolkit; Dear ImGui left the repository on 2026-11-27).
-option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
+option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS)" ON)
 # Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out") and the ONLY
 # model readers since 2026-11-24: Assimp was removed (branch claude/no-assimp-1; ufbx on 2026-11-23). A file our reader refuses
 # fails the import with the reader's reason. OKAY_OWN_<FMT>=0 switches one format off (it is then not read). NDO stays OFF:
@@ -269,9 +269,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
 okay_modules_read()
 add_subdirectory(engine)
 
-# ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
-# Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
-# so both can link okay::ui. Only needed by SDL-based hosts and its own test.
+# ---- OkayUI (our own immediate-mode UI toolkit) -----------------------
+# Added before the editor and tests so both can link okay::ui.
 # Skip OkayUI on Emscripten/WebGL: the web player links only okay::engine, and the
 # toolkit includes a Direct3D 11 backend that can't compile to WASM.
 if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_LAUNCHER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
@@ -387,30 +386,6 @@ if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
         target_include_directories(okay_cli_panel PUBLIC ${CMAKE_SOURCE_DIR}/shared)
         target_link_libraries(okay_cli_panel PUBLIC okay_cli_lib okay_ui)
         target_compile_features(okay_cli_panel PUBLIC cxx_std_17)
-    endif()
-endif()
-
-# ---- Ship SDL2.dll beside the binaries ----
-# Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
-# need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable
-# in place and "Build Game" / packaging can grab it from there.
-if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
-    # SDL2_DIR is .../<triple>/lib/cmake/SDL2; the DLL lives at .../<triple>/bin/SDL2.dll.
-    set(_okay_sdl_dll "")
-    foreach(_up "/../../../bin/SDL2.dll" "/../../bin/SDL2.dll")
-        get_filename_component(_cand "${SDL2_DIR}${_up}" ABSOLUTE)
-        if(EXISTS "${_cand}")
-            set(_okay_sdl_dll "${_cand}")
-            break()
-        endif()
-    endforeach()
-    if(_okay_sdl_dll)
-        add_custom_target(okay_copy_sdl2 ALL
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_okay_sdl_dll}" "${CMAKE_BINARY_DIR}/bin/"
-            COMMENT "Copying SDL2.dll next to the OkaySpace binaries")
-    else()
-        message(WARNING "SDL2.dll not found at ${_okay_sdl_dll}; ship it manually or use -DOKAY_STATIC_SDL=ON.")
     endif()
 endif()
 

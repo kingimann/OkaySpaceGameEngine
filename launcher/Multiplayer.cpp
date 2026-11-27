@@ -59,7 +59,7 @@ std::string MpGameTitle() { return g_myGame.running ? g_myGame.title : std::stri
 // Only built (exported) games count in multiplayer — the same rule as the Play page.
 struct MpLibGame { std::string title, scene; };
 static std::vector<MpLibGame> MpLibrary(bool refresh = false) {
-    static std::vector<MpLibGame> cache; static Uint32 at = 0;
+    static std::vector<MpLibGame> cache; static std::uint32_t at = 0;
     if (refresh || cache.empty() || okay::platform::TicksMs32() - at > 15000) {
         cache.clear(); at = okay::platform::TicksMs32();
         std::set<std::string> seen;
@@ -264,9 +264,9 @@ static int MpPublishWorker(void* p) {
     return 0;
 }
 void PumpMultiplayer() {
-    static Uint32 next = 0, lastPub = 0;
+    static std::uint32_t next = 0, lastPub = 0;
     static std::string pubText = "\x01", pubJoin;   // last published (impossible start value)
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (now < next) return;
     next = now + 1000;
     if (!g_presMutex) g_presMutex = okay::thr::CreateMutex();
@@ -405,7 +405,7 @@ static void MpRefresh(int tab) {
 }
 // Kick a background Friends refresh (the invite window / Friends tab need the list).
 static void MpFetchFriends() {
-    static Uint32 last = 0;   // an empty list stays empty: don't refetch every frame
+    static std::uint32_t last = 0;   // an empty list stays empty: don't refetch every frame
     if (g_frFetching || !g_presenceAccount || !g_presenceAccount->IsLoggedIn()) return;
     if (last && okay::platform::TicksMs32() - last < 30000) return;
     last = okay::platform::TicksMs32();
@@ -433,9 +433,9 @@ static std::vector<std::pair<std::string, std::string>> g_partyPendingInvites;  
 static bool PartyDemo() { return std::getenv("OKAY_MP_DEMO") != nullptr; }
 
 static int PartyPollWorker(void*) {
-    Uint32 next = 0;
+    std::uint32_t next = 0;
     while (g_partyPollRun) {
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         if (now >= next || g_partyForce) {
             g_partyForce = false;
             bool inParty = false;
@@ -570,7 +570,7 @@ void PumpParty() {
     }
     if (!g_party.Valid()) return;
 
-    static Uint32 lastSync = 0;
+    static std::uint32_t lastSync = 0;
     if (PartyIsLeader()) {   // members follow whatever session I'm in
         const std::string game = MpCanInvite() ? g_myGame.title : std::string();
         const std::string link = MpCanInvite() ? g_myGame.invite : std::string();
@@ -620,7 +620,7 @@ static std::vector<okay::Friend> MpFriends() {
 // "Maya invited you to play Star Arena  [Join] [Later]" — bottom-right pop-ups for
 // invites that arrive while the chat is closed (Steam's invite toast).
 static void DrawInvitePopups() {
-    struct Pop { PendingInvite inv; Uint32 shownAt = 0; };
+    struct Pop { PendingInvite inv; std::uint32_t shownAt = 0; };
     static std::vector<Pop> pops;
     std::vector<PendingInvite> fresh;
     if (g_pollMutex) { okay::thr::LockMutex(g_pollMutex); fresh.swap(g_pollInvites); okay::thr::UnlockMutex(g_pollMutex); }
@@ -1183,7 +1183,7 @@ static std::string MrDuration(long secs) {
 static void DrawRecentPlayers(bool signedIn, bool reload) {
     struct Row { std::string uid, username, name, avatar, game; long when = 0; int matches = 0; bool fromServer = false; };
     static std::vector<okay::PlayedWith> local;
-    static Uint32 localAt = 0;
+    static std::uint32_t localAt = 0;
     static bool asked = false;
     if (reload || !localAt || okay::platform::TicksMs32() - localAt > 5000) { local = okay::GameIpc::ReadPlayedWith(); localAt = okay::platform::TicksMs32(); }
     if (signedIn && (reload || !asked) && !MpDemo()) { asked = true; MrQueue(0); }

@@ -5,14 +5,13 @@
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "imgui.h"
-#include <SDL.h>
 #include "PainterBridge.hpp"
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
 
-namespace oked { extern SDL_Renderer* g_sdlRenderer; }
+namespace oked { extern okay::pb::Renderer* g_sdlRenderer; }
 
 namespace okay::editor {
 namespace {
@@ -21,8 +20,8 @@ bool g_open = false;
 std::string g_object;
 int g_example = 0;
 FpHandsPreview g_preview;
-SDL_Texture* g_playerTex = nullptr;
-SDL_Texture* g_otherTex = nullptr;
+okay::ui2d::Tex g_playerTex = nullptr;
+okay::ui2d::Tex g_otherTex = nullptr;
 
 void Help(const char* text) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
@@ -605,7 +604,7 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         auto player = g_preview.Render(true, W, H);
         auto other = g_preview.Render(false, W, H);
         if (oked::g_sdlRenderer) {
-            auto up = [&](SDL_Texture*& slot, const std::vector<std::uint32_t>& px) {
+            auto up = [&](okay::ui2d::Tex& slot, const std::vector<std::uint32_t>& px) {
                 if (slot && (texW != W || texH != H)) { okay::pb::DestroyTexture(oked::g_sdlRenderer, slot); slot = nullptr; }
                 if (!slot) {
                     slot = okay::pb::CreateTexture(oked::g_sdlRenderer, W, H, okay::pb::Access::Static, false, false);   // opaque

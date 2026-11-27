@@ -43,9 +43,9 @@ if(_okay_pth_src AND EXISTS "${_okay_pth_src}" AND DEFINED CMAKE_BINARY_DIR)
 endif()
 
 # Link the C/C++ runtime (libgcc, libstdc++, winpthread) statically so no MinGW
-# runtime DLLs are needed, but switch back to -Bdynamic afterwards so SDL2 links
-# against its import library — i.e. ship one SDL2.dll beside the exe.
-# Configure with -DOKAY_STATIC_SDL=ON to fully static-link into a single .exe instead.
+# runtime DLLs are needed, then switch back to -Bdynamic for the Windows system
+# libraries. -DOKAY_STATIC_SDL=ON (the option keeps its old name; SDL2 itself left
+# the build on 2026-11-27) links everything with -static instead.
 if(OKAY_STATIC_SDL)
     set(CMAKE_EXE_LINKER_FLAGS_INIT
         "-static -static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive ${_okay_pthread} -Wl,--no-whole-archive")

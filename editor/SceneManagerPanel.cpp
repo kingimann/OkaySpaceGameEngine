@@ -3,7 +3,7 @@
 // the one a build starts on. The list is <project>/.okay/scene_build.txt and is
 // copied into Build Settings so File > Build Settings ships the same order.
 #include "SceneManagerPanel.hpp"
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers
 #include "EditorCommon.hpp"
 #include "ConsolePanel.hpp"
 #include "SceneRenameOps.hpp"
@@ -368,7 +368,7 @@ void DrawSceneManager(EditorState& ed) {
             else ImGui::Text("#%d", idx);
         } else ImGui::TextDisabled("  -");
         ImGui::SameLine();
-        if (SDL_Texture* th = r.exists ? GetSceneThumb(r.path) : nullptr) {
+        if (okay::ui2d::Tex th = r.exists ? GetSceneThumb(r.path) : nullptr) {
             ImGui::Image((ImTextureID)th, ImVec2(28, 28));
             ImGui::SameLine();
         }

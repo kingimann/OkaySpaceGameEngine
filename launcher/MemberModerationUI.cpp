@@ -16,7 +16,7 @@ namespace okl {
 struct ModJob { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Request req; std::string what; };   // kind 0 action, 1 banned list
 struct ModResult { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Outcome out; std::vector<mm::BanEntry> bans; };
 struct ModBanList {
-    long cid = 0; bool loaded = false, inflight = false; Uint32 nextAt = 0;
+    long cid = 0; bool loaded = false, inflight = false; std::uint32_t nextAt = 0;
     std::vector<mm::BanEntry> list; std::string problem;   // problem: why the list could not load ("" = fine)
 };
 static okay::thr::Mutex* g_modMu = nullptr;

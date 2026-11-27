@@ -255,7 +255,7 @@ void ChatBubbleTextPop(bool mine);
 bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine);   // a chat reaction pill (main.cpp)                // the chat window's background
 // Games, friends and presence (main.cpp): what the multiplayer code shares with the rest.
 struct PlayProc {
-    std::string key, title; Uint32 lastCredit = 0;
+    std::string key, title; std::uint32_t lastCredit = 0;
 #if defined(_WIN32)
     HANDLE h = nullptr;
 #else

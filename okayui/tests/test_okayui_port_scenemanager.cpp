@@ -25,7 +25,7 @@ void OpenScriptFileInEditorAt(const std::string&, int) {}
 static std::vector<SceneBuildEntry> g_build;
 std::vector<SceneBuildEntry> SceneBuildSnapshot() { return g_build; }
 void SceneBuildApply(okay::editor::EditorState&, const std::vector<SceneBuildEntry>& e) { g_build = e; }
-SDL_Texture* GetSceneThumb(const std::string&) { return nullptr; }
+okay::ui2d::Tex GetSceneThumb(const std::string&) { return nullptr; }
 void AddRecent(const std::string&) {}
 void RunAfterSavePrompt(okay::editor::EditorState&, const std::string&, std::function<void()> action, std::function<void()>) { if (action) action(); }
 void ShowErrorPopup(const std::string&, const std::string&) {}

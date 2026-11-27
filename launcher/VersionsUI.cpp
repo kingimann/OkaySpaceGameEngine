@@ -91,13 +91,13 @@ struct State {
     bool haveIndex = false;
     bool listsWithTests = false;                        // the lists were read with "Get test builds" on (read again when the switch moves, here or in Settings)
     std::string running;                                // the editor a plain Open starts (Host::currentVersion, taken by Tick)
-    Uint32 indexAt = 0;
+    std::uint32_t indexAt = 0;
     std::string requested;                              // --versions <version> (normalized)
     std::string highlight;                              // the row to point at
     bool pageRequested = false, scrollToHighlight = false;
     std::vector<Installed> installed;
     std::vector<std::string> installedVersions;
-    Uint32 installedAt = 0;
+    std::uint32_t installedAt = 0;
     bool installedDirty = true;
     std::uint64_t usage = 0;
     std::unique_ptr<InstallJob> job;

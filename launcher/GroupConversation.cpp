@@ -39,7 +39,7 @@ void DrawGroupConversation(
     const int memberCount = gp ? gp->members : 0;
     const std::string gkey = "g:" + std::to_string(gid);
     const ImVec4 myBubble = ChatThemeFor(gkey);   // this group's theme colour for my bubbles
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     const bool demo = ChatDemo();
 
     // Members of this group (names, avatars, read position) from the poller.
@@ -61,7 +61,7 @@ void DrawGroupConversation(
     static bool showSearch = false; static char search[96] = "";
     static long unreadBaseline = 0;                 // newest id I'd seen before opening (-> "New messages")
     static bool openStarred = false, openMedia = false, openMembers = false;
-    static long gScrollTo = 0, gFlashId = 0; static Uint32 gFlashUntil = 0, gScrollSince = 0; static int gHits = 0;
+    static long gScrollTo = 0, gFlashId = 0; static std::uint32_t gFlashUntil = 0, gScrollSince = 0; static int gHits = 0;
     static bool wantBottom = false, gRefocus = false;
     if (sGid != gid) {
         sGid = gid; showSearch = false; search[0] = '\0';

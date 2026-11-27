@@ -55,7 +55,7 @@ option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its 
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
 # Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
 # that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the extra
-# OkayUI editor program (OKAY_EDITOR_ON_OKAYUI: not built by CI yet; docs/status/own_code_roadmap.md). The launcher is OkayUI only (2026-11-27).
+# OkayUI editor program (OKAY_EDITOR_ON_OKAYUI: built and self-tested by the full CI run; docs/ui/own_ui_toolkit.md section 32). The launcher is OkayUI only (2026-11-27).
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (switched off, .dae is not read; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (switched off, .3ds is not read; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)

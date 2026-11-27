@@ -64,7 +64,8 @@ SDL_Renderer* g_atlasR = nullptr;
 // carry the font's address as a placeholder; EndFrame binds the font's atlas.
 okay::TtfFont* g_fbFonts[8];
 int            g_nfb = 0;
-OverlaySpan g_ovSpans[32];
+OverlaySpan g_ovSpans[kMaxOvSpans];
+int g_clipBase = 0;
 int         g_novSpans = 0;
 SDL_Texture* fallbackTex(okay::TtfFont* f) {
     for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (SDL_Texture*)(void*)f;
@@ -350,6 +351,9 @@ inline void popIdSeed() {
 
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
 int hashLabel(const char* s) {
+    // Dear ImGui's documented "###" rule: "Text###id" is identified by the "###id" part alone, so the text may change (a count in a title)
+    // and the window or item stays the same one.
+    if (s) { const char* k = std::strstr(s, "###"); if (k) s = k; }
     unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
@@ -441,7 +445,9 @@ float availW() {
 // the labelled widgets that take it that way add their label's room to it (see BeginCombo).
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
+bool g_prevInOverlay = false;
 void place(float w, float h, float& x, float& y) {
+    g_prevInOverlay = false;
     bool sameLine = false;
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
     if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
@@ -678,8 +684,28 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
 // to its atlas (a span of its own; in the overlay, an overlay span).
 void bindTexture(SDL_Texture* t) {
     if (!g_toOverlay) { setTexture(t); return; }
-    if (g_novSpans > 0 && g_ovSpans[g_novSpans - 1].startIdx == g_oni) g_ovSpans[g_novSpans - 1].tex = t;
-    else if (g_novSpans < 32) g_ovSpans[g_novSpans++] = OverlaySpan{g_oni, t};
+    if (g_novSpans > 0 && g_ovSpans[g_novSpans - 1].startIdx == g_oni) { g_ovSpans[g_novSpans - 1].tex = t; return; }
+    OverlaySpan s = g_novSpans > 0 ? g_ovSpans[g_novSpans - 1] : OverlaySpan{g_oni, t};   // the clip in force goes on
+    s.startIdx = g_oni; s.tex = t;
+    if (g_novSpans < kMaxOvSpans) g_ovSpans[g_novSpans++] = s;
+}
+namespace {
+// The overlay's clip from here on (a clipped child inside a popup body). The texture in force goes on.
+void overlayClipSet(bool on, int x, int y, int w, int h) {
+    OverlaySpan* s = nullptr;
+    if (g_novSpans > 0 && g_ovSpans[g_novSpans - 1].startIdx == g_oni) s = &g_ovSpans[g_novSpans - 1];
+    else if (g_novSpans < kMaxOvSpans) {
+        const auto tex = g_novSpans > 0 ? g_ovSpans[g_novSpans - 1].tex : g_defTex;
+        s = &g_ovSpans[g_novSpans++]; *s = OverlaySpan{g_oni, tex};
+    }
+    if (s) { s->clipOn = on; s->clipX = x; s->clipY = y; s->clipW = w; s->clipH = h; }
+}
+}   // namespace
+void overlayClipOff() { overlayClipSet(false, 0, 0, 0, 0); }
+void overlayClipToStack() {
+    if (g_clipTop <= g_clipBase) { overlayClipOff(); return; }
+    const auto& r = g_clipStack[g_clipTop - 1];
+    overlayClipSet(true, r.x, r.y, r.w, r.h);
 }
 void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (g_cullRow && !g_toOverlay) return;
@@ -1084,7 +1110,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
+    g_inMenuBar = false; menuBarReset(); regionReset(); g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
     g_idSeed = 0; g_idTop = 0; g_idSkipped = 0;   // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -1092,7 +1118,7 @@ void BeginFrame(const Input& in) {
     while (g_textScaleTop > 0) PopTextScale();   // an unbalanced PushTextScale never leaks into the next frame
     g_ncards = 0;                        // reset card stack (BeginCard reserves per frame)
     g_nextItemW = -1.0f; g_itemWTop = 0; g_winItemWDepth = 0;   // reset item-width overrides
-    g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
+    g_nspans = 0; g_clipTop = 0; g_clipBase = 0;           // reset draw spans/stack
     g_curClipOn = false; g_curTex = g_defTex;
     g_childTop = 0;                        // reset child-region stack
     g_col.active = false;                  // reset column layout
@@ -1431,7 +1457,11 @@ void mergeOverlay() {
     // stays valid and a multiple of three.
     if (g_ni + g_oni > kMaxIdx || g_nv + g_onv > kMaxVerts) noteDrop();
     for (int j = 0; j + 3 <= g_oni && g_ni + 3 <= kMaxIdx; j += 3) {
-        while (sp < g_novSpans && g_ovSpans[sp].startIdx <= j) setTexture(g_ovSpans[sp++].tex);
+        while (sp < g_novSpans && g_ovSpans[sp].startIdx <= j) {
+            const OverlaySpan& s = g_ovSpans[sp++];
+            g_curClipOn = s.clipOn; g_curClipRect.x = s.clipX; g_curClipRect.y = s.clipY; g_curClipRect.w = s.clipW; g_curClipRect.h = s.clipH;
+            g_curTex = s.tex; pushSpan();
+        }
         if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) { noteDrop(); continue; }
         g_idx[g_ni++] = base + g_ovIdx[j]; g_idx[g_ni++] = base + g_ovIdx[j + 1]; g_idx[g_ni++] = base + g_ovIdx[j + 2];
     }
@@ -1866,7 +1896,7 @@ void Render() { EndFrameData(); }
 void PushClipRect(float x, float y, float w, float h) {
     SDL_Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
     // Intersect with the enclosing clip so nested regions never draw outside a parent.
-    if (g_clipTop > 0) {
+    if (g_clipTop > g_clipBase) {
         SDL_Rect& p = g_clipStack[g_clipTop - 1];
         int x0 = r.x > p.x ? r.x : p.x, y0 = r.y > p.y ? r.y : p.y;
         int x1 = (r.x + r.w) < (p.x + p.w) ? (r.x + r.w) : (p.x + p.w);
@@ -1874,12 +1904,14 @@ void PushClipRect(float x, float y, float w, float h) {
         r.x = x0; r.y = y0; r.w = x1 > x0 ? x1 - x0 : 0; r.h = y1 > y0 ? y1 - y0 : 0;
     }
     if (g_clipTop < 16) g_clipStack[g_clipTop++] = r;
-    pushClipSpan(true, r);
+    if (g_toOverlay) overlayClipToStack();   // inside a popup body: the overlay batch gets the clip, the main batch keeps its own
+    else pushClipSpan(true, r);
 }
 
 void PopClipRect() {
-    if (g_clipTop > 0) --g_clipTop;
-    if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);
+    if (g_clipTop > g_clipBase) --g_clipTop;
+    if (g_toOverlay) { overlayClipToStack(); return; }
+    if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);   // (back in the main batch: the window's clips below the base count again)
     else               pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });
 }
 
@@ -2762,7 +2794,7 @@ namespace {
 // the current window, else the display; always cut to the display when the host gave one.
 void visibleSpanY(float& top, float& bottom) {
     top = -1e30f; bottom = 1e30f;
-    if (g_clipTop > 0) { const SDL_Rect& r = g_clipStack[g_clipTop - 1]; top = (float)r.y; bottom = (float)(r.y + r.h); }
+    if (g_clipTop > g_clipBase) { const SDL_Rect& r = g_clipStack[g_clipTop - 1]; top = (float)r.y; bottom = (float)(r.y + r.h); }
     else if (g_curWin.valid) { top = g_curWin.y; bottom = g_curWin.y + g_curWin.h; }
     if (g_dispH > 0.0f) { top = std::max(top, 0.0f); bottom = std::min(bottom, g_dispH); }
 }
@@ -3294,9 +3326,23 @@ static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
             if (TextField(fid, ix, y, slidersW, h, buf, 16) && ColorFromHex(buf, rgba)) { for (int i = 0; i < n; ++i) c[i] = rgba[i]; changed = true; }
         } else {
             const float each = (slidersW - (n == 4 ? 12.0f : 8.0f)) / (float)n;
+            // HDR: the colour channels (not alpha) share one range, 0 .. the brightest channel rounded up (at least 1), fixed while a cell is
+            // held so the knob does not run away from the pointer.
+            float top = 1.0f;
+            if (flags & ColorEdit_HDR) {
+                float* held = floatState(id ^ 0x4d52, 1.0f);
+                bool holding = false;
+                for (int ch = 0; ch < 3; ++ch) holding |= g_active == (id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1)));
+                if (!holding) {
+                    float m = 1.0f;
+                    for (int ch = 0; ch < 3; ++ch) if (std::isfinite(c[ch]) && c[ch] > m) m = c[ch];
+                    *held = std::min(std::ceil(m), 1.0e6f);
+                }
+                top = *held;
+            }
             for (int ch = 0; ch < n; ++ch) {
                 const int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
-                if (Slider(cid, ix + (float)ch * (each + 4.0f), y, each, h, &c[ch], 0.0f, 1.0f)) changed = true;
+                if (Slider(cid, ix + (float)ch * (each + 4.0f), y, each, h, &c[ch], 0.0f, ch < 3 ? top : 1.0f)) changed = true;
             }
         }
     }
@@ -3373,6 +3419,7 @@ Rect GetOverlayRect(int index) {
 unsigned GetID(const char* label) { return (unsigned)hashLabel(label ? label : ""); }
 
 bool IsItemHovered() {
+    if (g_prevInOverlay) return g_lay.active && hitOverlay(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);
     return g_lay.active && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);
 }
 
@@ -3550,13 +3597,13 @@ bool IsAnyItemActive()   { return g_active != 0; }                              
 bool IsItemVisible() {                                                                // the last item overlaps the current clip rectangle
     if (!g_lay.active) return false;
     float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
-    if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    if (g_clipTop > g_clipBase) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return g_lay.prevX < x1 && g_lay.prevX + g_lay.prevW > x0 && g_lay.prevY < y1 && g_lay.prevY + g_lay.prevH > y0;
 }
 bool IsRectVisible(Vec2 min, Vec2 max) {
     if (!g_lay.active) return false;
     float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
-    if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    if (g_clipTop > g_clipBase) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return min.x < x1 && max.x > x0 && min.y < y1 && max.y > y0;
 }
 bool IsRectVisible(Vec2 size) { const Vec2 p = GetCursorScreenPos(); return IsRectVisible(p, Vec2{p.x + size.x, p.y + size.y}); }
@@ -3634,11 +3681,11 @@ void ResetState() {
     for (OpenSlot& o : g_opens) o = OpenSlot();
     for (FloatSlot& f : g_floats) f = FloatSlot();
     for (TextSlot& t : g_texts) t = TextSlot();
-    g_dd = DragDrop(); g_tdd = TypedDrag(); g_tddExt = g_tddExtSeen = g_tddExtReleased = false; g_curMenu = CurMenu(); g_inMenuBar = false;
+    g_dd = DragDrop(); g_tdd = TypedDrag(); g_tddExt = g_tddExtSeen = g_tddExtReleased = false; g_curMenu = CurMenu(); g_inMenuBar = false; menuBarReset(); regionReset();
     g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState(); g_cullRow = false;
     for (TblStore& t : g_tstore) t = TblStore();
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
-    g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = 0;
+    g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = g_clipBase = 0;
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_bareNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();

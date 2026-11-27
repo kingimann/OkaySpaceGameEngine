@@ -164,6 +164,7 @@ constexpr auto ImGuiColorEditFlags_AlphaPreview = OkayUI::ColorEdit_AlphaPreview
 constexpr auto ImGuiColorEditFlags_AlphaPreviewHalf = OkayUI::ColorEdit_AlphaPreviewHalf;
 constexpr auto ImGuiColorEditFlags_DisplayHex = OkayUI::ColorEdit_DisplayHex;
 constexpr auto ImGuiColorEditFlags_Float = OkayUI::ColorEdit_Float;
+constexpr auto ImGuiColorEditFlags_HDR = OkayUI::ColorEdit_HDR;
 constexpr auto ImGuiColorEditFlags_NoInputs = OkayUI::ColorEdit_NoInputs;
 constexpr auto ImGuiColorEditFlags_NoLabel = OkayUI::ColorEdit_NoLabel;
 constexpr auto ImGuiColorEditFlags_NoPicker = OkayUI::ColorEdit_NoPicker;

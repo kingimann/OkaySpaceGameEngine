@@ -234,6 +234,23 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.10, bring the Light body's OkayUI rows up to date"
 
 
+### 40.12 The whole editor on OkayUI (`OkayEngineOkayUI`)
+- **System:** OkayUI
+- **What:** the editor's own sources compiled a second time against OkayUI's Dear ImGui layer, so the program has no Dear ImGui in it: the step before OkayUI becomes the editor's only UI. First built, linked and run on 2026-11-27.
+- **Parts:**
+  - 40.12.1 The program - `editor/CMakeLists.txt` (target `okay-editor-okayui`, CMake option `OKAY_EDITOR_ON_OKAYUI`, ctest `editor_okayui`), `shared/OkayUIImGuiBackendShim.cpp`, `okayui/probe/`
+  - 40.12.2 Gaps closed for it - `okayui/src/OkayUI_Windows.cpp` (menu bar row, docking by `ConfigFlags_DockingEnable`, auto-fit axes, regions inside windows, focus of docked tabs), `okayui/src/OkayUI_Menus.cpp` (modals outside windows, menu items as last item, popup queries), `okayui/src/OkayUI.cpp` (`###` ids, clipped children in popups, `ColorEdit_HDR`), `okayui/src/OkayUIDock.cpp` (`DockAdoptTitle`), `editor/ModalGuard.hpp` (its OkayUI part)
+- **Code:** `editor/CMakeLists.txt`, `okayui/src/OkayUI_Windows.cpp`, `okayui/src/OkayUI_Menus.cpp`, `editor/ModalGuard.hpp`
+- **API:** `OkayUI::ClosePopup`, `OkayUI::ListOpenPopups`, `OkayUI::CurrentPopupDepth`, `OkayUI::DockAdoptTitle`, `OkayUI::DockLayout::Rename`, `OkayUI::ColorEdit_HDR`
+- **Editor:** a separate program, `bin/OkayEngineOkayUI`, built only with `-DOKAY_EDITOR_ON_OKAYUI=ON`; the normal editor is unchanged
+- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 6.26 and 32, with the gap table)
+- **Tests:** `editor_okayui`, `okayui_port_modalguard`, `okayui_windows`, `okayui_dockaware`, `okayui_color`
+- **Status:** Partial - builds, self-test passes, runs headless on Linux (gate, docked panels, 3D Scene view, Hierarchy, Inspector, menus, Play, Build Settings, Project Settings); never run on Windows or in a real window
+- **Open:** `ImGui::GetStyle()` writes are lost (theme metrics, tab padding, play tint); taller rows; the Inspector's Color cells; multi-window panels; drag and drop and several windows not tried; Dear ImGui not removed yet
+- **Related:** 40.9, 40.10
+- **Words:** OkayEngineOkayUI, editor on OkayUI, OKAY_EDITOR_ON_OKAYUI, replace Dear ImGui, move off ImGui, no Dear ImGui
+- **Seen as:** the editor on OkayUI shows panels floating instead of docked; a modal does not show; the menu bar is missing; a section draws outside its window
+- **Ask me like:** "work on 40.12, finish the editor on OkayUI"
 ### 40.11 The launcher on OkayUI only (no Dear ImGui)
 - **System:** OkayUI
 - **What:** the launcher (`OkaySpace.exe`) is drawn by OkayUI alone since 2026-11-27: its pages, written in Dear ImGui's names, compile against OkayUI's compatibility layer, and Dear ImGui is no longer built into it. The chat pop-out is OkayUI's second context in its own window; What's New, Tips and the Browser page are OkayUI screens drawn in place.

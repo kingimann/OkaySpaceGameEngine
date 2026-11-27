@@ -23,26 +23,56 @@ int ListOpenPopups(PopupSlotInfo* out, int cap) {
         if (!p.used || !p.open || n >= cap) continue;
         PopupSlotInfo& o = out[n++];
         o.id = (unsigned)p.id; o.pos = Vec2{p.x, p.y}; o.modal = p.modal;
+        std::snprintf(o.name, sizeof o.name, "%s", p.name); o.openedFrame = p.opened; o.drawnFrame = p.drawn;
         o.size = Vec2{p.w > 0.0f ? p.w : 200.0f, *floatState(p.id ^ 0x9090, rowH() * 3.0f) + 12.0f};
     }
     return n;
 }
+bool ClosePopup(const char* name) {
+    if (!name) return false;
+    PopupSlot* p = popupSlot(hashLabel(name), false);
+    if (!p || !p->open) return false;
+    p->open = false;
+    return true;
+}
+bool ClosePopupById(unsigned id) {
+    PopupSlot* p = popupSlot((int)id, false);
+    if (!p || !p->open) return false;
+    p->open = false;
+    return true;
+}
+int CurrentPopupDepth() { return g_popupTop; }
 WindowRef* GetTopMostPopupModal() {
     static WindowRef ref;
     for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) { ref = WindowRef(); ref.ID = (unsigned)p.id; ref.Pos = Vec2{p.x, p.y}; ref.Size = Vec2{p.w, 0.0f}; ref.Active = ref.WasActive = true; ref.RootWindow = &ref; return &ref; }
     return nullptr;
 }
+namespace { bool g_barReserved = false; LayoutState g_barSavedLay; }   // a Window_MenuBar row in use: the layout to give back at EndMenuBar
+void ui_core::menuBarReset() { g_barReserved = false; }
 bool BeginMenuBar() {
     if (!g_lay.active) return false;
     const float h = rowH();
-    float x, y; place(fullW(), h, x, y);
-    if (colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.track));
-    quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);   // a hairline under the bar
+    float x, y, bw = fullW();
+    if (g_we.open && g_we.menuBarH > 0.0f && g_childTop == 0 && g_popupTop == 0 && !g_barReserved) {
+        // the window kept a row for its menu bar: draw it there, wherever the window's cursor is, and lay the bar's items out on it
+        g_barSavedLay = g_lay; g_barReserved = true;
+        x = g_we.x; y = g_we.y + g_we.titleH; bw = g_we.w;
+        g_lay.cx = x; g_lay.cy = y; g_lay.pendingSameLine = false; g_lay.hasLineTop = false;
+        g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = 0.0f; g_lay.prevH = h;
+        g_lay.ox = x; g_lay.bottom = y + h;
+    } else {
+        place(bw, h, x, y);
+    }
+    if (colorIsSet(Col_MenuBarBg)) quad(x, y, bw, h, pick(Col_MenuBarBg, g_theme.track));
+    quad(x, y + h - 1.0f, bw, 1.0f, g_theme.border);   // a hairline under the bar
     g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
     return true;
 }
 
-void EndMenuBar() { g_inMenuBar = false; }
+void EndMenuBar() {
+    g_inMenuBar = false;
+    if (g_barReserved) { g_barReserved = false; g_lay = g_barSavedLay; }
+}
 
 
 namespace {
@@ -206,6 +236,7 @@ bool BeginMenu(const char* label) {
     const float bw = visW(label) + 16.0f;
     const float x = g_barX, y = g_barY;
     g_barX += bw;   // advance the bar cursor for the next menu
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = bw; g_lay.prevH = h; g_lay.pendingSameLine = false;   // SameLine after a menu continues after it
 
     const bool inside = hit(x, y, bw, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -290,6 +321,8 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     const int iid = hashLabel(label) ^ g_curMenu.menuId;
     const bool shown = menuRowShown(y, h);
     const bool ih = shown && enabled && hitOverlay(x, y, w, h);
+    // the row is the last item: IsItemHovered / GetItemRect after MenuItem ask about it (a tooltip on a menu row), as in Dear ImGui
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h; g_lastId = iid; g_prevInOverlay = true;
     if (ih) g_hot = iid;
     const int ord = g_curMenu.n++;
     if (enabled && ord < 64) g_curMenu.mask |= 1ull << ord;
@@ -368,6 +401,8 @@ void EndMenu() {
     if (nested) {   // back to the menu this one was opened from; it needs to know where this list is
         const CurMenu child = g_curMenu;
         g_curMenu = g_menuStack[--g_menuDepth];
+        // the sub-menu's row in the list it was opened from is the last item again (not the last row of its own list)
+        g_lay.prevX = child.bx; g_lay.prevY = child.by; g_lay.prevW = child.bw; g_lay.prevH = child.bh; g_prevInOverlay = true;
         if (hasItems) {   // the bounding box of its list and of any list opened from it (a press in either is "inside" for the outer menus)
             float x0 = child.x, y0 = listY0, x1 = child.x + child.w, y1 = listY1;
             if (child.subW > 0.0f) { x0 = std::min(x0, child.subX); y0 = std::min(y0, child.subY); x1 = std::max(x1, child.subX + child.subW); y1 = std::max(y1, child.subY + child.subH); }
@@ -381,6 +416,8 @@ void EndMenu() {
         return;
     }
     g_curMenu.active = false;
+    // a bar menu ends: its button is the last item again (SameLine in the bar continues after it, not after the list's last row)
+    g_lay.prevX = g_curMenu.bx; g_lay.prevY = g_curMenu.by; g_lay.prevW = g_curMenu.bw; g_lay.prevH = g_curMenu.bh; g_prevInOverlay = !g_inMenuBar && g_popupTop > 0;
 }
 
 static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec2 size, bool* p_sel) {
@@ -434,6 +471,7 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) 
 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
+    if (p && id && !p->open) { std::snprintf(p->name, sizeof p->name, "%s", id); p->opened = g_frameCount; }
     if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
 }
 
@@ -450,6 +488,7 @@ bool ui_core::beginPopupBody(int id) {
     if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
+    p->drawn = g_frameCount;
     // StyleVar_PopupWidth / StyleVar_PopupPadding (when pushed) give the size; with a pushed padding the height is the content's
     // exactly (no item spacing after the last item), as in Dear ImGui.
     const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
@@ -480,6 +519,8 @@ bool ui_core::beginPopupBody(int id) {
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
+    // A popup is a top-level window: the clips of what it was opened over do not cut it; a child region inside it clips in the overlay.
+    c.clipBase = g_clipBase; g_clipBase = g_clipTop; overlayClipOff();
     c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f;
     c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
@@ -500,7 +541,11 @@ void EndPopup() {
     *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
     if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
     *c.wSlot = g_lay.maxRight > c.x ? (g_lay.maxRight - c.x) + c.padX : 0.0f;   // and the width it needs, plus padding
+    while (g_clipTop > g_clipBase) PopClipRect();   // a child left open inside the popup
+    g_clipBase = c.clipBase;
     g_toOverlay = g_popupTop > 0;   // back in the popup this one was opened from: still on top
+    if (g_toOverlay) overlayClipToStack();
+    else overlayClipOff();
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
     // Escape closes the innermost popup, as in Dear ImGui: not while a text field in it has the keyboard (Escape gives the field up),
@@ -531,6 +576,7 @@ bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
     PopupSlot* p = popupSlot((int)id, true);
+    if (p && !p->open) p->opened = g_frameCount;
     if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
 }
 bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
@@ -544,11 +590,12 @@ bool IsPopupOpen(const char* name) {
 static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
 bool BeginPopupModal(const char* name, bool* open, int flags) { g_modalNoTitle = (flags & Window_NoTitleBar) != 0; const bool r = BeginPopupModal(name, open); g_modalNoTitle = false; return r; }
 bool BeginPopupModal(const char* name, bool* open) {
-    if (!g_lay.active || !name) return false;
+    if (!name) return false;   // (outside any window too: a modal is a top-level window in Dear ImGui, begun wherever the code is)
     const int id = hashLabel(name);
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) { if (open) *open = false; return false; }
     p->modal = true;
+    if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
         if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
         g_nextWinSize.set = false;

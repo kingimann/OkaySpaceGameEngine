@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and check the embedded font data (shared/RobotoFontOwn.h, shared/JetBrainsMonoFontOwn.h).
+"""Generate and check the embedded font data (shared/RobotoFont.h, shared/JetBrainsMonoFont.h).
 
 The fonts are stored in our own small container, "OKF1" (documented in shared/OkfDecode.hpp):
     16-byte header  magic "OKF1", method (0 stored, 1 LZ), 3 zero bytes, raw size u32 LE, CRC-32 of the raw bytes u32 LE
@@ -8,15 +8,12 @@ then base64 (RFC 4648, with padding), cut into lines of 100 characters that beco
 (a single literal could exceed a compiler's string length limit).
 
 Modes
-  --from-legacy   One-time migration: read the old Dear ImGui base85 arrays (shared/RobotoFont.h and
-                  shared/JetBrainsMonoFont.h), decode them with the reader below, print size and SHA-256 of
-                  each font, and write the OKF1 headers. (The legacy headers stay while Dear ImGui is in the tree:
-                  the editor and launcher still load them through ImGui's own loader.)
-  --from-ttf NAME FILE   Encode a TrueType file as shared/<NAME>FontOwn.h (NAME = Roboto or JetBrainsMono).
+  --from-ttf NAME FILE   Encode a TrueType file as shared/<NAME>Font.h (NAME = Roboto or JetBrainsMono).
+(The old Dear ImGui base85 arrays these were first converted from, and the one-time --from-legacy mode, are gone:
+every program now reads the OKF1 data, shared/EmbeddedFonts.hpp.)
   --check         Decode the generated headers with an independent Python decoder, compare size, CRC-32 and
                   SHA-256 with the pins in assets/fonts/embedded_fonts.sha256, and check that re-encoding gives the
-                  same file (so the generator is deterministic). Exit status 1 on any mismatch. Also compares with the
-                  legacy arrays when they are still present.
+                  same file (so the generator is deterministic). Exit status 1 on any mismatch.
 Run from the repository root:  python3 scripts/gen_embedded_fonts.py --check
 """
 import base64
@@ -29,80 +26,12 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONTS = {
-    # name: (legacy header, legacy symbol, new header, C++ symbol)
-    "Roboto": ("shared/RobotoFont.h", "RobotoMedium_compressed_data_base85", "shared/RobotoFontOwn.h", "kRobotoMediumOkf"),
-    "JetBrainsMono": ("shared/JetBrainsMonoFont.h", "JetBrainsMono_compressed_data_base85", "shared/JetBrainsMonoFontOwn.h", "kJetBrainsMonoOkf"),
+    # name: (header, C++ symbol)
+    "Roboto": ("shared/RobotoFont.h", "kRobotoMediumOkf"),
+    "JetBrainsMono": ("shared/JetBrainsMonoFont.h", "kJetBrainsMonoOkf"),
 }
 PINS = os.path.join(ROOT, "assets/fonts/embedded_fonts.sha256")
 LINE = 100
-
-
-# ---- reader for the legacy Dear ImGui format (base85 text -> compressed stream -> TTF); written from the format ----
-def legacy_read(path, symbol):
-    text = open(os.path.join(ROOT, path), encoding="utf-8").read()
-    m = re.search(re.escape(symbol) + r"\[\d+\+1\]\s*=\s*((?:\s*\"(?:[^\"\\]|\\.)*\")+)\s*;", text)
-    if not m:
-        raise SystemExit("cannot find %s in %s" % (symbol, path))
-    parts = re.findall(r"\"((?:[^\"\\]|\\.)*)\"", m.group(1))
-    s = "".join(parts)
-    s = re.sub(r"\\(.)", lambda mm: {"n": "\n", "t": "\t"}.get(mm.group(1), mm.group(1)), s)   # \\ and \" only occur
-    raw = s.encode("latin-1")
-
-    def d85(c):
-        return c - 36 if c >= ord("\\") else c - 35
-    comp = bytearray()
-    for i in range(0, len(raw) - len(raw) % 5, 5):
-        v = d85(raw[i]) + 85 * (d85(raw[i + 1]) + 85 * (d85(raw[i + 2]) + 85 * (d85(raw[i + 3]) + 85 * d85(raw[i + 4]))))
-        comp += struct.pack("<I", v & 0xFFFFFFFF)
-    return legacy_decompress(bytes(comp))
-
-
-def legacy_decompress(i):
-    be16 = lambda p: (i[p] << 8) | i[p + 1]
-    be24 = lambda p: (i[p] << 16) | be16(p + 1)
-    be32 = lambda p: (i[p] << 24) | be24(p + 1)
-    if be32(0) != 0x57BC0000 or be32(4) != 0:
-        raise SystemExit("not a Dear ImGui compressed stream")
-    olen = be32(8)
-    p = 16
-    out = bytearray()
-
-    def lit(pos, n):
-        out.extend(i[pos:pos + n])
-
-    def match(dist, n):
-        if dist > len(out):
-            raise SystemExit("bad match distance")
-        for _ in range(n):
-            out.append(out[-dist])
-    while True:
-        c = i[p]
-        if c >= 0x20:
-            if c >= 0x80:
-                match(i[p + 1] + 1, c - 0x80 + 1); p += 2
-            elif c >= 0x40:
-                match(be16(p) - 0x4000 + 1, i[p + 2] + 1); p += 3
-            else:
-                n = c - 0x20 + 1; lit(p + 1, n); p += 1 + n
-        else:
-            if c >= 0x18:
-                match(be24(p) - 0x180000 + 1, i[p + 3] + 1); p += 4
-            elif c >= 0x10:
-                match(be24(p) - 0x100000 + 1, be16(p + 3) + 1); p += 5
-            elif c >= 0x08:
-                n = be16(p) - 0x0800 + 1; lit(p + 2, n); p += 2 + n
-            elif c == 0x07:
-                n = be16(p + 1) + 1; lit(p + 3, n); p += 3 + n
-            elif c == 0x06:
-                match(be24(p + 1) + 1, i[p + 4] + 1); p += 5
-            elif c == 0x04:
-                match(be24(p + 1) + 1, be16(p + 4) + 1); p += 6
-            else:
-                if c == 0x05 and i[p + 1] == 0xFA and len(out) == olen:
-                    return bytes(out)
-                raise SystemExit("bad token / end marker")
-        if len(out) > olen:
-            raise SystemExit("output overrun")
 
 
 # ---- OKF1 -------------------------------------------------------------------------------------------------------
@@ -248,7 +177,7 @@ def read_new(path, symbol):
 
 
 def write_font(name, raw):
-    _, _, path, symbol = FONTS[name]
+    path, symbol = FONTS[name]
     sha = hashlib.sha256(raw).hexdigest()
     packed = pack(raw)
     open(os.path.join(ROOT, path), "w", encoding="utf-8", newline="\n").write(header_text(name, symbol, raw, packed, sha))
@@ -268,20 +197,6 @@ def read_pins():
 
 
 def main(argv):
-    if len(argv) >= 2 and argv[1] == "--from-legacy":
-        pins = []
-        for name, (lpath, lsym, _, _) in FONTS.items():
-            raw = legacy_read(lpath, lsym)
-            if raw[:4] not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
-                raise SystemExit("%s does not decode to a TrueType file" % name)
-            sha = write_font(name, raw)
-            pins.append("%s %d %s" % (sha, len(raw), name))
-        open(PINS, "w", encoding="utf-8", newline="\n").write(
-            "# SHA-256 and size of each embedded font's decoded TrueType bytes (what rendering sees). Written by\n"
-            "# scripts/gen_embedded_fonts.py --from-legacy from the original Dear ImGui arrays; checked by --check and by\n"
-            "# tests/test_embedded_font.cpp. If a font is ever replaced on purpose, change this file in the same commit.\n"
-            + "\n".join(pins) + "\n")
-        return 0
     if len(argv) == 4 and argv[1] == "--from-ttf":
         if argv[2] not in FONTS:
             raise SystemExit("name must be one of %s" % ", ".join(FONTS))
@@ -290,17 +205,13 @@ def main(argv):
     if len(argv) == 2 and argv[1] == "--check":
         pins = read_pins()
         bad = 0
-        for name, (lpath, lsym, path, symbol) in FONTS.items():
+        for name, (path, symbol) in FONTS.items():
             packed = read_new(path, symbol)
             raw = unpack(packed)
             sha = hashlib.sha256(raw).hexdigest()
             ok = name in pins and pins[name] == (sha, len(raw))
             again = pack(raw) == packed
             line = "%-14s %7d bytes sha256 %s pins:%s regenerates-identically:%s" % (name, len(raw), sha[:16] + "...", "ok" if ok else "MISMATCH", "yes" if again else "NO")
-            if os.path.exists(os.path.join(ROOT, lpath)):
-                same = legacy_read(lpath, lsym) == raw
-                line += " equals-legacy-array:%s" % ("yes" if same else "NO")
-                ok = ok and same
             print(line)
             if not ok or not again:
                 bad = 1

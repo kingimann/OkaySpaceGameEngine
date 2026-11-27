@@ -1,7 +1,7 @@
 #pragma once
 // Script assist (ScriptAssist.cpp): the Scripting Reference window and the Script Editor's completion, signatures,
 // hover docs, C# members, help card, snippet painter, palette and language definition. Called by the Script Editor
-// (DrawScriptEditor, main.cpp) and the Help menu. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 3).
+// (the Script Editor window's hooks, editor/ScriptEditorAppHost.cpp) and the Help menu. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 3).
 #include "imgui.h"
 #include "ScriptEditorCodeEdit.hpp" // scripteditor::ScriptPalette, scripteditor::LanguageWords (our code widget's types)
 #include <string>

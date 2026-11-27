@@ -244,15 +244,22 @@ int main() {
         CHECK(PlainNetReason("winhttp error 12030").find("cut off") != std::string::npos);
         CHECK(PlainNetReason("winhttp error 12175").find("secure connection failed") != std::string::npos);
         CHECK(PlainNetReason("timeout: winhttp error 12002").find("too long") != std::string::npos);
-        CHECK(PlainNetReason("curl exit code 6").find("could not be looked up") != std::string::npos);
-        CHECK(PlainNetReason("curl exit code 60").find("secure connection failed") != std::string::npos);
+        // our own client (okay::ownhttp, Linux): "ErrName: message" (NativeHttp.hpp / NativeFetch.hpp)
+        CHECK(PlainNetReason("connect: cannot resolve host: Name or service not known").find("could not be looked up") != std::string::npos);
+        CHECK(PlainNetReason("connect: connect failed: Connection refused").find("Could not connect") != std::string::npos);
+        CHECK(PlainNetReason("connect: connect timed out").find("too long") != std::string::npos);
+        CHECK(PlainNetReason("tls: certificate not verified (20)").find("secure connection failed") != std::string::npos);
+        CHECK(PlainNetReason("proxy: proxy refused CONNECT (HTTP 403)").find("A proxy on this network") != std::string::npos);
+        CHECK(PlainNetReason("io: read failed").find("cut off") != std::string::npos);
+        // the curl fallback is gone: its exit codes are no longer translated
+        CHECK(PlainNetReason("curl exit code 6") == "[curl exit code 6]");
         CHECK(PlainNetReason("winhttp error 12030").find("[winhttp error 12030]") != std::string::npos);   // the code stays
         CHECK(PlainNetReason("weird: thing") == "[weird: thing]");                                         // unknown: as it is
         const std::string q = PlainNetReason("connect: https://x.io/a?apikey=SECRET failed");
         CHECK(q.find("SECRET") == std::string::npos && q.find("failed") != std::string::npos);            // no query strings
         CHECK(PlainNetReason("a\nb").find('\n') == std::string::npos);
         CHECK(acc::detail::NotReachedMessage("Couldn't reach.", "") == "Couldn't reach.");
-        CHECK(acc::detail::NotReachedMessage("Couldn't reach.", "curl exit code 7").rfind("Couldn't reach.\nDetails: Could not connect", 0) == 0);
+        CHECK(acc::detail::NotReachedMessage("Couldn't reach.", "connect: connect failed: Connection refused").rfind("Couldn't reach.\nDetails: Could not connect", 0) == 0);
     }
 
     // ---- the account server address: only an http(s) value counts (the launcher and okay::Account::Get agree) ----

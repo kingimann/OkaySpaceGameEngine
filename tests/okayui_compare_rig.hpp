@@ -10,7 +10,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "OkayTheme.hpp"
-#include "RobotoFont.h"
+#include "EmbeddedFonts.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -84,8 +84,8 @@ struct ImGuiRig {
         io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
         io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
         ImFontConfig fc; fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-        io.Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 18.0f, &fc);
-        heading = io.Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 22.0f, &fc);
+        okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 18.0f, fc);
+        heading = okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 22.0f, fc);
         // editor/main.cpp ApplyTheme with the default settings: Slate theme, the first accent, comfortable density, scale 1
         ImGui::StyleColorsDark();
         ImGuiStyle& s = ImGui::GetStyle();

@@ -123,7 +123,7 @@ static std::vector<Scenario> Scenarios() {
         return seq;
     }});
     v.push_back({"signin_unreachable", [=](const fs::path& d) {
-        Fake f; f.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("curl exit code 6")};
+        Fake f; f.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("connect: cannot resolve host: Name or service not known")};
         auto a = make(d, f);
         std::string seq = Outcome(a->Login("alex@example.test", "pw-123456"));
         seq += f.log;
@@ -352,7 +352,7 @@ static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
         signIn(p, "alex@example.test", "pw-123456");
     }});
     v.push_back({"signin_unreachable", [=](ProviderRun& p) {
-        p.fake.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("curl exit code 6")};
+        p.fake.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("connect: cannot resolve host: Name or service not known")};
         signIn(p, "alex@example.test", "pw-123456");
     }});
     v.push_back({"signin_refused", [=](ProviderRun& p) {

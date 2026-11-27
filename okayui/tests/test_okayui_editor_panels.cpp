@@ -2,8 +2,7 @@
 // panels, and the small tool windows (Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager, Timers, Input Actions), drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
 // to 11). Driven headless the way
 // the editor drives them: every control is found by its rectangle in the result and used with synthetic input (clicks, typing,
-// the wheel, right-click menus); golden images (launcher look) pin what is drawn. The Dear ImGui versions are compared against
-// these in tests/test_okayui_editor_panels_imgui.cpp.
+// the wheel, right-click menus); golden images (launcher look) pin what is drawn.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "OkayUIEditorPanels.hpp"

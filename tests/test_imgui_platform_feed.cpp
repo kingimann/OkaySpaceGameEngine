@@ -1,8 +1,7 @@
-// The own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): the key table, event translation, and a real ImGui
-// context fed through a fake host (no window, no SDL). Expected values come from the USB HID usage table (the seam's key
-// numbers) and Dear ImGui's public header.
+// The platform feed (shared/ImGuiPlatformFeed.hpp): the key table, event translation, and a real OkayUI context fed through a fake
+// host (no window, no SDL), compiled as the editor and launcher are (okayui/probe first: "imgui.h" is OkayUI's).
+// Expected values come from the USB HID usage table (the seam's key numbers) and Dear ImGui's documented key names, which OkayUI keeps.
 #include "ImGuiPlatformFeed.hpp"
-#include "ImGuiPainterRenderer.hpp"   // its OwnRequested has the same rule
 #include <cstdio>
 #include <set>
 
@@ -12,6 +11,9 @@ namespace f = okay::imguifeed;
 static int g_fail = 0, g_n = 0;
 #define CHECK(c) do { ++g_n; if (!(c)) { ++g_fail; std::printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
 
+// A pointer position the feed gave (it gives -FLT_MAX, -FLT_MAX when the pointer is outside the window).
+static bool PosValid(const ImVec2& p) { return p.x > -1e30f && p.y > -1e30f; }
+
 static Event Ev(EventType t, uint32_t win = 1) { Event e; e.type = t; e.windowId = win; return e; }
 
 static void KeyTable() {
@@ -19,12 +21,12 @@ static void KeyTable() {
     CHECK(f::KeyToImGui(Key::A) == ImGuiKey_A && f::KeyToImGui(Key::Z) == ImGuiKey_Z);
     CHECK(f::KeyToImGui(Key::N1) == ImGuiKey_1 && f::KeyToImGui(Key::N9) == ImGuiKey_9 && f::KeyToImGui(Key::N0) == ImGuiKey_0);
     CHECK(f::KeyToImGui(Key::F1) == ImGuiKey_F1 && f::KeyToImGui(Key::F12) == ImGuiKey_F12);
-    CHECK(f::KeyToImGui((Key)104) == ImGuiKey_F13 && f::KeyToImGui((Key)115) == ImGuiKey_F24);
+    CHECK(f::KeyToImGui((Key)104) == ImGuiKey_F13 && f::KeyToImGui((Key)115) == OkayUI::KeyId_F24);
     CHECK(f::KeyToImGui(Key::Return) == ImGuiKey_Enter && f::KeyToImGui(Key::KpEnter) == ImGuiKey_KeypadEnter);
     CHECK(f::KeyToImGui(Key::Backspace) == ImGuiKey_Backspace && f::KeyToImGui(Key::Delete) == ImGuiKey_Delete);
     CHECK(f::KeyToImGui(Key::Left) == ImGuiKey_LeftArrow && f::KeyToImGui(Key::Up) == ImGuiKey_UpArrow);
     CHECK(f::KeyToImGui(Key::Grave) == ImGuiKey_GraveAccent && f::KeyToImGui(Key::Equals) == ImGuiKey_Equal);
-    CHECK(f::KeyToImGui(Key::Kp1) == ImGuiKey_Keypad1 && f::KeyToImGui(Key::Kp9) == ImGuiKey_Keypad9 && f::KeyToImGui(Key::Kp0) == ImGuiKey_Keypad0);
+    CHECK(f::KeyToImGui(Key::Kp1) == ImGuiKey_Keypad1 && f::KeyToImGui(Key::Kp9) == OkayUI::KeyId_Keypad9 && f::KeyToImGui(Key::Kp0) == ImGuiKey_Keypad0);
     CHECK(f::KeyToImGui((Key)103) == ImGuiKey_KeypadEqual);
     CHECK(f::KeyToImGui(Key::LCtrl) == ImGuiKey_LeftCtrl && f::KeyToImGui(Key::RGui) == ImGuiKey_RightSuper);
     CHECK(f::KeyToImGui(Key::Application) == ImGuiKey_Menu);
@@ -34,7 +36,8 @@ static void KeyTable() {
     for (int v = 0; v < kKeyCount; ++v) {
         const ImGuiKey k = f::KeyToImGui((Key)v);
         if (k == ImGuiKey_None) continue;
-        ++mapped; if (!seen.insert((int)k).second) dup = true;
+        ++mapped;
+        if (!seen.insert((int)k).second && (Key)v != Key::KpEnter) dup = true;   // OkayUI: the keypad's Enter is Enter (KeyId_KeypadEnter = KeyId_Enter)
     }
     CHECK(!dup);
     CHECK(mapped == 26 + 9 + 12 + 12 + 9 + 18 + 9 + 4 + 6 + 2 + 2 + 1 + 8);   // letters, 1-9, F1-F12, F13-F24, Kp1-9, then 0 and punctuation (18), PrintScreen..PageDown (9), arrows, NumLock and keypad ops (6), Kp0 and Kp., NonUs and Menu, Kp=, 8 modifiers
@@ -44,11 +47,6 @@ static void KeyTable() {
     CHECK(f::CursorToSeam(ImGuiMouseCursor_TextInput, s) && s == CursorShape::TextInput);
     CHECK(f::CursorToSeam(ImGuiMouseCursor_ResizeNWSE, s) && s == CursorShape::ResizeNWSE);
     CHECK(!f::CursorToSeam(ImGuiMouseCursor_None, s));
-    CHECK(f::OwnRequested("own") && !f::OwnRequested("sdl2") && !f::OwnRequested("") && !f::OwnRequested(nullptr) && !f::OwnRequested("OWN"));
-    // With the own path as the default (the launcher, rule 17): unset or anything else is own; only "sdl2" goes back.
-    CHECK(f::OwnRequested(nullptr, true) && f::OwnRequested("", true) && f::OwnRequested("own", true) && !f::OwnRequested("sdl2", true));
-    CHECK(okay::imguirender::OwnRequested(nullptr, true) && !okay::imguirender::OwnRequested("sdl2", true));
-    CHECK(!okay::imguirender::OwnRequested(nullptr) && okay::imguirender::OwnRequested("own"));
 }
 
 static void Translation() {
@@ -106,6 +104,7 @@ struct Fake {
     std::string clip;
     int shapes = 0; CursorShape lastShape = CursorShape::Arrow;
     int hides = 0, shows = 0, warps = 0, imeRects = 0;
+    int imeX = -1, imeY = -1, imeH = -1;   // the last input-method caret rectangle the feed sent
     f::FeedHost Host() {
         f::FeedHost h2;
         h2.windowSize = [this](int& x, int& y) { x = w; y = h; };
@@ -118,32 +117,34 @@ struct Fake {
         h2.getClipboard = [this]() { return clip; };
         h2.setClipboard = [this](const std::string& t) { clip = t; return true; };
         h2.warpMouse = [this](int, int) { ++warps; };
-        h2.setTextInputRect = [this](int, int, int, int) { ++imeRects; };
+        h2.setTextInputRect = [this](int x, int y, int, int hh) { ++imeRects; imeX = x; imeY = y; imeH = hh; };
         return h2;
     }
 };
 
 static float g_wheelSeen = 0;   // io.MouseWheel as the frame saw it (ImGui's own scrolling uses it up during the frame)
+static ImVec2 g_displaySeen{0, 0};
 static void OneFrame(f::Feed& feed, ImGuiIO& io, const char* label = "x") {
     feed.NewFrame(io);
+    g_displaySeen = io.DisplaySize;   // what the feed set (OkayUI keeps its last size for a minimized window)
     ImGui::NewFrame();
-    if (io.MouseWheel != 0.0f) g_wheelSeen = io.MouseWheel;
+    if (ImGui::GetIO().MouseWheel != 0.0f) g_wheelSeen = ImGui::GetIO().MouseWheel;
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(300, 200));
     ImGui::Begin(label);
     ImGui::End();
     ImGui::Render();
+    (void)ImGui::GetIO();   // OkayUI's IO fields are a snapshot taken by GetIO(): refresh them for the checks after the frame
 }
 
 static void Context() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
-    unsigned char* px; int fw, fh; io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh);
     Fake fk; f::Feed feed;
     feed.Init(io, 1, fk.Host());
     CHECK((io.BackendFlags & ImGuiBackendFlags_HasMouseCursors) && (io.BackendFlags & ImGuiBackendFlags_HasSetMousePos));
-    CHECK(!(io.BackendFlags & ImGuiBackendFlags_HasGamepad) && !(io.BackendFlags & ImGuiBackendFlags_PlatformHasViewports));
+    CHECK(!(io.BackendFlags & ImGuiBackendFlags_PlatformHasViewports));   // one OS window: no platform windows
 
     OneFrame(feed, io);
     CHECK(io.DisplaySize.x == 800 && io.DisplaySize.y == 600);
@@ -154,7 +155,7 @@ static void Context() {
     fk.now = 10.5; OneFrame(feed, io);     // a frame with no time passing must not hand ImGui a zero
     CHECK(io.DeltaTime > 0);
     fk.minimized = true; OneFrame(feed, io);
-    CHECK(io.DisplaySize.x == 0 && io.DisplaySize.y == 0);
+    CHECK(g_displaySeen.x == 0 && g_displaySeen.y == 0);
     fk.minimized = false; fk.w = 640; fk.h = 480; fk.dw = 640; fk.dh = 480; OneFrame(feed, io);
     CHECK(io.DisplaySize.x == 640 && io.DisplayFramebufferScale.x == 1.0f);
 
@@ -202,13 +203,13 @@ static void Context() {
 
     // pointer leaves the window: no mouse; comes back: position again
     fk.mouseIn = false; OneFrame(feed, io); OneFrame(feed, io);
-    CHECK(!ImGui::IsMousePosValid(&io.MousePos));
+    CHECK(!PosValid(io.MousePos));
     fk.mouseIn = true; mv.x = 20; mv.y = 21; feed.ProcessEvent(mv, io); OneFrame(feed, io);
-    CHECK(io.MousePos.x == 20 && ImGui::IsMousePosValid(&io.MousePos));
+    CHECK(io.MousePos.x == 20 && PosValid(io.MousePos));
     // a held button keeps the pointer (a drag out of the window)
     bd.type = EventType::MouseButtonDown; feed.ProcessEvent(bd, io); OneFrame(feed, io);
     fk.mouseIn = false; OneFrame(feed, io);
-    CHECK(ImGui::IsMousePosValid(&io.MousePos));
+    CHECK(PosValid(io.MousePos));
     bd.type = EventType::MouseButtonUp; feed.ProcessEvent(bd, io); OneFrame(feed, io);
 
     // focus loss releases held keys
@@ -256,10 +257,76 @@ static void Context() {
     ImGui::DestroyContext();
 }
 
+// Typing with an input method (IME): the OS shows the composition in its own window at the caret the app reports, and the finished
+// text arrives as ordinary text input. In the OkayUI build the caret comes from OkayUI::GetImeRect() (the focused field's caret);
+// the feed sends it to the window when it changes and again when a field takes the keyboard (the editor's text fields, the
+// Script Editor). Before 2026-11-27 nothing sent it in the OkayUI build: the candidate window stayed at the window's corner.
+static char g_field[64];
+static OkayUI::Rect g_fieldRect{};
+static void FieldFrame(f::Feed& feed, ImGuiIO& io) {
+    feed.NewFrame(io);
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(300, 200));
+    ImGui::Begin("ime");
+    ImGui::InputText("##name", g_field, sizeof g_field);
+    g_fieldRect = OkayUI::GetItemRect();
+    ImGui::End();
+    ImGui::Render();
+    (void)ImGui::GetIO();
+}
+static void Click(f::Feed& feed, ImGuiIO& io, float x, float y) {
+    Event mv = Ev(EventType::MouseMove); mv.x = (int)x; mv.y = (int)y; feed.ProcessEvent(mv, io);
+    Event bd = Ev(EventType::MouseButtonDown); bd.button = MouseLeft; bd.x = (int)x; bd.y = (int)y; feed.ProcessEvent(bd, io);
+    FieldFrame(feed, io);
+    bd.type = EventType::MouseButtonUp; feed.ProcessEvent(bd, io);
+    FieldFrame(feed, io);
+}
+static void InputMethod() {
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    Fake fk; f::Feed feed;
+    feed.Init(io, 1, fk.Host());
+    g_field[0] = 0;
+    FieldFrame(feed, io); FieldFrame(feed, io);
+    CHECK(fk.imeRects == 0);                                   // no field has the keyboard: nothing sent
+    const OkayUI::Rect r = g_fieldRect;
+    CHECK(r.w > 20 && r.h > 5);
+    Click(feed, io, r.x + 10, r.y + r.h * 0.5f);
+    FieldFrame(feed, io);
+    CHECK(fk.imeRects >= 1);                                   // the field took the keyboard: its caret went to the window
+    CHECK(fk.imeX >= (int)r.x && fk.imeX <= (int)(r.x + r.w) && fk.imeY >= (int)r.y - 1 && fk.imeY <= (int)(r.y + r.h));
+    CHECK(fk.imeH > 0 && fk.imeH <= (int)r.h + 1);
+    const int sent = fk.imeRects, x0 = fk.imeX;
+    FieldFrame(feed, io); FieldFrame(feed, io);
+    CHECK(fk.imeRects == sent);                                // unchanged caret: not sent again
+    Event t = Ev(EventType::TextInput); t.text = "\xE6\x97\xA5\xE6\x9C\xAC";   // what an IME commits: two CJK characters (UTF-8)
+    feed.ProcessEvent(t, io);
+    FieldFrame(feed, io); FieldFrame(feed, io);
+    CHECK(std::string(g_field) == "\xE6\x97\xA5\xE6\x9C\xAC");
+    CHECK(fk.imeRects > sent && fk.imeX > x0);                 // the caret moved past the text: the new spot was sent
+    Event composing = Ev(EventType::TextEditing); composing.text = "ni";   // an unfinished composition is the OS window's, not the field's
+    feed.ProcessEvent(composing, io);
+    FieldFrame(feed, io);
+    CHECK(std::string(g_field) == "\xE6\x97\xA5\xE6\x9C\xAC");
+    Click(feed, io, 290, 190);                                 // click away: the field lets go of the keyboard
+    FieldFrame(feed, io);
+    const int afterLeave = fk.imeRects;
+    FieldFrame(feed, io);
+    CHECK(fk.imeRects == afterLeave);
+    Click(feed, io, r.x + 10, r.y + r.h * 0.5f);               // and back: sent again even at the same spot
+    FieldFrame(feed, io);
+    CHECK(fk.imeRects > afterLeave);
+    feed.Shutdown(io);
+    ImGui::DestroyContext();
+}
+
 int main() {
     KeyTable();
     Translation();
     Context();
+    InputMethod();
     std::printf("imgui_platform_feed: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -5,6 +5,7 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -53,6 +54,18 @@ int main() {
         CHECK(bShown >= 2 && aShown == before);
         // SetWindowFocus on a docked window whose tab is hidden chooses its tab (as the editor's Play does for the Game view)
         { const int a0 = aShown; UI::SetWindowFocus("Alpha"); frame(); frame(); CHECK(aShown >= a0 + 2); UI::GetDockLayout().SetActive("Beta"); frame(); }
+        {   // SetNextWindowFocus before the Begin of a docked window whose tab is hidden (the editor's Play does this for Game)
+            const int a0 = aShown; bool once = true;
+            s.Frame([&] {
+                UI::DockSpace(UI::Rect{0, 0, 800, 500});
+                if (once) { UI::SetNextWindowFocus(); once = false; }
+                if (UI::Begin("Alpha", &openA, 0)) ++aShown; UI::End();
+                if (UI::Begin("Beta", &openB, 0)) ++bShown; UI::End();
+                if (UI::Begin("Gamma###g", &openG, 0)) ++gShown; UI::End();
+            });
+            CHECK(aShown == a0 + 1);
+            UI::GetDockLayout().SetActive("Beta"); frame();
+        }
         // closing a tab through the dock: the window leaves the layout and *p_open goes false
         for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Gamma###g") {
             const int cx = (int)(t.rect.x + t.rect.w - 6.0f), cy = (int)(t.rect.y + t.rect.h * 0.5f);
@@ -123,6 +136,24 @@ int main() {
         betaOn = true; f(); f();
         betaTab = false; for (const UI::DockTabInfo& t : UI::GetDockTabs()) betaTab |= t.window == "Beta";
         CHECK(betaTab);                                   // submitted again: its tab is back
+        UI::SetDockAwareBegin(false);
+    }
+    {   // a pushed FramePadding (x) around DockSpace is the tabs' text inset (the editor makes room for its panel icons this way)
+        Reset(); Sim s(800, 500); BuildTwo(); UI::SetDockAwareBegin(true);
+        float plainW = 0.0f, paddedW = 0.0f;
+        auto f = [&](bool pad) { s.Frame([&] {
+            if (pad) UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{40.0f, UI::GetStyle().FramePadding.y});   // (the same height)
+            UI::DockSpace(UI::Rect{0, 0, 800, 500});
+            if (pad) UI::PopStyleVar();
+            if (UI::Begin("Alpha", nullptr, 0)) {} UI::End();
+            if (UI::Begin("Beta", nullptr, 0)) {} UI::End();
+            if (UI::Begin("Gamma###g", nullptr, 0)) {} UI::End();
+        }); };
+        f(false); f(false);
+        for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Alpha") plainW = t.idealWidth;
+        f(true); f(true);
+        for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Alpha") paddedW = t.idealWidth;
+        CHECK(std::fabs(paddedW - plainW - 60.0f) < 0.5f);   // 40 instead of 10 on each side
         UI::SetDockAwareBegin(false);
     }
     {   // popups and child regions inside a routed window; a window that asks to close itself

@@ -105,7 +105,7 @@ int main() {
         // No source that a program is built from still carries or loads the old compressed base-85 arrays.
         int found = 0;
         for (const char* rel : {"shared/RobotoFont.h", "shared/JetBrainsMonoFont.h", "editor/main.cpp", "launcher/main.cpp",
-                                "tests/okayui_compare_rig.hpp", "tests/test_launcher_page_layout.cpp"}) {
+                                "tests/test_launcher_page_layout.cpp"}) {
             std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/" + rel, std::ios::binary);
             CHECK(in.good());
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());

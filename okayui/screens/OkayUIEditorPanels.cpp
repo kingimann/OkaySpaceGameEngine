@@ -1,6 +1,6 @@
 // The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering panels
 // and sections drawn with OkayUI. Written from what the
-// editor's own Dear ImGui panels show and do (editor/EditorPanelViews.cpp draws the same models) and from Dear ImGui's documented
+// editor's own Dear ImGui panels showed and did (the reference bodies were deleted with Dear ImGui on 2026-11-27) and from Dear ImGui's documented
 // behaviour where the look had to match; no code from any other project.
 #include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIEditorPanels.hpp"

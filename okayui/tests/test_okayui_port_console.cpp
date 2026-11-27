@@ -21,6 +21,7 @@ namespace oked {   // what main.cpp provides to the panel; stubs for the test
 bool g_showConsole = true;
 bool g_paused = false;
 bool g_consoleCollapse = false;
+bool g_clearConsoleOnPlay = false;   // the "Clear on Play" toggle row of the options menu (a real bool* now, not a constant tick)
 void SaveSettings() {}
 void ActivateBoundConsoleSource(const okay::ConsoleSource&) {}
 void OpenScriptFileInEditorAt(const std::string&, int) {}

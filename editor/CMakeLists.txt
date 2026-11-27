@@ -1,17 +1,12 @@
-# OkaySpace Editor — Dear ImGui (docking) + SDL2 renderer desktop editor.
-#
-# Requires SDL2 dev libraries and (at configure time) network access to fetch
-# Dear ImGui. Enable from the top level with -DOKAY_BUILD_EDITOR=ON.
-include(FetchContent)
-
+# OkaySpace Editor: the desktop editor. Its sources are written in Dear ImGui's names and compiled only against OkayUI's compatibility
+# layer (okayui/probe first on the include path: "imgui.h" and "ImGuiPainterRenderer.hpp" are OkayUI's), so no Dear ImGui is in it
+# (2026-11-27, docs/ui/own_ui_toolkit.md section 33). Input: shared/ImGuiPlatformFeed.hpp; drawing: OkayUI's frame through the window's
+# okay::platform::Painter. Needs SDL2 dev libraries (the window on Windows). Enable from the top level with -DOKAY_BUILD_EDITOR=ON.
 find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    message(WARNING "okay-editor needs SDL2 dev libraries; skipping.")
+if(NOT SDL2_FOUND OR NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
+    message(WARNING "okay-editor needs SDL2 dev libraries and OkayUI; skipping.")
     return()
 endif()
-
-# The editor renders the ImGui UI through SDL's 2D renderer (Direct3D on
-# Windows, Metal on macOS, OpenGL elsewhere), so no OpenGL dependency is needed.
 
 # SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
 # the editor ships as a single self-contained .exe (no SDL2.dll alongside).
@@ -24,30 +19,6 @@ else()
     set(OKAY_SDL_LIB ${SDL2_LIBRARIES})
 endif()
 # Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
-
-# Pin a specific Dear ImGui *docking-branch* commit so editor builds are
-# reproducible (the docking branch has DockBuilder + IMGUI_HAS_DOCK). Fetching a
-# bare branch name was non-deterministic across machines/CI, so we pin a SHA;
-# checking out a SHA needs the full history (no GIT_SHALLOW). Override with
-# -DOKAY_IMGUI_TAG=<ref> if you want a different revision (the tag is set in the
-# top-level CMakeLists.txt, shared with the tests).
-FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        ${OKAY_IMGUI_TAG})
-FetchContent_MakeAvailable(imgui)
-
-# Dear ImGui ships no CMake; build the core + SDL2 backends ourselves.
-add_library(okay_imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
-target_include_directories(okay_imgui SYSTEM PUBLIC
-    ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
-target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     HangWatchdog.cpp                                                   # the hang watchdog: a stuck main loop is reported (okay_hang.txt) and, on Windows, Wait / Close is offered
@@ -81,11 +52,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
-    OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
-    OkayUIHostMode.cpp                                                 # window mode: OkayUI owns the window (OKAY_UI_HOST=okayui, dev switch): screen + state
-    OkayUIHostRun.cpp                                                  # window mode: backend, window, painter, frame loop, the editor's game step
-    OkayUIHostDialogs.cpp                                              # window mode: the error modal and the save question (OkayUI popups)
-    OkayUIHostViews.cpp                                                # window mode: the Scene and Game views (SceneViewCore.hpp, the engine software renderer, no Dear ImGui)
+    OkayPanels.cpp                                                     # the panels drawn by OkayUI's own screens (Crash Log, Audio Mixer, History, Problems, ...)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
@@ -97,7 +64,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIInspectorWidgetsMore.cpp                                         # search, date, files, accordion, crumbs, pages, skeleton, sheet
     InspectorPanel.cpp InspectorModel.cpp PrefabEdit.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
-    UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
+    UIPreviewPainter.cpp                                               # engine UI renderer -> the UI's draw list
     ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
     UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
@@ -116,10 +83,17 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp                    # monitor list and display-mode changes (okay::platform, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
-    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
-target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
-target_include_directories(okay-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher)   # editor/: shared/ScriptIdeApp.hpp includes ScriptIde.hpp
-target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
+    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's window
+target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE} OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+target_compile_features(okay-editor PRIVATE cxx_std_17)
+target_include_directories(okay-editor BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's
+target_include_directories(okay-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher   # editor/: shared/ScriptIdeApp.hpp includes ScriptIde.hpp
+    ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
+target_link_libraries(okay-editor PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
+# View > Panels > Command Line (shared/CommandLinePanel.hpp): okay's commands run inside the editor. okay_cli_panel is made after
+# this folder (top CMakeLists.txt, with okay_cli_lib), so it is named through generator expressions; without it the panel is absent.
+target_link_libraries(okay-editor PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)
+target_compile_definitions(okay-editor PRIVATE $<$<TARGET_EXISTS:okay_cli_panel>:OKAY_HAVE_CLI_PANEL=1>)
 if(WIN32)
     # Embed the OkaySpace app icon so OkayEngine.exe shows a real taskbar /
     # Explorer / shortcut icon (same icon as the launcher, so they match).
@@ -135,32 +109,6 @@ if(WIN32)
     # Debug info lives in a separate part of the PE and doesn't slow the code.
     target_compile_options(okay-editor PRIVATE -g)
     target_link_options(okay-editor PRIVATE -g)
-endif()
-# OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
-if(TARGET okay_ui)
-    # Window mode's copies of the Console, Scene Manager and Project-dialog panels: the same sources, compiled against OkayUI's Dear ImGui compatibility header
-    # (okayui/probe first on the include path, so no Dear ImGui is involved) in their own object library, then linked in. docs/ui/own_ui_toolkit.md 6.24 step 5.
-    add_library(okay_editor_wm_panels OBJECT OkayUIHostPanels.cpp OkayUIHostObjects.cpp OkayUIHostMenu.cpp)   # + the Hierarchy and Inspector windows (InspectorPanel.cpp and EditorWidgets.cpp again, suffix _WO), 6.24 step 9
-    target_include_directories(okay_editor_wm_panels BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
-    target_include_directories(okay_editor_wm_panels PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/okayui/screens)
-    target_link_libraries(okay_editor_wm_panels PRIVATE okay_ui okay_ui_screens okay::engine)
-    target_sources(okay-editor PRIVATE $<TARGET_OBJECTS:okay_editor_wm_panels>)
-    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens okay_ui_soft)
-    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
-    if(TARGET okay_ui_soft)   # the software painter: the editor's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
-        target_link_libraries(okay-editor PRIVATE okay_ui_soft)
-    endif()
-    if(TARGET okay_ui_render)   # OkayUI's own OpenGL renderer for the hosted screens (OKAY_UI_OWN_RENDER=1, off by default; shared/OkayUIFrame.hpp)
-        target_link_libraries(okay-editor PRIVATE okay_ui_render)
-    endif()
-    target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
-    # View > Panels > Command Line (shared/CommandLinePanel.hpp): okay's commands run inside the editor. okay_cli_panel is made after
-    # this folder (top CMakeLists.txt, with okay_cli_lib), so it is named through generator expressions; without it the panel is absent.
-    target_link_libraries(okay-editor PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)
-    target_compile_definitions(okay-editor PRIVATE $<$<TARGET_EXISTS:okay_cli_panel>:OKAY_HAVE_CLI_PANEL=1>)
-endif()
-if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
-    target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
@@ -186,37 +134,4 @@ endif()
 
 if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
     target_compile_definitions(okay-editor PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
-endif()
-
-# ---- The editor on OkayUI (OKAY_EDITOR_ON_OKAYUI, off by default) --------------------------------------------------------------------------------
-# The SAME sources as okay-editor, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's),
-# so no Dear ImGui is in the program. Input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path), the painter-renderer is
-# okayui/probe/ImGuiPainterRenderer.hpp, the backend entry points shared/OkayUIImGuiBackendShim.cpp. Output: bin/OkayEngineOkayUI(.exe) next to OkayEngine(.exe).
-# First built and run headless on 2026-11-27 (docs/ui/own_ui_toolkit.md section 32); the full CI run builds it in the editor job and runs its self-test.
-if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
-    get_target_property(_ed_srcs okay-editor SOURCES)
-    list(FILTER _ed_srcs EXCLUDE REGEX "TARGET_OBJECTS")   # the window-mode panel copies are Dear ImGui-API sources compiled for the other editor
-    list(FILTER _ed_srcs EXCLUDE REGEX "okayspace\\.rc$")
-    add_executable(okay-editor-okayui ${_ed_srcs} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp)
-    target_compile_definitions(okay-editor-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
-    target_compile_features(okay-editor-okayui PRIVATE cxx_std_17)
-    target_include_directories(okay-editor-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
-    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
-        ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
-    target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
-    target_link_libraries(okay-editor-okayui PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)   # View > Panels > Command Line
-    target_compile_definitions(okay-editor-okayui PRIVATE $<$<TARGET_EXISTS:okay_cli_panel>:OKAY_HAVE_CLI_PANEL=1>)
-    if(OKAY_ENABLE_TEST_HOOKS)
-        target_compile_definitions(okay-editor-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
-    endif()
-    if(WIN32)
-        enable_language(RC)
-        target_sources(okay-editor-okayui PRIVATE okayspace.rc)
-        okay_win_version(okay-editor-okayui "OkaySpace Editor (OkayUI)" "OkayEngineOkayUI.exe")
-        target_link_libraries(okay-editor-okayui PRIVATE comdlg32 ole32 shell32 user32 dbghelp)
-    endif()
-    set_target_properties(okay-editor-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkayEngineOkayUI")
-    if(OKAY_BUILD_TESTS)
-        add_test(NAME editor_okayui COMMAND okay-editor-okayui --selftest)   # the editor's self-test on the OkayUI build
-    endif()
 endif()

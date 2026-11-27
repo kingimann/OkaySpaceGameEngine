@@ -341,7 +341,7 @@ void VisualScriptApp::Impl::drawMenu(float X, float Y, float W, float h) {
                 if (UI::MenuItem("Frame Selection", "F", false, any)) frameAll(true);
                 if (UI::MenuItem("Zoom In", "Ctrl+=")) s.zoom = std::clamp(s.zoom * 1.12f, 0.28f, 2.2f);
                 if (UI::MenuItem("Zoom Out", "Ctrl+-")) s.zoom = std::clamp(s.zoom / 1.12f, 0.28f, 2.2f);
-                if (UI::MenuItem("Actual Size", "Ctrl+0")) s.zoom = 1.0f;
+                if (UI::MenuItem("Reset Zoom", "Ctrl+0")) s.zoom = 1.0f;
                 if (cfg.windowCommands) {
                     const std::vector<AppCommand> extra = cfg.windowCommands();
                     if (!extra.empty()) UI::MenuSeparator();

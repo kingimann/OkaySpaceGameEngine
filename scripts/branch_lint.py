@@ -53,7 +53,7 @@ ENTROPY_SKIP_DIRS = ("config/", "tests/", "docs/", "engine/src/Crypto/", "engine
 
 def added_lines(root, base, head, rev=None):
     """Yield (path, line number in the new file, text) for every added line."""
-    args = ["diff", "-U0", "--no-renames", "--diff-filter=AM"]
+    args = ["diff", "-U0", "-M", "--diff-filter=AMR"]   # -M: a moved file (git mv) adds only the lines it changed
     args += [f"{rev}^", rev] if rev else [f"{base}...{head}"]
     cur, ln = None, 0
     for line in L.git(root, *args).splitlines():

@@ -50796,6 +50796,9 @@ int main(int argc, char** argv) {
     g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
     std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
     if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
+#ifdef OKAY_ON_OKAYUI
+    OkayUI::UseImGuiCoordinates(true);   // the editor on OkayUI: its code places things by Dear ImGui's coordinate rules (as the launcher)
+#endif
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
     // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
@@ -51837,6 +51840,11 @@ int main(int argc, char** argv) {
             if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design
             ImGui::NewFrame();
         }
+#ifdef OKAY_ON_OKAYUI
+        // Dear ImGui's framed widgets and text rows for the whole frame (the editor's code is written for them; as the launcher does)
+        OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);
+        OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);
+#endif
         ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
@@ -52623,6 +52631,9 @@ int main(int argc, char** argv) {
         }
 #endif
         InputProbeEndFrame();   // clicks arriving and landing nowhere: what Dear ImGui thinks, to okay_editor_perf.log
+#ifdef OKAY_ON_OKAYUI
+        OkayUI::PopStyleVar(2);   // the frame's framed widgets and text rows (pushed after NewFrame)
+#endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SaveDockLayout(false); SavePanelStateIfChanged();   // the layout and the open panels survive a restart (and a forced close)
         okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

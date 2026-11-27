@@ -514,6 +514,12 @@ void TableNextRow() {
     } else if ((g_tbl.flags & Table_RowBg) && colorIsSet(Col_TableRowBg)) {
         quad(bx, by, bw, bandH, g_theme.colors[Col_TableRowBg]);
     }
+    // A data table (striped or sortable) lights the row under the pointer, from the row's height last frame: the eye follows a wide
+    // row across its columns (OkayUI's own; Dear ImGui's tables do not).
+    if ((g_tbl.flags & (Table_RowBg | Table_Sortable)) && g_tbl.store && !g_tbl.rowCulled && hit(bx, by, bw, bandH)) {
+        unsigned char tmp[4];
+        quad(bx, by, bw, bandH, withAlpha(g_theme.ink, 0.07f, tmp));
+    }
     if ((g_tbl.flags & Table_BordersInnerH) && g_tbl.rowTop > g_tbl.rowStart + 0.5f) quad(bx, by, bw, 1.0f, pick(Col_TableBorderLight, g_theme.border));
 }
 

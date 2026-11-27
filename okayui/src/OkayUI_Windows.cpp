@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -84,7 +85,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     // a click on the topmost window under the pointer raises it. NoBringToFront windows stay at the bottom.
     {
         const float bh = *collapsed ? titleH : h;
-        const bool fresh = slot && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
+        const bool fresh = slot && (slot->lastFrame == 0 || (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount));
         if (slot) {
             if (noFront) slot->z = 0;
             else if (slot->z == 0) slot->z = ++g_zCounter;
@@ -152,7 +153,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     const unsigned char* titleCol = pick(*collapsed ? Col_TitleBgCollapsed : (g_focusWin == id ? Col_TitleBgActive : Col_TitleBg), g_theme.titleBg);
     g_winBaseScale = g_theme.textScale;
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
-    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
+    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount)};   // appearing: never drawn, or not on the frame before
     g_curWin.z = slot ? slot->z : 0;
     if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
     if (slot) { slot->lastFrame = g_frameCount; if (title) std::snprintf(slot->title, sizeof slot->title, "%s", title); }
@@ -351,7 +352,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     }
     bool pin = false;
     if (slot) {
-        const bool appearing = slot->lastFrame + 1 < g_frameCount;      // not drawn on the frame before
+        const bool appearing = (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);      // not drawn on the frame before
         auto apply = [&](const NextWin& n, bool& init) {
             if (!n.set) return false;
             const bool take = n.cond == Cond_Always || ((n.cond == Cond_Once || n.cond == Cond_FirstUseEver) && !init) || (n.cond == Cond_Appearing && appearing);
@@ -369,7 +370,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     if (g_nextCollapse.set) {   // SetNextWindowCollapsed, with the same conditions as position and size
         const NextCollapse nc = g_nextCollapse; g_nextCollapse = NextCollapse();
         if (slot) {
-            const bool appearing = slot->lastFrame + 1 < g_frameCount;
+            const bool appearing = (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
             const bool take = nc.cond == Cond_Always || ((nc.cond == Cond_Once || nc.cond == Cond_FirstUseEver) && !slot->collInit) || (nc.cond == Cond_Appearing && appearing);
             if (take) { *openState(id ^ 0x5c01, false) = nc.value; slot->collInit = true; }
         }
@@ -409,7 +410,7 @@ bool SetWindowSize(const char* title, Vec2 size, Cond cond) {
     if (!title || !*title || !std::isfinite(size.x) || !std::isfinite(size.y)) return false;
     const int id = windowId(title);
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool appearing = (ws.lastFrame == 0 || ws.lastFrame + 1 < g_frameCount);
         const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.sizeInit);
         if (!take) return true;   // found, the condition said no
         ws.w = size.x < 1.0f ? 1.0f : (size.x > 1.0e6f ? 1.0e6f : size.x);
@@ -445,7 +446,7 @@ bool SetWindowPos(const char* title, Vec2 pos, Cond cond) {
     if (!title || !*title || !std::isfinite(pos.x) || !std::isfinite(pos.y)) return false;
     const int id = windowId(title);
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool appearing = (ws.lastFrame == 0 || ws.lastFrame + 1 < g_frameCount);
         const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.posInit);
         if (!take) return true;
         ws.x = pos.x < -1.0e6f ? -1.0e6f : (pos.x > 1.0e6f ? 1.0e6f : pos.x);
@@ -679,4 +680,24 @@ void EndChild() {
     g_posOverride = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_bareNext),
+    OKAYUI_CTX_VAR(g_childAutoSlot),
+    OKAYUI_CTX_VAR(ui_core::g_curWin),
+    OKAYUI_CTX_VAR(ui_core::g_dockAware),
+    OKAYUI_CTX_VAR(ui_core::g_dockRouted),
+    OKAYUI_CTX_VAR(ui_core::g_focusWin),
+    OKAYUI_CTX_VAR(ui_core::g_nextWinPos),
+    OKAYUI_CTX_VAR(ui_core::g_nextWinSize),
+    OKAYUI_CTX_VAR(ui_core::g_noTitleNext),
+    OKAYUI_CTX_VAR(ui_core::g_pinNext),
+    OKAYUI_CTX_VAR(g_resizeMinH),
+    OKAYUI_CTX_VAR(g_resizeMinW),
+    OKAYUI_CTX_VAR(ui_core::g_resizeNext),
+    OKAYUI_CTX_VAR(ui_core::g_we),
+    OKAYUI_CTX_VAR(ui_core::g_wflagsNext))
 } // namespace OkayUI

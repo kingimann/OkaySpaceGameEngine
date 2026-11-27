@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include "OkayUIInternal.hpp"
@@ -544,4 +545,13 @@ void DrawList::PopTexture() const {
     bindTexture(g_texTop > 0 ? g_texStack[g_texTop - 1] : g_defTex);
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_path),
+    OKAYUI_CTX_VAR(ui_core::g_pathN),
+    OKAYUI_CTX_VAR(g_texStack),
+    OKAYUI_CTX_VAR(g_texTop))
 } // namespace OkayUI

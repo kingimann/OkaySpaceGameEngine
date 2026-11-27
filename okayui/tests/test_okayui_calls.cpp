@@ -209,7 +209,10 @@ int main() {
     {   // context shims
         Reset();
         UI::Context* c = UI::CreateContext();
-        CHECK(c != nullptr && UI::GetCurrentContext() == c && UI::CreateContext() == c);
+        CHECK(c != nullptr && UI::GetCurrentContext() == c);
+        UI::Context* c2 = UI::CreateContext();                    // a second context (test_okayui_contexts tests them); c stays current
+        CHECK(c2 != nullptr && c2 != c && UI::GetCurrentContext() == c);
+        UI::DestroyContext(c2); CHECK(UI::GetCurrentContext() == c);
         UI::SetCurrentContext(nullptr); CHECK(UI::GetCurrentContext() == nullptr);
         UI::SetCurrentContext(reinterpret_cast<UI::Context*>(0x1234)); CHECK(UI::GetCurrentContext() == nullptr);   // a foreign handle is ignored
         UI::SetCurrentContext(c); CHECK(UI::GetCurrentContext() == c);
@@ -553,6 +556,38 @@ int main() {
         CHECK(std::fabs(r5.x - (startX + 150.0f)) < 1.0f && r5.y == r4.y);
         s.Click(CenterX(r1), CenterY(r1), ui); CHECK(clicks == 1);
         s.rdown = true; s.Move(CenterX(r4), CenterY(r4)); s.Frame(ui); s.rdown = false; s.Frames(2, ui);   // right click on an item opens its own popup
+    }
+    {   // Dear ImGui code styles through GetStyle(): the writes are taken in (colours, rounding, padding, border, font scale), the rest stays
+        Reset(); Sim s(300, 200);
+        s.Frame([] {});
+        const UI::ImVec4 dim0 = UI::GetStyleColorVec4(UI::Col_TextDisabled);
+        const float pad0 = UI::Style().windowPadding;
+        UI::StyleInfo& st = UI::GetStyle();
+        st.Colors[UI::Col_Text] = UI::ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        st.Colors[UI::Col_FrameBg] = UI::ImVec4(0.0f, 0.5f, 0.0f, 1.0f);
+        st.FrameRounding = 7.0f; st.WindowRounding = 0.0f; st.FrameBorderSize = 0.0f;
+        s.Frame([] {});                                                   // taken in at the frame start
+        UI::ImVec4 t = UI::GetStyleColorVec4(UI::Col_Text), fb = UI::GetStyleColorVec4(UI::Col_FrameBg);
+        CHECK(t.x == 1.0f && t.y == 0.0f && t.z == 0.0f && fb.y > 0.49f && fb.y < 0.51f && fb.x == 0.0f);
+        CHECK(UI::Style().rounding == 7.0f && UI::Style().windowRounding == 0.0f && UI::Style().borderPx == 0.0f);
+        const UI::ImVec4 dim1 = UI::GetStyleColorVec4(UI::Col_TextDisabled);
+        CHECK(dim1.x == dim0.x && dim1.w == dim0.w && UI::Style().windowPadding == pad0);   // fields nobody wrote are left alone
+        UI::GetStyle().WindowPadding = UI::Vec2{14, 12};                    // taken in by the next GetStyle() call too
+        CHECK(UI::GetStyle().WindowPadding.x == 14.0f && UI::Style().windowPadding == 14.0f);
+        const UI::StyleInfo copy = UI::GetStyle();                        // the chat window's way: copy the style, assign it back
+        UI::StyleColorsLight();
+        UI::GetStyle() = copy; s.Frame([] {});
+        t = UI::GetStyleColorVec4(UI::Col_Text); CHECK(t.x == 1.0f && t.y == 0.0f);
+        UI::GetStyle().FrameRounding = std::nanf(""); s.Frame([] {}); CHECK(UI::Style().rounding == 7.0f);   // nonsense is ignored
+        // IO::FontGlobalScale: the text grows with it, and back
+        const float w1 = UI::CalcTextSize("Scaled text").x;
+        UI::GetIO().FontGlobalScale = 1.5f; s.Frame([] {});
+        const float w15 = UI::CalcTextSize("Scaled text").x;
+        CHECK(w15 > w1 * 1.45f && w15 < w1 * 1.55f);
+        UI::GetIO().FontGlobalScale = 1.5f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w15);   // not applied twice
+        UI::GetIO().FontGlobalScale = 1.0f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w1);
+        UI::GetIO().FontGlobalScale = -3.0f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w1);   // out of range: ignored
+        UI::GetIO().FontGlobalScale = 1.0f;
     }
     TEST_MAIN_RESULT();
 }

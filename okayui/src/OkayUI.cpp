@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -904,7 +905,11 @@ constexpr int kMaxHexSlots = 16;
 using namespace ui_core;
 
 
+void ApplyStyleWrites();
+void ApplyFontGlobalScale();
 void BeginFrame(const Input& in) {
+    ApplyStyleWrites();   // what Dear ImGui code wrote into GetStyle() since (see GetStyle)
+    ApplyFontGlobalScale();
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
@@ -1618,6 +1623,11 @@ void IO::AddInputCharacter(unsigned cp) {
     g_pendText.append(b, (size_t)n);
 }
 // Merge what AddKeyEvent / AddInputCharacter collected into a frame's input (NewFrame calls this), then forget the one-frame parts.
+namespace {
+bool g_mergeMine[KeyId_COUNT] = {};          // keys whose state came from events last time
+bool g_mergeMineCtrl = false, g_mergeMineShift = false;
+int g_mergeReleaseNext[2] = {0, 0};          // frames the press is still shown after a one-frame click (a click must last two frames: the first presses, the second is when a widget sees the pointer held)
+}
 void MergePendingIo(Input& in) {
     static std::string text;
     text.clear();   // typed text is one-shot: only what AddInputCharacter collected
@@ -1626,14 +1636,14 @@ void MergePendingIo(Input& in) {
     // NewFrame reuses the last frame's input, so its one-frame parts (the typed text, the key flags, the wheel) are cleared first.
     in.backspace = in.del = in.left = in.right = in.up = in.down = in.home = in.end = in.enter = in.escape = false;
     in.wheel = g_pendWheel; g_pendWheel = 0.0f; in.selectAll = in.copy = in.cut = in.paste = false; in.commit = nullptr;
-    static bool mine[KeyId_COUNT] = {};   // keys whose state came from events last time
+    bool (&mine)[KeyId_COUNT] = g_mergeMine;
     for (int k = 1; k < KeyId_COUNT; ++k) {
         const bool now = g_pendKeyDown[k] || g_pendKeyEdge[k];   // pressed and released inside one frame still counts as a press
         if (now) in.keyDown[k] = true; else if (mine[k]) in.keyDown[k] = false;
         mine[k] = now;
     }
     {   // the modifier keys: either hand, or the modifier flag key; events decide once any arrived
-        static bool mineCtrl = false, mineShift = false;
+        bool& mineCtrl = g_mergeMineCtrl; bool& mineShift = g_mergeMineShift;
         const bool c = g_pendKeyDown[KeyId_Ctrl] || g_pendKeyDown[KeyId_RightCtrl] || g_pendKeyDown[KeyId_ModCtrl] || g_pendKeyDown[KeyId_LeftSuper] || g_pendKeyDown[KeyId_RightSuper] || g_pendKeyDown[KeyId_ModSuper];
         const bool sh = g_pendKeyDown[KeyId_Shift] || g_pendKeyDown[KeyId_RightShift] || g_pendKeyDown[KeyId_ModShift];
         if (c) in.ctrl = true; else if (mineCtrl) in.ctrl = false;
@@ -1642,7 +1652,7 @@ void MergePendingIo(Input& in) {
     }
     if (g_pendMouseSet) { in.mouseX = g_pendMX; in.mouseY = g_pendMY; g_pendMouseSet = false; }
     {   // a press and a release inside one frame show as one pressed frame; the NEXT frame must show the release (nothing else would: the input is carried over)
-        static int releaseNext[2] = {0, 0};   // frames the press is still shown after a one-frame click (a click must last two frames: the first presses, the second is when a widget sees the pointer held)
+        int (&releaseNext)[2] = g_mergeReleaseNext;
         bool* down[2] = {&in.mouseDown, &in.rightDown};
         for (int b = 0; b < 2; ++b) {
             if (g_pendBtn[b] >= 0 || g_pendClick[b]) {
@@ -1694,10 +1704,11 @@ Vec2 GetMouseDragDelta(int button, float threshold) {
 }
 void ResetMouseDragDelta(int button) { if (button == 0) { g_pressX = g_in.mouseX; g_pressY = g_in.mouseY; } }
 bool IsAnyItemHovered() { return g_lay.active && (g_anyHoverNow || g_anyHoverPrev); }
+namespace { unsigned g_ctxLastHot = 0; double g_ctxHotSince = 0.0; }   // RefreshContext's hover timer
 Context* RefreshContext() {
-    static Context c;
+    Context& c = *ctxstate::LiveHandle();   // the handle of the context in use (OkayUI_Context.cpp), so GImGui == GetCurrentContext()
     c.ActiveId = (unsigned)g_active; c.HoveredId = (unsigned)g_hot; c.FrameCount = (int)g_frameCount; c.Time = GetTime();
-    { static unsigned lastHot = 0; static double hotSince = 0.0; if (c.HoveredId != lastHot) { lastHot = c.HoveredId; hotSince = c.Time; } c.HoveredIdTimer = c.HoveredId ? (float)(c.Time - hotSince) : 0.0f; }
+    { if (c.HoveredId != g_ctxLastHot) { g_ctxLastHot = c.HoveredId; g_ctxHotSince = c.Time; } c.HoveredIdTimer = c.HoveredId ? (float)(c.Time - g_ctxHotSince) : 0.0f; }
     const WinSlot* hov = nullptr;
     if (!g_in.blocked) for (const WinSlot& ws : g_wins) {
         if (!ws.used || ws.lastFrame + 1 < g_frameCount || !pointIn(g_in.mouseX, g_in.mouseY, ws.x, ws.y, ws.w, ws.h)) continue;
@@ -2544,8 +2555,43 @@ static bool InputInt_raw(const char* label, int* value, int step) {
 
 
 // ---- GetStyle: the style as Dear ImGui-shaped fields, read off OkayUI's own settings each call ----------------------------
+// GetStyle() hands out one style object per context. Writes to it (Dear ImGui code sets colours and sizes through it) are taken in
+// at the next GetStyle() call and at the start of the next frame: every field that differs from what GetStyle last wrote there is
+// applied (the colours as set colours, see SetStyleColor; the window and frame rounding, the window padding, the border width and the
+// font scale to the theme). The other fields are filled in for reading; a write to them is not used. Written by us from Dear ImGui's
+// documented behaviour (ImGuiStyle is read by every widget, so a write changes how the UI draws); no code from any other project.
+namespace {
+StyleInfo g_styleOut;           // what GetStyle() returned
+StyleInfo g_styleSeen;          // what it held when it was returned (to see what a caller changed)
+bool g_styleHanded = false;
+bool SameColor(const ImVec4& a, const ImVec4& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+unsigned char ToByte(float v) { if (!(v > 0.0f)) return 0; if (v >= 1.0f) return 255; return (unsigned char)(v * 255.0f + 0.5f); }
+float Sane(float v, float lo, float hi, float keep) { return std::isfinite(v) && v >= lo && v <= hi ? v : keep; }
+} // namespace
+void ApplyStyleWrites() {
+    if (!g_styleHanded) return;
+    const StyleInfo& o = g_styleOut; const StyleInfo& w = g_styleSeen;
+    for (int i = 0; i < Col_COUNT && i < 64; ++i)
+        if (!SameColor(o.Colors[i], w.Colors[i])) SetStyleColor((Col)i, ToByte(o.Colors[i].x), ToByte(o.Colors[i].y), ToByte(o.Colors[i].z), ToByte(o.Colors[i].w));
+    if (o.WindowRounding != w.WindowRounding) g_theme.windowRounding = Sane(o.WindowRounding, 0.0f, 64.0f, g_theme.windowRounding);
+    if (o.FrameRounding != w.FrameRounding) g_theme.rounding = Sane(o.FrameRounding, 0.0f, 64.0f, g_theme.rounding);
+    if (o.WindowPadding.x != w.WindowPadding.x) g_theme.windowPadding = Sane(o.WindowPadding.x, 0.0f, 200.0f, g_theme.windowPadding);
+    if (o.FrameBorderSize != w.FrameBorderSize) g_theme.borderPx = Sane(o.FrameBorderSize, 0.0f, 16.0f, g_theme.borderPx);
+    else if (o.WindowBorderSize != w.WindowBorderSize) g_theme.borderPx = Sane(o.WindowBorderSize, 0.0f, 16.0f, g_theme.borderPx);
+    if (o.FontScale != w.FontScale) g_theme.textScale = Sane(o.FontScale, 0.25f, 16.0f, g_theme.textScale);
+    g_styleSeen = g_styleOut;
+}
+// IO::FontGlobalScale (Dear ImGui: every font drawn this much larger): the theme's text scale follows it, applied at frame start.
+namespace { float g_fontGlobalApplied = 1.0f; }
+void ApplyFontGlobalScale() {
+    const float want = Sane(g_io.FontGlobalScale, 0.25f, 4.0f, g_fontGlobalApplied);
+    if (want == g_fontGlobalApplied) return;
+    g_theme.textScale = Sane(g_theme.textScale / g_fontGlobalApplied * want, 0.25f, 32.0f, g_theme.textScale);
+    g_fontGlobalApplied = want;
+}
 StyleInfo& GetStyle() {
-    static StyleInfo s;
+    ApplyStyleWrites();
+    StyleInfo& s = g_styleOut;
     const float rh = rowH(), th = textH();
     s.Alpha = 1.0f;
     s.WindowPadding = Vec2{g_theme.windowPadding, g_theme.windowPadding};
@@ -2558,6 +2604,7 @@ StyleInfo& GetStyle() {
     s.WindowBorderSize = g_theme.borderPx; s.ChildBorderSize = g_theme.borderPx; s.FrameBorderSize = g_theme.borderPx;
     s.FontScale = g_theme.textScale;
     for (int i = 0; i < Col_COUNT && i < 64; ++i) s.Colors[i] = GetStyleColorVec4((Col)i);
+    g_styleSeen = s; g_styleHanded = true;
     return s;
 }
 
@@ -3435,6 +3482,7 @@ void ResetState() {
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
+    g_styleHanded = false; g_fontGlobalApplied = 1.0f; g_io.FontGlobalScale = 1.0f;
 }
 
 // ---- Edit tracking: every value widget below reports through noteEdit (see IsItemEdited) ----
@@ -3758,3 +3806,214 @@ bool SearchField(const char* id, const char* hint, char* buf, int cap, float wid
 
 } // namespace OkayUI
 
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_active),
+    OKAYUI_CTX_VAR(ui_core::g_activeAtFrameStart),
+    OKAYUI_CTX_VAR(ui_core::g_anyHoverNow),
+    OKAYUI_CTX_VAR(ui_core::g_anyHoverPrev),
+    OKAYUI_CTX_VAR(ui_core::g_barH),
+    OKAYUI_CTX_VAR(ui_core::g_barX),
+    OKAYUI_CTX_VAR(ui_core::g_barY),
+    OKAYUI_CTX_VAR(ui_core::g_bgAlphaCore),
+    OKAYUI_CTX_VAR(ui_core::g_btnAlignX),
+    OKAYUI_CTX_VAR(ui_core::g_cellPadX),
+    OKAYUI_CTX_VAR(ui_core::g_cellPadY),
+    OKAYUI_CTX_VAR(ui_core::g_centerNext),
+    OKAYUI_CTX_VAR(ui_core::g_childPadY),
+    OKAYUI_CTX_VAR(ui_core::g_childStack),
+    OKAYUI_CTX_VAR(ui_core::g_childTop),
+    OKAYUI_CTX_VAR(ui_core::g_clipStack),
+    OKAYUI_CTX_VAR(ui_core::g_clipTop),
+    OKAYUI_CTX_VAR(ui_core::g_clock),
+    OKAYUI_CTX_VAR(ui_core::g_col),
+    OKAYUI_CTX_VAR(ui_core::g_colStack),
+    OKAYUI_CTX_VAR(ui_core::g_colTop),
+    OKAYUI_CTX_VAR(g_ctxHotSince),
+    OKAYUI_CTX_VAR(g_ctxLastHot),
+    OKAYUI_CTX_VAR(ui_core::g_cullRow),
+    OKAYUI_CTX_VAR(ui_core::g_curClipOn),
+    OKAYUI_CTX_VAR(ui_core::g_curClipRect),
+    OKAYUI_CTX_VAR(ui_core::g_curMenu),
+    OKAYUI_CTX_VAR(ui_core::g_cursor),
+    OKAYUI_CTX_VAR(ui_core::g_curTex),
+    OKAYUI_CTX_VAR(ui_core::g_dblClick),
+    OKAYUI_CTX_VAR(ui_core::g_dd),
+    OKAYUI_CTX_VAR(ui_core::g_defTex),
+    OKAYUI_CTX_VAR(ui_core::g_disCount),
+    OKAYUI_CTX_VAR(ui_core::g_dispH),
+    OKAYUI_CTX_VAR(ui_core::g_dispW),
+    OKAYUI_CTX_VAR(ui_core::g_disStack),
+    OKAYUI_CTX_VAR(ui_core::g_disTop),
+    OKAYUI_CTX_VAR(ui_core::g_dragAccum),
+    OKAYUI_CTX_VAR(ui_core::g_dragOriginX),
+    OKAYUI_CTX_VAR(ui_core::g_dragOriginY),
+    OKAYUI_CTX_VAR(ui_core::g_edFrameId),
+    OKAYUI_CTX_VAR(ui_core::g_editBuf),
+    OKAYUI_CTX_VAR(ui_core::g_editId),
+    OKAYUI_CTX_VAR(ui_core::g_edStickyId),
+    OKAYUI_CTX_VAR(ui_core::g_escapeUsed),
+    OKAYUI_CTX_VAR(ui_core::g_fieldFocus),
+    OKAYUI_CTX_VAR(ui_core::g_fieldFocusSeen),
+    OKAYUI_CTX_VAR(ui_core::g_fieldPadL),
+    OKAYUI_CTX_VAR(ui_core::g_fieldPadR),
+    OKAYUI_CTX_VAR(ui_core::g_floats),
+    OKAYUI_CTX_VAR(ui_core::g_focus),
+    OKAYUI_CTX_VAR(ui_core::g_focusAtFrameStart),
+    OKAYUI_CTX_VAR(ui_core::g_focusClaimed),
+    OKAYUI_CTX_VAR(ui_core::g_focusLostEnd),
+    OKAYUI_CTX_VAR(ui_core::g_focusLostPrev),
+    OKAYUI_CTX_VAR(ui_core::g_focusNextField),
+    OKAYUI_CTX_VAR(ui_core::g_focusSelectAll),
+    OKAYUI_CTX_VAR(ui_core::g_font),
+    OKAYUI_CTX_VAR(ui_core::g_frame),
+    OKAYUI_CTX_VAR(ui_core::g_frameCount),
+    OKAYUI_CTX_VAR(ui_core::g_framedWidgets),
+    OKAYUI_CTX_VAR(ui_core::g_framePadX),
+    OKAYUI_CTX_VAR(ui_core::g_framePadY),
+    OKAYUI_CTX_VAR(ui_core::g_grp),
+    OKAYUI_CTX_VAR(ui_core::g_grpTop),
+    OKAYUI_CTX_VAR(ui_core::g_hintText),
+    OKAYUI_CTX_VAR(ui_core::g_hitWinId),
+    OKAYUI_CTX_VAR(ui_core::g_hitWinOn),
+    OKAYUI_CTX_VAR(ui_core::g_hitWinZ),
+    OKAYUI_CTX_VAR(ui_core::g_hot),
+    OKAYUI_CTX_VAR(ui_core::g_hoverFrame),
+    OKAYUI_CTX_VAR(ui_core::g_hoverKey),
+    OKAYUI_CTX_VAR(ui_core::g_hoverStart),
+    OKAYUI_CTX_VAR(ui_core::g_idSeed),
+    OKAYUI_CTX_VAR(ui_core::g_idSkipped),
+    OKAYUI_CTX_VAR(ui_core::g_idStack),
+    OKAYUI_CTX_VAR(ui_core::g_idTop),
+    OKAYUI_CTX_VAR(ui_core::g_ime),
+    OKAYUI_CTX_VAR(ui_core::g_in),
+    OKAYUI_CTX_VAR(ui_core::g_inMenuBar),
+    OKAYUI_CTX_VAR(ui_core::g_innerX),
+    OKAYUI_CTX_VAR(ui_core::g_inTip),
+    OKAYUI_CTX_VAR(ui_core::g_io),
+    OKAYUI_CTX_VAR(g_ioQueueFilled),
+    OKAYUI_CTX_VAR(g_ioQueueFrame),
+    OKAYUI_CTX_VAR(ui_core::g_itemWStack),
+    OKAYUI_CTX_VAR(ui_core::g_itemWTop),
+    OKAYUI_CTX_VAR(ui_core::g_keyNextRepeat),
+    OKAYUI_CTX_VAR(ui_core::g_keyNow),
+    OKAYUI_CTX_VAR(ui_core::g_keyPrev),
+    OKAYUI_CTX_VAR(ui_core::g_keySince),
+    OKAYUI_CTX_VAR(ui_core::g_lastId),
+    OKAYUI_CTX_VAR(ui_core::g_lastMouseMove),
+    OKAYUI_CTX_VAR(ui_core::g_lastPressTime),
+    OKAYUI_CTX_VAR(ui_core::g_lastPressX),
+    OKAYUI_CTX_VAR(ui_core::g_lastPressY),
+    OKAYUI_CTX_VAR(ui_core::g_lay),
+    OKAYUI_CTX_VAR(ui_core::g_look),
+    OKAYUI_CTX_VAR(ui_core::g_menuDepth),
+    OKAYUI_CTX_VAR(ui_core::g_menuKbs),
+    OKAYUI_CTX_VAR(ui_core::g_menuStack),
+    OKAYUI_CTX_VAR(g_mergeMine),
+    OKAYUI_CTX_VAR(g_mergeMineCtrl),
+    OKAYUI_CTX_VAR(g_mergeMineShift),
+    OKAYUI_CTX_VAR(g_mergeReleaseNext),
+    OKAYUI_CTX_VAR(ui_core::g_mouseDX),
+    OKAYUI_CTX_VAR(ui_core::g_mouseDY),
+    OKAYUI_CTX_VAR(ui_core::g_mPressed),
+    OKAYUI_CTX_VAR(ui_core::g_mPrevDown),
+    OKAYUI_CTX_VAR(ui_core::g_mReleased),
+    OKAYUI_CTX_VAR(ui_core::g_nextBgAlpha),
+    OKAYUI_CTX_VAR(ui_core::g_nextCollapse),
+    OKAYUI_CTX_VAR(ui_core::g_nextFrameKbd),
+    OKAYUI_CTX_VAR(ui_core::g_nextItemW),
+    OKAYUI_CTX_VAR(g_nextNum),
+    OKAYUI_CTX_VAR(ui_core::g_nextOpen),
+    OKAYUI_CTX_VAR(ui_core::g_nextWinFocus),
+    OKAYUI_CTX_VAR(g_ntoasts),
+    OKAYUI_CTX_VAR(g_numLast),
+    OKAYUI_CTX_VAR(g_numText),
+    OKAYUI_CTX_VAR(ui_core::g_nwrec),
+    OKAYUI_CTX_VAR(ui_core::g_openPopupThisFrame),
+    OKAYUI_CTX_VAR(ui_core::g_opens),
+    OKAYUI_CTX_VAR(ui_core::g_ovCur),
+    OKAYUI_CTX_VAR(ui_core::g_ovCurN),
+    OKAYUI_CTX_VAR(ui_core::g_ovPrev),
+    OKAYUI_CTX_VAR(ui_core::g_ovPrevN),
+    OKAYUI_CTX_VAR(g_pendBtn),
+    OKAYUI_CTX_VAR(g_pendClick),
+    OKAYUI_CTX_VAR(g_pendFocusLost),
+    OKAYUI_CTX_VAR(g_pendKeyDown),
+    OKAYUI_CTX_VAR(g_pendKeyEdge),
+    OKAYUI_CTX_VAR(g_pendMouseSet),
+    OKAYUI_CTX_VAR(g_pendMX),
+    OKAYUI_CTX_VAR(g_pendMY),
+    OKAYUI_CTX_VAR(g_pendText),
+    OKAYUI_CTX_VAR(g_pendWheel),
+    OKAYUI_CTX_VAR(ui_core::g_popCur),
+    OKAYUI_CTX_VAR(ui_core::g_popCurN),
+    OKAYUI_CTX_VAR(ui_core::g_popPrev),
+    OKAYUI_CTX_VAR(ui_core::g_popPrevN),
+    OKAYUI_CTX_VAR(ui_core::g_popupPadX),
+    OKAYUI_CTX_VAR(ui_core::g_popupPadY),
+    OKAYUI_CTX_VAR(ui_core::g_popups),
+    OKAYUI_CTX_VAR(ui_core::g_popupStack),
+    OKAYUI_CTX_VAR(ui_core::g_popupSubOpen),
+    OKAYUI_CTX_VAR(ui_core::g_popupTop),
+    OKAYUI_CTX_VAR(ui_core::g_popupW),
+    OKAYUI_CTX_VAR(ui_core::g_posOverride),
+    OKAYUI_CTX_VAR(ui_core::g_posSameLine),
+    OKAYUI_CTX_VAR(ui_core::g_posX),
+    OKAYUI_CTX_VAR(ui_core::g_posY),
+    OKAYUI_CTX_VAR(ui_core::g_pressed),
+    OKAYUI_CTX_VAR(ui_core::g_pressX),
+    OKAYUI_CTX_VAR(ui_core::g_pressY),
+    OKAYUI_CTX_VAR(ui_core::g_prevDown),
+    OKAYUI_CTX_VAR(ui_core::g_prevMouseX),
+    OKAYUI_CTX_VAR(ui_core::g_prevMouseY),
+    OKAYUI_CTX_VAR(ui_core::g_ptrOverWindow),
+    OKAYUI_CTX_VAR(ui_core::g_ptrOverWindowPrev),
+    OKAYUI_CTX_VAR(ui_core::g_rawDraw),
+    OKAYUI_CTX_VAR(ui_core::g_released),
+    OKAYUI_CTX_VAR(ui_core::g_rowClipper),
+    OKAYUI_CTX_VAR(ui_core::g_rPressed),
+    OKAYUI_CTX_VAR(ui_core::g_rPrevDown),
+    OKAYUI_CTX_VAR(ui_core::g_rReleased),
+    OKAYUI_CTX_VAR(ui_core::g_sbSize),
+    OKAYUI_CTX_VAR(ui_core::g_sortSpecsFor),
+    OKAYUI_CTX_VAR(ui_core::g_sortSpecsOut),
+    OKAYUI_CTX_VAR(g_split),
+    OKAYUI_CTX_VAR(g_fontGlobalApplied),
+    OKAYUI_CTX_VAR(g_styleHanded),
+    OKAYUI_CTX_VAR(g_styleOut),
+    OKAYUI_CTX_VAR(g_styleSeen),
+    OKAYUI_CTX_VAR(g_styleStack),
+    OKAYUI_CTX_VAR(g_styleTop),
+    OKAYUI_CTX_VAR(ui_core::g_tabBar),
+    OKAYUI_CTX_VAR(ui_core::g_tabOrders),
+    OKAYUI_CTX_VAR(ui_core::g_tabSel),
+    OKAYUI_CTX_VAR(ui_core::g_tbl),
+    OKAYUI_CTX_VAR(ui_core::g_tdd),
+    OKAYUI_CTX_VAR(ui_core::g_tddExt),
+    OKAYUI_CTX_VAR(ui_core::g_tddExtReleased),
+    OKAYUI_CTX_VAR(ui_core::g_tddExtSeen),
+    OKAYUI_CTX_VAR(g_textRowH),
+    OKAYUI_CTX_VAR(g_texts),
+    OKAYUI_CTX_VAR(ui_core::g_theme),
+    OKAYUI_CTX_VAR(g_toasts),
+    OKAYUI_CTX_VAR(ui_core::g_toggledId),
+    OKAYUI_CTX_VAR(ui_core::g_toOverlay),
+    OKAYUI_CTX_VAR(ui_core::g_tstore),
+    OKAYUI_CTX_VAR(ui_core::g_ttf),
+    OKAYUI_CTX_VAR(g_userSavedScale),
+    OKAYUI_CTX_VAR(ui_core::g_wCur),
+    OKAYUI_CTX_VAR(ui_core::g_wCurN),
+    OKAYUI_CTX_VAR(ui_core::g_wheelUsed),
+    OKAYUI_CTX_VAR(ui_core::g_whiteU),
+    OKAYUI_CTX_VAR(ui_core::g_whiteV),
+    OKAYUI_CTX_VAR(ui_core::g_winBaseScale),
+    OKAYUI_CTX_VAR(ui_core::g_winItemWDepth),
+    OKAYUI_CTX_VAR(ui_core::g_wins),
+    OKAYUI_CTX_VAR(ui_core::g_wPrev),
+    OKAYUI_CTX_VAR(ui_core::g_wPrevN),
+    OKAYUI_CTX_VAR(ui_core::g_wrapPos),
+    OKAYUI_CTX_VAR(ui_core::g_wrec),
+    OKAYUI_CTX_VAR(ui_core::g_wrecOpen),
+    OKAYUI_CTX_VAR(ui_core::g_zCounter))
+} // namespace OkayUI

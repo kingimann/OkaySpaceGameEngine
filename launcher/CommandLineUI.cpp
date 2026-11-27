@@ -155,6 +155,9 @@ void DrawOkayTab(Tab& t, const Host& host, const PageLayout& L, ImVec2 origin) {
     const std::string& text = s.Lines().empty() ? s_empty : s.Text();
     ImGui::InputTextMultiline("##cliout", const_cast<char*>(text.c_str()), text.size() + 1, ImVec2(L.output.w, L.output.h),
                               ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoUndoRedo | ImGuiInputTextFlags_WordWrap);
+#ifdef OKAY_ON_OKAYUI
+    if (t.follow > 0) { OkayUI::ScrollTextBoxToEnd("##cliout"); --t.follow; }   // the box keeps its own scroll: to its last line
+#else
     {   // The box is a child window, the newest child of this page: scroll it to its end (imgui_internal SetScrollY).
         ImGuiWindow* page = ImGui::GetCurrentWindow();
         if (t.follow > 0 && !page->DC.ChildWindows.empty()) {
@@ -163,6 +166,7 @@ void DrawOkayTab(Tab& t, const Host& host, const PageLayout& L, ImVec2 origin) {
             --t.follow;
         }
     }
+#endif
     ImGui::PopStyleColor();
 
     Place(L.input, origin);

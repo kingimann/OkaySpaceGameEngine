@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -633,4 +634,11 @@ bool BeginPopupContextItem(const char* id) {
     return beginPopupBody(pid);
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_comboCloseId),
+    OKAYUI_CTX_VAR(g_modalNoTitle))
 } // namespace OkayUI

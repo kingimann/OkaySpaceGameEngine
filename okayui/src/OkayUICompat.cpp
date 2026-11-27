@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <memory>
 #include <vector>
 #include "okay/Graphics/TtfFont.hpp"
@@ -210,20 +211,7 @@ const char* FindRenderedTextEnd(const char* text, const char* textEnd) {
     return p;
 }
 
-namespace {
-bool g_ctxCurrent = true;
-}
-Context* CreateContext() { g_ctxCurrent = true; return RefreshContext(); }
-void DestroyContext(Context* ctx) {
-    if (ctx && ctx != RefreshContext()) return;
-    ResetState();
-    g_ctxCurrent = false;
-}
-Context* GetCurrentContext() { return g_ctxCurrent ? RefreshContext() : nullptr; }
-void SetCurrentContext(Context* ctx) {
-    if (!ctx) g_ctxCurrent = false;
-    else if (ctx == RefreshContext()) g_ctxCurrent = true;
-}
+// CreateContext, DestroyContext, GetCurrentContext and SetCurrentContext: OkayUI_Context.cpp.
 
 namespace {
 void SetBase(Theme& t, const unsigned char bg[4], const unsigned char hov[4], const unsigned char down[4], const unsigned char border[4],
@@ -322,9 +310,10 @@ bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float in
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
 void MergePendingIo(Input& in);   // OkayUI.cpp: IO::AddKeyEvent / AddInputCharacter
 IO& IoRaw();
+namespace { double g_newFrameClock = 0.0; }   // NewFrame's clock: the frame times a platform feed wrote, added up (one per context)
 void NewFrame() {
     Input in = GetFrameInput(); MergePendingIo(in);
-    static double clock = 0.0;
+    double& clock = g_newFrameClock;
     const IO& r = IoRaw();   // a platform feed (shared/ImGuiPlatformFeed.hpp) writes the display size and the frame time here
 
     if (r.DisplaySize.x > 0.0f && r.DisplaySize.y > 0.0f) { in.displayW = r.DisplaySize.x; in.displayH = r.DisplaySize.y; }
@@ -476,3 +465,18 @@ const FontRequest* FontRequests(int* count) { if (count) *count = g_nFontReqs; r
 
 namespace OkayUI { void ColorConvertHSVtoRGB(float h, float s, float v, float& r, float& g, float& b) { ColorConvertHSVtoRGB(h, s, v, &r, &g, &b); } }
 namespace OkayUI { void Columns(int count, const char*, bool) { Columns(count); } }
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_flagStack),
+    OKAYUI_CTX_VAR(g_flagTop),
+    OKAYUI_CTX_VAR(g_fontBefore),
+    OKAYUI_CTX_VAR(g_fontStack),
+    OKAYUI_CTX_VAR(g_fontTop),
+    OKAYUI_CTX_VAR(g_keyOwner),
+    OKAYUI_CTX_VAR(g_keyOwnerFrame),
+    OKAYUI_CTX_VAR(g_mainViewport),
+    OKAYUI_CTX_VAR(g_newFrameClock),
+    OKAYUI_CTX_VAR(g_store))
+} // namespace OkayUI

@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -175,4 +176,11 @@ void EndTooltip() {
     t.open = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_pendingTip),
+    OKAYUI_CTX_VAR(g_tip))
 } // namespace OkayUI

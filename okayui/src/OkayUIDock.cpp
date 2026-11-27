@@ -1,5 +1,6 @@
 // OkayUI docking: the dock space, tab strips, splitters, drag to float / dock, drop-target preview.
 // The data model is in OkayUIDockLayout.cpp. See okay/UI/OkayUIDock.hpp.
+#include "OkayUI_ContextState.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
 
@@ -427,4 +428,10 @@ void DockEnd() {
     c.pOpen = nullptr;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(C()))
 } // namespace OkayUI

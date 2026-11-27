@@ -14074,6 +14074,8 @@ int main(int argc, char** argv) {
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
+#elif defined(OKAY_ON_OKAYUI)
+        okayFrame = true;   // the whole launcher is an OkayUI frame: the Browser page draws straight into it
 #endif
         SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
         PumpBrowser();                        // its pages, downloads and games move along whichever page is shown
@@ -14960,6 +14962,13 @@ int main(int argc, char** argv) {
                 ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
 #ifdef OKAY_HAVE_OKAYUI
                 HostOkayPage("##okayui_browser", ra, [&](ImVec2 p, ImVec2 a) { DrawBrowserPage(p.x, p.y, a.x, a.y); });
+#elif defined(OKAY_ON_OKAYUI)
+                {   // on OkayUI the browser is drawn in place, in the page's own window (no second frame to host)
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    DrawBrowserPage(p.x, p.y, ra.x, ra.y);
+                    ImGui::SetCursorScreenPos(p);
+                    ImGui::Dummy(ra);
+                }
 #else
                 ImGui::Dummy(ra);
 #endif

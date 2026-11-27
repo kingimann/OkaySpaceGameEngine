@@ -108,7 +108,7 @@ struct StyleInfo {
     float WindowRounding = 0.0f, ChildRounding = 0.0f, FrameRounding = 0.0f;
     float WindowBorderSize = 0.0f, ChildBorderSize = 0.0f, FrameBorderSize = 0.0f;
     float FontScale = 1.0f;                // the theme's text scale (2 = 16 px glyphs), not a multiplier of 1
-    // Style fields OkayUI has no setting for: filled with fixed values so reads compile and give a sensible number (a write is lost, as for the others).
+    // Style fields OkayUI has no setting for: filled with fixed values so reads compile and give a sensible number (a write to them is not used).
     float PopupRounding = 4.0f, PopupBorderSize = 1.0f, GrabMinSize = 10.0f, GrabRounding = 3.0f, TabRounding = 4.0f, TabBorderSize = 0.0f, TabBarBorderSize = 1.0f;
     float TabBarOverlineSize = 0.0f, TabMinWidthBase = 1.0f, TabMinWidthShrink = 80.0f, TabCloseButtonMinWidthSelected = -1.0f, TabCloseButtonMinWidthUnselected = 0.0f;
     float SeparatorTextBorderSize = 1.0f, DockingSeparatorSize = 2.0f;
@@ -121,7 +121,9 @@ struct StyleInfo {
     void ScaleAllSizes(float) {}           // accepted; OkayUI scales through the text scale and the display scale
     ImVec4 Colors[Col_COUNT];              // index with the Col ids
 };
-StyleInfo& GetStyle();   // not const only so `ImGuiStyle& st = GetStyle();` compiles; a write is still lost
+/// One style object per context. A write to Colors, WindowRounding, FrameRounding, WindowPadding.x, the border sizes or FontScale is taken in at
+/// the next GetStyle() call or frame start (as set colours and theme values); a write to the other fields is not used.
+StyleInfo& GetStyle();
 /// Dear ImGui's name for the style type, so `const ImGuiStyle& st = GetStyle();` compiles (read-only, see above).
 typedef StyleInfo ImGuiStyle;
 

@@ -16,6 +16,18 @@ ensure_index() {
   done
   echo "apt index still empty after 4 tries (the install step will fail with the real apt error)"
 }
+# The runner image also lists Microsoft's package repository, which none of our installs need. On 2026-11-27 it answered
+# "403 Forbidden ... is no longer signed", and `apt-get update` (run by `playwright install --with-deps`) then failed the
+# WebGL job. If that repository cannot be read, switch it off for this job; when it is fine it is left alone.
+for f in /etc/apt/sources.list.d/*microsoft*.list /etc/apt/sources.list.d/*microsoft*.sources; do
+  [ -f "$f" ] || continue
+  url=$(grep -oE 'https?://packages\.microsoft\.com/[^ ]*' "$f" | head -1)
+  [ -n "$url" ] || continue
+  if ! curl -fsS -m 20 -o /dev/null "${url%/}/dists/$(. /etc/os-release && echo "$VERSION_CODENAME")/InRelease"; then
+    echo "Microsoft package repository unreadable ($url), switching it off for this job: $f"
+    sudo mv "$f" "$f.disabled"
+  fi
+done
 PROBE="http://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease"
 if curl -fsS -m 20 -o /dev/null "$PROBE"; then
   echo "apt mirror ok, no change"

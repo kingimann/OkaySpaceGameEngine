@@ -328,10 +328,11 @@ inline std::string PercentEncode(const std::string& in) {
 }
 
 /// Why a request got no HTTP answer, in plain words, from the HTTP seam's low-level reason (okay::http::Result::error:
-/// "connect: winhttp error 12029", "curl exit code 6", the own client's "ErrName: message"). The code stays at the end in
-/// brackets so a report can be looked up. Never holds a secret: the seam's reasons carry no header, body or query string,
-/// and any "?..." part is cut anyway. Empty in, empty out. Written from the WinHTTP error-code list (winhttp.h) and
-/// curl's exit-code list.
+/// "connect: winhttp error 12029" on Windows, our own client's "ErrName: message" elsewhere, e.g. "connect: cannot resolve
+/// host: ..." or "tls: certificate not verified"; okay::ownhttp::ErrName). The code stays at the end in brackets so a
+/// report can be looked up. Never holds a secret: the seam's reasons carry no header, body or query string, and any "?..."
+/// part is cut anyway. Empty in, empty out. Written from the WinHTTP error-code list (winhttp.h) and our own client's
+/// error names (OwnHttp.hpp). (There is no curl fallback any more, so curl's exit codes are not translated.)
 inline std::string PlainNetReason(std::string raw) {
     if (raw.empty()) return {};
     for (std::size_t q = raw.find('?'); q != std::string::npos; q = raw.find('?')) {   // no query strings in what we show
@@ -348,7 +349,7 @@ inline std::string PlainNetReason(std::string raw) {
         return any ? v : -1;
     };
     const char* words = nullptr;
-    const long w = code("winhttp error "), c = code("curl exit code ");
+    const long w = code("winhttp error ");
     switch (w) {
         case 12002: words = "The server took too long to answer."; break;
         case 12007: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
@@ -360,18 +361,18 @@ inline std::string PlainNetReason(std::string raw) {
         case 12166: case 12167: case 12180: words = "Windows' proxy settings could not be used."; break;
         default: break;
     }
-    if (!words) switch (c) {
-        case 6: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
-        case 7: words = "Could not connect to the server (no internet, or a firewall blocks it)."; break;
-        case 28: words = "The server took too long to answer."; break;
-        case 35: case 51: case 58: case 60: words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS)."; break;
-        case 52: case 56: words = "The connection was cut off before the server answered."; break;
-        default: break;
+    auto starts = [&](const char* tag) { return raw.compare(0, std::strlen(tag), tag) == 0; };   // our own client: "ErrName: ..."
+    if (!words && w < 0) {
+        if (starts("connect: cannot resolve host")) words = "The server's name could not be looked up (no internet, or DNS is blocked).";
+        else if (starts("connect: connect timed out")) words = "The server took too long to answer.";
+        else if (starts("connect: ")) words = "Could not connect to the server (no internet, or a firewall blocks it).";
+        else if (starts("tls: ")) words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS).";
+        else if (starts("io: ")) words = "The connection was cut off before the server answered.";
+        else if (starts("proxy: ")) words = "A proxy on this network refused the connection.";
     }
     if (!words) {
         if (raw.find("timeout") != std::string::npos) words = "The server took too long to answer.";
         else if (raw.find("proxy-auth") != std::string::npos) words = "A proxy on this network wants a password.";
-        else if (raw.find("curl could not be started") != std::string::npos) words = "The backup connection (curl) could not be started.";
         else if (raw.find("bad-url") != std::string::npos) words = "The account server address is not a valid web address.";
     }
     return words ? std::string(words) + " [" + raw + "]" : "[" + raw + "]";

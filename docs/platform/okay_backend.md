@@ -10,7 +10,11 @@
 > "will" below for later rounds is still a plan. Owner decisions that change the plan are in section 13, each with the
 > default this plan uses until the owner says otherwise.
 >
-> **Last checked:** 2026-11-26 (branch `claude/okay-backend-4`).
+> **Last checked:** 2026-11-27 (branch `claude/okay-backend-6`).
+>
+> **Admin dashboard:** the audit and design of the OkayBackend administration dashboard (owner request 2026-11-26: our own
+> Admin API, roles and permissions, audit log, what is native and what is still Supabase) is
+> [okay_backend_admin.md](okay_backend_admin.md). Its rounds are lettered A1 to A9 so they do not mix with the rounds below.
 
 ## Contents
 

@@ -14,7 +14,7 @@ namespace okay { class OkayScriptVM; }
 namespace oked {
 
 /// What the plugin calls reach in the Script Editor: the open script and a few actions. The Script Editor fills it every
-/// frame (DrawScriptEditor); empty functions make the calls do nothing.
+/// frame (DrawScriptEditorApp, editor/ScriptEditorAppHost.cpp); empty functions make the calls do nothing.
 struct ScriptEditorHost {
     std::function<std::string()> text, path, language;
     std::function<int()> caretLine;

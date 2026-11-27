@@ -9,6 +9,7 @@
 - [Download my data and Delete my account](account_data.md): Launcher: **Account > Sign-in & security > Your data** (online Supabase accounts only).
 - [Player accounts](accounts.md): OkaySpace has a small account system for signing players in and out.
 - [Anti-cheat](anticheat.md): Server-side, opt-in anti-cheat: the quick start, the full reference, and what hardening is done and not done.
+- [OkayAntiCheat audit and design](okay_anticheat.md): what anti-cheat exists today, its privacy and false-positive risks, and the plan to make it one module in rounds.
 - [Crash reports: what is saved, what is sent, how an issue is made](crash_reports.md): If the editor crashes, it writes a detailed report.
 - [Dedicated servers](dedicated-server.md): Any OkaySpace game can run as its own **headless, authoritative game server**: the same player executable, with no window, GPU or audio.
 - [Kick, ban and admins in community servers and group chats](member_moderation.md): The Members list of a community server (right side of the Servers page) and of a group chat (group menu, Members) now has moderation.

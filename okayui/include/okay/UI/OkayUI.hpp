@@ -989,7 +989,7 @@ struct Font {
 };
 typedef Font ImFont;
 /// What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
-struct ImFontConfig { float SizePixels = 0.0f; int OversampleH = 1, OversampleV = 1; bool PixelSnapH = false, MergeMode = false; Vec2 GlyphOffset; const unsigned short* GlyphRanges = nullptr; char Name[40] = {0}; };
+struct ImFontConfig { float SizePixels = 0.0f; int OversampleH = 1, OversampleV = 1; bool PixelSnapH = false, MergeMode = false; Vec2 GlyphOffset; const unsigned short* GlyphRanges = nullptr; char Name[40] = {0}; bool FontDataOwnedByAtlas = true; /* (as Dear ImGui; OkayUI never frees the caller's bytes) */ };
 /// Set the active font (null restores the built-in 8x8).
 void SetFont(const Font* font);
 Font* GetFont();   // not const so `ImFont* f = GetFont();` compiles; the font is not changed through it

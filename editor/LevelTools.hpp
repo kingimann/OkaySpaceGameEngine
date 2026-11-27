@@ -8,7 +8,6 @@
 
 namespace okay { class Component; class GameObject; class Terrain; struct Mat4; struct Vec3; }
 
-namespace okaypanels { struct InspFieldList; }
 
 namespace oked {
 
@@ -44,21 +43,6 @@ void DrawLevelInspector(okay::editor::EditorState& ed, okay::GameObject* go, oka
 void DrawTerrainLayersUI(okay::editor::EditorState& ed, okay::Terrain& terrain);
 void DrawTerrainScatterUI(okay::editor::EditorState& ed, okay::Terrain& terrain);
 
-// The same two sections as OkayUI field rows (the Inspector, stage 4; docs/own_ui_toolkit.md section 17): AddTerrainToolRows appends
-// them to the Terrain body's rows and keeps what it needs in `st`; after the rows are drawn RunTerrainToolRows does what the Dear ImGui
-// sections do. RunTerrainToolRows returns false when it stopped early (every layer removed).
-struct TerrainToolRows {
-    int addLayers = -1, addLayer = -1, fill = -1, removeAll = -1, detail = -1, paint = -1;
-    int firstLayer = -1, layerCount = 0;                 // per layer: radio, name, tint, tiling, [Remove], texture (see rowsPerLayer)
-    int layerRow[4][6] = {};
-    float tint[4][4] = {};
-    int detailIndex = 1;
-    float scale[2] = {}, band[2] = {};
-    int scaleRow = -1, bandRow = -1, scatter = -1, clear = -1, addFoliage = -1;
-    bool paintOn = false;
-};
-void AddTerrainToolRows(okay::editor::EditorState& ed, okay::Terrain& terrain, okaypanels::InspFieldList& L, TerrainToolRows& st);
-void RunTerrainToolRows(okay::editor::EditorState& ed, okay::Terrain& terrain, okaypanels::InspFieldList& L, TerrainToolRows& st);
 
 // Add Component rows: Foliage, Decal in Rendering; Cable in Rendering too.
 void LevelAddComponentItems(okay::editor::EditorState& ed, okay::GameObject* go,

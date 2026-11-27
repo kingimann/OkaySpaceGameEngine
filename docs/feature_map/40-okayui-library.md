@@ -212,24 +212,23 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 
 ### 40.10 The Inspector on OkayUI (preview, on by default)
 - **System:** OkayUI
-- **What:** the editor's Inspector drawn by our own toolkit instead of Dear ImGui: the object header card, the component bars and about a hundred component bodies, described once as "field rows" and drawn by OkayUI's screens. On by default since 2026-11-23 (Settings > Experimental items "OkayUI screens" and "OkayUI Inspector"; untick either to go back to Dear ImGui); every body without an up-to-date OkayUI version stays Dear ImGui's.
+- **What:** the editor's Inspector. Since 2026-11-27 (round 5) it has ONE body per component: the editor's own code, written in Dear ImGui's names and drawn by OkayUI (the editor has no Dear ImGui, 40.12). The second copies (a "field rows" body per component drawn by OkayUI's screens, chosen by the Settings > Experimental items "OkayUI screens" and "OkayUI Inspector") were deleted with that switch: since round 3 their draw calls were stubs that always fell back, so they never drew anything, and one of them swallowed the component bars' tooltips.
 - **Parts:**
-  - 40.10.1 Field rows - `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp` - one row list per body (drag, slider, check box, combo, colour, asset slot, gradient, curve, mask, list, note, button), no toolkit or engine types
-  - 40.10.2 OkayUI views - `okayui/screens/OkayUIEditorPanels.cpp` - header card, component bar with its menu, rows, tooltips drawn last, sub-menu lists inside popups
-  - 40.10.4 Editor hosting - `editor/main.cpp` (`UseOkayUIInspector`, the "Inspector's OkayUI parts" block before `DrawInspector`), `editor/OkayPanels.cpp`, `editor/InspectorPanel.cpp` (generic card), `editor/NavigationWindow.cpp`, `editor/BehaviorTreeWindow.cpp`, `editor/FpHandsWindow.cpp`, `editor/LevelTools.cpp`
-  - 40.10.5 The switch - `shared/OkayUIBackend.hpp` (`InspectorOn`), `shared/OwnSwitches.hpp` (Settings > Experimental item "OkayUI Inspector", `OKAY_UI_INSPECTOR=1`)
+  - 40.10.1 Field rows - `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp` - one row list per body (drag, slider, check box, combo, colour, asset slot, gradient, curve, mask, list, note, button), no toolkit or engine types; the editor uses only `CompHeaderTitle` and `InspFitText` from them now
+  - 40.10.2 OkayUI views - `okayui/screens/OkayUIEditorPanels.cpp` - header card, component bar with its menu, rows, tooltips drawn last, sub-menu lists inside popups; tested by golden pictures, no caller in the editor since round 5
+  - 40.10.4 Editor - `editor/main.cpp` (`DrawInspector`, `CompHeader`), `editor/InspectorPanel.cpp` (generic card), `editor/NavigationWindow.cpp`, `editor/BehaviorTreeWindow.cpp`, `editor/FpHandsWindow.cpp`, `editor/LevelTools.cpp`
   - 40.10.6 Toolkit pieces it needs - `okayui/src/OkayUI.cpp` - framed widgets (`StyleVar_FramedWidgets`, framed number fields through `FramedNumbersOn`), text rows (`StyleVar_TextRowHeight`), popup padding and width, combo list placement, 32 popup slots, Dear ImGui wrapping, `SearchField`, middle button, reorderable tabs, hideable table columns, `BeginChild(id, size, flags)` with padding and outline
-- **Code:** `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp`, `okayui/screens/OkayUIEditorPanels.cpp`, `editor/OkayPanels.cpp`, `editor/main.cpp`, `shared/OkayUIBackend.hpp`, `shared/OwnSwitches.hpp`
-- **API:** `okaypanels::InspFieldList`, `oked::DrawCompHeaderOkayUI`, `UseOkayUIInspector`, `okayuibackend::InspectorOn`
-- **Editor:** on by default since 2026-11-23: Settings > Experimental "OkayUI screens" and "OkayUI Inspector" both start ticked (untick either and restart to go back; `OKAY_UI_BACKEND=imgui` also opts out). Also on with `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`
-- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 14 to 23)
-- **Tests:** `okayui_inspector`, `okayui_editor_panels`, `okayui_hierarchy`, `okayui_imcompat`, `ui_backend`, `own_switches`
-- **Status:** Partial - built and tested headless; run under Xvfb on Linux only, never on Windows. Bodies whose Dear ImGui version changed on main after the port (Camera, Light, Mesh Renderer, Particle System, Water, Modifiers, Cinemachine Brain, First-person, Third-person and View toggle settings) stay Dear ImGui until their rows are brought up to date
-- **Open:** bring the stale bodies above up to date; the Hierarchy port is in the library and its tests but not wired into the editor (main's panel changed since, and it has no editor host); no Windows run. The Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows are drawn by OkayUI only, straight into their windows (`docs/ui/own_ui_toolkit.md` sections 24 and 25), and so are Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, Lighting's Post-processing and the Project panel's import settings (sections 26 and 27), Keyboard Shortcuts, Net, Find in Files, Data Asset and the Plugin Manager (section 28), and Map Humanoid Bones, the Save Manager, Material, Frame time and the Input panel (section 29), and Timers and Input Actions (section 30). Since 2026-11-27 the editor has no Dear ImGui at all (section 33), so the Dear ImGui-API bodies are drawn by OkayUI too: each body that has an OkayUI-screen version is drawn twice over (two OkayUI bodies), one to be deleted per body
-- **Related:** 40.4, 40.9, 15
-- **Words:** Inspector, OkayUI Inspector, field rows, component body, replace Dear ImGui, preview, Experimental, OKAY_UI_INSPECTOR
-- **Seen as:** the Inspector looks the same with OkayUI on; a component body is still Dear ImGui with OkayUI on; typing in an OkayUI field triggers an editor shortcut
-- **Ask me like:** "work on 40.10, bring the Light body's OkayUI rows up to date"
+- **Code:** `editor/main.cpp`, `editor/InspectorPanel.cpp`, `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp`, `okayui/screens/OkayUIEditorPanels.cpp`
+- **API:** `okaypanels::InspFieldList`, `okaypanels::CompHeaderTitle`
+- **Editor:** the Inspector panel. Deleted on 2026-11-27: `shared/OkayUIBackend.hpp` and its test `ui_backend`, the Settings > Experimental items "OkayUI screens" (`OKAY_UI_BACKEND`) and "OkayUI Inspector" (`OKAY_UI_INSPECTOR`), the editor setting `uibackend` (an old line is ignored, as is an old `off=okayui` / `off=inspector`)
+- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 14 to 23, and 35 for the deletion)
+- **Tests:** `okayui_inspector`, `okayui_editor_panels`, `okayui_hierarchy`, `okayui_imcompat`, `own_switches`, `own_stack`, `editor`
+- **Status:** Partial - one body per component in the editor; built and its tests run on Linux only, never built or run on Windows
+- **Open:** the library-side Inspector views (40.10.1 and 40.10.2: header card, component bar, Transform, Mesh Renderer, Add Component and the field-row lists, with their golden tests) have no caller in the editor any more: delete them, or make one of them THE body, is the next decision; the Hierarchy port is in the library and its tests but not wired into the editor
+- **Related:** 40.4, 40.9, 40.12, 15
+- **Words:** Inspector, OkayUI Inspector (removed switch), field rows, component body, replace Dear ImGui, OKAY_UI_INSPECTOR (removed), OKAY_UI_BACKEND (removed), OkayUIBackend.hpp (removed)
+- **Seen as:** a component body looks different from the others; a component bar's tooltip does not show
+- **Ask me like:** "work on 40.10, delete the unused library Inspector views"
 
 
 ### 40.12 The editor on OkayUI only (no Dear ImGui)
@@ -244,7 +243,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Docs:** `docs/ui/own_ui_toolkit.md` (sections 6.26, 32, 33 and 34)
 - **Tests:** `editor`, `okayui_port_modalguard`, `okayui_windows`, `okayui_widgets`, `okayui_dockaware`, `okayui_color`, `imgui_platform_feed`
 - **Status:** Partial - builds and passes its self-test on Linux; run headless under Xvfb (round 2's checklist and round 3's drags, file drops and input-method text in `docs/ui/own_ui_toolkit.md` sections 32 and 33); never built with MinGW or run on Windows (changed files syntax-checked only)
-- **Open:** more than one OS window (multi-window panels, `docs/status/UNFINISHED.md`); a real input method was not run (only its committed text and caret); the second copies of the Inspector bodies (40.10). Round 4 (section 34) closed: right-click on dock tabs (the tab menu, also for tabs never chosen), the menu bar switching on hover and from the keyboard, tab drag-and-dock with a preview and cancel, negative item widths (Inspector labels cut off)
+- **Open:** more than one OS window (multi-window panels, `docs/status/UNFINISHED.md`); a real input method was not run (only its committed text and caret). Round 5 (section 35) deleted the second copies of the Inspector bodies (40.10) and the UI backend switch. Round 4 (section 34) closed: right-click on dock tabs (the tab menu, also for tabs never chosen), the menu bar switching on hover and from the keyboard, tab drag-and-dock with a preview and cancel, negative item widths (Inspector labels cut off)
 - **Related:** 40.9, 40.10, 40.11
 - **Words:** editor on OkayUI, OkayEngineOkayUI (the old second program), OKAY_EDITOR_ON_OKAYUI (deleted), replace Dear ImGui, move off ImGui, no Dear ImGui
 - **Seen as:** the editor shows panels floating instead of docked; a modal does not show; the menu bar is missing; a section draws outside its window; an input method's candidate list is in the wrong place

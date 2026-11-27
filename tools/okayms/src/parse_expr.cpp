@@ -2015,7 +2015,16 @@ bool Parser::parse_unary(Node* out) {
                         if (!m.is_static) any_object_fn = true;
                     }
                 int tmpl_owner = -1;
-                if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr) {
+                const MemberTmpl* lam_mt = find_member_tmpl(cls, name, &tmpl_owner);
+                if (lam_mt != nullptr && lam_mt->is_static && (is(TLt) || is(TLParen))) {
+                    // A static member function template of the class, called from a lambda without a capture
+                    // ([class.static] 2; Round 34, PropertyBuilder.hpp's `As<Owner>(c)` in its getters; before "unknown
+                    // name As").
+                    std::vector<TArg> qtargs;
+                    if (is(TLt) && !parse_template_args(lam_mt->td, &qtargs, true)) return false;
+                    return qualified_call(out, cls, name, std::move(qtargs)) && parse_postfix(out);
+                }
+                if (lam_mt != nullptr) {
                     is_method = true;
                     any_object_fn = true;
                 }

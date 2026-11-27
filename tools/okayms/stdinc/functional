@@ -83,7 +83,10 @@ public:
     }
 };
 
-template <typename T> struct hash;
+// The primary template turns the value into a size_t: the integer and enumeration types ([unord.hash] 4; Round 34:
+// once a specialization matched only its own type, hash<size_t> and hash<SomeEnum> found none). A class needs its
+// own specialization (std::string's is in <string>).
+template <typename T> struct hash { size_t operator()(T v) const { return (size_t)v; } };
 template <> struct hash<bool> { size_t operator()(bool v) const { return (size_t)v; } };
 template <> struct hash<char> { size_t operator()(char v) const { return (size_t)v; } };
 template <> struct hash<short> { size_t operator()(short v) const { return (size_t)v; } };

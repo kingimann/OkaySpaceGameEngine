@@ -7704,7 +7704,14 @@ struct Parser {
             (*got)[idx] = true;
             return true;
         }
-        return pat.base == act.base && pat.pointers == act.pointers && (pat.base != 3 || pat.struct_id == act.struct_id);
+        if (!(pat.base == act.base && pat.pointers == act.pointers && (pat.base != 3 || pat.struct_id == act.struct_id)))
+            return false;
+        // A specialization's own type matches only the same type ([temp.class.spec.match] 2, [temp.type] 1): unsigned
+        // int is not int, unsigned char not char, long long not int (Round 34: numeric_limits<unsigned>::max() was
+        // numeric_limits<int>'s 2147483647, silent wrong values). Deduction from a call keeps the loose rule.
+        if (match_loose) return true;
+        return pat.is_unsigned == act.is_unsigned && pat.wide == act.wide && pat.is_bool == act.is_bool &&
+               pat.enum_id == act.enum_id;
     }
 
     // Box<int>: the class instance, made the first time it is named.
@@ -8619,6 +8626,35 @@ struct Parser {
         }
         const auto ctx_bound = bind_params(ctx_decl, mt.ctx_args);
         const auto bound = bind_params(body_decl, targs);
+        // The injected-class-name of a class template instance ([temp.local] 1): `B&` in `template <class O> B& F(...)`
+        // of `template <class C> class B` names B<C> when the member template is made later (Round 34,
+        // PropertyBuilder.hpp's AddString returning PropertyBuilder&; before "expected a type").
+        struct InjectedName {
+            Parser& p;
+            std::string name;
+            bool had = false;
+            Type old{};
+            ~InjectedName() {
+                if (name.empty()) return;
+                if (had) p.typedefs[name] = old;
+                else p.typedefs.erase(name);
+            }
+        } injected{*this, std::string()};
+        {
+            const StructDef& od = structs[static_cast<size_t>(owner)];
+            if (!od.tmpl.empty() && od.parent < 0) {
+                injected.name = od.tmpl;
+                const auto prev = typedefs.find(od.tmpl);
+                if (prev != typedefs.end()) {
+                    injected.had = true;
+                    injected.old = prev->second;
+                }
+                Type self;
+                self.base = 3;
+                self.struct_id = owner;
+                typedefs[od.tmpl] = self;
+            }
+        }
         const size_t saved_at = at;
         at = body_decl.start;
         bool ok = true;
@@ -8825,6 +8861,10 @@ struct Parser {
                 }
                 continue;
             }
+            // Any other braced list is a non-deduced context ([temp.deduct.call] 1; Round 34, PropertyBuilder.hpp's
+            // AddEnum("projection", &Camera::projection, {"Orthographic", "Perspective"}) for a vector<string>
+            // parameter; before "cannot deduce template arguments of AddEnum").
+            if (call_args[i].kind == Node::Block && call_args[i].text == "tokbrace") continue;
             Type at_type;
             if (!static_type(call_args[i], &at_type)) {
                 error = "cannot deduce template arguments of " + name;

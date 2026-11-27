@@ -3515,7 +3515,7 @@ comparison tests.
 | `GetCursorPos` / `SetCursorPos` from the content corner, `GetWindowSize` of the outer window inside a child (the pinned page footer fell off the page) | layout | `UseImGuiCoordinates(true)`: Dear ImGui's meaning; off by default so OkayUI's own code and ported-panel goldens are unchanged |
 | `CalcTextSize` / `DrawList::AddText` ignored the wrap width and line breaks; a word wider than the line was not broken | layout | Dear ImGui's wrapping in one place (`ui_core::imguiWrap`), used by both and by wrapped text |
 | Wrapped lines after a `SameLine` restarted at the left edge | layout | with `UseImGuiCoordinates` every line starts where the text began |
-| The launcher's 17 px text was drawn from the 20 px glyphs | look | 17 px baked in the atlas (`page_pricing` golden updated, same picture) |
+| The launcher's text was 16 px, Dear ImGui's 17 | look | the launcher sets the text scale to 17 px (drawn from the 20 px glyphs, scaled; a 17 px bake was tried and left out: `dup_lint` reads the atlas header's `Size` as a retired name, a false match on a compiler test program) |
 | `IsWindowAppearing` was false on a window's first frame | behaviour | a never-drawn window appears |
 | `TextLink`, `InputTextFlags_WordWrap` / `NoUndoRedo`, scrolling a text box to its end, `F4`/`F6`-`F8`, `4`-`9`, `ItemFlags_NoTabStop`, `TabBarFlags_AutoSelectNewTabs`, `IO::NavVisible` | compile | added (the Command line page and the sidebar chips) |
 | The Browser page, What's New and Tips needed a hosted OkayUI frame | behaviour | drawn in place, in OkayUI's own layout rules while they draw |

@@ -246,7 +246,7 @@
    "engine/src/Inventory/ItemDatabase.cpp": 1,
    "engine/src/Inventory/NetInventory.cpp": 3,
    "engine/src/Modeling/MeshLibrary.cpp": 1,
-   "engine/src/Net/AntiCheat.cpp": 1,
+   "engine/src/AntiCheat/AntiCheat.cpp": 1,
    "engine/src/Net/NetBuildSync.cpp": 1,
    "engine/src/Net/NetQuestSync.cpp": 1,
    "engine/src/Net/NetSim.cpp": 1,

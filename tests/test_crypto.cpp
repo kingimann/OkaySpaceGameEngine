@@ -413,7 +413,7 @@ int main() {
     }
 
     RUN_SUITE("crypto Ed25519IsWeakKey");
-    {   // the key checks Ed25519Verify makes, exposed for vetting key lists (shared/AntiCheatCrypto.hpp)
+    {   // the key checks Ed25519Verify makes, exposed for vetting key lists (engine/include/okay/AntiCheat/AntiCheatCrypto.hpp)
         const char* weak[] = {
             "0000000000000000000000000000000000000000000000000000000000000000",   // order 4
             "0100000000000000000000000000000000000000000000000000000000000000",   // identity

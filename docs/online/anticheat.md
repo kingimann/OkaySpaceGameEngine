@@ -305,7 +305,7 @@ The source is in `supabase/functions/session-ticket/`:
   2. It checks anti-cheat bans: `public.ac_is_banned(account, hw_hash)` from
      `docs/sql/anticheat.sql`, called with the function's own service key. A
      banned account gets `403 {"error": "banned"}` and no ticket. The body may
-     also carry `"hw_hash"` (the machine hash from `shared/AntiCheatHardware.hpp`);
+     also carry `"hw_hash"` (the machine hash from `engine/include/okay/AntiCheat/AntiCheatHardware.hpp`);
      it comes from the player, so it can only find a machine ban, never hide an
      account ban. Without `anticheat.sql` nobody is banned; if the lookup fails
      for any other reason the function answers `503` and issues nothing.
@@ -341,7 +341,7 @@ Nothing is deployed. To go live:
 
 ##### Joining a server that needs a ticket
 
-The player installs a join gate (`NetworkManager::SetJoinGate`, `shared/TicketJoin.hpp`) when
+The player installs a join gate (`NetworkManager::SetJoinGate`, `engine/include/okay/AntiCheat/TicketJoin.hpp`) when
 `okay_tickets.cfg` is next to the game (one `key value` per line, `#` comments):
 
 ```
@@ -359,7 +359,7 @@ goes through the gate **before any socket is opened**:
    8 s limit).
 2. A ticket is presented as the auth token instead of the account's own token, so a game server
    never sees the Supabase token. A reconnect asks again: a bound ticket works for one connection.
-3. Answers (`shared/TicketClient.hpp`, `tests/test_ticket_client.cpp`):
+3. Answers (`engine/include/okay/AntiCheat/TicketClient.hpp`, `tests/test_ticket_client.cpp`):
 
    | Answer | What happens |
    |---|---|
@@ -757,7 +757,7 @@ lines (`anticheatdetect`), so nothing is lost on save and load.
 - **Observe mode** sets `kickAt`, `banAt`, `shadowAt` and `rateLimitAt` to 0 (log and flag stay on): the detectors score and keep their evidence,
   nothing is done to a player. Unticking brings back the values that were there (the defaults if a file had them at 0). This is the "start in
   observe mode" advice of [Tuning](#tuning) as one click.
-- The logic (field table, tooltips, observe mode, text round trip) is `okay/Net/DetectInspector.hpp`, unit tested in `anticheat_wiring`.
+- The logic (field table, tooltips, observe mode, text round trip) is `okay/AntiCheat/DetectInspector.hpp`, unit tested in `anticheat_wiring`.
   A rules file (`file`) replaces the inline settings when it loads, so edit the file instead when one is set.
 
 #### Tuning
@@ -784,7 +784,7 @@ lines (`anticheatdetect`), so nothing is lost on save and load.
 
 #### Evidence bundles
 
-`EvidenceBundle` (okay/Net/CheatDetect.hpp) is what a server attaches to a report. It is a single compact JSON object:
+`EvidenceBundle` (okay/AntiCheat/CheatDetect.hpp) is what a server attaches to a report. It is a single compact JSON object:
 
 ```
 {"v":1,"peer":4,"risk":62.5,"action":"shadow_restrict","t":812.4,"trunc":false,"game":"demo","server":"arena-3",
@@ -1109,7 +1109,7 @@ Launcher > Admin > Anti-cheat uses the two device helpers of `anticheat.sql`:
   the account's ban plus one machine ban per machine not already banned, in one step under the admin's own rights (the ban policy and guard apply
   to every row, so an admin still can't ban themselves), and the launcher reports how many ban rows it made.
 
-The requests and the row parsing are plain functions in `shared/AntiCheatAdminTools.hpp` (`LinkedAccounts`, `ParseLinkedAccounts`,
+The requests and the row parsing are plain functions in `engine/include/okay/AntiCheat/AntiCheatAdminTools.hpp` (`LinkedAccounts`, `ParseLinkedAccounts`,
 `BanWithDevices`, `ParseBanCount`, `ReportEvidence`, `ParseReportEvidence`), unit tested in `anticheat_wiring`; the launcher only sends them.
 
 Anti-cheat bans are separate from site bans (`site_bans`). They're enforced
@@ -1183,7 +1183,7 @@ plus `OKAY_UI_DEMO_ACVIEW` / `OKAY_UI_DEMO_ACPOPUP` / `OKAY_UI_DEMO_ACBAN` /
 
 ##### Hardware hash
 
-`shared/AntiCheatHardware.hpp`. A ban can name a machine, so a cheater can't
+`engine/include/okay/AntiCheat/AntiCheatHardware.hpp`. A ban can name a machine, so a cheater can't
 come back on a new account. Only this leaves the machine:
 
 ```
@@ -1244,9 +1244,9 @@ localhost); ctest skips it otherwise. Never point it at a live database.
 
 - ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
   the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
-  Otherwise (and with `-DOKAY_OWN_CRYPTO=ON`) `shared/AntiCheatCrypto.hpp` uses
+  Otherwise (and with `-DOKAY_OWN_CRYPTO=ON`) `engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` uses
   `okay::crypto`, our own Ed25519 (`engine/src/Crypto/`, written from RFC 8032).
-  `shared/AntiCheatCrypto.hpp` itself holds no crypto code: the TweetNaCl-derived
+  `engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` itself holds no crypto code: the TweetNaCl-derived
   port that used to be the fallback is deleted. `okay::crypto` makes the checks
   libsodium 1.0.18 makes before verifying: S must be canonical, R must not be a
   small-order point, and the public key must be canonical and not small-order
@@ -1262,7 +1262,7 @@ localhost); ctest skips it otherwise. Never point it at a live database.
 
 #### The runtime checks (Windows)
 
-`shared/AntiCheatChecks.hpp`, run from the player's frame loop. Each check runs
+`engine/include/okay/AntiCheat/AntiCheatChecks.hpp`, run from the player's frame loop. Each check runs
 every few seconds:
 
 - **Debugger**: `IsDebuggerPresent` and `CheckRemoteDebuggerPresent`, every 5 s.

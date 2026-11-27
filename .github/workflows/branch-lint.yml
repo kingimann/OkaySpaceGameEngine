@@ -63,6 +63,12 @@ jobs:
         if: always()
         run: python3 scripts/dup_lint.py check --base "$BASE" --head HEAD
 
+      - name: "OkayAntiCheat has no launcher or editor code in it (fatal; docs/online/okay_anticheat.md)"
+        if: always()
+        run: |
+          cmake -DROOT="$PWD" -P tests/check_anticheat_deps.cmake
+          cmake -DROOT="$PWD" -DSELFTEST="$RUNNER_TEMP/anticheat_deps_selftest" -P tests/check_anticheat_deps.cmake
+
       - name: "Claims: do not push into another lane's open claim (fatal)"
         # the lane claims on issue #422 are for the lane branches only (docs/lanes.json: claude/**, claude2/**, claude3/**, grok/**)
         if: always() && (startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/heads/claude2/') || startsWith(github.ref, 'refs/heads/claude3/') || startsWith(github.ref, 'refs/heads/grok/'))

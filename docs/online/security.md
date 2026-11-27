@@ -138,7 +138,7 @@ release: a "freeze"); signing the executables for Windows itself (that is the Au
 launchers in the field never verify anything.
 
 Cryptography note (CLAUDE.md rule 18): no new cryptography was written. Verification and signing go through the existing
-`shared/AntiCheatCrypto.hpp` wrapper (libsodium Ed25519 where libsodium is built in) and the existing `scripts/sign_index.py`;
+`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` wrapper (libsodium Ed25519 where libsodium is built in) and the existing `scripts/sign_index.py`;
 no private key is in the repository, and the scripts never print the seed.
 
 ## 4. Reactions privacy (SQL)

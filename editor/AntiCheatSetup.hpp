@@ -10,8 +10,8 @@
 // ---------------------------------------------------------------------------
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetworkSync.hpp"
-#include "okay/Net/AntiCheat.hpp"
-#include "okay/Net/DetectInspector.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
+#include "okay/AntiCheat/DetectInspector.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Scene/GameObject.hpp"

@@ -11,7 +11,7 @@
 // Not a security proof: it fixes behaviour on these inputs. The RFC 8032 vectors, the strictness checks and the rest are in
 // test_anticheat_integrity.cpp; the big differential tests against libsodium are crypto_difftest.
 #include "test_framework.hpp"
-#include "AntiCheatCrypto.hpp"
+#include "okay/AntiCheat/AntiCheatCrypto.hpp"
 #include <cstdio>
 #include <cstdlib>
 

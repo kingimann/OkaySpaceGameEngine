@@ -1,5 +1,5 @@
 #include "test_framework.hpp"
-#include "AntiCheatChecks.hpp"
+#include "okay/AntiCheat/AntiCheatChecks.hpp"
 #include <cmath>
 
 // Anti-cheat P3: the runtime checks. The probes are Windows-only, but the logic

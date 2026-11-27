@@ -145,7 +145,7 @@ What is new:
 * **C++20 shell, C++17 engine.** The shell (`main.cpp`, `engine_shell.hpp`, C++/WinRT) is its own C++20 target; the engine and `engine_bridge.cpp` (UwpBackend, renderer, presenter, WASAPI, game runtime) are C++17 targets (`okay_engine_uwp`, `okay_xbox_engine_bridge`). Only plain C++ crosses, `app/engine_bridge.hpp`
   (no Windows, WinRT or engine header): create, resize/visibility/activation/key/pointer events, suspend/resume, and one `Run` loop. The engine's `u8string()` use no longer matters for the shell.
 * **Sweep of every engine source.** All 310 sources of `okay_engine_uwp` (engine + crypto lists) were syntax-checked with MinGW (`-std=c++17 -D_WIN32 -DWINAPI_FAMILY=2 -DOKAY_XBOX_UWP=1`), whose headers hide desktop-only APIs when `WINAPI_FAMILY=WINAPI_FAMILY_APP`; and again with clang (`clang++ --target=x86_64-w64-mingw32 -fms-extensions`, same defines, MinGW headers): all 310 pass with clang, 0 errors. Three failed the MinGW check at first:
-  `Net/ClockCheck.cpp` and `Net/RelayServer.cpp` (via `shared/AntiCheatChecks.hpp`: `CheckRemoteDebuggerPresent`, `GetModuleHandleW`, `GetWindowsDirectoryW`, module snapshots) and `Scripting/OkayScriptVM.cpp` (via `GameIpc.hpp`: `_getpid`).
+  `AntiCheat/ClockCheck.cpp` and `Net/RelayServer.cpp` (via `engine/include/okay/AntiCheat/AntiCheatChecks.hpp`: `CheckRemoteDebuggerPresent`, `GetModuleHandleW`, `GetWindowsDirectoryW`, module snapshots) and `Scripting/OkayScriptVM.cpp` (via `GameIpc.hpp`: `_getpid`).
   Fixed behind `OKAY_XBOX_UWP`: the anti-cheat probes stay empty in a UWP app (the guard idles; anti-cheat is not offered there, nothing pretends to pass), `GetCurrentProcessId` replaces `_getpid`. The audit scanner learned those names. All 310 now pass the MinGW check and the audit finds nothing.
   **A MinGW check is not an MSVC compile**: MSVC can still reject things MinGW accepts, and the UWP allow-list can differ from MinGW's header partition.
 * **The tiny scene** was loaded once with the engine's real `SceneSerializer` (against a prebuilt engine library of unknown revision found on this machine, so only a sanity check): 2 objects, 1 mesh renderer, 1 camera. The committed Linux test checks the text format (object count, field counts, config resolves) but does not load it.
@@ -509,7 +509,7 @@ Windows or a console: UNVERIFIED.** It follows CLAUDE.md rules 17, 18 and 19a. T
   means no packet encryption (`OKAY_NET_CRYPTO` undefined). The UWP target defines neither by default, so `sodium.h` is never included.
 * What `okay_crypto_uwp` still contains and uses on UWP: SHA-256 and SHA-512, ChaCha20, X25519, Ed25519, AEAD and the random-bytes function (`BCryptGenRandom`
   with the system RNG, which UWP allows). They are always our own code: file checksums and update-signature checks call them directly
-  (`shared/AntiCheatCrypto.hpp`, `shared/UpdateSignature.hpp`). **This is own crypto, not independently reviewed.**
+  (`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp`, `shared/UpdateSignature.hpp`). **This is own crypto, not independently reviewed.**
 * **The explicit choice:** `OKAY_XBOX_OWN_CRYPTO` (CMake option of `platform/xbox_uwp/engine`, default **OFF**; PowerShell `-OwnCrypto`). ON defines
   `OKAY_OWN_CRYPTO`, so packet encryption works through `okay::crypto`. CMake then prints a warning and the PowerShell script prints and logs
   "own crypto, not independently reviewed". It is for experiments only: do not ship.

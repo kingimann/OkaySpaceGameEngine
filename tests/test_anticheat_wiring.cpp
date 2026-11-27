@@ -1,7 +1,7 @@
 #include "test_framework.hpp"
-#include "AntiCheatAdminTools.hpp"
+#include "okay/AntiCheat/AntiCheatAdminTools.hpp"
 #include "okay/Net/DedicatedServer.hpp"
-#include "okay/Net/DetectInspector.hpp"
+#include "okay/AntiCheat/DetectInspector.hpp"
 
 // Anti-cheat wiring: (1) a kick / ban request's evidence bundle rides on the
 // server_kick report (KickReporter + AntiCheatBackend), (2) the launcher admin

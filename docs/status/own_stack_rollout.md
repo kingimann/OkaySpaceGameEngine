@@ -116,7 +116,7 @@ variable is a configure error. CMake prints a warning when it is on.
 
 **Releases refuse it, and refuse any build that does not really have libsodium.** Owner decision (2026-11-14, `CLAUDE.md`
 rule 18): libsodium stays the default in every release, `okay::crypto` stays off. The danger is not only a switch being
-turned on: without libsodium, `shared/AntiCheatCrypto.hpp` quietly falls back to `okay::crypto` for Ed25519 (update
+turned on: without libsodium, `engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` quietly falls back to `okay::crypto` for Ed25519 (update
 signatures, anti-cheat manifest, host identity) and CMake used to only print a status line. So there are four locks:
 
 1. **CMake: `-DOKAY_REQUIRE_SODIUM=ON`** (default OFF for developer builds). With it, configuring FAILS when libsodium is not

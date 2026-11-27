@@ -1,6 +1,6 @@
 # ---- okay::crypto as its own static library --------------------------
 # Our own crypto primitives (docs/platform/crypto.md). A separate target so that code which must not
-# link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
+# link the whole engine (the launcher, engine/include/okay/AntiCheat/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
 # the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
 # PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/platform/crypto.md.
 add_library(okay_crypto STATIC
@@ -184,12 +184,7 @@ add_library(okay_engine
     src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
-    src/Net/AntiCheat.cpp
-    src/Net/CheatDetect.cpp
-    src/Net/AntiCheatLog.cpp
-    src/Net/CheatSim.cpp
     src/Net/SessionTicket.cpp
-    src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
     src/Components/RagdollShared.cpp
@@ -567,11 +562,12 @@ set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.
 set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITIONS "${OKAY_VERSION_DEFINE}")
-# The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
-# and runs its clock heartbeat (shared/AntiCheatChecks.hpp); the dedicated server
-# files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
-# the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
-set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
+# The network layer signs its key exchange with #269's ed25519 (okay/AntiCheat/AntiCheatCrypto.hpp)
+# and runs its clock heartbeat (okay/AntiCheat/AntiCheatChecks.hpp); the dedicated server
+# files anti-cheat kicks with #270's request builder (okay/AntiCheat/AntiCheatBackend.hpp);
+# the relay makes its hello cookies with HmacSha256 (okay/AntiCheat/AntiCheatChecks.hpp).
+# Those headers include the updater's file helpers (shared/OfficialGame.hpp), hence shared/.
+set_source_files_properties(src/Net/NetworkManager.cpp src/AntiCheat/ClockCheck.cpp src/Net/DedicatedServer.cpp
                             src/Net/RelayServer.cpp src/Net/NetworkManagerSync.cpp src/Net/NetworkManagerAuthority.cpp
                             src/Net/NetworkManagerServer.cpp src/Net/NetworkManagerClient.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
@@ -840,6 +836,31 @@ endforeach()
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
 
+# OkayAntiCheat (docs/online/okay_anticheat.md): one home, engine/include/okay/AntiCheat/ and engine/src/AntiCheat/, and
+# this one library. Core: rules, detectors, ban list and audit log (AntiCheat, CheatDetect, AntiCheatLog); server: the
+# clock check and the cheat simulator (ClockCheck, CheatSim); client and online parts are header-only today
+# (AntiCheatIntegrity/Checks/Hardware/Crypto, TicketClient/TicketJoin, AntiCheatBackend/AdminTools). It is an object
+# library compiled exactly like the engine (same include folders, definitions and options) and linked into okay_engine,
+# so the engine, the player and the dedicated server all carry it. It must not use launcher or editor code: the test
+# anticheat_deps (tests/check_anticheat_deps.cmake) checks the home's includes and the include folders written below.
+add_library(okay_anticheat OBJECT
+    src/AntiCheat/AntiCheat.cpp
+    src/AntiCheat/CheatDetect.cpp
+    src/AntiCheat/AntiCheatLog.cpp
+    src/AntiCheat/CheatSim.cpp
+    src/AntiCheat/ClockCheck.cpp)
+target_include_directories(okay_anticheat PRIVATE $<TARGET_PROPERTY:okay_engine,INCLUDE_DIRECTORIES>)
+target_compile_definitions(okay_anticheat PRIVATE $<TARGET_PROPERTY:okay_engine,COMPILE_DEFINITIONS>)
+target_compile_options(okay_anticheat PRIVATE $<TARGET_PROPERTY:okay_engine,COMPILE_OPTIONS>)
+target_compile_features(okay_anticheat PRIVATE cxx_std_17)
+get_target_property(_ac_pic okay_engine POSITION_INDEPENDENT_CODE)
+if(_ac_pic)
+    set_target_properties(okay_anticheat PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_link_libraries(okay_engine PRIVATE okay_anticheat)
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/okay_anticheat_includes.txt"
+     CONTENT "$<JOIN:$<TARGET_PROPERTY:okay_anticheat,INCLUDE_DIRECTORIES>,\n>\n")
+
 # 1.1 Loop and time (docs/engine/loop_and_time.md): Time effects + clocks, Game pause reasons /
 # quit guard, the shared GameLoop driver, dice parser. Clock.hpp and RandomExtras'
 # templates are header-only.
@@ -907,4 +928,4 @@ target_sources(okay_engine PRIVATE
 
 # Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
 # whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
-okay_modules_group(okay_engine)
+okay_modules_group(okay_engine okay_anticheat)

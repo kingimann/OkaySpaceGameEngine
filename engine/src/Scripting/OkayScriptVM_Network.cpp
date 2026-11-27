@@ -428,7 +428,7 @@ void OkayScriptVM::Impl::RegisterMatchResultBuiltins(BuiltinCtx& c) {
             NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = SafeInt(a[0].AsFloat());
             return Value{n ? (float)n->maxMessagesPerSecond : 0.0f};
         };
-        // Server only: the anti-cheat (see okay/Net/AntiCheat.hpp). net_anticheat([on])
+        // Server only: the anti-cheat (see okay/AntiCheat/AntiCheat.hpp). net_anticheat([on])
         // reads / sets whether it's on; net_anticheat_load(path) applies an .okayac
         // file from the game's folders (true if it loaded); net_violations(peer)
         // is that peer's refusals this minute.

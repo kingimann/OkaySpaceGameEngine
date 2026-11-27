@@ -15,7 +15,7 @@
 --            appeal.
 --
 -- Hardware hashes are salted HMAC-SHA256 values made on the player's machine
--- (shared/AntiCheatHardware.hpp): the raw hardware IDs never reach this database.
+-- (engine/include/okay/AntiCheat/AntiCheatHardware.hpp): the raw hardware IDs never reach this database.
 -- A machine without a real machine id sends no hash at all, so a machine ban
 -- always names one machine (never "every PC with this CPU").
 --

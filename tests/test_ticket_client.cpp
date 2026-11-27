@@ -1,8 +1,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Net/SessionTicket.hpp"
-#include "TicketClient.hpp"
-#include "TicketJoin.hpp"
+#include "okay/AntiCheat/TicketClient.hpp"
+#include "okay/AntiCheat/TicketJoin.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -26,7 +26,7 @@ namespace fs = std::filesystem;
 using net::SessionTicket;
 using net::SessionTicketClaims;
 
-// The launcher / game side of the session-ticket flow (shared/TicketClient.hpp, shared/TicketJoin.hpp, the NetworkManager join gate):
+// The launcher / game side of the session-ticket flow (engine/include/okay/AntiCheat/TicketClient.hpp, engine/include/okay/AntiCheat/TicketJoin.hpp, the NetworkManager join gate):
 //  A. the client logic with a scripted transport and a fake clock (retries, 401, banned, skew, expiry, cache, config);
 //  B. the whole chain with a REAL local HTTP server standing in for the ticket service: AccountService -> curl -> the fake service,
 //     a real ticket signed with a throwaway key, a real server NetworkManager that requires tickets and a client that joins through the gate.

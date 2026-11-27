@@ -1,4 +1,4 @@
-#include "okay/Net/CheatDetect.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
 #include <algorithm>
 #include <cctype>
 #include <charconv>

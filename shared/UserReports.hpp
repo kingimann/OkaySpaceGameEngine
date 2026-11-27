@@ -8,7 +8,7 @@
 // without a server. The rules (who may file, read or review what, duplicates,
 // self-reports, flood limits) live in the SQL; the checks here only stop
 // malformed input and turn the server's answer into an honest sentence.
-#include "AntiCheatBackend.hpp"
+#include "okay/AntiCheat/AntiCheatBackend.hpp"
 
 namespace okayrep {
 

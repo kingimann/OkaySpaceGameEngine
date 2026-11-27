@@ -107,7 +107,7 @@ update all go through it) are built with `-DOKAY_UPDATE_TRUSTED_KEYS=<hex>[,<hex
   list (versions.json) was not signed by the publisher's key. Nothing was installed and your current version is unchanged..."* It never
   falls back to the unsigned `VERSION.txt` heads, which carry no checksums and so could not be installed anyway;
 - a bad key list (malformed, weak key) refuses everything: it never becomes "no keys, so accept";
-- the verify code is `shared/UpdateSignature.hpp` on the repository's own ed25519 (`shared/AntiCheatCrypto.hpp`, libsodium when present,
+- the verify code is `shared/UpdateSignature.hpp` on the repository's own ed25519 (`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp`, libsodium when present,
   its portable code otherwise), and tests/test_update_signature.cpp checks that the publish tool and the C++ verifier agree.
 
 The channel heads (`VERSION.txt`, `LTS.txt`) and notes are not signed and are not trusted: a version can only be installed from the signed

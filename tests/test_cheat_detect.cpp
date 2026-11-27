@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
-#include "okay/Net/AntiCheat.hpp"
-#include "okay/Net/CheatDetect.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
 #include <Okay.hpp>
 
 #include <cmath>

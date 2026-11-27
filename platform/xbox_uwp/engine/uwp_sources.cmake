@@ -43,6 +43,8 @@ endfunction()
 
 if(CMAKE_SCRIPT_MODE_FILE AND OKAY_ROOT)
     okay_uwp_collect(okay_engine "${OKAY_ROOT}/engine/CMakeLists.txt" _eng)
+    okay_uwp_collect(okay_anticheat "${OKAY_ROOT}/engine/CMakeLists.txt" _ac)
+    list(APPEND _eng ${_ac})
     okay_uwp_collect(okay_crypto "${OKAY_ROOT}/engine/CMakeLists.txt" _cry)
     okay_uwp_excluded("${OKAY_ROOT}/platform/xbox_uwp/engine/uwp_exclude.txt" _ex)
     list(LENGTH _eng _n1)

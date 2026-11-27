@@ -38,6 +38,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | FNV-1a string hash | `Core/StringId.hpp` | `okay::StringId::HashOf`, `StringId::Make` | `constexpr auto h = StringId::HashOf("player");` |
 | SHA-256, HMAC, PBKDF2 | `Crypto/Sha256.hpp` | `okay::crypto::Sha256Hash`, `Sha256`, `HmacSha256Mac`, `Pbkdf2HmacSha256` | `std::uint8_t d[32]; crypto::Sha256Hash(d, data, n);` |
 | SHA-512 | `Crypto/Crypto.hpp` | `okay::crypto::Sha512Hash`, `Sha512` | `std::uint8_t d[64]; crypto::Sha512Hash(d, data, n);` |
+| A shipped file's size and SHA-256 against a list, safe relative paths in a file list | `shared/OfficialGame.hpp` (the updater's; OkayAntiCheat's signed manifest, `okay/AntiCheat/AntiCheatIntegrity.hpp`, uses it) | `okayofficial::Verify`, `FileSha256`, `SafeRelPath` | `if (!okayofficial::SafeRelPath(rel, &why)) return false;` |
 | CRC-32, Adler-32 | `Core/ImageWrite.hpp` | `okay::ImageWrite::Crc32`, `ImageWrite::Adler32` | `auto c = ImageWrite::Crc32(p, n);  // pass c back in to continue` |
 | Inflate (zlib, gzip, raw DEFLATE) | `Core/Inflate.hpp` | `okay::inflate::Zlib`, `inflate::Gzip`, `inflate::Raw` | `inflate::Zlib(in, n, out, {}, why);` |
 | Brotli decoder (RFC 7932; library `okay_brotli`) | `Core/Brotli.hpp` | `okay::brotli::Decode` | `brotli::Decode(in, n, out, opts, why);` |

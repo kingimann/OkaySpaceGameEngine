@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
 // AntiCheatConfig — turns the server's anti-cheat on for this scene (see
-// okay/Net/AntiCheat.hpp) and connects it to the game:
+// okay/AntiCheat/AntiCheat.hpp) and connects it to the game:
 //   * its settings (or a .okayac file) go to the scene's NetworkManager;
 //   * every refusal raises "On Cheat Detected" on the scene's visual scripts
 //     (Event Name = what was caught, Event Value = the peer id, and the object
@@ -21,7 +21,7 @@
 // Only the server checks anything; on clients and offline it does nothing.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
-#include "okay/Net/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include <cstdint>
 #include <functional>

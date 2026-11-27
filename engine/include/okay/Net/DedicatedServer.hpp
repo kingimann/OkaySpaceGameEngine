@@ -19,7 +19,7 @@
 #include <map>
 #include <memory>
 #include <string>
-#include "okay/Net/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
 #include "okay/Net/NetworkManager.hpp"
 
 namespace okay {
@@ -74,7 +74,7 @@ struct DedicatedServerOptions {
     /// server keeps a ban list ("okay_bans.txt") and an audit log ("okay_anticheat_audit.log") in its folder
     /// unless the rules name other files. These turn the defaults off.
     bool noBanFile = false, noAuditLog = false;
-    /// --cheat-sim / OKAY_CHEAT_SIM: don't serve; run the cheat simulator (okay/Net/CheatSim.hpp) on this
+    /// --cheat-sim / OKAY_CHEAT_SIM: don't serve; run the cheat simulator (okay/AntiCheat/CheatSim.hpp) on this
     /// machine, print what the anti-cheat caught, and exit (0 = everything caught, 1 = something missed).
     bool cheatSim = false;
     std::string cheatSimOnly;        ///< --cheat-sim-only speed,flood: run just these (see CheatSimOptions::only)

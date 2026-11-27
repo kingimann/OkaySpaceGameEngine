@@ -21,7 +21,7 @@
 // format and the behaviour with anti-cheat off are exactly as before.
 // ---------------------------------------------------------------------------
 #include "okay/Math/Vec3.hpp"
-#include "okay/Net/CheatDetect.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -124,7 +124,7 @@ struct AntiCheatSettings {
     /// of their own (RPCs, SyncVars) keep it as well. A normal client sends 30 to 150 a second.
     int   maxPacketsPerSecond = -1;
 
-    // ---- Bans and the audit log (okay/Net/AntiCheatLog.hpp) ----
+    // ---- Bans and the audit log (okay/AntiCheat/AntiCheatLog.hpp) ----
     /// A text file of banned identities. "" = no file: bans last only until the
     /// server stops (a kick still has its rejoin cooldown). The server reads it
     /// at its first join, refuses a banned identity at the join, and adds to it
@@ -144,7 +144,7 @@ struct AntiCheatSettings {
     /// "okay_anticheat_audit.log" unless this names another file.
     std::string auditLog;
 
-    // ---- Detection engine (okay/Net/CheatDetect.hpp): behavioural detectors, a
+    // ---- Detection engine (okay/AntiCheat/CheatDetect.hpp): behavioural detectors, a
     // risk score and graduated responses. Off unless detect.enabled; the
     // .okayac keys are "detect.<key> <value>" (see docs/online/anticheat.md).
     DetectSettings detect;

@@ -47,7 +47,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/PhysicsToyPresets.hpp"   // GameObject > 3D Object > Physics Toys
 #include "okay/Components/BehaviorTreeRunner.hpp"
-#include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
+#include "okay/AntiCheat/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
 #include "okay/Render/TextureAsset.hpp"  // textures::Pump once a frame, hot reload, the texture rows of the Profiler
@@ -160,7 +160,7 @@
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
 #include "OkayPanels.hpp"                // the panels drawn by OkayUI (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, the Inspector's parts)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
-#include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
+#include "okay/AntiCheat/AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
 #ifdef OKAY_ENABLE_TEST_HOOKS
@@ -34919,7 +34919,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
-            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/online/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
+            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/online/anticheat.md "Detection engine"); logic: okay/AntiCheat/DetectInspector.hpp
                 using namespace okay::detectui;
                 DetectSettings& d = s.detect;
                 static std::map<const void*, ObserveMemory> observeMem;   // what observe mode replaced, per component

@@ -3,7 +3,7 @@
 A cross-cutting area: every place where the engine, launcher or backend defends itself against cheaters, forged data, unsafe
 paths or tampered files. It pulls together the anti-cheat in the network layer (details in 16.6), the five `shared/AntiCheat*`
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
-safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
+safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `AntiCheat/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/online/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
 hardening items are merged. The opt-in detection engine (39.12) was added afterwards. On 2026-11-26 the owner asked for all of it as one module, OkayAntiCheat: the audit and the plan in rounds are
 `docs/online/okay_anticheat.md`.
@@ -14,15 +14,15 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **System:** OkayAntiCheat
 - **What:** What the server refuses from a client: moving, despawning or writing something it doesn't own, spawning prefabs off a list, flooding SyncVars or RPCs, speed hacks, forged hit claims, and writing server-only variables. Opt-in per scene; a new Anti-Cheat Config starts safe.
 - **Parts:**
-  - 39.1.1 Rules and kicks - `Net/AntiCheat` - `AntiCheatSettings`, the `.okayac` text format, refusal counts, kick after N in a minute, a rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
+  - 39.1.1 Rules and kicks - `AntiCheat/AntiCheat` - `AntiCheatSettings`, the `.okayac` text format, refusal counts, kick after N in a minute, a rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
   - 39.1.2 Scene component - `Components/AntiCheatConfig` - inline rules or a `.okayac` file; On Cheat Detected and On Validate Rpc events; fails closed (a rules file that won't load refuses every join)
   - 39.1.3 Per-RPC validators - `Components/NetValidator` - size, calls per second, cooldown, ammo-style budget, host-only
   - 39.1.4 Hit claims and lag compensation - `Net/NetworkManager` - six server checks before any damage; the server alone applies damage (16.6.4)
-  - 39.1.5 Unowned world objects - `Net/AntiCheat` - objects nobody owns belong to the server; "Players can claim it" opts in; refusals there are logged once and don't count as violations
+  - 39.1.5 Unowned world objects - `AntiCheat/AntiCheat` - objects nobody owns belong to the server; "Players can claim it" opts in; refusals there are logged once and don't count as violations
   - 39.1.6 Kick filing - `Net/DedicatedServer` - `KickReporter` files `ac_reports` rows, nothing is banned automatically (16.5.4)
   - 39.1.7 Easy setup - `editor/AntiCheatSetup.hpp`, `editor/AntiCheatSetupUi.cpp` - three presets (Casual co-op, Competitive, Economy game), one-click Add Anti-Cheat (Add Component and the Network Manager), spawn list filled from the project's networked prefabs, and the Anti-cheat checklist (Inspector and Build Settings) with safe fix buttons
-  - 39.1.8 Bans, audit log and packet ceiling - `Net/AntiCheatLog`, `Net/NetworkManager` - `banFile` (a ban request or `banAfterKicks` kicks writes a ban; refused at the join, survives a restart, hand-editable), `auditLog` (local, players as a salted one-way tag), `maxPacketsPerSecond` (every packet type from a joined client counts); a dedicated server with the anti-cheat on keeps `okay_bans.txt` and `okay_anticheat_audit.log`
-- **Code:** `Net/AntiCheat`, `Net/AntiCheatLog`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
+  - 39.1.8 Bans, audit log and packet ceiling - `AntiCheat/AntiCheatLog`, `Net/NetworkManager` - `banFile` (a ban request or `banAfterKicks` kicks writes a ban; refused at the join, survives a restart, hand-editable), `auditLog` (local, players as a salted one-way tag), `maxPacketsPerSecond` (every packet type from a joined client counts); a dedicated server with the anti-cheat on keeps `okay_bans.txt` and `okay_anticheat_audit.log`
+- **Code:** `AntiCheat/AntiCheat`, `AntiCheat/AntiCheatLog`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
 - **API:** `BanList`, `AuditLog`, `.okayac` keys `banFile`, `auditLog`, `banAfterKicks`, `banHours`, `banOnRequest`, `maxPacketsPerSecond`, flags `--no-ban-file`, `--no-audit-log`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
 - **Editor:** Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one click); Network Manager > Add Anti-Cheat; File > Build Settings > Anti-cheat checklist; File > Build Settings > Server page
 - **Docs:** `docs/online/anticheat.md`, `docs/online/anticheat.md` (P1, Network hardening, Bans and the audit log, Gameplay validation, Exporting), `docs/online/anticheat.md` (audit table), `docs/online/multiplayer.md`
@@ -63,12 +63,12 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **What:** A short-lived signed "this account may join this server" pass. A Supabase Edge function signs it after checking the login and anti-cheat bans; the game server checks it with only a public key, so it needs no Supabase key and a banned player gets no ticket.
 - **Parts:**
   - 39.3.1 Ticket format and verify - `Net/SessionTicket` - `okt1.<payload>.<signature>` (ed25519), `sub`, `aud`, `iat`, `exp` (at most 1 h, 60 s skew), optional `cnf` key binding; `SessionTicket::Sign` is for tests and tools only
-  - 39.3.2 Server side policy - `Net/AntiCheat` - `ticketKey`, `ticketAudience` (required with a key), `ticketAnyAudience`; one connection per account (a second join replaces the first)
+  - 39.3.2 Server side policy - `AntiCheat/AntiCheat` - `ticketKey`, `ticketAudience` (required with a key), `ticketAnyAudience`; one connection per account (a second join replaces the first)
   - 39.3.3 Edge function - `supabase/functions/session-ticket/index.ts` - checks login (`/auth/v1/user`), calls `ac_is_banned` with its own service key, answers 403 banned, 503 if the ban check fails, else a ticket with `OKAY_TICKET_TTL` (600 s default, 3600 max) and the service clock (`iat`); records the machine hash with `ac_note_device` (best effort)
   - 39.3.4 Signing code - `supabase/functions/session-ticket/ticket.ts` - Web Crypto only; must match `SessionTicket::Verify` byte for byte
   - 39.3.5 Key maker and self-test - `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts` - the owner runs `make_key.ts`; the seed is the private key and never goes in git, a build or chat
-  - 39.3.6 Client request - `shared/AntiCheatBackend.hpp`, `shared/TicketClient.hpp`, `shared/TicketJoin.hpp` - the checked POST (`SessionTicket`) and `ParseTicket`; `Client::Acquire` (retries, 401 renew, banned is final, clock skew from `iat`, expiry, cache of unbound tickets); `Decide` (`mode off/optional/required`, `okay_tickets.cfg`); `NetworkManager::SetJoinGate` runs it before every `StartClient` / `JoinViaRelay`; the player installs it and the launcher checks before it starts a game to join
-- **Code:** `Net/SessionTicket`, `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `shared/AntiCheatBackend.hpp`, `shared/TicketClient.hpp`, `shared/TicketJoin.hpp`
+  - 39.3.6 Client request - `engine/include/okay/AntiCheat/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/TicketClient.hpp`, `engine/include/okay/AntiCheat/TicketJoin.hpp` - the checked POST (`SessionTicket`) and `ParseTicket`; `Client::Acquire` (retries, 401 renew, banned is final, clock skew from `iat`, expiry, cache of unbound tickets); `Decide` (`mode off/optional/required`, `okay_tickets.cfg`); `NetworkManager::SetJoinGate` runs it before every `StartClient` / `JoinViaRelay`; the player installs it and the launcher checks before it starts a game to join
+- **Code:** `Net/SessionTicket`, `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `engine/include/okay/AntiCheat/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/TicketClient.hpp`, `engine/include/okay/AntiCheat/TicketJoin.hpp`
 - **API:** `SessionTicket::Verify`, `NetworkManager::SetAuthToken`, `TicketBinding`, `SetJoinGate`, `LastJoinRefusal`, `okayac::ticket::Client`, `Decide`, `okay_tickets.cfg`, `.okayac` keys `ticketKey`, `ticketAudience`, `ticketAnyAudience`, env `OKAY_TICKET_SEED`, `OKAY_TICKET_PUBLIC_KEY`, `OKAY_TICKET_TTL`
 - **Editor:** none
 - **Docs:** `docs/online/anticheat.md` (P2: session tickets, The ticket service)
@@ -81,18 +81,17 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "set up the ticket service", "why can't I join a ticket server?"
 
 ### 39.4 Client integrity: signed manifest and launch check
-- **System:** Game File Safety - Checks that a game's files were not changed, keeps signing keys out of the code, and stops scripts touching files outside the game.
-  Home: `shared/AntiCheatIntegrity.hpp`. Entry: `shared/AntiCheatIntegrity.hpp`. Also called: client integrity, signed manifest, PathSafety.
+- **System:** OkayAntiCheat
 - **What:** Builds carry `Data/manifest.json` listing every shipped file's size and SHA-256, signed with ed25519 when the owner has a key. The launcher and the player check the install against it before a game starts. Off by default; Report logs, Enforce refuses.
 - **Parts:**
-  - 39.4.1 Manifest writer - `shared/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`
-  - 39.4.2 Verifier - `shared/AntiCheatIntegrity.hpp` - `VerifyInstall` fails on a missing or changed file, an unlisted program file (`.exe`, `.dll`, `.asi`, hidden ones too), a linked file or folder, a bad signature, or an untrusted signer
-  - 39.4.3 Start decision - `shared/AntiCheatIntegrity.hpp` - `DecideStart` and `CheckLaunch`: Off, Report or Enforce from the build (`anticheat=` in `game.okayconfig`), `OKAY_ANTICHEAT` (stricter only) and trusted keys
-  - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise our own `okay::crypto` (the TweetNaCl-derived port is deleted) with libsodium's extra checks (canonical S, no small-order R or key); `okay::crypto` is not yet reviewed from outside; tested against RFC 8032 vectors and a recorded transcript of the old port's answers
+  - 39.4.1 Manifest writer - `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`
+  - 39.4.2 Verifier - `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp` - `VerifyInstall` fails on a missing or changed file, an unlisted program file (`.exe`, `.dll`, `.asi`, hidden ones too), a linked file or folder, a bad signature, or an untrusted signer
+  - 39.4.3 Start decision - `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp` - `DecideStart` and `CheckLaunch`: Off, Report or Enforce from the build (`anticheat=` in `game.okayconfig`), `OKAY_ANTICHEAT` (stricter only) and trusted keys
+  - 39.4.4 Ed25519 and SHA-512 - `engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` - libsodium when present, otherwise our own `okay::crypto` (the TweetNaCl-derived port is deleted) with libsodium's extra checks (canonical S, no small-order R or key); `okay::crypto` is not yet reviewed from outside; tested against RFC 8032 vectors and a recorded transcript of the old port's answers
   - 39.4.5 File hashing and safe paths - `shared/OfficialGame.hpp` - `okayofficial::Verify` (size plus SHA-256) and path checks shared with the official-game updater
   - 39.4.6 Launcher and player hooks - `launcher/main.cpp` (L1181), `player/main.cpp` (L1405) - launcher checks the official game and library games with a `game.okayconfig`; the player checks before anything loads; a player built with trusted keys needs a valid signed manifest and takes its mode from it
   - 39.4.7 Build Settings option - `editor/main.cpp` (Output > Anti-cheat) - Off, Report, Enforce; writes `anticheat=`
-- **Code:** `shared/AntiCheatIntegrity.hpp`, `shared/AntiCheatCrypto.hpp`, `shared/OfficialGame.hpp`, `launcher/main.cpp`, `player/main.cpp`
+- **Code:** `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp`, `engine/include/okay/AntiCheat/AntiCheatCrypto.hpp`, `shared/OfficialGame.hpp`, `launcher/main.cpp`, `player/main.cpp`
 - **API:** `okayac::Mode`, `VerifyInstall`, `CheckLaunch`, `DecideStart`, `WriteBuildManifest`, `ed25519::Verify`, env `OKAY_ANTICHEAT`, `OKAY_AC_TRUSTED_KEY` (local test builds only)
 - **Editor:** File > Build Settings > Output > Anti-cheat
 - **Docs:** `docs/online/anticheat.md` (P3: client integrity, The manifest, Keys, Crypto, Limits)
@@ -108,12 +107,12 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **System:** OkayAntiCheat
 - **What:** Checks that run while a game plays on Windows: a debugger, an unknown loaded module, and a game clock that runs fast or slow (speed hacks). The decision logic is plain code tested everywhere; the probes are Windows-only.
 - **Parts:**
-  - 39.5.1 Debugger check - `shared/AntiCheatChecks.hpp` - `IsDebuggerPresent` and `CheckRemoteDebuggerPresent` every 5 s
-  - 39.5.2 Module allowlist - `shared/AntiCheatChecks.hpp` - Windows folder, the game's own manifest-listed files and the Steam and Discord overlays are allowed; anything else is reported once (false positives from overlays and recorders, so Report first)
-  - 39.5.3 Local clock heartbeat - `shared/AntiCheatChecks.hpp` - `ClockHeartbeat` with an HMAC challenge against a clock NTP can't step; 5 s windows, flagged past 5%, three in a row
-  - 39.5.4 Runtime guard - `shared/AntiCheatChecks.hpp` - `RuntimeGuard` runs the probes from the player's frame loop
-  - 39.5.5 Server-verified heartbeat - `Net/ClockCheck` - the server as verifier over the network (`maxClockDrift`); a client that never answers is flagged after 10 s
-- **Code:** `shared/AntiCheatChecks.hpp`, `Net/ClockCheck`
+  - 39.5.1 Debugger check - `engine/include/okay/AntiCheat/AntiCheatChecks.hpp` - `IsDebuggerPresent` and `CheckRemoteDebuggerPresent` every 5 s
+  - 39.5.2 Module allowlist - `engine/include/okay/AntiCheat/AntiCheatChecks.hpp` - Windows folder, the game's own manifest-listed files and the Steam and Discord overlays are allowed; anything else is reported once (false positives from overlays and recorders, so Report first)
+  - 39.5.3 Local clock heartbeat - `engine/include/okay/AntiCheat/AntiCheatChecks.hpp` - `ClockHeartbeat` with an HMAC challenge against a clock NTP can't step; 5 s windows, flagged past 5%, three in a row
+  - 39.5.4 Runtime guard - `engine/include/okay/AntiCheat/AntiCheatChecks.hpp` - `RuntimeGuard` runs the probes from the player's frame loop
+  - 39.5.5 Server-verified heartbeat - `AntiCheat/ClockCheck` - the server as verifier over the network (`maxClockDrift`); a client that never answers is flagged after 10 s
+- **Code:** `engine/include/okay/AntiCheat/AntiCheatChecks.hpp`, `AntiCheat/ClockCheck`
 - **API:** `okayac::ClockHeartbeat`, `AnswerChallenge`, `RuntimeGuard`, `ModuleAllowlist`, `.okayac` key `maxClockDrift`
 - **Editor:** Build Settings tooltip warns about false positives
 - **Docs:** `docs/online/anticheat.md` (The runtime checks, Limits)
@@ -129,13 +128,13 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **System:** OkayAntiCheat
 - **What:** The human side of anti-cheat: players report cheaters, games report what their checks found, admins ban an account or a machine, players see and appeal their bans. Everything is enforced by Supabase row-level security and logged to `admin_log`.
 - **Parts:**
-  - 39.6.1 Backend calls - `shared/AntiCheatBackend.hpp` - every call is built as a `Request` and its answer parsed by a plain function, so both are unit tested without a server
+  - 39.6.1 Backend calls - `engine/include/okay/AntiCheat/AntiCheatBackend.hpp` - every call is built as a `Request` and its answer parsed by a plain function, so both are unit tested without a server
   - 39.6.2 SQL schema - `docs/sql/anticheat.sql` - `ac_reports`, `ac_report_servers`, `ac_bans`, `ac_appeals`; `ac_is_banned` (ticket service and admins only), `ac_my_bans`, `ac_file_appeal` (one waiting, 3 per ban), `ac_purge_old()` (90-day retention, `pg_cron` job if available); abuse limits (`ac_rate_hit`: reports 20/h and 60/day, duplicates, dismissed-report pause, appeals 1/h and 5/day, lookups 120/h); ban evasion (`ac_devices`, `ac_note_device`, `ac_linked_accounts`, `ac_ban_with_devices`); an append-only `ac_audit` of every ban, appeal and review change including SQL-editor ones, trimmed by `ac_purge_audit()` after a year
-  - 39.6.3 Hardware hash - `shared/AntiCheatHardware.hpp` - HMAC-SHA256 of machine id, volume serial and CPU brand with a salt (`OKAY_AC_HW_SALT`); no machine id means no hash, so such a player is banned by account only
+  - 39.6.3 Hardware hash - `engine/include/okay/AntiCheat/AntiCheatHardware.hpp` - HMAC-SHA256 of machine id, volume serial and CPU brand with a salt (`OKAY_AC_HW_SALT`); no machine id means no hash, so such a player is banned by account only
   - 39.6.4 Launcher admin pages - `launcher/main.cpp` (L12335-12860) - Admin > Anti-cheat: Reports, Bans (Ban, Unban with a reason), Appeals (Accept, Reject with a note)
   - 39.6.5 Player side - `launcher/main.cpp` (L12724-12860) - ban banner on every page, Appeal box, Report cheating in a chat's menu; a game with anti-cheat on files one `client_check` report per run
   - 39.6.6 Local SQL test - `tests/scripts/test_anticheat_sql.sh`, `tests/sql/test_anticheat.sql`, `tests/sql/supabase_stub.sql` - runs `anticheat.sql` on a throwaway local Postgres with a stand-in for Supabase's `auth` schema; never point it at a live database
-- **Code:** `shared/AntiCheatBackend.hpp`, `shared/AntiCheatHardware.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `tests/scripts/test_anticheat_sql.sh`, `tests/sql/test_anticheat.sql`, `tests/sql/supabase_stub.sql`
+- **Code:** `engine/include/okay/AntiCheat/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/AntiCheatHardware.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `tests/scripts/test_anticheat_sql.sh`, `tests/sql/test_anticheat.sql`, `tests/sql/supabase_stub.sql`
 - **API:** `okayac::backend::Request`, `okayac::HardwareHash`, SQL `ac_is_banned`, `ac_my_bans`, `ac_file_appeal`, `ac_purge_old`, env `OKAY_SQL_TEST_PGHOST`, demo hooks `OKAY_UI_DEMO_ACVIEW`, `OKAY_UI_DEMO_ACBAN`
 - **Editor:** none (launcher: Admin > Anti-cheat, ban banner, Report cheating...)
 - **Docs:** `docs/online/anticheat.md` (The backend, In the launcher, Hardware hash, Retention, Setting it up)
@@ -148,7 +147,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "ban this machine for a week", "what does an appeal look like for an admin?"
 
 ### 39.7 Trusted keys and signing keys at build time
-- **System:** Game File Safety
+- **System:** OkayAntiCheat
 - **What:** How public keys get into binaries and how private ones stay out. The launcher is built with the owner's trusted public keys; the editor signs with a private key from the environment; the CMake check refuses a malformed key list.
 - **Parts:**
   - 39.7.1 Key list check - `cmake/OkayAntiCheatKeys.cmake` - `okay_ac_check_trusted_keys()` needs exactly 64 hex digits per key, comma separated, no empty entries; a bad list stops the configure instead of building a program that trusts nothing
@@ -192,13 +191,14 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "turn legacy hellos off on the relay", "what limits does the relay enforce?"
 
 ### 39.9 Script and file path safety
-- **System:** Game File Safety
+- **System:** Game File Safety - Stops scripts, visual scripts and network spawns touching files outside the game. (The signed manifest and trusted keys, 39.4 and 39.7, moved to OkayAntiCheat in its round 2.)
+  Home: `engine/include/okay/Core/SaveData.hpp`. Entry: `engine/include/okay/Core/SaveData.hpp`. Also called: PathSafety, path safety.
 - **What:** Scripts and visual scripts come with downloaded game content, so every file name they pass to save, prefs, data, build or scene calls must stay inside the game's folders: no absolute paths, no `..`; saves land in the game's save folder. Prefabs that the network can spawn must be safe and registered.
 - **Parts:**
   - 39.9.1 Safe relative path - `Core/SaveData` - `Save::IsSafeRelative(name)`
   - 39.9.2 OkayScript builtins - `Scripting/OkayScriptVM` - file-taking builtins call the check (L144)
   - 39.9.3 Visual script nodes - `VisualScript/NodesExtra` - the load-scene node refuses unsafe names; `Components/ActionList` does the same for `save_prefs` and scene actions
-  - 39.9.4 Safe network spawns - `Net/AntiCheat` - only registered prefabs may be network-spawned (#351)
+  - 39.9.4 Safe network spawns - `AntiCheat/AntiCheat` - only registered prefabs may be network-spawned (#351)
   - 39.9.5 Launcher shell guard - `launcher/main.cpp` (L233) - `ShellSafeUrl` allows only plain http(s) URL characters before a URL reaches the browser or cmd (downloads no longer start curl, wget or PowerShell)
 - **Code:** `Core/SaveData`, `Scripting/OkayScriptVM`, `VisualScript/NodesExtra`, `Components/ActionList`, `launcher/main.cpp`
 - **API:** `Save::IsSafeRelative`, `ShellSafeUrl`
@@ -257,19 +257,19 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **System:** OkayAntiCheat
 - **What:** An opt-in server-side layer that watches what clients claim over time (positions, aim, shots, counters, packets), keeps a decaying risk score per player and escalates through log, flag, rate-limit, shadow-restrict, kick and ban request. It uses only what the server saw and its own physics, so it cannot be patched out of a client; it cannot see anything the server never receives. Off unless `detect.enabled`.
 - **Parts:**
-  - 39.12.1 Movement detectors - `Net/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
-  - 39.12.2 Combat detectors - `Net/CheatDetect`, `Net/NetworkManager` - fire rate per weapon definition, accuracy and headshot ratio over a sliding window, aim snap then hit, shots through walls, damage above the weapon maximum, hits outside lag-compensated reach
-  - 39.12.3 Economy and state detectors - `Net/CheatDetect` - counters claimed above what server-known grants explain (client SyncVar writes of watched keys are checked automatically), duplicated unique items and acquisition bursts, ability use before its cooldown
-  - 39.12.4 Network detectors - `Net/CheatDetect`, `Net/NetworkManager` - message-rate bursts, replayed packets (the secure channel's window feeds it), malformed input, repeated corrections and a tick going backwards, a game clock off the server's
-  - 39.12.5 Suspicion model - `Net/CheatDetect` - evidence records (kind, value, threshold, tick, state snapshots), per-kind weights, decay by half-life, confirmations for soft detectors, a response ladder with release and latched kick / ban request, risk kept for 5 minutes across a rejoin
-  - 39.12.6 False-positive protection - `Net/CheatDetect` - grace after teleport, respawn, lag spike, host migration and join; ping-scaled tolerance; stale-input tolerance; `NoteSpeedBoost`, `NoteExternalForce`, `NoteFlightAllowed`
-  - 39.12.7 Evidence bundle - `Net/CheatDetect` - `EvidenceBundle` JSON (size capped, tokens redacted, no account or address unless opted in) and a parser for hostile input; `AntiCheatKick` carries `risk`, `banRequested` and `evidence`
+  - 39.12.1 Movement detectors - `AntiCheat/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
+  - 39.12.2 Combat detectors - `AntiCheat/CheatDetect`, `Net/NetworkManager` - fire rate per weapon definition, accuracy and headshot ratio over a sliding window, aim snap then hit, shots through walls, damage above the weapon maximum, hits outside lag-compensated reach
+  - 39.12.3 Economy and state detectors - `AntiCheat/CheatDetect` - counters claimed above what server-known grants explain (client SyncVar writes of watched keys are checked automatically), duplicated unique items and acquisition bursts, ability use before its cooldown
+  - 39.12.4 Network detectors - `AntiCheat/CheatDetect`, `Net/NetworkManager` - message-rate bursts, replayed packets (the secure channel's window feeds it), malformed input, repeated corrections and a tick going backwards, a game clock off the server's
+  - 39.12.5 Suspicion model - `AntiCheat/CheatDetect` - evidence records (kind, value, threshold, tick, state snapshots), per-kind weights, decay by half-life, confirmations for soft detectors, a response ladder with release and latched kick / ban request, risk kept for 5 minutes across a rejoin
+  - 39.12.6 False-positive protection - `AntiCheat/CheatDetect` - grace after teleport, respawn, lag spike, host migration and join; ping-scaled tolerance; stale-input tolerance; `NoteSpeedBoost`, `NoteExternalForce`, `NoteFlightAllowed`
+  - 39.12.7 Evidence bundle - `AntiCheat/CheatDetect` - `EvidenceBundle` JSON (size capped, tokens redacted, no account or address unless opted in) and a parser for hostile input; `AntiCheatKick` carries `risk`, `banRequested` and `evidence`
   - 39.12.8 Cheat simulation harness - `tests/test_anticheat_sim.cpp` - scripted cheating and honest players against the engine (seeded, fake time) and against a real server; prints detection and false-positive rates
-  - 39.12.9 Evidence on kick reports - `Net/DedicatedServer`, `shared/AntiCheatBackend.hpp`, `docs/sql/anticheat.sql` - `KickReporter` attaches the kick's bundle (re-written without account / address unless `includeIdentifiers`, 16 KiB cap, must be a JSON object) to the `server_kick` report for a kick or a ban request; `ac_reports.evidence jsonb` (size check, kept only from `ac_report_servers` accounts, frozen on review, admins read only)
-  - 39.12.10 Admin views: linked accounts, ban with devices, evidence - `shared/AntiCheatAdminTools.hpp`, `launcher/main.cpp` - Admin > Anti-cheat: "Linked accounts" (`ac_linked_accounts`), the Ban dialog's "every machine this account used" (`ac_ban_with_devices`, shows how many bans it made), "Evidence" on a server-kick report; requests and row parsing are plain functions
-  - 39.12.11 Editor inspector - `Net/DetectInspector.hpp`, `editor/main.cpp` - Anti-Cheat Config > Detection engine: master switch, Observe mode (kickAt, banAt, shadowAt, rateLimitAt to 0; restores on untick), about 30 grouped numbers with tooltips from the docs, and a text box of every `detect.*` line (Apply text checks all of it)
-  - 39.12.12 Bot / macro heuristic - `Net/CheatDetect`, `Net/NetworkManager` - `input_regularity`: one button pressed 20 times at a steady gap (spread under 4%), timed on the player's own input tick; Fire and Alt Fire off by default (auto-fire is regular on purpose); `detect.regularity*` keys
-- **Code:** `Net/CheatDetect`, `Net/AntiCheat`, `Net/NetworkManager`, `Net/DedicatedServer`, `Net/DetectInspector`, `Scene/SceneSerializer`, `shared/AntiCheatBackend.hpp`, `shared/AntiCheatAdminTools.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `editor/main.cpp`
+  - 39.12.9 Evidence on kick reports - `Net/DedicatedServer`, `engine/include/okay/AntiCheat/AntiCheatBackend.hpp`, `docs/sql/anticheat.sql` - `KickReporter` attaches the kick's bundle (re-written without account / address unless `includeIdentifiers`, 16 KiB cap, must be a JSON object) to the `server_kick` report for a kick or a ban request; `ac_reports.evidence jsonb` (size check, kept only from `ac_report_servers` accounts, frozen on review, admins read only)
+  - 39.12.10 Admin views: linked accounts, ban with devices, evidence - `engine/include/okay/AntiCheat/AntiCheatAdminTools.hpp`, `launcher/main.cpp` - Admin > Anti-cheat: "Linked accounts" (`ac_linked_accounts`), the Ban dialog's "every machine this account used" (`ac_ban_with_devices`, shows how many bans it made), "Evidence" on a server-kick report; requests and row parsing are plain functions
+  - 39.12.11 Editor inspector - `AntiCheat/DetectInspector.hpp`, `editor/main.cpp` - Anti-Cheat Config > Detection engine: master switch, Observe mode (kickAt, banAt, shadowAt, rateLimitAt to 0; restores on untick), about 30 grouped numbers with tooltips from the docs, and a text box of every `detect.*` line (Apply text checks all of it)
+  - 39.12.12 Bot / macro heuristic - `AntiCheat/CheatDetect`, `Net/NetworkManager` - `input_regularity`: one button pressed 20 times at a steady gap (spread under 4%), timed on the player's own input tick; Fire and Alt Fire off by default (auto-fire is regular on purpose); `detect.regularity*` keys
+- **Code:** `AntiCheat/CheatDetect`, `AntiCheat/AntiCheat`, `Net/NetworkManager`, `Net/DedicatedServer`, `AntiCheat/DetectInspector`, `Scene/SceneSerializer`, `engine/include/okay/AntiCheat/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/AntiCheatAdminTools.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `editor/main.cpp`
 - **API:** `DetectSettings`, `CheatDetector`, `AntiCheatSettings::detect`, `AntiCheat::detector`, `onDetectResponse`, `EvidenceBundle`, `BundleOptions`, `NetworkManager::AntiCheatKick`, `KickReporter::includeIdentifiers`, `okayac::backend::FileServerKick` (evidence), `LinkedAccounts`, `BanWithDevices`, `okay::detectui`, `.okayac` keys `detect.*` (`detect.enabled`, `detect.maxSpeed`, `detect.weapon`, `detect.ability`, `detect.economy`, `detect.kickAt`, `detect.weight.<detector>` ...)
 - **Editor:** Anti-Cheat Config > Detection engine (switch, Observe mode, grouped numbers with tooltips, a text box of the `detect.*` lines); a rules file replaces the inline settings when it loads. Launcher: Admin > Anti-cheat (linked accounts, ban with devices, evidence)
 - **Docs:** `docs/online/anticheat.md` (Detection engine)
@@ -285,10 +285,10 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **System:** OkayAntiCheat
 - **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/online/anticheat.md`.
 - **Parts:**
-  - 39.13.1 The simulator - `Net/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets
+  - 39.13.1 The simulator - `AntiCheat/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets
   - 39.13.2 Where to run it - `Net/DedicatedServer`, `player/main.cpp` - `OkaySpacePlayer.exe --server --cheat-sim [--log FILE]`, `--cheat-sim-only LIST`, env `OKAY_CHEAT_SIM`; needs no game, window or scene; exit code 0 when everything was caught
   - 39.13.3 Status table - `docs/online/anticheat.md` - every audit item and topic with its status and proof
-- **Code:** `Net/CheatSim`, `Net/DedicatedServer`, `player/main.cpp`
+- **Code:** `AntiCheat/CheatSim`, `Net/DedicatedServer`, `player/main.cpp`
 - **API:** `okay::RunCheatSim`, `CheatSimOptions`, `CheatSimReport`, flags `--cheat-sim`, `--cheat-sim-only`, env `OKAY_CHEAT_SIM`
 - **Editor:** none
 - **Docs:** `docs/online/anticheat.md` (The cheat simulator), `docs/online/anticheat.md`, `docs/try_it.md`

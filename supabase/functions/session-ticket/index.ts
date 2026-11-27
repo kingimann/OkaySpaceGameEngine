@@ -27,7 +27,7 @@
 import { importSigningKey, KEY_BINDING, MAX_LIFETIME_SECONDS, signTicket } from "./ticket.ts";
 
 const AUD = /^[A-Za-z0-9._:-]{1,64}$/; // a concrete server id ("*" tickets aren't issued here)
-const HW = /^[0-9a-f]{64}$/;            // shared/AntiCheatHardware.hpp's machine hash
+const HW = /^[0-9a-f]{64}$/;            // engine/include/okay/AntiCheat/AntiCheatHardware.hpp's machine hash
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {

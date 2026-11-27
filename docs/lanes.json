@@ -287,7 +287,9 @@
         "assets/**",
         "shared/**",
         "engine/include/okay/Net/**",
-        "engine/src/Net/**"
+        "engine/src/Net/**",
+        "engine/include/okay/AntiCheat/**",
+        "engine/src/AntiCheat/**"
       ]
     },
     {

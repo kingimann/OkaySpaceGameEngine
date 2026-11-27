@@ -58,10 +58,10 @@
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Platform/Painter.hpp"    // ...drawn through the platform painter
 #include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
-#include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
-#include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
-#include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
-#include "TicketJoin.hpp"                // session tickets: the join gate (okay_tickets.cfg)
+#include "okay/AntiCheat/AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
+#include "okay/AntiCheat/AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
+#include "okay/AntiCheat/AntiCheatHardware.hpp"        // (with the salted hardware hash)
+#include "okay/AntiCheat/TicketJoin.hpp"                // session tickets: the join gate (okay_tickets.cfg)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUI_SoftPainter.hpp"   // the software painter of the own platform backend (own code, not ready)

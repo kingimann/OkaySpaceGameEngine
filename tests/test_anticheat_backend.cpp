@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
-#include "AntiCheatBackend.hpp"
-#include "AntiCheatHardware.hpp"
+#include "okay/AntiCheat/AntiCheatBackend.hpp"
+#include "okay/AntiCheat/AntiCheatHardware.hpp"
 
 // Anti-cheat P4: the salted hardware hash, and the requests the launcher's
 // Admin > Anti-cheat page and the player's appeal flow send to Supabase

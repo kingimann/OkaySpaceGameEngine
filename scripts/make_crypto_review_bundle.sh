@@ -67,9 +67,9 @@ files=(
     engine/src/Net/NetworkManagerClient.cpp
     engine/src/Net/RelayServer.cpp
     # the other crypto code in the tree (section 1, second table); read-only, not built here
-    # (shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto now; the TweetNaCl-derived port is deleted)
-    shared/AntiCheatCrypto.hpp
-    shared/AntiCheatChecks.hpp
+    # (engine/include/okay/AntiCheat/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto now; the TweetNaCl-derived port is deleted)
+    engine/include/okay/AntiCheat/AntiCheatCrypto.hpp
+    engine/include/okay/AntiCheat/AntiCheatChecks.hpp
     engine/include/okay/Platform/Account/AccountService.hpp
     shared/OfficialGame.hpp
     # tests, harnesses and fuzzers
@@ -199,7 +199,7 @@ else
     note "SKIPPED  libsodium cross-checks and the differential test (libsodium-dev / pkg-config not found)"
 fi
 build test_net_crypto_own "${BASE[@]}" -Itests tests/test_net_crypto_own.cpp "${CORE[@]}" && run test_net_crypto_own
-# The anti-cheat Ed25519 and SHA-512 wrapper (shared/AntiCheatCrypto.hpp) against a transcript recorded from the old TweetNaCl-derived port
+# The anti-cheat Ed25519 and SHA-512 wrapper (engine/include/okay/AntiCheat/AntiCheatCrypto.hpp) against a transcript recorded from the old TweetNaCl-derived port
 build test_anticheat_golden "${BASE[@]}" -Itests -Ishared tests/test_anticheat_golden.cpp "${CORE[@]}" && run test_anticheat_golden
 build fuzz_crypto_smoke "${BASE[@]}" tests/fuzz_crypto.cpp "${CORE[@]}" && run fuzz_crypto_smoke 300
 build fuzz_net_crypto_smoke "${BASE[@]}" -DOKAY_OWN_CRYPTO -DOKAY_NET_CRYPTO tests/fuzz_net_crypto.cpp engine/src/Net/SessionTicket.cpp "${CORE[@]}" && run fuzz_net_crypto_smoke 300

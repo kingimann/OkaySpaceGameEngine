@@ -401,7 +401,7 @@ Its TweetNaCl section is out of date: that port is already gone (#849).
    wiping, add the CI jobs a reviewer would ask for (valgrind, sanitizers, libFuzzer; they exist only on branch
    `claude/thirdparty-followups2`), runs on Windows, macOS and WebAssembly and on other CPUs, a decision on Ed25519 signing speed.
 3. **What is already ours:** Ed25519 and SHA-512 when a build has no libsodium; SHA-512 always, inside the anti-cheat wrapper
-   (`shared/AntiCheatCrypto.hpp` says so). The startup word `crypto=libsodium` only describes Ed25519. That is by your approval of
+   (`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` says so). The startup word `crypto=libsodium` only describes Ed25519. That is by your approval of
    the TweetNaCl replacement. Say so plainly to anyone who reads "libsodium is the only crypto in a release".
 
 ### curl (a program we start; not linked)

@@ -22,7 +22,7 @@ exactly the primitives the network layer uses today, plus their direct building 
 | X25519 | RFC 7748 | key pairs |
 | Kx session keys (X25519, then BLAKE2b-512 of `q || client_pk || server_pk`, split into rx and tx) | same construction as libsodium's `crypto_kx` | `SecureChannel::Establish` |
 | BLAKE2b | RFC 7693 | Kx |
-| Ed25519 (detached, strict like libsodium: S < L, no small-order R or key, canonical key) | RFC 8032 | session tickets, host identity (`shared/AntiCheatCrypto.hpp`) |
+| Ed25519 (detached, strict like libsodium: S < L, no small-order R or key, canonical key) | RFC 8032 | session tickets, host identity (`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp`) |
 | SHA-256 (header-only `Crypto/Sha256.hpp`, the engine's only SHA-256), HMAC-SHA256, PBKDF2-HMAC-SHA256 | FIPS 180-4, RFC 2104 / 4231, RFC 8018 / 7914 | file checksums (updater, anti-cheat manifest), local account passwords, anti-cheat clock tag, voice room key, ticket key binding |
 | SHA-512 | FIPS 180-4 | Ed25519 |
 | `RandomBytes` (getrandom, getentropy, BCryptGenRandom; aborts if the OS has none), `MemZero`, `ConstantTimeEqual` | | everywhere |
@@ -44,7 +44,7 @@ SHA-256, HMAC-SHA256 and PBKDF2-HMAC-SHA256 are the exception: they are one head
 Speed only (2026-11-16, branch `claude2/own-http-sha-fast`): the SHA-256 block function was made faster, and on x86 CPUs with the SHA extensions those instructions are used (picked once at run time; `OKAY_SHA256_PORTABLE=1` forces the portable function). Every digest is the same as before (FIPS 180-4 vectors, 100,000 random messages in random pieces against Python hashlib with both block functions, the crypto suites including the libsodium cross-checks, ASan and UBSan). Nothing else in `okay::crypto` changed, and nothing changed about which library is used for anything: libsodium stays the default for everything it does, and `okay::crypto` is still not a default replacement for it (rule 18).
 
 `okay::crypto` is its own static library (`okay_crypto`, `okay::crypto` in CMake), so code that must not link the engine can use it:
-`shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz
+`engine/include/okay/AntiCheat/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz
 targets and benchmark link only it.
 
 ## Releases must have libsodium (the guard)

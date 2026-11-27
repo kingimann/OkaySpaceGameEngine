@@ -252,7 +252,7 @@ okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
 # nobody has signed yet; set it once the first signed publish is out).
 set(OKAY_UPDATE_TRUSTED_KEYS "" CACHE STRING "Updater: ed25519 public keys (hex, comma-separated) that must sign versions.json (empty = unsigned feeds still accepted)")
 okay_ac_check_trusted_keys("${OKAY_UPDATE_TRUSTED_KEYS}")      # same rule: exactly 64 hex digits per key, or configure fails
-# The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
+# The salt of the anti-cheat hardware hash (engine/include/okay/AntiCheat/AntiCheatHardware.hpp): give your
 # deployment its own so its hashes can't be matched with another's. Not a secret.
 set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
 if(OKAY_AC_HW_SALT)

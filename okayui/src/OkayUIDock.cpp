@@ -215,7 +215,7 @@ void DrawGuides(Ctx& c, const DockDropInfo& d) {
         fg.AddRect(V(f.x, f.y), V(f.x + f.w, f.y + f.h), ColorMulAlpha(acc, 0.85f), rr, 1.5f);
     } else {          // the exact area the window will fill, inset a little so the panes around it stay readable
         const Rect& p = d.preview;
-        fg.AddRectFilled(V(p.x + 3.0f, p.y + 3.0f), V(p.x + p.w - 3.0f, p.y + p.h - 3.0f), ColorMulAlpha(acc, 0.24f), rr);
+        fg.AddRectFilled(V(p.x + 3.0f, p.y + 3.0f), V(p.x + p.w - 3.0f, p.y + p.h - 3.0f), GetColorU32(Col_DockingPreview), rr);   // the accent at 30% unless a program set it
         fg.AddRect(V(p.x + 3.0f, p.y + 3.0f), V(p.x + p.w - 3.0f, p.y + p.h - 3.0f), acc, rr, 2.0f);
     }
     // the guide tiles: at the dock area's edges, and over the leaf under the pointer

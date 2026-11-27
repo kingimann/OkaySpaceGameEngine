@@ -679,6 +679,27 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// A static local of the function around a lambda without captures, named in the lambda ([expr.prim.lambda.capture] 7;
+// Browser/Script.cpp's kWeb; before, "unknown name"): the variable itself, also written to.
+static void r33_lambda_static(Tally& tally) {
+    std::printf("r33_lambda_static\n");
+    okayms_test::run_both(kRun, tally, "lambda_static", std::string(kAlloc) + R"OKMS(
+#include <set>
+#include <string>
+int count_known(const char* a, const char* b) {
+  static const std::set<std::string> kWeb = {"Node", "Element"};
+  static int calls = 0;
+  auto known = [](const std::string& n) { ++calls; return kWeb.count(n) != 0; };
+  return (known(a) ? 1 : 0) + (known(b) ? 10 : 0) + calls * 100;
+}
+int entry(void) {
+  CK(1, count_known("Node", "x") == 201);
+  CK(2, count_known("y", "Element") == 410);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -698,5 +719,6 @@ int main(int argc, char** argv) {
     r33_aggregates(tally);
     r33_eh_block(tally);
     r33_raw_strings(tally);
-    return tally.finish(15);
+    r33_lambda_static(tally);
+    return tally.finish(16);
 }

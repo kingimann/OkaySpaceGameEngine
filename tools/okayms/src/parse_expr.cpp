@@ -1696,6 +1696,23 @@ bool Parser::parse_unary(Node* out) {
             const auto alias = global_alias.find(name);
             if (alias != global_alias.end()) name = alias->second;
         }
+        if (!from_global && !lam_outer_locals_.empty() && !local_visible(name) && name.find("::") == std::string::npos) {
+            // A static local of the function around a lambda, named in the lambda's body ([expr.prim.lambda.capture] 7:
+            // a variable with static storage needs no capture; Round 33, Browser/Script.cpp's
+            // `static const std::unordered_set<std::string> kWeb = {...}; auto known = [](...) { return kWeb.count(n); }`):
+            // the variable itself, by its own symbol. Before, "unknown name".
+            bool found = false;
+            for (size_t li = lam_outer_locals_.size(); li-- > 0 && !found;) {
+                const std::vector<Local>* outer = lam_outer_locals_[li];
+                if (outer == nullptr) continue;
+                for (size_t k = outer->size(); k-- > 0;)
+                    if ((*outer)[k].name == name) {
+                        if ((*outer)[k].is_static && !(*outer)[k].symbol.empty()) name = (*outer)[k].symbol;
+                        found = true;
+                        break;
+                    }
+            }
+        }
         if (is(TLParen) && !member_call && !from_global && !local_visible(name) && first_func(name) == nullptr &&
             !(cur_class >= 0 && member_hides(name, TLParen))) {
             // g(args) where g is a variable at namespace scope holding a function pointer ([expr.call] 1; Round 33,

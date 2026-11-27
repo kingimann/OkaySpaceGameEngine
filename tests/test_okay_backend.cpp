@@ -175,6 +175,11 @@ int main() {
         CHECK(path(db.From("t").Select("a,b").Eq("c", "1").Neq("d", "2").Gt("e", "3").Gte("f", "4").Lt("g", "5").Lte("h", "6")) ==
               "t?select=a,b&c=eq.1&d=neq.2&e=gt.3&f=gte.4&g=lt.5&h=lte.6");
         CHECK(path(db.From("t").Like("n", "al*").Ilike("m", "*X*")) == "t?n=like.al%2A&m=ilike.%2AX%2A");
+        // (round 6) A pattern the program encoded itself is written unchanged; Encoded stays the default.
+        CHECK(path(db.From("t").Like("n", "%5BCall*", ob::ValueText::AsIs).Ilike("m", "*a%20b*", ob::ValueText::AsIs)) ==
+              "t?n=like.%5BCall*&m=ilike.*a%20b*");
+        CHECK(path(db.From("t").Like("n", "a&b", ob::ValueText::Encoded)) == path(db.From("t").Like("n", "a&b")));
+        CHECK(path(db.From("t").Ilike("n", "x y&z=1")) == "t?n=ilike.x%20y%26z%3D1");
         CHECK(path(db.From("t").Is("a", ob::IsValue::Null).Is("b", ob::IsValue::True).Is("c", ob::IsValue::False).Is("d", ob::IsValue::Unknown)) ==
               "t?a=is.null&b=is.true&c=is.false&d=is.unknown");
         CHECK(path(db.From("t").In("id", {"a", "b c", "x,y", "q\"t", ""})) == "t?id=in.(a,b%20c,%22x%2Cy%22,%22q%5C%22t%22,%22%22)");

@@ -14,6 +14,7 @@
 // OkayUI draws on top of every ImGui window, so a hosted region must not be one that other ImGui windows or menus are
 // meant to cover (documented in docs/ui/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 #include "okay/Platform/Platform.hpp"
 
 // SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
@@ -528,6 +529,7 @@ public:
         m_w = w; m_h = h;
         OkayUI::Input in = m_events.Build((float)w, (float)h, blocked, deliverKeys);
         in.time = time;
+        OkayUI::design::Poll(time);   // another program changed the person's appearance.json: follow it (only after FollowUserFile)
         OkayUI::BeginFrame(in);
     }
     /// A resize event came since the last frame (see EventCollector::TakeResized).

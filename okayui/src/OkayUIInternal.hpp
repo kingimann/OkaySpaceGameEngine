@@ -41,11 +41,12 @@ extern float g_whiteU, g_whiteV;
 // Texture changes inside the overlay batch (fallback-font text in toasts and
 // popups): the overlay index each starts at. mergeOverlay turns them into spans.
 // An overlay span carries its texture and, since popups may hold clipped child regions (a scrolling list in a modal), its clip rectangle.
-struct OverlaySpan { int startIdx; SDL_Texture* tex; bool clipOn = false; SDL_Rect clip = SDL_Rect{0, 0, 0, 0}; };
+struct OverlaySpan { int startIdx; SDL_Texture* tex; bool clipOn = false; int clipX = 0, clipY = 0, clipW = 0, clipH = 0; };
 constexpr int kMaxOvSpans = 128;
 extern OverlaySpan g_ovSpans[kMaxOvSpans];
 extern int g_clipBase;
-void overlayClip(bool on, SDL_Rect r);   // OkayUI.cpp: the overlay batch's clip from here on   // clip rectangles below this stack depth belong to what a popup was opened over: they do not clip the popup
+void overlayClipOff();       // OkayUI.cpp: the overlay batch is not clipped from here on
+void overlayClipToStack();   // OkayUI.cpp: the overlay batch is clipped to the innermost clip above g_clipBase (none: not clipped)   // clip rectangles below this stack depth belong to what a popup was opened over: they do not clip the popup
 extern int g_novSpans;
 // Draw spans: the main batch is split into contiguous index ranges, each carrying a
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
@@ -216,7 +217,7 @@ extern float g_framePadY;
 // StyleVar_ScrollbarSize (< 0 = none pushed: OkayUI's own 10-pixel bars): the width of the scroll bars of children and scrolling tables.
 // A pushed size also gives Dear ImGui's proportions: the bar inside a framed child's outline and its grab 2 pixels in on every side.
 extern float g_sbSize;
-inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (g_look ? 15.0f : 12.0f)); }
+inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (float)(int)((g_look ? 15.0f : 12.0f) * g_theme.spacing + 0.5f)); }   // spacing: the density
 inline float textH() { return fH() * g_theme.textScale; }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // Item-width override: SetNextItemWidth (one-shot) / PushItemWidth (scoped). availW()
@@ -318,8 +319,31 @@ extern int g_childTop;
 void panelColored(float x, float y, float w, float h, const unsigned char* fill);
 void framedComboBox(float x, float y, float w, float h, bool hovered, const char* text);
 void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]);
+void chevronDir(float cx, float cy, float sz, int dir, const unsigned char c[4]);   // 0 right, 1 down, 2 left, 3 up
 void xMark(float cx, float cy, float sz, const unsigned char c[4]);
 void softShadow(float x, float y, float w, float h, float rad);
+// Design shapes (OkayUI.cpp): a shadow of a given depth, an outline ring, the keyboard focus ring, a control's box (outline when
+// the design has one, then the fill), a colour blend, and per-widget motion (0..1 toward `on`; see anim in OkayUI.cpp).
+void elevation(float x, float y, float w, float h, float rad, int depth);
+void ringRect(float x, float y, float w, float h, float rad, float t, const unsigned char c[4]);
+void focusRing(float x, float y, float w, float h, float rad);
+void controlBox(float x, float y, float w, float h, float rad, const unsigned char* fill);
+const unsigned char* mixColor(const unsigned char a[4], const unsigned char b[4], float t, unsigned char out[4]);
+void animFrame(double now);
+void tabBarBackground(float x, float y, float w, float h);   // OkayUI_Tabs.cpp
+void treeGuidesReset();   // OkayUI_Trees.cpp
+void comboBox(int id, float x, float y, float w, float h, bool hovered, bool open, const char* text);   // OkayUI.cpp
+void popoverBox(float x, float y, float w, float h, const unsigned char* fill);
+float anim(int id, int channel, bool on);
+// The hover / press colour of a control, eased by motion: `rest`, `hover` and `down` blended by anim(id).
+inline const unsigned char* stateColor(int id, bool over, bool down, const unsigned char* rest, const unsigned char* hoverC,
+                                       const unsigned char* downC, unsigned char out[4]) {
+    const float h = anim(id, 0, over || down);
+    mixColor(rest, hoverC, h, out);
+    if (down) { unsigned char t[4] = {out[0], out[1], out[2], out[3]}; mixColor(t, downC, anim(id, 1, true), out); }
+    else anim(id, 1, false);
+    return out;
+}
 bool* openState(int id, bool dflt);
 struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false;
                 bool keyMoved = false; };   // keyMoved: the arrows moved the highlight this frame (a scrolling list brings it into view)
@@ -346,6 +370,7 @@ struct CurMenu {
     float virtTop = 0.0f;                        // where row 0 would be (itemStartY minus the scroll)
     float* heightSlot = nullptr;                 // the list's full height last frame
     float* scrollSlot = nullptr;                 // its scroll offset in pixels
+    bool boxed = false;                          // the list's popover box was drawn (from last frame's height): rows draw only their highlight
 };
 extern CurMenu g_curMenu;
 extern CurMenu g_menuStack[4];

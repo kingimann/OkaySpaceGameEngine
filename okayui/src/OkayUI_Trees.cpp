@@ -14,6 +14,14 @@
 namespace OkayUI {
 using namespace ui_core;
 
+namespace {
+// The open tree nodes' indent guides: where each line starts (under the chevron). Reset when a frame begins or the stack runs off.
+struct TreeGuide { float x, y; };
+TreeGuide g_treeGuide[16];
+int g_treeTop = 0;
+}
+void ui_core::treeGuidesReset() { g_treeTop = 0; }
+
 
 bool CollapsingHeader(const char* label, bool defaultOpen);
 bool CollapsingHeader(const char* label) { return CollapsingHeader(label, false); }
@@ -28,17 +36,16 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) { *open = !*open; g_toggledId = id; } g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
-    const unsigned char* bg = (g_active == id && inside) ? pick(Col_HeaderActive, g_theme.bgDown) : (inside ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_Header, g_theme.track));
-    const float s = g_theme.textScale;
-    if (g_look) {
-        rrect(x, y, w, h, rnd(), inside ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_Header, g_theme.bg));
-        chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
-        drawText(x + 28.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
-        return *open;
-    }
-    quad(x, y, w, h, bg);
-    drawText(x + 8.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);   // expander glyph
-    drawText(x + 8.0f + fCharW() * s * 2.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
+    // A section header: a raised band with a chevron that turns as it opens, the label in the text colour; hover and press
+    // ease in. Designs with accent headers put a short accent bar on its left edge.
+    unsigned char st[4];
+    const unsigned char* bg = stateColor(id, inside, g_active == id && inside, pick(Col_Header, g_theme.raised),
+                                         pick(Col_HeaderHovered, g_theme.bgHover), pick(Col_HeaderActive, g_theme.bgDown), st);
+    const float s = g_theme.textScale, rd = rnd();
+    controlBox(x, y, w, h, rd, bg);
+    if (g_theme.accentHeaders) rrect(x, y + 4.0f, 3.0f, h - 8.0f, 1.5f, g_theme.accent);
+    chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+    drawText(x + (g_look ? 28.0f : 8.0f + fCharW() * s * 2.0f), y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return *open;
 }
 
@@ -79,18 +86,18 @@ bool TreeNodeEx(const char* label, unsigned flags) {
         quad(x, y, w, h, sel);
     }
     const bool bullet = (flags & TreeNode_Bullet) != 0;
-    if (g_look) {
-        unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        if (inside && !(flags & TreeNode_Framed)) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        if (bullet) fillCircle(ax + 11.0f, y + h * 0.5f, 3.0f, g_theme.text);
-        else if (!leaf) chevron(ax + 11.0f, y + h * 0.5f, 8.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
-        drawText(ax + 24.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
-    } else {
-        if (inside && !(flags & TreeNode_Framed)) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-        if (bullet) fillCircle(ax + 4.0f + fCharW() * s * 0.5f, y + h * 0.5f, 3.0f, g_theme.text);
-        else if (!leaf) drawText(ax + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-        drawText(ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
+    // A row with a soft rounded hover, a chevron (a dot for a bullet node) at the indent and the label after it. The label's
+    // place is the text grid of the bitmap font or 24 pixels with TrueType text, as before (layouts do not move).
+    {
+        unsigned char tmp[4];
+        const float over = anim(id, 0, inside);
+        if (over > 0.0f && !(flags & TreeNode_Framed)) rrect(x, y, w, h, g_theme.radiusSmall, pick(Col_HeaderHovered, withAlpha(g_theme.ink, 0.07f * over, tmp)));
+        const float cx = g_look ? ax + 11.0f : ax + 4.0f + fCharW() * s * 0.5f;
+        if (bullet) fillCircle(cx, y + h * 0.5f, 3.0f, g_theme.textDim);
+        else if (!leaf) chevron(cx, y + h * 0.5f, 8.0f, *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+        drawText(g_look ? ax + 24.0f : ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
+    if (shown && !(flags & TreeNode_NoTreePushOnOpen) && g_treeTop < 16) { g_treeGuide[g_treeTop] = {g_look ? ax + 11.0f : ax + 4.0f + fCharW() * s * 0.5f, y + h}; ++g_treeTop; }
     if (shown && !(flags & TreeNode_NoTreePushOnOpen)) g_lay.indent += 16.0f;   // children indent until TreePop()
     return shown;
 }
@@ -101,6 +108,12 @@ bool IsItemToggledOpen() { return g_toggledId != 0 && g_toggledId == g_lastId; }
 
 void TreePop() {
     if (!g_lay.active) return;
+    if (g_treeTop > 0) {   // the indent guide: a faint line from under the node's chevron down to its last child
+        --g_treeTop;
+        const TreeGuide& gd = g_treeGuide[g_treeTop];
+        const float bottom = g_lay.cy - g_lay.spacingY * 0.5f;
+        if (bottom > gd.y + 2.0f && gd.y > -1e6f) { unsigned char c[4]; quad(gd.x - 0.5f, gd.y, 1.0f, bottom - gd.y, withAlpha(g_theme.textFaint, 0.45f, c)); }
+    }
     g_lay.indent -= 16.0f;
     if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
 }

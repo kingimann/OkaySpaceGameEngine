@@ -102,23 +102,14 @@ inline int Sweep(const std::function<void(const char*)>& closed, const std::func
     return 0;
 }
 
-/// The modals that opened and closed since the last call, as breadcrumb lines ("Modal opened: <name>", "Modal closed: <name>").
-class ModalTrail {
-public:
-    std::vector<std::string> Update() {
-        std::vector<std::string> out, now;
-        ImGuiContext& g = *GImGui;
-        for (const ImGuiPopupData& p : g.OpenPopupStack)
-            if (p.Window && (p.Window->Flags & ImGuiWindowFlags_Modal)) now.push_back(p.Window->Name);
-        for (const std::string& n : now) if (!Has(m_open, n)) out.push_back("Modal opened: " + n);
-        for (const std::string& n : m_open) if (!Has(now, n)) out.push_back("Modal closed: " + n);
-        m_open.swap(now);
-        return out;
-    }
-private:
-    static bool Has(const std::vector<std::string>& v, const std::string& s) { for (const std::string& x : v) if (x == s) return true; return false; }
-    std::vector<std::string> m_open;
-};
+/// The names of the modals open now (ModalTrail compares them frame to frame).
+inline std::vector<std::string> OpenModalNames() {
+    std::vector<std::string> now;
+    ImGuiContext& g = *GImGui;
+    for (const ImGuiPopupData& p : g.OpenPopupStack)
+        if (p.Window && (p.Window->Flags & ImGuiWindowFlags_Modal)) now.push_back(p.Window->Name);
+    return now;
+}
 
 /// What Dear ImGui thinks about the mouse right now, on one line.
 inline std::string DescribeInputState() {
@@ -188,23 +179,14 @@ inline int Sweep(const std::function<void(const char*)>& closed, const std::func
     return 0;
 }
 
-/// The modals that opened and closed since the last call, as breadcrumb lines ("Modal opened: <name>", "Modal closed: <name>").
-class ModalTrail {
-public:
-    std::vector<std::string> Update() {
-        std::vector<std::string> out, now;
-        OkayUI::PopupSlotInfo open[32];
-        const int n = OkayUI::ListOpenPopups(open, 32);
-        for (int i = 0; i < n; ++i) if (open[i].modal) now.push_back(open[i].name);
-        for (const std::string& s : now) if (!Has(m_open, s)) out.push_back("Modal opened: " + s);
-        for (const std::string& s : m_open) if (!Has(now, s)) out.push_back("Modal closed: " + s);
-        m_open.swap(now);
-        return out;
-    }
-private:
-    static bool Has(const std::vector<std::string>& v, const std::string& s) { for (const std::string& x : v) if (x == s) return true; return false; }
-    std::vector<std::string> m_open;
-};
+/// The names of the modals open now (ModalTrail compares them frame to frame).
+inline std::vector<std::string> OpenModalNames() {
+    std::vector<std::string> now;
+    OkayUI::PopupSlotInfo open[32];
+    const int n = OkayUI::ListOpenPopups(open, 32);
+    for (int i = 0; i < n; ++i) if (open[i].modal) now.push_back(open[i].name);
+    return now;
+}
 
 /// What OkayUI thinks about the mouse right now, on one line.
 inline std::string DescribeInputState() {
@@ -231,6 +213,21 @@ inline std::string DescribeInputState() {
 }
 
 #endif
+
+/// The modals that opened and closed since the last call, as breadcrumb lines ("Modal opened: <name>", "Modal closed: <name>").
+class ModalTrail {
+public:
+    std::vector<std::string> Update() {
+        std::vector<std::string> out, now = OpenModalNames();
+        for (const std::string& n : now) if (!Has(m_open, n)) out.push_back("Modal opened: " + n);
+        for (const std::string& n : m_open) if (!Has(now, n)) out.push_back("Modal closed: " + n);
+        m_open.swap(now);
+        return out;
+    }
+private:
+    static bool Has(const std::vector<std::string>& v, const std::string& s) { for (const std::string& x : v) if (x == s) return true; return false; }
+    std::vector<std::string> m_open;
+};
 
 /// Clicks that arrive but land nowhere. The event loop calls NoteClick for every mouse press the window system delivers; the frame
 /// calls EndFrame after the UI was drawn (before ImGui::Render). Every `periodSeconds` with clicks and none landed, EndFrame returns

@@ -51,7 +51,8 @@ public:
             const OkayUI::ImeRect r = OkayUI::GetImeRect();
             if (r.valid) m_backend.SetTextInputRect((int)r.caret.x, (int)r.caret.y, (int)(r.caret.w < 1.0f ? 1.0f : r.caret.w), (int)(r.caret.h < 1.0f ? 1.0f : r.caret.h));
         }
-        m_host.EndFrame();
+        const unsigned char* bg = OkayUI::Style().track;   // the window behind the panels: the design's sunken surface
+        m_host.EndFrame(bg[0], bg[1], bg[2]);
         return true;
     }
     Host& GetHost() { return m_host; }

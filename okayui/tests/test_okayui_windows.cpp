@@ -207,8 +207,13 @@ void TestScroll() {
         const Bitmap b = sim.Draw(12, 14, 20);
         const unsigned track = ThemeRgba(UI::Style().track);
         const int barPixels = CountNot(b, 20 + 200 - 12, 20 + 30, 20 + 200 - 1, 20 + 195, kClear);
-        CHECK(noBar ? PixelAt(b, 20 + 200 - 6, 120) != track : PixelAt(b, 20 + 200 - 6, 120) == track);
-        (void)barPixels;
+        (void)barPixels; (void)track;
+        {   // the thin overlay thumb along the right edge (no track): pixels there that are not the window's own colour
+            const unsigned panel = ThemeRgba(UI::Style().panel);
+            int thumb = 0;
+            for (int y = 20 + 40; y < 20 + 190; ++y) for (int x = 20 + 200 - 9; x < 20 + 200 - 1; ++x) if (PixelAt(b, x, y) != panel) ++thumb;
+            CHECK(noBar ? thumb < 20 : thumb > 50);   // (without a bar, only the rounded ends of the buttons' edges reach the strip)
+        }
         CHECK(last.y > 20 + 200);                                    // the last button is below the window
         sim.Move(100, 100); sim.Frame(ui);
         for (int i = 0; i < 4; ++i) { sim.wheel = -2.0f; sim.Frame(ui); }
@@ -216,7 +221,7 @@ void TestScroll() {
         CHECK(first.y < y0 - 20);                                     // the content moved up
         // scrolled content is clipped to the window: the pixels below the window are clear
         const Bitmap b2 = sim.Draw(12, 14, 20);
-        CHECK(CountNot(b2, 20, 226, 220, 290, kClear) == 0);
+        CHECK(CountNot(b2, 20, 245, 220, 290, kClear) == 0);   // (below the window's shadow)
         // the wheel stops at the end
         for (int i = 0; i < 60; ++i) { sim.wheel = -3.0f; sim.Frame(ui); }
         sim.Frames(2, ui);

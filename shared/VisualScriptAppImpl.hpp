@@ -4,6 +4,7 @@
 // (okay::editor::vsed::Session(), editor/VisualScriptModel.hpp). Written for this project.
 #include "VisualScriptApp.hpp"
 #include "VisualScriptModel.hpp"
+#include "OkayUIAppKit.hpp"         // the colours, the dialog box, the tab strip
 #include "HierarchyPanelModel.hpp"   // okaypanels::HierEllipsize: text cut to a width with an ellipsis
 #include "okay/UI/OkayUI.hpp"
 
@@ -20,12 +21,9 @@ namespace UI = OkayUI;
 namespace vsed = okay::editor::vsed;
 
 namespace detail {
-inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The app's colours: the same calm dark scheme as the Script Editor app, a slightly darker canvas.
-inline const UI::Color32 kBack = Rgb(30, 32, 37), kCanvas = Rgb(24, 26, 31), kGrid = Rgb(34, 37, 44), kGridBold = Rgb(44, 48, 57),
-                  kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69), kText = Rgb(214, 218, 226),
-                  kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56), kHover = Rgb(52, 57, 66),
-                  kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110), kBody = Rgb(46, 49, 57),
+// The OkayUI apps' colours (OkayUIAppKit.hpp), and the canvas's own: a darker canvas, its grid, a block's body, the selection.
+using namespace okayuiapp;
+inline const UI::Color32 kCanvas = Rgb(24, 26, 31), kGrid = Rgb(34, 37, 44), kGridBold = Rgb(44, 48, 57), kBody = Rgb(46, 49, 57),
                   kSelect = Rgb(255, 196, 84);
 /// `text` cut to `maxW` pixels of the UI font, with an ellipsis.
 inline std::string Fit(const std::string& text, float maxW) {

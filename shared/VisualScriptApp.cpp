@@ -201,17 +201,7 @@ std::vector<std::string> VisualScriptApp::Impl::compareRows() {
 }
 
 bool VisualScriptApp::Impl::beginDialog(const std::string& id, float X, float Y, float W, float H, float bw, float bh, float& bx, float& by) {
-    UI::BareNextWindow();
-    if (!UI::Begin(id.c_str(), X, Y, W, H)) return false;
-    const auto& dl = UI::GetWindowDrawList();
-    dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), Rgb(0, 0, 0, 90));
-    bw = std::min(bw, W - 20.0f);
-    const float x0 = X + (W - bw) * 0.5f, y0 = Y + std::max(20.0f, std::min(80.0f, (H - bh) * 0.3f));
-    dl->AddRectFilled(UI::Vec2(x0, y0), UI::Vec2(x0 + bw, y0 + bh), kPanel, 6.0f);
-    dl->AddRect(UI::Vec2(x0, y0), UI::Vec2(x0 + bw, y0 + bh), kLine, 6.0f, 1.0f);
-    bx = x0 + 14.0f;
-    by = y0 + 12.0f;
-    return true;
+    return okayuiapp::BeginDialog(id, X, Y, W, H, bw, bh, bx, by);
 }
 
 // ---- the menus ------------------------------------------------------------------------------------------------------------
@@ -373,34 +363,19 @@ void VisualScriptApp::Impl::drawTabs(float X, float Y, float W, float h, bool mo
     UI::BareNextWindow();
     if (UI::Begin((cfg.idPrefix + "_tabs").c_str(), X, Y, W, h)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + h), kStrip);
         vsed::VsSession& ses = vsed::Session();
         vsed::State();   // there is always one tab
+        std::vector<std::string> labels;
+        for (const auto& t : ses.tabs) labels.push_back((t->g.dirty ? "* " : "") + vsed::VsTabTitle(*t));
+        const okayuiapp::TabStripResult r = okayuiapp::DrawTabStrip(X, Y, W, h, labels, ses.active, modal, Fit, 60.0f);
+        if (r.clicked >= 0) ses.active = r.clicked;
         const UI::Vec2 m = UI::GetMousePos();
-        const float lh = UI::GetTextLineHeight();
-        float x = X + 4;
-        int toClose = -1;
-        for (std::size_t i = 0; i < ses.tabs.size() && x < X + W - 60; ++i) {
-            const vsed::VsEditState& t = *ses.tabs[i];
-            const std::string label = (t.g.dirty ? "* " : "") + vsed::VsTabTitle(t);
-            const float tw = std::min(220.0f, UI::CalcTextWidth(label.c_str()) + 40.0f);
-            const bool on = (int)i == ses.active;
-            const bool hover = m.x >= x && m.x < x + tw && m.y >= Y && m.y < Y + h;
-            dl->AddRectFilled(UI::Vec2(x, Y + 3), UI::Vec2(x + tw, Y + h), on ? kTabOn : (hover ? kHover : kStrip), 4.0f);
-            if (on) dl->AddRectFilled(UI::Vec2(x, Y + h - 2), UI::Vec2(x + tw, Y + h), kAccent);
-            dl->AddText(UI::Vec2(x + 10, Y + (h - lh) * 0.5f + 1), on ? kText : kDim, Fit(label, tw - 34).c_str());
-            const float cx = x + tw - 18;
-            const bool overClose = m.x >= cx && m.x < cx + 14 && m.y >= Y + 6 && m.y < Y + h - 4;
-            dl->AddText(UI::Vec2(cx + 3, Y + (h - lh) * 0.5f + 1), overClose ? kText : kDim, "x");
-            if (hover && !modal && UI::IsMouseClicked(0)) { if (overClose) toClose = (int)i; else ses.active = (int)i; }
-            if (hover && !modal && UI::IsMouseClicked(2)) toClose = (int)i;
-            x += tw + 2;
-        }
+        const float lh = UI::GetTextLineHeight(), x = r.endX;
         // "+": a new graph
         const bool overPlus = m.x >= x && m.x < x + 26 && m.y >= Y && m.y < Y + h;
         dl->AddText(UI::Vec2(x + 8, Y + (h - lh) * 0.5f + 1), overPlus ? kText : kDim, "+");
         if (overPlus && !modal && UI::IsMouseClicked(0)) vsed::NewGraph(true);
-        if (toClose >= 0) requestClose(toClose);
+        if (r.close >= 0) requestClose(r.close);
     }
     UI::End();
 }
@@ -499,11 +474,8 @@ void VisualScriptApp::Impl::drawDetails(float X, float Y, float W, float H, bool
 // ---- the panel under the canvas ---------------------------------------------------------------------------------------------
 
 void VisualScriptApp::Impl::drawPanel(float X, float Y, float W, float H, bool modal) {
-    UI::BareNextWindow();
-    if (UI::Begin((cfg.idPrefix + "_panel").c_str(), X, Y, W, H)) {
+    if (okayuiapp::BeginFilled(cfg.idPrefix + "_panel", X, Y, W, H, kPanel, true)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), kPanel);
-        dl->AddLine(UI::Vec2(X, Y), UI::Vec2(X + W, Y), kLine);
         vsed::VsEditState& s = st();
         vsed::VsEditGraph& g = s.g;
         // the panel's tabs

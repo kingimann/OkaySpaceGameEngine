@@ -14,6 +14,7 @@
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
 #include "VisualScriptApp.hpp"
+#include "OkayUIAppKit.hpp"         // ParseProgramArgs: the programs' command line
 #include "VisualScriptModel.hpp"   // okay::editor::vsed::VsRestoreTabs, okay::edtabs::UserFilesDir
 #include "FileDialog.hpp"          // File > Open > Browse...: the system's file dialog
 #include "okay/Platform/Painter.hpp"
@@ -29,20 +30,12 @@
 int main(int argc, char** argv) {
     std::vector<std::string> paths;
     int frames = 0;
-    for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a == "--help" || a == "-h") {
-            std::printf("Usage: %s [FOLDER | FILE.okayvs ...] [--frames N]\n"
-                        "  FOLDER     open this folder (File > Open lists its graphs)\n"
-                        "  FILE       open this graph in a tab\n"
-                        "  --frames N end after N frames (a start-and-quit check)\n", argv[0]);
-            return 0;
-        }
-        if (a == "--frames" && i + 1 < argc) {
-            const long n = std::strtol(argv[++i], nullptr, 10);
-            frames = n < 1 ? 1 : (n > 1000000 ? 1000000 : (int)n);
-        } else if (!a.empty() && a[0] != '-') paths.push_back(a);
-    }
+    if (!okayuiapp::ParseProgramArgs(argc, argv,
+                                     "Usage: %s [FOLDER | FILE.okayvs ...] [--frames N]\n"
+                                     "  FOLDER     open this folder (File > Open lists its graphs)\n"
+                                     "  FILE       open this graph in a tab\n"
+                                     "  --frames N end after N frames (a start-and-quit check)\n", paths, frames))
+        return 0;
 
     std::unique_ptr<vsapp::VisualScriptApp> app;
     okayuihost::platform::ProgramDesc desc;

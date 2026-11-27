@@ -8,7 +8,7 @@
 // text, breakpoints and the paused bar's keys, the settings file, Quit; and the editor's hosting through a fake host (its save
 // hook, Stop Play, its Window items). OKAY_SHOT_DIR=<folder> also writes pictures for a person to look at (never committed).
 #include "test_framework.hpp"
-#include "OkayUITestKit.hpp"
+#include "OkayUIAppTestKit.hpp"   // WriteFile, ReadFile, Picture (the apps' tests share them)
 #include "OkayUI_SoftPainter.hpp"
 #include "VisualScriptApp.hpp"
 #include "VisualScriptModel.hpp"
@@ -25,37 +25,6 @@ namespace UI = OkayUI;
 namespace fs = std::filesystem;
 namespace vsed = okay::editor::vsed;
 
-static void WriteFile(const fs::path& p, const std::string& text) {
-    std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
-    std::ofstream f(p, std::ios::binary);
-    f << text;
-}
-static std::string ReadFile(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::stringstream s;
-    s << f.rdbuf();
-    return s.str();
-}
-
-// The last frame drawn through the CPU painter (what the program's window does).
-static Bitmap Picture(const Sim& sim, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
-    Bitmap out((int)sim.W, (int)sim.H);
-    std::unique_ptr<okay::platform::Painter> p = UI::soft::CreateBitmapPainter((int)sim.W, (int)sim.H);
-    if (!p) return out;
-    p->SetClipRect(nullptr);
-    p->SetBlendMode(okay::platform::BlendMode::None);
-    p->SetDrawColor(r, g, b, 255);
-    p->Clear();
-    {
-        UI::soft::FrameDrawer fd(*p);
-        fd.Draw(UI::GetDrawData());
-    }
-    std::vector<std::uint8_t> rgba;
-    int w = 0, h = 0;
-    if (p->ReadPixels(rgba, w, h) && w == out.w && h == out.h) out.rgba = rgba;
-    return out;
-}
 static void Golden(const Sim& sim, const char* name) {
     std::string why;
     const bool same = MatchesGolden(name, Picture(sim, 24, 26, 31), &why);
@@ -68,7 +37,7 @@ static int CountType(const vsed::VsEditGraph& g, const char* type) {
     for (const auto& b : g.nodes) if (b.type == type) ++n;
     return n;
 }
-static void Key(Sim& sim, UI::KeyId k, const std::function<void()>& ui, bool ctrl = false, bool shift = false) {
+static void Tap(Sim& sim, UI::KeyId k, const std::function<void()>& ui, bool ctrl = false, bool shift = false) {
     sim.ctrl = ctrl; sim.shift = shift;
     sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.Frame(ui);
     sim.ctrl = false; sim.shift = false;
@@ -148,7 +117,7 @@ int main() {
         CHECK(!rows.empty() && rows.front().find("Wait") != std::string::npos);
         Golden(sim, "visual_script_app_palette");
         sim.Press(Key_Enter);
-        Key(sim, UI::KeyId_Enter, ui);
+        Tap(sim, UI::KeyId_Enter, ui);
         CHECK(!app.PaletteOpen());
         CHECK(CountType(app.Active().g, "Wait") == 1);
         CHECK(app.Active().g.dirty);
@@ -220,18 +189,18 @@ int main() {
         // ---- Delete, then Undo and Redo (one step each) ----
         sim.Frames(3, ui);   // the move is one undo step once the mouse is up
         const std::size_t blocks = app.Active().g.nodes.size();
-        Key(sim, UI::KeyId_Delete, ui);
+        Tap(sim, UI::KeyId_Delete, ui);
         CHECK(app.Active().g.nodes.size() == blocks - 2);
         sim.Frames(2, ui);
-        Key(sim, UI::KeyId_Z, ui, true);
+        Tap(sim, UI::KeyId_Z, ui, true);
         CHECK(app.Active().g.nodes.size() == blocks);
-        Key(sim, UI::KeyId_Y, ui, true);
+        Tap(sim, UI::KeyId_Y, ui, true);
         CHECK(app.Active().g.nodes.size() == blocks - 2);
-        Key(sim, UI::KeyId_Z, ui, true);
+        Tap(sim, UI::KeyId_Z, ui, true);
         CHECK(app.Active().g.nodes.size() == blocks);
 
         // ---- Ctrl+S writes the file ----
-        Key(sim, UI::KeyId_S, ui, true);
+        Tap(sim, UI::KeyId_S, ui, true);
         CHECK(!app.Active().g.dirty);
         CHECK(app.Notice() == "Saved Player.okayvs");
         {
@@ -259,7 +228,7 @@ int main() {
             dv.stopped = true; dv.key = player; dv.node = print; dv.nodeType = "Print"; dv.object = "Ship"; dv.event = "Start";
             dv.resume = false;
             sim.Frames(2, ui);
-            Key(sim, UI::KeyId_F10, ui);
+            Tap(sim, UI::KeyId_F10, ui);
             CHECK(dv.resume);
             CHECK(okay::vs::VsDebugger::Get().PendingStep() == okay::vs::VsDebugger::Step::Over);
             dv = vsed::VsDebugView{};
@@ -302,7 +271,7 @@ int main() {
 
         // ---- closing a changed tab asks; Cancel keeps it, Don't Save closes it, Reopen brings the edits back ----
         CHECK(app.Active().g.dirty);
-        Key(sim, UI::KeyId_W, ui, true);
+        Tap(sim, UI::KeyId_W, ui, true);
         CHECK(app.ClosePromptOpen());
         app.AnswerClosePrompt(2);
         CHECK(app.TabCount() == 2);
@@ -314,7 +283,7 @@ int main() {
         CHECK(app.Active().g.path == enemy);
 
         // ---- a new graph: Ctrl+S on an untitled one asks where; Save As writes it ----
-        Key(sim, UI::KeyId_N, ui, true);
+        Tap(sim, UI::KeyId_N, ui, true);
         CHECK(app.TabCount() == 3);
         CHECK(app.Active().g.path.empty());
         CHECK(!app.Save());   // the Save As box opens
@@ -328,7 +297,7 @@ int main() {
         app.SaveSettings();
 
         // ---- Quit with changed graphs asks first ----
-        Key(sim, UI::KeyId_Q, ui, true);
+        Tap(sim, UI::KeyId_Q, ui, true);
         CHECK(!app.WantsQuit());
         CHECK(app.ClosePromptOpen());
         app.AnswerClosePrompt(1);
@@ -380,7 +349,7 @@ int main() {
         // Ctrl+S goes to the host's save: the app writes nothing itself
         host.AddBlock("Wait", 600, 300);
         const std::string disk = ReadFile(fs::u8path(enemy));
-        Key(sim, UI::KeyId_S, ui, true);
+        Tap(sim, UI::KeyId_S, ui, true);
         CHECK(saves == 1);
         CHECK(savedText.find("Wait") != std::string::npos);
         CHECK(ReadFile(fs::u8path(enemy)) == disk);

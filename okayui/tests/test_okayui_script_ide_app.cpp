@@ -7,7 +7,7 @@
 // app (the program and the editor share it), Ctrl+Shift+O with a typed folder, and AppSettings' text format with bad values.
 // OKAY_SHOT_DIR=<folder> also writes pictures for a person to look at (never committed).
 #include "test_framework.hpp"
-#include "OkayUITestKit.hpp"
+#include "OkayUIAppTestKit.hpp"   // WriteFile, ReadFile, Picture (the apps' tests share them)
 #include "ScriptIdeApp.hpp"
 #include "OkayUI_SoftPainter.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -26,39 +26,6 @@ using namespace okayuitest;
 namespace UI = OkayUI;
 namespace fs = std::filesystem;
 namespace si = scriptide;
-
-static void WriteFile(const fs::path& p, const std::string& text) {
-    std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
-    std::ofstream f(p, std::ios::binary);
-    f << text;
-}
-static std::string ReadFile(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::stringstream s;
-    s << f.rdbuf();
-    return s.str();
-}
-
-// The last frame drawn through the CPU painter (OkayUI::soft::FrameDrawer, what the program's window does): unlike the plain
-// software rasteriser it draws text in fonts made with AddFontTtf, such as the code's JetBrains Mono.
-static Bitmap Picture(const Sim& sim, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
-    Bitmap out((int)sim.W, (int)sim.H);
-    std::unique_ptr<okay::platform::Painter> p = UI::soft::CreateBitmapPainter((int)sim.W, (int)sim.H);
-    if (!p) return out;
-    p->SetClipRect(nullptr);
-    p->SetBlendMode(okay::platform::BlendMode::None);
-    p->SetDrawColor(r, g, b, 255);
-    p->Clear();
-    {
-        UI::soft::FrameDrawer fd(*p);
-        fd.Draw(UI::GetDrawData());
-    }
-    std::vector<std::uint8_t> rgba;
-    int w = 0, h = 0;
-    if (p->ReadPixels(rgba, w, h) && w == out.w && h == out.h) out.rgba = rgba;
-    return out;
-}
 
 static const char* kPlayer =
     "// The player: moves with the arrow keys\n"

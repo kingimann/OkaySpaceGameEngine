@@ -406,29 +406,11 @@ void ScriptIdeApp::Impl::drawTabs(float X, float Y, float W, float h, bool modal
     const std::string pre = cfg.idPrefix;
     UI::BareNextWindow();
     if (UI::Begin((pre + "_tabs").c_str(), X, Y, W, h)) {
-        const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + h), kStrip);
-        const UI::Vec2 m = UI::GetMousePos();
-        float x = X + 4;
-        int toClose = -1;
-        const float lh = UI::GetTextLineHeight();
-        for (std::size_t i = 0; i < docs.size() && x < X + W - 40; ++i) {
-            const Doc& d = *docs[i];
-            const std::string label = (dirty(d) ? "* " : "") + d.label;
-            const float tw = std::min(220.0f, UI::CalcTextWidth(label.c_str()) + 40.0f);
-            const bool on = (int)i == active;
-            const bool hover = m.x >= x && m.x < x + tw && m.y >= Y && m.y < Y + h;
-            dl->AddRectFilled(UI::Vec2(x, Y + 3), UI::Vec2(x + tw, Y + h), on ? kTabOn : (hover ? kHover : kStrip), 4.0f);
-            if (on) dl->AddRectFilled(UI::Vec2(x, Y + h - 2), UI::Vec2(x + tw, Y + h), kAccent);
-            dl->AddText(UI::Vec2(x + 10, Y + (h - lh) * 0.5f + 1), on ? kText : kDim, Fit(label, tw - 34).c_str());
-            const float cx = x + tw - 18;
-            const bool overClose = m.x >= cx && m.x < cx + 14 && m.y >= Y + 6 && m.y < Y + h - 4;
-            dl->AddText(UI::Vec2(cx + 3, Y + (h - lh) * 0.5f + 1), overClose ? kText : kDim, "x");
-            if (hover && !modal && UI::IsMouseClicked(0)) { if (overClose) toClose = (int)i; else active = (int)i; }
-            if (hover && !modal && UI::IsMouseClicked(2)) toClose = (int)i;
-            x += tw + 2;
-        }
-        if (toClose >= 0) requestClose(toClose);
+        std::vector<std::string> labels;
+        for (const auto& d : docs) labels.push_back((dirty(*d) ? "* " : "") + d->label);
+        const okayuiapp::TabStripResult r = okayuiapp::DrawTabStrip(X, Y, W, h, labels, active, modal, Fit);
+        if (r.clicked >= 0) active = r.clicked;
+        if (r.close >= 0) requestClose(r.close);
     }
     UI::End();
 }
@@ -533,11 +515,8 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
 
 void ScriptIdeApp::Impl::drawPanel(float X, float Y, float W, float H, bool modal) {
     const std::string pre = cfg.idPrefix;
-    UI::BareNextWindow();
-    if (UI::Begin((pre + "_panel").c_str(), X, Y, W, H)) {
+    if (okayuiapp::BeginFilled(pre + "_panel", X, Y, W, H, kPanel, true)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), kPanel);
-        dl->AddLine(UI::Vec2(X, Y), UI::Vec2(X + W, Y), kLine);
         UI::SetCursorScreenPos(UI::Vec2(X + 8, Y + 6));
         if (panel == P_Find) {
             UI::TextUnformatted("Find in Files");

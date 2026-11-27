@@ -30,6 +30,35 @@ float treeIndentPop() { if (g_treeIndentTop <= 0) return 16.0f; --g_treeIndentTo
 void ui_core::treeGuidesReset() { g_treeTop = 0; g_treeIndentTop = 0; }
 
 namespace {
+// A tree node's row (both looks): placed at the cursor `h` tall (from the content edge with SpanFullWidth), and its clicks: a release over
+// it toggles a node with children (only on the arrow, ending at `arrowEnd`, with OpenOnArrow; a double click with OpenOnDoubleClick).
+struct TreeRow { float x, y, w, h; bool inside; };
+TreeRow treeRowPlace(int id, unsigned flags, float h, float arrowEnd, bool* open, bool leaf) {
+    TreeRow r; r.h = h;
+    place(fullW(), h, r.x, r.y);
+    r.w = fullW();
+    if (flags & TreeNode_SpanFullWidth) { r.x = g_lay.ox; r.w = g_lay.contentW; g_lay.prevX = r.x; g_lay.prevW = r.w; }
+    r.inside = hit(r.x, r.y, r.w, h);
+    g_lastId = id; if (r.inside) g_hot = id;
+    const bool onArrowOnly = (flags & TreeNode_OpenOnArrow) != 0, onDbl = (flags & TreeNode_OpenOnDoubleClick) != 0;
+    bool doToggle = false;
+    if (g_active == id) {
+        if (g_released) {
+            if (r.inside && !leaf) {
+                const bool arrow = g_pressX < arrowEnd;          // where the press went down
+                if (onDbl) { if (onArrowOnly && arrow) doToggle = true; }   // double click opens it elsewhere; with OpenOnArrow the arrow also takes one click
+                else if (!onArrowOnly || arrow) doToggle = true;
+            }
+            g_active = 0;
+        }
+    } else if (r.inside && g_pressed) {
+        g_active = id;
+        if (!leaf && onDbl && g_dblClick) doToggle = true;
+    }
+    if (doToggle) { *open = !*open; g_toggledId = id; }
+    return r;
+}
+
 // Dear ImGui's tree node, as it documents and draws it (StyleVar_FramedWidgets, the editor and launcher on OkayUI): an unframed node is one
 // text line tall; a framed one (TreeNode_Framed) is a frame tall with the header colour behind it. The arrow is a
 // filled triangle FramePadding.x in, the label starts GetTreeNodeToLabelSpacing() (the font size and twice FramePadding.x) from the node's
@@ -39,28 +68,8 @@ bool treeNodeFramedLook(const char* label, unsigned flags, int id, bool* open, b
     const float th = textH(), h = framed ? rowH() : th, s = g_theme.textScale;
     const float padX = framePadXNow();
     const float ax = leftEdge();
-    float x, y; place(fullW(), h, x, y);
-    float w = fullW();
-    if (flags & TreeNode_SpanFullWidth) { x = g_lay.ox; w = g_lay.contentW; g_lay.prevX = x; g_lay.prevW = w; }
-    const bool inside = hit(x, y, w, h);
-    g_lastId = id; if (inside) g_hot = id;
-    const float arrowEnd = ax + th + padX * 2.0f;
-    const bool onArrowOnly = (flags & TreeNode_OpenOnArrow) != 0, onDbl = (flags & TreeNode_OpenOnDoubleClick) != 0;
-    bool doToggle = false;
-    if (g_active == id) {
-        if (g_released) {
-            if (inside && !leaf) {
-                const bool arrow = g_pressX < arrowEnd;
-                if (onDbl) { if (onArrowOnly && arrow) doToggle = true; }
-                else if (!onArrowOnly || arrow) doToggle = true;
-            }
-            g_active = 0;
-        }
-    } else if (inside && g_pressed) {
-        g_active = id;
-        if (!leaf && onDbl && g_dblClick) doToggle = true;
-    }
-    if (doToggle) { *open = !*open; g_toggledId = id; }
+    const TreeRow row = treeRowPlace(id, flags, h, ax + th + padX * 2.0f, open, leaf);
+    const float x = row.x, y = row.y, w = row.w; const bool inside = row.inside;
     const bool selected = (flags & TreeNode_Selected) != 0;
     const int bg = (g_active == id && inside) ? Col_HeaderActive : (inside ? Col_HeaderHovered : ((selected || framed) ? Col_Header : -1));
     if (bg >= 0) { unsigned char tmp[4]; quad(x, y, w, h, styleColor(bg, tmp)); }
@@ -117,28 +126,8 @@ bool TreeNodeEx(const char* label, unsigned flags) {
     }
     const float h = rowH(), s = g_theme.textScale;
     const float ax = leftEdge();                                  // where the arrow sits: at the indent
-    float x, y; place(fullW(), h, x, y);
-    float w = fullW();
-    if (flags & TreeNode_SpanFullWidth) { x = g_lay.ox; w = g_lay.contentW; g_lay.prevX = x; g_lay.prevW = w; }
-    const bool inside = hit(x, y, w, h);
-    g_lastId = id; if (inside) g_hot = id;
-    const float arrowW = std::max(24.0f, h);
-    const bool onArrowOnly = (flags & TreeNode_OpenOnArrow) != 0, onDbl = (flags & TreeNode_OpenOnDoubleClick) != 0;
-    bool doToggle = false;
-    if (g_active == id) {
-        if (g_released) {
-            if (inside && !leaf) {
-                const bool arrow = g_pressX < ax + arrowW;          // where the press went down
-                if (onDbl) { if (onArrowOnly && arrow) doToggle = true; }   // double click opens it elsewhere; with OpenOnArrow the arrow also takes one click
-                else if (!onArrowOnly || arrow) doToggle = true;
-            }
-            g_active = 0;
-        }
-    } else if (inside && g_pressed) {
-        g_active = id;
-        if (!leaf && onDbl && g_dblClick) doToggle = true;
-    }
-    if (doToggle) { *open = !*open; g_toggledId = id; }
+    const TreeRow row = treeRowPlace(id, flags, h, ax + std::max(24.0f, h), open, leaf);
+    const float x = row.x, y = row.y, w = row.w; const bool inside = row.inside;
     const bool shown = leaf || *open;
     if ((flags & TreeNode_Framed) != 0) quad(x, y, w, h, pick((g_active == id && inside) ? Col_HeaderActive : (inside ? Col_HeaderHovered : Col_Header), g_theme.track));
     if ((flags & TreeNode_Selected) != 0) {

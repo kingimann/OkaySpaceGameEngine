@@ -558,9 +558,7 @@ static std::vector<Scenario> Scenarios() {
 // ---- The same requests through the Supabase provider directly (okay::backend::supabase::Database, RecordingTransport) ------
 // Each flow sends, in order, the requests its scenario of the same name sent (the user-id lookups included), built only with
 // the Query builder: a builder or provider change that alters one byte fails here even when a header still matches.
-struct ProviderRun : golden::Recorder {
-    okay::backend::supabase::Database Db() { return okay::backend::supabase::Database(kUrl, kKey, rec, Tok(1)); }
-};
+using ProviderRun = golden::DbRecorder;   // supabase::Database straight to the recorder, signed in as u1
 using ProviderFlow = std::function<void(ProviderRun&)>;
 static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
     namespace ob = okay::backend;

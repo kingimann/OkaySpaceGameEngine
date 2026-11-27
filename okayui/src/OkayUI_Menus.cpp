@@ -413,6 +413,11 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
     x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
     const bool ih = enabled && hit(x, y, w, h);
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    {   // the row's real need (label, a gap and the shortcut, the tick or arrow): the popup grows to it, so a long row keeps a margin
+        // on the right instead of running into the edge ("Find References in Scene")
+        const float need = labelW(label) + (shortcut && shortcut[0] ? labelW(shortcut) + 24.0f : 0.0f) + (selected || arrow ? th + 4.0f : 0.0f) + g_lay.spacingX * 0.5f;
+        if (ix + need > g_lay.maxRight) g_lay.maxRight = ix + need;
+    }
     if (ih || lit) rrect(x + 2.0f, y, w - 4.0f, h, std::min(g_theme.radiusSmall, h * 0.3f), pick(Col_HeaderHovered, g_theme.bgHover));   // a rounded highlight inset from the popup's sides
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     drawText(ix, iy, label, s, col);
@@ -660,10 +665,14 @@ bool ui_core::beginPopupBody(int id) {
     p->drawn = g_frameCount;
     // StyleVar_PopupWidth / StyleVar_PopupPadding (when pushed) give the size; with a pushed padding the height is the content's
     // exactly (no item spacing after the last item), as in Dear ImGui.
-    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
+    // A modal is a window: its padding is the window padding in force when it begins (Dear ImGui's WindowPadding, which the launcher's
+    // dialogs push; without it a dialog's text sat 6 pixels from its edge and the Software Update dialog's notes touched it).
+    const float modalPadX = std::clamp(std::isfinite(g_theme.windowPadding) ? g_theme.windowPadding : 14.0f, 6.0f, 40.0f);
+    const float modalPadY = std::clamp(g_childPadY >= 0.0f && std::isfinite(g_childPadY) ? g_childPadY : modalPadX, 6.0f, 40.0f);
+    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : (p->modal ? modalPadX : 6.0f), padY = g_popupPadY >= 0.0f ? g_popupPadY : (p->modal ? modalPadY : 6.0f);
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float* wSlot = floatState(id ^ 0x9091, 0.0f);   // the widest line of last frame's content (plus padding): the popup grows to fit it
-    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * (g_popupPadY >= 0.0f ? g_popupPadY : 6.0f));   // a height asked for: the box keeps it
+    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * padY);   // a height asked for: the box keeps it
     float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
     if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
     if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
@@ -749,7 +758,9 @@ void EndPopup() {
 bool BeginPopup(const char* id) {
     const int pid = hashLabel(id);
     if (id) if (PopupSlot* p = popupSlot(pid, false); p && p->open && !p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", id);   // (opened by id: the name for IsPopupOpen)
-    return beginPopupBody(pid);
+    const bool r = beginPopupBody(pid);
+    if (!r) { g_nextWinSize.set = false; g_nextWinPos.set = false; }   // used up even when it is not open (Dear ImGui's rule; see BeginPopupModal)
+    return r;
 }
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
@@ -770,14 +781,30 @@ bool IsPopupOpen(const char* name) {
 }
 
 static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
-bool BeginPopupModal(const char* name, bool* open, int flags) { g_modalNoTitle = (flags & Window_NoTitleBar) != 0; const bool r = BeginPopupModal(name, open); g_modalNoTitle = false; return r; }
+static bool g_modalAutoFit = false;   // BeginPopupModal(.., Window_AlwaysAutoResize): the box is its content's size
+bool BeginPopupModal(const char* name, bool* open, int flags) {
+    g_modalNoTitle = (flags & Window_NoTitleBar) != 0; g_modalAutoFit = (flags & Window_AlwaysAutoResize) != 0;
+    const bool r = BeginPopupModal(name, open);
+    g_modalNoTitle = false; g_modalAutoFit = false;
+    return r;
+}
 bool BeginPopupModal(const char* name, bool* open) {
     if (!name) return false;   // (outside any window too: a modal is a top-level window in Dear ImGui, begun wherever the code is)
     const int id = hashLabel(name);
     PopupSlot* p = popupSlot(id, false);
-    if (!p || !p->open) { if (open) *open = false; return false; }
+    // Not open: the SetNextWindow* calls made for it are used up all the same, as Dear ImGui's BeginPopupModal does; they reached the
+    // next modal instead (the launcher's closed New Project dialog left 820 x 680 for "Close OkaySpace?").
+    if (!p || !p->open) { if (open) *open = false; g_nextWinSize.set = false; g_nextWinPos.set = false; return false; }
     p->modal = true;
     if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
+    if (g_modalAutoFit) {
+        // AlwaysAutoResize: the box is as big as last frame's content in both directions (no 320-pixel floor, no size left over from a
+        // SetNextWindowSize meant for something else); only a size given to it in this frame's SetNextWindowSize counts, axis by axis,
+        // as in Dear ImGui. (The launcher's "Close OkaySpace?" box was 820 x 680 around one line and three buttons.)
+        p->fixedW = false; p->fixedH = 0.0f;
+        const float* wSlot = floatState(id ^ 0x9091, 0.0f);
+        p->w = *wSlot > 0.0f ? *wSlot : 320.0f;
+    }
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
         if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
         // a height too (Dear ImGui sizes the modal to it; the editor's file browser lays its list out from GetContentRegionAvail().y)
@@ -787,7 +814,7 @@ bool BeginPopupModal(const char* name, bool* open) {
     g_nextWinPos.set = false;   // consumed: it must not move the next window
     if (p->w <= 0.0f) p->w = 320.0f;
     if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
-    const float pad = 6.0f;
+    const float pad = g_popupPadY >= 0.0f ? g_popupPadY : std::clamp(g_childPadY >= 0.0f && std::isfinite(g_childPadY) ? g_childPadY : (std::isfinite(g_theme.windowPadding) ? g_theme.windowPadding : 14.0f), 6.0f, 40.0f);   // as beginPopupBody pads it
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * pad);   // centred by the height it was given
     const float titleH = rowH() + 4.0f;
@@ -893,5 +920,6 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(g_barKeyFrame),
     OKAYUI_CTX_VAR(g_barSavedLay),
     OKAYUI_CTX_VAR(g_comboCloseId),
-    OKAYUI_CTX_VAR(g_modalNoTitle))
+    OKAYUI_CTX_VAR(g_modalNoTitle),
+    OKAYUI_CTX_VAR(g_modalAutoFit))
 } // namespace OkayUI

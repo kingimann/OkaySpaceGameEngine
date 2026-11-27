@@ -915,6 +915,50 @@ void TestModalFixedHeight() {
     CHECK(footer.y + footer.h <= boxBottom + 1.0f);            // the footer is inside the box
 }
 
+// A modal with AlwaysAutoResize hugs its content (owner, 2026-11-27: the launcher's "Close OkaySpace?" box was far taller and wider than
+// its text and three buttons). A size set for a closed modal (the launcher's New Project dialog) must not reach the next one, and
+// a width given to the modal itself each frame (the Software Update dialog) is kept.
+void TestModalFitsContent() {
+    RUN_SUITE("windows: an auto-resizing modal is the size of its content");
+    Reset();
+    Sim sim(1160, 752);
+    UI::Rect text{}, cancel{}; bool shown = false; float giveW = 0.0f;
+    auto ui = [&] {
+        UI::UseImGuiCoordinates(true);
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::SetNextWindowSize(V(820, 680), UI::Cond_Always);   // meant for the New Project dialog, which is closed: BeginPopupModal uses it up
+        if (UI::BeginPopupModal("New Project", nullptr, 0)) UI::EndPopup();
+        if (!UI::IsPopupOpen("Close OkaySpace?")) UI::OpenPopup("Close OkaySpace?");
+        UI::SetNextWindowPos(V(580, 376), UI::Cond_Appearing, V(0.5f, 0.5f));
+        if (giveW > 0.0f) UI::SetNextWindowSize(V(giveW, 0), UI::Cond_Always);
+        shown = UI::BeginPopupModal("Close OkaySpace?", nullptr, UI::Window_AlwaysAutoResize);
+        if (shown) {
+            UI::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?"); text = UI::GetItemRect();
+            UI::Dummy(V(0, 10));
+            UI::Button("Exit", V(120, 0)); UI::SameLine(); UI::Button("Minimize", V(120, 0)); UI::SameLine(); UI::Button("Cancel", V(120, 0));
+            cancel = UI::GetItemRect();
+            UI::EndPopup();
+        }
+        UI::PopStyleVar(2);
+        UI::UseImGuiCoordinates(false);
+    };
+    sim.Frames(4, ui);
+    CHECK(shown);
+    UI::PopupSlotInfo pops[4]; int n = UI::ListOpenPopups(pops, 4);
+    CHECK(n == 1);
+    if (n == 1) {
+        const float contentW = std::max(text.x + text.w, cancel.x + cancel.w) - pops[0].pos.x;
+        const float contentH = cancel.y + cancel.h - pops[0].pos.y;
+        CHECK(pops[0].size.x <= contentW + 40.0f);           // no more than the padding past the widest line
+        CHECK(pops[0].size.y <= contentH + 40.0f);           // nor below the buttons
+        CHECK(pops[0].size.x >= contentW && pops[0].size.y >= contentH);
+    }
+    giveW = 600.0f;                                          // a width the program asks for each frame is kept
+    sim.Frames(3, ui);
+    n = UI::ListOpenPopups(pops, 4);
+    CHECK(n == 1 && std::fabs(pops[0].size.x - 600.0f) < 1.0f);
+}
+
 // Drags between windows, the editor's way (round 3 of the editor on OkayUI): a file dragged from the Project panel (a tile with a
 // drag source) dropped on the Scene view (an InvisibleButton with mouse-button flags, then BeginDragDropTarget), on an Inspector slot
 // (a button whose target accepts before delivery and acts only on IsDelivery()) and anywhere else in the Inspector (a target over the
@@ -1074,6 +1118,7 @@ int main() {
     TestMenuBarHoverSwitch();
     TestTopLevelPopupId();
     TestModalFixedHeight();
+    TestModalFitsContent();
     TestDragAcrossWindows();
     TestDragSourceThatMoves();
     TEST_MAIN_RESULT();

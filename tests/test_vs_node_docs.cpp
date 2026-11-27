@@ -1,6 +1,6 @@
 // Every node in the visual-script palette has a description, pin docs and requirements.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 
 #include <cstdlib>
 #include <fstream>

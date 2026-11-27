@@ -1,23 +1,27 @@
-// The Visual Script app inside the editor (VisualScriptAppHost.hpp): one shared VisualScriptApp, fed with the editor's data through
-// its Config hooks. No second Visual Script editor is written here; this file only connects the shared one to the editor.
+// The editor's Visual Script window (VisualScriptAppHost.hpp): one shared VisualScriptApp, fed with the editor's data through its Config
+// hooks. No second Visual Script editor is written here; this file only connects the shared one to the editor.
 #include "VisualScriptAppHost.hpp"
 #include "ScriptEditorAppHost.hpp"   // g_scriptCodeOwnsKeys: a hosted OkayUI app has the keyboard
 #include "VisualScriptApp.hpp"
 #include "VisualScriptModel.hpp"     // PublishOpenGraph, the editor's open graphs
 #include "OkayPanels.hpp"            // DrawAppWindowOkayUI: a whole OkayUI app in an editor window
 #include "ConsolePanel.hpp"          // ConsoleLog
+#include "imgui.h"                   // the editor's own drags (Project and Hierarchy panels), handed on to OkayUI
 #include "okay/Platform/Platform.hpp"   // PrefPath: the settings folder the Visual Script program uses too
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
 
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 
-namespace oked {
+extern bool g_showVisualScript;   // main.cpp: View > Editors & Tools > Visual Script
 
-bool g_showVisualScriptApp = false;
+namespace oked {
 
 namespace {
 okay::editor::EditorState* g_ed = nullptr;   // the editor whose scene the hooks read (set every frame the window draws)
@@ -31,10 +35,16 @@ vsapp::VisualScriptApp& App() {
             const std::string data = be->PrefPath("OkaySpace", "VisualScript");
             if (!data.empty()) cfg.settingsPath = data + "visual_script.json";   // the program's settings: one look for both
         }
-        // Save: write the file and reload every object that runs this graph (the same as the Visual Script window's Save)
-        cfg.save = [](okay::editor::vsed::VsEditState&, std::string& why) {
+        // Save: write the file and reload every object that runs this graph (including ones whose path was stored differently and
+        // embedded copies); the Console says how many objects were updated
+        cfg.save = [](okay::editor::vsed::VsEditState& tab, std::string& why) {
             if (!g_ed) { why = "no scene"; return false; }
             if (!okay::editor::vsed::PublishOpenGraph(*g_ed, false)) { why = "the file could not be written"; return false; }
+            int n = 0;
+            for (const auto& up : g_ed->scene().Objects())
+                for (auto* vc : up->GetComponents<okay::VisualScriptComponent>())
+                    if (!tab.g.path.empty() && okay::editor::vsed::VsSamePath(vc->Path(), tab.g.path)) ++n;
+            if (n) ConsoleLog("Visual Script: updated " + std::to_string(n) + " object(s) that run " + tab.g.path);
             return true;
         };
         cfg.log = [](const std::string& line, int level) { ConsoleLog("Visual Script: " + line, level); };
@@ -53,16 +63,36 @@ vsapp::VisualScriptApp& App() {
             for (const auto& up : g_ed->scene().Objects()) if (okay::vs::NodeGraph* g = usesThis(up.get())) return g;
             return nullptr;
         };
-        cfg.stopPlay = [] { if (g_ed) g_ed->Stop(); };
+        cfg.stopPlay = [] { if (g_ed) { g_ed->Stop(); ConsoleLog("Stop"); } };
+        cfg.editor = []() { return g_ed; };   // the scene: object lists, Attach to Selected Object, Add Component, ...
         app.reset(new vsapp::VisualScriptApp(cfg));
     }
     return *app;
+}
+
+// A drag that began in one of the editor's Dear ImGui panels, handed to OkayUI so the app's slots and canvas take it: a file from the
+// Project panel (ASSET_PATH, its path), an object from the Hierarchy (OBJECT_REF: what a slot stores for it, its @guid: reference or
+// its name), a property from the Inspector (VS_INSPECTOR).
+void HandDragToOkayUI() {
+    const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+    if (!pl || !pl->Data) return;
+    const bool released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    if (pl->IsDataType("ASSET_PATH") || pl->IsDataType("VS_INSPECTOR")) {
+        OkayUI::SetExternalDragDrop(pl->IsDataType("ASSET_PATH") ? "ASSET_PATH" : "VS_INSPECTOR", pl->Data,
+                                    std::min(pl->DataSize, OkayUI::kDragPayloadMax), released);
+    } else if (pl->IsDataType("GO_PTR")) {
+        okay::GameObject* go = *(okay::GameObject* const*)pl->Data;
+        if (!go) return;
+        const std::string ref = go->Guid().empty() ? go->name : okay::vs::VsGuidRef(go->Guid());
+        OkayUI::SetExternalDragDrop("OBJECT_REF", ref.c_str(), (int)std::min<std::size_t>(ref.size() + 1, OkayUI::kDragPayloadMax), released);
+    }
 }
 } // namespace
 
 void DrawVisualScriptApp(okay::editor::EditorState& ed) {
     g_ed = &ed;
-    if (!g_showVisualScriptApp) return;
+    okay::editor::vsed::VsRestoreTabs();   // the graphs that were open last time (once)
+    if (!g_showVisualScript) return;
     vsapp::VisualScriptApp& app = App();
     // the open project is the app's folder (File > Open lists its graphs, Find References searches it)
     static std::string followed;
@@ -70,8 +100,9 @@ void DrawVisualScriptApp(okay::editor::EditorState& ed) {
         followed = ed.projectDir();
         if (!followed.empty()) app.OpenFolder(followed);
     }
-    DrawAppWindowOkayUI("Visual Script (App)", &g_showVisualScriptApp, "##okayui_visual_script_app",
-                        [&app](float x, float y, float w, float h) { app.Frame(x, y, w, h); }, 1080.0f, 680.0f,
+    // "Visual Script": the old window's name, so saved layouts put it where it was docked
+    DrawAppWindowOkayUI("Visual Script", &g_showVisualScript, "##okayui_visual_script_app",
+                        [&app](float x, float y, float w, float h) { HandDragToOkayUI(); app.Frame(x, y, w, h); }, 1180.0f, 760.0f,
                         [&app](const std::string& dropped) {
                             if (std::filesystem::u8path(dropped).extension().u8string() == ".okayvs") app.OpenFile(dropped);
                         });

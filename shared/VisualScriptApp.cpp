@@ -26,6 +26,10 @@ std::string AppSettings::Serialize() const {
     o += std::string("  \"showMinimap\": ") + b(showMinimap) + ",\n";
     o += std::string("  \"snapGrid\": ") + b(snapGrid) + ",\n";
     o += std::string("  \"scrollPans\": ") + b(scrollPans) + ",\n";
+    o += std::string("  \"showOutline\": ") + b(showOutline) + ",\n";
+    o += std::string("  \"liveValues\": ") + b(liveValues) + ",\n";
+    o += std::string("  \"showHint\": ") + b(showHint) + ",\n";
+    o += "  \"density\": " + std::to_string(density) + ",\n";
     o += "  \"panel\": " + std::to_string(panel) + ",\n  \"lastFolder\": ";
     okay::json::Escape(lastFolder, o);
     o += ",\n  \"recentFiles\": [";
@@ -38,11 +42,17 @@ AppSettings AppSettings::Parse(const std::string& text) {
     okay::json::Value root;
     if (!okay::json::Parse(text, root) || !root.IsObject()) return s;
     for (auto [key, field] : {std::make_pair("showDetails", &s.showDetails), std::make_pair("showMinimap", &s.showMinimap),
-                              std::make_pair("snapGrid", &s.snapGrid), std::make_pair("scrollPans", &s.scrollPans)})
+                              std::make_pair("snapGrid", &s.snapGrid), std::make_pair("scrollPans", &s.scrollPans),
+                              std::make_pair("showOutline", &s.showOutline), std::make_pair("liveValues", &s.liveValues),
+                              std::make_pair("showHint", &s.showHint)})
         if (const okay::json::Value* v = root.Get(key); v && v->IsBool()) *field = v->boolean;
     if (const okay::json::Value* v = root.Get("panel")) {
         std::uint64_t n = 0;
         if (v->AsIndex(n) && n <= 4) s.panel = (int)n;
+    }
+    if (const okay::json::Value* v = root.Get("density")) {
+        std::uint64_t n = 0;
+        if (v->AsIndex(n) && n <= 2) s.density = (int)n;
     }
     if (const okay::json::Value* v = root.Get("lastFolder"); v && v->IsString()) s.lastFolder = v->string;
     if (const okay::json::Value* list = root.Get("recentFiles"); list && list->IsArray())
@@ -67,6 +77,7 @@ VisualScriptApp::Impl::Impl(Config c) : cfg(std::move(c)) {
         std::ifstream f(fs::u8path(cfg.settingsPath), std::ios::binary);
         if (f) { std::stringstream ss; ss << f.rdbuf(); settings = AppSettings::Parse(ss.str()); }
     }
+    if (!cfg.editor && settings.density >= 0) oked::scriptui::SetDensity(settings.density);   // the program: the Density it was left at
 }
 
 vsed::VsEditState& VisualScriptApp::Impl::st() { return vsed::State(); }
@@ -155,13 +166,21 @@ void VisualScriptApp::Impl::close(int index) {
 void VisualScriptApp::Impl::requestClose(int index) {
     vsed::VsSession& ses = vsed::Session();
     if (index < 0 || index >= (int)ses.tabs.size()) return;
-    if (ses.tabs[(std::size_t)index]->g.dirty) { promptOpen = true; promptQuit = false; promptTab = index; return; }
+    if (ses.tabs[(std::size_t)index]->g.dirty) { promptOpen = true; promptQuit = false; promptMode = 0; promptTab = index; return; }
     close(index);
 }
 
 void VisualScriptApp::Impl::requestQuit() {
-    if (vsed::VsAnyUnsaved()) { promptOpen = true; promptQuit = true; promptTab = -1; return; }
+    if (vsed::VsAnyUnsaved()) { promptOpen = true; promptQuit = true; promptMode = 1; promptTab = -1; return; }
     quit = true;
+}
+
+void VisualScriptApp::Impl::closeMany(int keep) {
+    vsed::VsSession& ses = vsed::Session();
+    bool changed = false;
+    for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != keep && ses.tabs[(std::size_t)i]->g.dirty) changed = true;
+    if (changed) { promptOpen = true; promptQuit = false; promptMode = keep >= 0 ? 2 : 3; promptTab = keep; return; }
+    for (int i = (int)ses.tabs.size() - 1; i >= 0; --i) if (i != keep) close(i);
 }
 
 void VisualScriptApp::Impl::answerPrompt(int answer) {
@@ -169,6 +188,15 @@ void VisualScriptApp::Impl::answerPrompt(int answer) {
     promptOpen = false;
     if (answer == 2) return;   // Cancel
     vsed::VsSession& ses = vsed::Session();
+    if (promptMode >= 2) {   // Close Others / Close All: Save writes each changed one first (one that cannot be written stays open)
+        const int keep = promptMode == 2 ? promptTab : -1;
+        for (int i = (int)ses.tabs.size() - 1; i >= 0; --i) {
+            if (i == keep || i >= (int)ses.tabs.size()) continue;
+            if (answer == 0 && ses.tabs[(std::size_t)i]->g.dirty && !saveTab(i)) continue;
+            close(i);
+        }
+        return;
+    }
     if (promptQuit) {
         if (answer == 0) {
             for (int i = 0; i < (int)ses.tabs.size(); ++i)
@@ -241,8 +269,26 @@ void VisualScriptApp::Impl::drawMenu(float X, float Y, float W, float h) {
                     vsed::VsShowDiff(s.g.path, "the saved file", ss.str());
                     settings.panel = 4;
                 }
+                if (UI::BeginMenu("Restore Previous Version")) {   // the editor keeps the last saves of each file (VsBackups)
+                    const auto versions = vsed::VsBackups && !s.g.path.empty() ? vsed::VsBackups(s.g.path)
+                                                                              : std::vector<std::pair<std::string, std::string>>();
+                    if (versions.empty()) UI::MenuItem(s.g.path.empty() ? "(save the graph first)" : "(no earlier saves)", nullptr, false, false);
+                    for (std::size_t i = 0; i < versions.size(); ++i)
+                        if (UI::MenuItem((versions[i].first + "##vsapp_rv" + std::to_string(i)).c_str())) restoreVersion(versions[i].second);
+                    if (!versions.empty() && UI::BeginMenu("Compare With")) {
+                        for (std::size_t i = 0; i < versions.size(); ++i)
+                            if (UI::MenuItem((versions[i].first + "##vsapp_cv" + std::to_string(i)).c_str())) {
+                                vsed::VsShowDiff(s.g.path, versions[i].first, versions[i].second);
+                                settings.panel = 4;
+                            }
+                        UI::EndMenu();
+                    }
+                    UI::EndMenu();
+                }
                 UI::MenuSeparator();
                 if (UI::MenuItem("Close Tab", "Ctrl+W")) requestClose(ses.active);
+                if (UI::MenuItem("Close Others", nullptr, false, ses.tabs.size() > 1)) closeMany(ses.active);
+                if (UI::MenuItem("Close All")) closeMany(-1);
                 if (UI::MenuItem("Reopen Closed Tab", "Ctrl+Shift+T", false, !okay::editor::docrec::ClosedStack().empty())) vsed::VsReopenClosedGraph();
                 if (cfg.quitItem) { UI::MenuSeparator(); if (UI::MenuItem("Quit", "Ctrl+Q")) requestQuit(); }
                 UI::EndMenu();
@@ -281,6 +327,13 @@ void VisualScriptApp::Impl::drawMenu(float X, float Y, float W, float h) {
                     const UI::Vec2 w = toWorld(cx - 100.0f, cy - 40.0f);
                     openPalette(cx - 160.0f, cy - 140.0f, w.x, w.y);
                 }
+                if (UI::MenuItem("Pick a Recipe...")) recipeBox = true;
+                if (UI::MenuItem("Templates...")) { templateBox = true; tplBuf[0] = 0; }
+                if (okay::editor::EditorState* e = ed()) {   // the editor: the graph runs on the selected object
+                    okay::GameObject* sel = e->selected();
+                    if (UI::MenuItem(sel ? ("Attach to " + sel->name).c_str() : "Attach to Selected Object", nullptr, false, sel != nullptr)) attachSelected();
+                }
+                UI::MenuSeparator();
                 if (UI::BeginMenu("Arrange")) {
                     const std::size_t k = s.sel.size();
                     cmd("Align Left", "vs.alignLeft", "Shift+A", k >= 2);
@@ -333,6 +386,17 @@ void VisualScriptApp::Impl::drawMenu(float X, float Y, float W, float h) {
                 if (UI::MenuItem("Details", nullptr, settings.showDetails)) { settings.showDetails = !settings.showDetails; changed = true; }
                 if (UI::MenuItem("Minimap", nullptr, settings.showMinimap)) { settings.showMinimap = !settings.showMinimap; changed = true; }
                 if (UI::MenuItem("Scroll Moves the View (trackpad)", nullptr, settings.scrollPans)) { settings.scrollPans = !settings.scrollPans; changed = true; }
+                if (UI::MenuItem("Outline", nullptr, settings.showOutline)) { settings.showOutline = !settings.showOutline; changed = true; }
+                if (UI::MenuItem("Live Values While Playing", nullptr, settings.liveValues)) { settings.liveValues = !settings.liveValues; changed = true; }
+                if (UI::MenuItem("Canvas Hint", nullptr, settings.showHint)) { settings.showHint = !settings.showHint; changed = true; }
+                if (UI::BeginMenu("Density")) {   // Compact / Comfortable / Spacious: the blocks' sizes (shared with the Script Editor)
+                    for (int d = 0; d < oked::scriptui::DensityCount(); ++d)
+                        if (UI::MenuItem(oked::scriptui::DensityName(d), nullptr, oked::scriptui::g_scriptDensity == d)) {
+                            oked::scriptui::SetDensity(d);   // the editor saves it with its settings; the program in its own
+                            if (!cfg.editor) { settings.density = d; changed = true; }
+                        }
+                    UI::EndMenu();
+                }
                 UI::MenuSeparator();
                 const char* names[] = {"Problems", "Navigator", "OkayScript", "Compare"};
                 for (int i = 1; i <= 4; ++i)
@@ -370,6 +434,7 @@ void VisualScriptApp::Impl::drawTabs(float X, float Y, float W, float h, bool mo
         for (const auto& t : ses.tabs) labels.push_back((t->g.dirty ? "* " : "") + vsed::VsTabTitle(*t));
         const okayuiapp::TabStripResult r = okayuiapp::DrawTabStrip(X, Y, W, h, labels, ses.active, modal, Fit, 60.0f);
         if (r.clicked >= 0) ses.active = r.clicked;
+        if (r.menu >= 0) { tabMenu = r.menu; const UI::Vec2 mp = UI::GetMousePos(); popX = mp.x; popY = mp.y; }
         const UI::Vec2 m = UI::GetMousePos();
         const float lh = UI::GetTextLineHeight(), x = r.endX;
         // "+": a new graph
@@ -391,58 +456,21 @@ void VisualScriptApp::Impl::drawDetails(float X, float Y, float W, float H, bool
         dl->AddLine(UI::Vec2(X, Y), UI::Vec2(X, Y + H), kLine);
         vsed::VsEditState& s = st();
         vsed::VsEditGraph& g = s.g;
+        fieldRects.clear();
         UI::SetCursorScreenPos(UI::Vec2(X + 10, Y + 8));
         if (UI::BeginChild((cfg.idPrefix + "_detailslist").c_str(), W - 16, H - 14, false)) {
             UI::PushTextWrapPos(W - 30);
+            if (vsed::DebugView().stopped) drawPaused();   // the paused game: where it stopped and what it can see
             vsed::VsEditNode* n = g.find(s.selected);
             const vsed::VsDef* d = n ? vsed::VsDefFor(g, *n) : nullptr;
             if (!n || !d) {
                 UI::TextUnformatted("Graph");
                 UI::TextDisabled((std::to_string(g.nodes.size()) + " blocks, " + std::to_string(g.execLinks.size() + g.dataLinks.size()) + " wires").c_str());
-                UI::Spacing(6);
-                UI::TextUnformatted("Variables");
-                if (g.vars.empty()) UI::TextDisabled("None yet.");
-                for (std::size_t i = 0; i < g.vars.size(); ++i) {
-                    const auto& v = g.vars[i];
-                    UI::TextUnformatted(Fit(v.name + " : " + v.type + " = " + (v.value.empty() ? std::string("(default)") : v.value) + "  [" + v.scope + "]", W - 30).c_str());
-                }
-                static char newVar[64] = "";
-                UI::SetNextItemWidth(W - 100);
-                UI::InputTextWithHint("##vsapp_newvar", "new variable name", newVar, (int)sizeof newVar);
-                UI::SameLine();
-                if (UI::Button("Add##vsapp_addvar") && !modal && newVar[0]) {
-                    std::string why;
-                    if (g.declare(newVar, "Number", "object", &why)) { note(std::string("Declared ") + newVar); newVar[0] = 0; }
-                    else note("Could not declare it: " + why, 1);
-                }
+                drawSavedValues(W - 30, modal);   // the saved values with their types, scopes and start values; bundles
                 UI::Spacing(6);
                 UI::TextDisabled("Select a block to see what it does and set its values. Right-click the canvas, or press Space, to add one.");
             } else {
-                UI::TextUnformatted(vsed::VsNodeTitle(*n, *d).c_str());
-                UI::TextDisabled((std::string(n->type) + "  #" + std::to_string(n->id)).c_str());
-                if (const char* help = vsed::VsNodeHelp(n->type.c_str())) { UI::Spacing(4); UI::TextWrapped(help); }
-                if (d->param) {
-                    UI::Spacing(6);
-                    UI::TextUnformatted(d->paramHint && *d->paramHint ? d->paramHint : "Setting");
-                    char buf[512];
-                    std::snprintf(buf, sizeof buf, "%s", n->arg.c_str());
-                    UI::SetNextItemWidth(W - 30);
-                    if (UI::InputText(("##vsapp_arg" + std::to_string(n->id)).c_str(), buf, (int)sizeof buf) && !modal) { n->arg = buf; g.dirty = true; }
-                }
-                bool anyInput = false;
-                for (int i = 0; i < (int)d->dataIn.size(); ++i) {
-                    if (vsed::VsInputWired(g, n->id, i)) continue;
-                    if (!anyInput) { UI::Spacing(6); UI::TextUnformatted("Values (inputs with no wire)"); anyInput = true; }
-                    char buf[256];
-                    const auto it = n->pinDefault.find(i);
-                    std::snprintf(buf, sizeof buf, "%s", it == n->pinDefault.end() ? "" : it->second.c_str());
-                    UI::TextDisabled(d->dataIn[(std::size_t)i] ? d->dataIn[(std::size_t)i] : "?");
-                    UI::SetNextItemWidth(W - 30);
-                    if (UI::InputText(("##vsapp_pin" + std::to_string(n->id) + "_" + std::to_string(i)).c_str(), buf, (int)sizeof buf) && !modal) {
-                        if (buf[0]) n->pinDefault[i] = buf; else n->pinDefault.erase(i);
-                        g.dirty = true;
-                    }
-                }
+                drawBlockFields(*n, *d, W - 30, modal);
                 const std::vector<vsed::VsQuickFix> fixes = vsed::VsQuickFixesFor(g, s.issues, n->id);
                 if (!fixes.empty()) {
                     UI::Spacing(6);
@@ -457,6 +485,7 @@ void VisualScriptApp::Impl::drawDetails(float X, float Y, float W, float H, bool
                 const bool bp = !g.path.empty() && okay::vs::VsDebugger::Get().HasBreakpoint(g.path, n->id);
                 if (UI::Button(bp ? "Remove Breakpoint" : "Add Breakpoint") && !modal) {
                     if (g.path.empty()) note("Save the graph to a file first: breakpoints are kept per graph file.", 1);
+                    else if (!vsed::VsCanBreakAt(*n)) note("Breakpoints go on steps (blocks the flow runs through). A value block runs when a step reads it.", 1);
                     else okay::vs::VsDebugger::Get().ToggleBreakpoint(g.path, n->id);
                 }
                 if (UI::Button("Find References") && !modal) { vsed::VsRunCommand(s, "vs.findReferences", root()); settings.panel = 2; }
@@ -464,6 +493,7 @@ void VisualScriptApp::Impl::drawDetails(float X, float Y, float W, float H, bool
                     UI::SameLine();
                     if (UI::Button(vsed::VsIde(s).watches.has(n->id, 0) ? "Stop Watching" : "Watch Values") && !modal) { vsed::VsRunCommand(s, "vs.watchValues", root()); settings.panel = 2; }
                 }
+                if (UI::Button("Frame This Block") && !modal) { s.focusNode = n->id; s.sel = {n->id}; }
             }
             UI::PopTextWrapPos();
         }
@@ -704,10 +734,11 @@ void VisualScriptApp::Impl::drawPrompt(float X, float Y, float W, float H) {
     if (beginDialog(cfg.idPrefix + "_prompt", X, Y, W, H, 480.0f, 104.0f, bx, by)) {
         std::string question;
         vsed::VsSession& ses = vsed::Session();
-        if (promptQuit) {
+        if (promptQuit || promptMode >= 2) {
             int n = 0;
-            for (const auto& t : ses.tabs) if (t->g.dirty) ++n;
-            question = std::to_string(n) + (n == 1 ? " graph has" : " graphs have") + " changes that are not saved.";
+            for (int i = 0; i < (int)ses.tabs.size(); ++i) if (ses.tabs[(std::size_t)i]->g.dirty && !(promptMode == 2 && i == promptTab)) ++n;
+            question = std::to_string(n) + (n == 1 ? " graph has" : " graphs have") + " changes that are not saved." +
+                       (promptMode >= 2 ? " Save before closing?" : "");
         } else {
             const bool ok = promptTab >= 0 && promptTab < (int)ses.tabs.size();
             question = "Save the changes to " + (ok ? vsed::VsTabTitle(*ses.tabs[(std::size_t)promptTab]) : std::string("the graph")) + " before closing it?";
@@ -718,7 +749,7 @@ void VisualScriptApp::Impl::drawPrompt(float X, float Y, float W, float H) {
         int answer = -1;
         if (UI::Button(promptQuit ? "Save All and Quit" : "Save##vsapp_prompt")) answer = 0;
         UI::SameLine();
-        if (UI::Button(promptQuit ? "Quit Without Saving" : "Don't Save")) answer = 1;
+        if (UI::Button(promptQuit ? "Quit Without Saving" : "Don't Save")) answer = 1;   // (Close Others / Close All: close them unsaved)
         UI::SameLine();
         if (UI::Button("Cancel##vsapp_prompt") || UI::IsKeyPressed(UI::KeyId_Escape, false)) answer = 2;
         if (answer >= 0) answerPrompt(answer);
@@ -774,7 +805,7 @@ void VisualScriptApp::Impl::shortcuts(bool modal) {
         else if (key(UI::KeyId_F10)) go(S::Over);
         else if (key(UI::KeyId_F11)) go(shift ? S::Out : S::Into);
     }
-    if (UI::WantsTextInput() || palOpen) return;   // a field has the keyboard: the rest is typing
+    if (UI::WantsTextInput() || palOpen || !keyWait.empty()) return;   // a field has the keyboard (or a key field waits for a key)
     if (!canvasFocused) return;
     if (ctrl && !shift && key(UI::KeyId_Z)) { vsed::VsUndo(s); return; }
     if ((ctrl && key(UI::KeyId_Y)) || (ctrl && shift && key(UI::KeyId_Z))) { vsed::VsRedo(s); return; }
@@ -797,7 +828,7 @@ void VisualScriptApp::Impl::shortcuts(bool modal) {
         s.selected = s.sel.empty() ? -1 : *s.sel.begin();
         return;
     }
-    if ((key(UI::KeyId_Delete) || key(UI::KeyId_Backspace)) && any) { vsed::VsDeleteBlocks(s.g, s.sel, false); s.sel.clear(); s.selected = -1; return; }
+    if ((key(UI::KeyId_Delete) || key(UI::KeyId_Backspace)) && any) { vsed::VsDeleteBlocks(s.g, s.sel, shift); s.sel.clear(); s.selected = -1; return; }   // Shift: cut, not join
     if (ctrl && key(UI::KeyId_Equal)) { s.zoom = std::clamp(s.zoom * 1.12f, 0.28f, 2.2f); return; }
     if (ctrl && key(UI::KeyId_Minus)) { s.zoom = std::clamp(s.zoom / 1.12f, 0.28f, 2.2f); return; }
     if (ctrl && key(UI::KeyId_0)) { s.zoom = 1.0f; return; }
@@ -854,27 +885,40 @@ void VisualScriptApp::Impl::frame(float X, float Y, float W, float H) {
     if (s.refuseTime > 0) s.refuseTime -= UI::GetIO().DeltaTime > 0 ? UI::GetIO().DeltaTime : 1.0f / 60.0f;
     vsed::VsDebugView& dv = vsed::DebugView();
     if (dv.stopped && dv.focusPending && dv.key == s.g.path) { s.focusNode = dv.node; s.sel = {dv.node}; s.selected = dv.node; dv.focusPending = false; }
+    // the editor: names and paths in the file become references once the scene says what they point at (older files still run)
+    if (okay::editor::EditorState* e = ed()) if (vsed::VsUpgradeGraph(s.g, e->scene())) s.g.dirty = true;
+    okay::vs::NodeGraph::Tracing() = true;   // run counts and the last values, so a running graph can be watched
+    refreshLive();
+    vsed::VsUpdateFlashes(s, live, UI::GetIO().DeltaTime > 0 ? UI::GetIO().DeltaTime : 1.0f / 60.0f);
 
     const float menuH = 26.0f, tabH = 30.0f, statusH = 24.0f, dbgH = dv.stopped ? 30.0f : 0.0f;
     const float detailsW = settings.showDetails ? std::min(320.0f, std::max(220.0f, W * 0.26f)) : 0.0f;
+    const float outlineW = settings.showOutline ? std::min(260.0f, std::max(170.0f, W * 0.2f)) : 0.0f;
     const float panelH = settings.panel == 0 ? 0.0f : std::min(260.0f, std::max(130.0f, H * 0.3f));
     const float bodyY = Y + menuH + tabH + dbgH, bodyH = std::max(40.0f, H - menuH - tabH - dbgH - statusH);
     drawMenu(X, Y, W, menuH);
     drawTabs(X, Y + menuH, W, tabH, modal);
     if (dbgH > 0) drawDebugBar(X, Y + menuH + tabH, W, dbgH);
-    const float cw = std::max(60.0f, W - detailsW);
-    drawCanvas(X, bodyY, cw, std::max(30.0f, bodyH - panelH), modal);
-    if (detailsW > 0) drawDetails(X + cw, bodyY, detailsW, bodyH - panelH, modal);
+    const float cw = std::max(60.0f, W - detailsW - outlineW);
+    if (outlineW > 0) drawOutline(X, bodyY, outlineW, bodyH - panelH, modal);
+    drawCanvas(X + outlineW, bodyY, cw, std::max(30.0f, bodyH - panelH), modal);
+    if (detailsW > 0) drawDetails(X + outlineW + cw, bodyY, detailsW, bodyH - panelH, modal);
     if (panelH > 0) drawPanel(X, bodyY + bodyH - panelH, W, panelH, modal);
     drawStatus(X, Y + H - statusH, W, statusH);
+    if (!modal) drawHelpCard(modal);
     if (nodeMenu >= 0) drawNodeMenu();
+    if (tabMenu >= 0) drawTabMenu();
+    if (commentMenu >= 0) drawCommentMenu();
+    if (connectNode >= 0) drawConnectMenu();
     if (palOpen) drawPalette(X, Y, W, H);
+    if (recipeBox) drawRecipeBox(X, Y, W, H);
+    if (templateBox) drawTemplateBox(X, Y, W, H);
     if (openBox) drawOpenBox(X, Y, W, H);
     if (saveAsBox) drawSaveAsBox(X, Y, W, H);
     if (renameBox) drawRenameBox(X, Y, W, H);
     if (promptOpen) drawPrompt(X, Y, W, H);
     vsed::VsTrackUndo(s, !UI::IsMouseDown(0) && !UI::IsAnyItemActive());
-    wantsKeys = canvasFocused || UI::WantsTextInput() || modalOpen() || palOpen;
+    wantsKeys = canvasFocused || UI::WantsTextInput() || modalOpen() || palOpen || !keyWait.empty();
 }
 
 // ---- VisualScriptApp ------------------------------------------------------------------------------------------------------------
@@ -1053,5 +1097,11 @@ const std::string& VisualScriptApp::Folder() const { return m->folder; }
 const std::string& VisualScriptApp::Notice() const { return m->notice; }
 AppSettings& VisualScriptApp::Settings() { return m->settings; }
 bool VisualScriptApp::WantsKeyboard() const { return m->wantsKeys; }
+bool VisualScriptApp::FieldOnScreen(const std::string& id, float& x0, float& y0, float& x1, float& y1) const {
+    const auto it = m->fieldRects.find(id);
+    if (it == m->fieldRects.end()) return false;
+    x0 = it->second.x0; y0 = it->second.y0; x1 = it->second.x1; y1 = it->second.y1;
+    return true;
+}
 
 }  // namespace vsapp

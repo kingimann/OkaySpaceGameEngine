@@ -12,7 +12,11 @@
 #include "OkayUI_SoftPainter.hpp"
 #include "VisualScriptApp.hpp"
 #include "VisualScriptModel.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +91,11 @@ int main() {
     const std::string player = (proj / "Assets/Graphs/Player.okayvs").u8string();
     const std::string enemy = (proj / "Assets/Graphs/Enemy.okayvs").u8string();
 
+    // the "What is this?" card of the selected block sits over the canvas's bottom-right corner; these steps drag to blocks that may
+    // be under it, so it starts folded (the round-2 part below opens it)
+    vsed::VsPrefs().helpCardOpen = false;
+    vsed::VsPrefs().hideStart = false;
+
     vsapp::VisualScriptApp::Config cfg;
     cfg.settingsPath = (dir / "settings" / "visual_script.json").u8string();
     cfg.idPrefix = "##test_vs";
@@ -133,7 +142,10 @@ int main() {
         CHECK(!rows.empty() && rows.front().find("Wait") != std::string::npos);
         Golden(sim, "visual_script_app_palette");
         const std::string added = app.PaletteTypes().empty() ? std::string() : app.PaletteTypes().front();   // the starter "Wait Then Continue"
-        CHECK(added == "Delay");
+        // the everyday "wait" block first: a Quick block or a starter one ranks first, as the editor's old list ranked them
+        CHECK(added == "Delay" || added == "QbWaitThenDo");
+        const vsed::VsDef* addedDef = vsed::FindDef(added);
+        CHECK(addedDef && addedDef->execIn && !addedDef->execOut.empty());
         sim.Press(Key_Enter);
         Tap(sim, UI::KeyId_Enter, ui);
         CHECK(!app.PaletteOpen());
@@ -166,6 +178,7 @@ int main() {
 
         // ---- a wire dropped on empty space: the list shows only blocks that take a flow wire, and the pick is wired ----
         app.FrameAll();   // the block may sit near the edge: everything in view first
+        app.Active().sel.clear(); app.Active().selected = -1;   // no help card over the canvas
         sim.Frames(2, ui);
         CHECK(app.PlugOnScreen(wait, true, true, 0, ax, ay));
         CHECK(EmptySpot(app, app.Active().g, 40, 90, W * 0.6f, H - 80, ex, ey));
@@ -389,6 +402,386 @@ int main() {
         CHECK(host.WindowTitle().find("Enemy.okayvs") == 0);
         dv = vsed::VsDebugView{};
         (void)stops; (void)floats;
+    }
+
+
+    // ======================================================================================================================
+    // Round 2: what moved from the editor's old Dear ImGui Visual Script window into the app (the window itself is deleted).
+    // The editor is a real EditorState (its scene, the selected object, Play); the hooks the editor's main.cpp sets (Add
+    // Component, the Actions step list, the earlier saves) are set here the same way.
+    // ======================================================================================================================
+    {
+        vsed::Session() = vsed::VsSession{};
+        vsed::VsPrefs() = vsed::VsUsagePrefs{};   // a person who has seen nothing yet: the start cards, the hints and the help card show
+        vsed::VsStore() = vsed::VsPaletteStore{};
+        vsed::VsStore().loaded = true;
+        static int addCalls = 0;
+        static std::string addedId;
+        vsed::VsHasComponent = [](okay::GameObject*, const char* id) -> bool { return addedId == id; };
+        vsed::VsAddComponentById = [](okay::GameObject*, const char* id) -> bool { ++addCalls; addedId = id; return true; };
+        vsed::StepCatalog = [](bool cond) -> const std::vector<vsed::VsStepInfo>* {
+            static const std::vector<vsed::VsStepInfo> acts = {{"log", "Print Message", "Debug", "Writes a line.", false, "text"},
+                                                               {"move", "Move By", "Move", "Moves this object.", false, "x y z"}};
+            static const std::vector<vsed::VsStepInfo> conds = {{"always", "Always", "Basic", "Always passes.", false, ""}};
+            return cond ? &conds : &acts;
+        };
+        static std::string earlier;
+        vsed::VsBackups = [](const std::string&) {
+            return std::vector<std::pair<std::string, std::string>>{{"Earlier today", earlier}};
+        };
+
+        okay::editor::EditorState ed;
+        ed.setProjectDir(proj.u8string());
+        okay::GameObject* ship = ed.scene().CreateGameObject("Ship");
+        okay::GameObject* rock = ed.scene().CreateGameObject("Rock");
+        const float W = 1200, H = 760;
+        Sim sim(W, H);
+        vsapp::VisualScriptApp::Config rc;
+        rc.idPrefix = "##test_vs_r2";
+        rc.editor = [&ed]() { return &ed; };
+        rc.liveGraph = [&](const std::string& path) -> const okay::vs::NodeGraph* {
+            if (!ed.isPlaying()) return nullptr;
+            for (auto* vc : ship->GetComponents<okay::VisualScriptComponent>()) if (vsed::VsSamePath(vc->Path(), path)) return vc->Graph();
+            return nullptr;
+        };
+        vsapp::VisualScriptApp app(rc);
+        bool externalOn = false, externalRelease = false;
+        std::string externalType, externalData;
+        auto ui = [&] {
+            if (externalOn) UI::SetExternalDragDrop(externalType.c_str(), externalData.c_str(), (int)externalData.size() + 1, externalRelease);
+            app.Frame(0, 0, W, H);
+        };
+        auto centre = [&](const std::string& id, float& x, float& y) {
+            float a = 0, b = 0, c = 0, d = 0;
+            if (!app.FieldOnScreen(id, a, b, c, d)) return false;
+            x = (a + c) * 0.5f; y = (b + d) * 0.5f;
+            return true;
+        };
+        auto dropOn = [&](const std::string& id, const std::string& type, const std::string& data) {
+            float x = 0, y = 0;
+            if (!centre(id, x, y)) return false;
+            externalOn = true; externalRelease = false; externalType = type; externalData = data;
+            sim.Move(x, y); sim.Frames(2, ui);
+            externalRelease = true; sim.Frame(ui);
+            externalOn = false; externalRelease = false; sim.Frame(ui);
+            return true;
+        };
+        auto select = [&](int id) { app.Active().sel = {id}; app.Active().selected = id; sim.Frames(2, ui); };
+        // the middle of a flow wire that no block covers (the curve's middle is the middle of its two plugs); false when none is free
+        auto freeWireMiddle = [&](int from, float& wx, float& wy, int& wa, int& wb) {
+            for (const auto& l : app.Active().g.execLinks) {
+                if (from >= 0 && l.from != from) continue;
+                float ax = 0, ay = 0, bx = 0, by = 0;
+                if (!app.PlugOnScreen(l.from, true, true, l.pin, ax, ay) || !app.PlugOnScreen(l.to, true, false, 0, bx, by)) continue;
+                const float x = (ax + bx) * 0.5f, y = (ay + by) * 0.5f;
+                if (x < 20 || y < 70 || x > W - 340 || y > H - 60) continue;   // not under the Details pane
+                bool covered = false;
+                for (const auto& n : app.Active().g.nodes) {
+                    float a = 0, b = 0, c = 0, d = 0;
+                    if (app.BlockOnScreen(n.id, a, b, c, d) && x > a - 14 && x < c + 14 && y > b - 14 && y < d + 14) covered = true;
+                }
+                if (std::fabs(ax - bx) < 40.0f) covered = true;   // too short to hit the curve and not a plug
+                if (!covered) { wx = x; wy = y; wa = l.from; wb = l.to; return true; }
+            }
+            return false;
+        };
+        CHECK(app.OpenFolder(proj.u8string()));
+
+        // ---- the start cards over an empty graph: one click puts a small working graph on the canvas ----
+        app.NewGraph(false);
+        sim.Move(3, 3);
+        sim.Frames(3, ui);
+        CHECK(app.StartCardsShown());
+        float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+        CHECK(app.StartCardOnScreen(0, c0, c1, c2, c3));
+        sim.Click((c0 + c2) * 0.5f, (c1 + c3) * 0.5f, ui);
+        sim.Frames(2, ui);
+        CHECK(!app.Active().g.nodes.empty());
+        CHECK(!app.StartCardsShown());
+        CHECK(!app.HintLine().empty());   // the next-step hint at the bottom of the canvas
+
+        // ---- the "What is this?" card of the selected block: Next steps chips, Try this block ----
+        const int firstBlock = app.Active().g.nodes.front().id;
+        select(firstBlock);
+        CHECK(app.HelpCardTitle().rfind("What is this?", 0) == 0);
+        const std::size_t before = app.Active().g.nodes.size();
+        if (!app.NextStepChips().empty()) {
+            CHECK(app.AddNextStep(0));
+            CHECK(app.Active().g.nodes.size() == before + 1);
+        }
+        select(firstBlock);
+        const std::size_t beforeTry = app.Active().g.nodes.size();
+        CHECK(app.TryThisBlock());
+        CHECK(app.Active().g.nodes.size() > beforeTry);
+        vsed::VsPrefs().helpCardOpen = false;   // folded from here on: the gestures below reach blocks and wires it would cover
+        // a plain sentence under each block's title, and its badge
+        sim.Frames(2, ui);
+        CHECK(!app.BlockSentence(firstBlock).empty());
+        const std::string badge = app.BlockBadge(firstBlock);
+        CHECK(badge == "Ready" || badge == "Needs input" || badge == "Error");
+
+        // ---- a graph on a file, attached to the selected object (Attach to Selected Object) ----
+        const std::string shipGraph = (proj / "Assets/Graphs/ShipFields.okayvs").u8string();
+        CHECK(app.SaveAs(shipGraph));
+        ed.Select(ship);
+        CHECK(app.AttachToSelected());
+        bool attached = false;
+        for (auto* vc : ship->GetComponents<okay::VisualScriptComponent>()) if (vsed::VsSamePath(vc->Path(), shipGraph)) attached = true;
+        CHECK(attached);
+
+        // ---- a block's fields: a key you press, an object dropped from the Hierarchy, a file dropped from the Project panel ----
+        vsed::VsEditGraph& g = app.Active().g;
+        const int onKey = g.add("OnKey", 900, 900);
+        select(onKey);
+        float kx = 0, ky = 0;
+        CHECK(centre("key" + std::to_string(onKey), kx, ky));
+        sim.Click(kx, ky, ui);
+        Tap(sim, UI::KeyId_J, ui);
+        CHECK(app.Active().g.find(onKey)->arg == "j");
+
+        const int find = app.Active().g.add("FindObject", 900, 1100);
+        select(find);
+        CHECK(dropOn("arg" + std::to_string(find), "OBJECT_REF", okay::vs::VsGuidRef(rock->Guid())));
+        CHECK(app.Active().g.find(find)->arg == okay::vs::VsGuidRef(rock->Guid()));
+
+        const int spawn = app.Active().g.add("Spawn", 900, 1300);
+        select(spawn);
+        const std::string crate = (proj / "Assets/Prefabs/Crate.okayprefab").u8string();
+        WriteFile(fs::u8path(crate), "prefab\n");
+        CHECK(dropOn("arg" + std::to_string(spawn), "ASSET_PATH", crate));
+        CHECK(app.Active().g.find(spawn)->arg.find("Crate.okayprefab") != std::string::npos);
+        CHECK(dropOn("arg" + std::to_string(spawn), "ASSET_PATH", (proj / "Assets/boom.wav").u8string()));   // the wrong kind: refused, said
+        CHECK(app.Active().g.find(spawn)->arg.find("Crate.okayprefab") != std::string::npos);
+        CHECK(app.Active().refHint.find("Wrong file") == 0);
+
+        // a Quick block's key field and number field
+        const int jump = app.Active().g.add("QbJumpOnKey", 900, 1500);
+        select(jump);
+        CHECK(centre("qk" + std::to_string(jump) + "_0", kx, ky));
+        sim.Click(kx, ky, ui);
+        Tap(sim, UI::KeyId_K, ui);
+        CHECK(app.Active().g.find(jump)->pinDefault[0] == "k");
+        float nx = 0, ny = 0;
+        CHECK(centre("q" + std::to_string(jump) + "_1", nx, ny));   // Strength: a number you drag
+        const int flash = app.Active().g.add("QbFlashColour", 900, 1700);
+        select(flash);
+        CHECK(centre("q" + std::to_string(flash) + "_0", nx, ny));  // Colour: a swatch
+        {
+            float rgb[3] = {1.0f, 0.0f, 0.5f};
+            CHECK(vsed::VsColourHex(rgb) == "#ff0080");
+            float back[3];
+            vsed::VsColourParts("#ff0080", back);
+            CHECK(back[0] == 1.0f && back[1] == 0.0f && std::fabs(back[2] - 128.0f / 255.0f) < 1e-6f);
+        }
+
+        // the Action Steps editor inside a block, and Switch cases
+        const int steps = app.Active().g.add("Actions", 900, 1900);
+        select(steps);
+        const std::size_t stepsBefore = okay::ActionList::DecodeItems(app.Active().g.find(steps)->arg).size();   // a new block has one step
+        CHECK(centre("addstep" + std::to_string(steps), kx, ky));
+        sim.Click(kx, ky, ui);
+        CHECK(okay::ActionList::DecodeItems(app.Active().g.find(steps)->arg).size() == stepsBefore + 1);
+        const int sw = app.Active().g.add("SwitchCases", 900, 2100);
+        app.Active().g.find(sw)->arg = "1, 2";
+        select(sw);
+        CHECK(centre("case" + std::to_string(sw), kx, ky));
+        sim.Click(kx, ky, ui);
+        CHECK(vsed::VsEditorSwitchCases(app.Active().g.find(sw)->arg).size() == 3);
+
+        // ---- the saved values panel (nothing selected): a name typed and Add ----
+        app.Active().sel.clear(); app.Active().selected = -1;
+        sim.Frames(2, ui);
+        CHECK(centre("newvar", kx, ky));
+        sim.Click(kx, ky, ui);
+        sim.Type("lives");
+        sim.Frames(2, ui);
+        CHECK(centre("addvar", kx, ky));
+        sim.Click(kx, ky, ui);
+        bool declared = false;
+        for (const auto& v : app.Active().g.vars) if (v.name == "lives") declared = true;
+        CHECK(declared);
+
+        // ---- the outline: events, breakpoints, saved values ----
+        app.Settings().showOutline = true;
+        sim.Frames(2, ui);
+        okay::vs::VsDebugger::Get().ToggleBreakpoint(app.Active().g.path, onKey);
+        bool evRow = false, bpRow = false;
+        for (const std::string& r : app.OutlineRows()) {
+            if (r.rfind(std::string(vsed::kPanelEvents) + ": ", 0) == 0) evRow = true;
+            if (r.rfind(std::string(vsed::kPanelStopPoints) + ": ", 0) == 0) bpRow = true;
+        }
+        CHECK(evRow && bpRow);
+        okay::vs::VsDebugger::Get().ClearBreakpoints();
+        app.Settings().showOutline = false;
+
+        // ---- a block's missing component (the object running the graph lacks it) and Add Component ----
+        int needy = -1;
+        for (const vsed::VsDef& d : vsed::Registry()) {
+            const vsed::VsNodeDoc* doc = d.type ? vsed::VsNodeDocFor(d.type) : nullptr;
+            if (!doc || doc->component.empty() || doc->component.find('|') != std::string::npos || vsed::VsPaletteHidden(d)) continue;
+            needy = app.Active().g.add(d.type, 1400, 900);
+            break;
+        }
+        CHECK(needy >= 0);
+        sim.Frames(2, ui);
+        const std::string missing = app.MissingComponent(needy);
+        CHECK(!missing.empty());
+        CHECK(app.AddMissingComponent(needy));
+        CHECK(addCalls == 1 && addedId == missing);
+        CHECK(app.MissingComponent(needy).empty());
+
+        // ---- Connect to...: a block's plug, then the blocks that fit it, the pick wired ----
+        const int pr = app.Active().g.add("Print", 1400, 1200);
+        sim.Frames(2, ui);
+        const std::vector<std::string> plugsRows = app.ConnectRows(pr);
+        std::size_t flowOut = plugsRows.size();
+        for (std::size_t i = 0; i < plugsRows.size(); ++i) if (plugsRows[i].rfind("Flow out", 0) == 0) { flowOut = i; break; }
+        CHECK(flowOut < plugsRows.size());
+        CHECK(app.ConnectFrom(pr, flowOut));
+        CHECK(app.PaletteOpen());
+        app.SetPaletteQuery("print");
+        CHECK(app.PickPaletteRow(0));
+        bool connected = false;
+        for (const auto& l : app.Active().g.execLinks) if (l.from == pr) connected = true;
+        CHECK(connected);
+
+        // ---- a block put on a wire: double-click the wire, pick; Shift+double-click: a knot; drag it; right-click takes it away ----
+        app.Active().focusNode = pr;   // the view on that block, readable (the whole graph is spread too wide to fit)
+        sim.Frames(3, ui);
+        int wireFrom = -1, wireTo = -1;
+        float mx = 0, my = 0;
+        CHECK(freeWireMiddle(pr, mx, my, wireFrom, wireTo));
+        sim.Click(mx, my, ui);
+        sim.Click(mx, my, ui);
+        CHECK(app.PaletteOpen());
+        app.SetPaletteQuery("wait");
+        const std::size_t blocksBefore = app.Active().g.nodes.size();
+        CHECK(app.PickPaletteRow(0));
+        CHECK(app.Active().g.nodes.size() == blocksBefore + 1);
+        bool direct = false;
+        for (const auto& l : app.Active().g.execLinks) if (l.from == wireFrom && l.to == wireTo) direct = true;
+        CHECK(!direct);   // the new block sits between them now
+        app.Active().focusNode = pr;
+        sim.Frames(3, ui);
+        int ka = -1, kb = -1;
+        CHECK(freeWireMiddle(-1, mx, my, ka, kb));
+        sim.shift = true;
+        sim.Click(mx, my, ui);
+        sim.Click(mx, my, ui);
+        sim.shift = false;
+        CHECK(app.Active().g.knots.size() == 1);
+        sim.Frames(2, ui);
+        float kx0 = 0, ky0 = 0;
+        CHECK(app.KnotOnScreen(0, kx0, ky0));
+        const float knotX = app.Active().g.knots.empty() ? 0.0f : app.Active().g.knots[0].x;
+        Drag(sim, kx0, ky0, kx0 + 60, ky0 + 30, ui);
+        CHECK(app.Active().g.knots.size() == 1 && app.Active().g.knots[0].x > knotX + 10);
+        CHECK(app.KnotOnScreen(0, kx0, ky0));
+        sim.Move(kx0, ky0); sim.Frame(ui);
+        sim.rdown = true; sim.Frame(ui); sim.rdown = false; sim.Frame(ui);
+        CHECK(app.Active().g.knots.empty());
+
+        // ---- a comment frame: resized by its corner, coloured from its menu ----
+        app.Active().sel = {pr};
+        CHECK(app.CommentSelection());
+        const int cm = (int)app.Active().g.comments.size() - 1;   // the new frame
+        app.Active().focusNode = pr;
+        sim.Frames(3, ui);
+        float gx = 0, gy = 0;
+        CHECK(app.CommentGripOnScreen(cm, gx, gy));
+        const float cw = app.Active().g.comments[(std::size_t)cm].w;
+        Drag(sim, gx, gy, gx + 80, gy + 50, ui);
+        CHECK(app.Active().g.comments[(std::size_t)cm].w > cw + 20);
+        {
+            float t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+            CHECK(app.CommentOnScreen(cm, t0, t1, t2, t3));
+            const float titleX = t0 + 30.0f, titleY = t1 + 6.0f;   // its title bar
+            sim.Move(titleX, titleY); sim.Frame(ui);
+            sim.rdown = true; sim.Frame(ui); sim.rdown = false; sim.Frame(ui);
+            const float lh = UI::GetTextLineHeight() + 6;
+            sim.Click(titleX + 30, titleY + 4 + lh + 7 + lh + lh * 0.5f, ui);   // Rename, a line, Colour: Blue, then Colour: Green
+            CHECK(app.Active().g.comments[(std::size_t)cm].color == 1);
+        }
+
+        // ---- Restore Previous Version (the editor's earlier saves), and Undo takes it back ----
+        vsed::VsEditGraph one;
+        one.add("OnStart", 40, 40);
+        earlier = one.toText();
+        CHECK(app.PreviousVersions().size() == 1);
+        const std::size_t nowBlocks = app.Active().g.nodes.size();
+        CHECK(app.RestoreVersion(0));
+        CHECK(app.Active().g.nodes.size() == 1);
+        CHECK(app.Undo());
+        CHECK(app.Active().g.nodes.size() == nowBlocks);
+
+        // ---- Pick a Recipe and Templates ----
+        CHECK(app.RecipeNames().size() == vsed::VsRecipes().size() + vsed::VsExtraRecipes().size());
+        const std::size_t r0 = app.Active().g.nodes.size();
+        CHECK(app.PickRecipe(app.RecipeNames().size() - 1));   // one of the "More recipes"
+        CHECK(app.Active().g.nodes.size() > r0);
+        const std::vector<std::string> tpl = app.TemplateNames("", 0);
+        CHECK(!tpl.empty());
+        app.NewGraph(false);
+        CHECK(app.ApplyTemplate(tpl.front()));
+        CHECK(!app.Active().g.nodes.empty() && app.Active().g.path.empty() && app.Active().g.dirty);
+
+        // ---- the live run: Play runs a graph on the ship; the block that ran says what it did ----
+        {
+            vsed::VsEditGraph lg;
+            const int ev = lg.add("OnStart", 40, 40), said = lg.add("Print", 300, 40);
+            lg.linkExec(ev, 0, said);
+            lg.find(said)->pinDefault[0] = "hello";
+            const std::string liveFile = (proj / "Assets/Graphs/Live.okayvs").u8string();
+            WriteFile(fs::u8path(liveFile), lg.toText());
+            auto* vc = ship->AddComponent<okay::VisualScriptComponent>();
+            std::string err;
+            CHECK(vc->LoadFromFile(liveFile, &err));
+            CHECK(app.OpenFile(liveFile));
+            int printBlock = -1;
+            for (const auto& n : app.Active().g.nodes) if (n.type == "Print") printBlock = n.id;
+            okay::vs::NodeGraph::Tracing() = true;
+            ed.Play();
+            for (int i = 0; i < 10; ++i) ed.Tick(1.0f / 60.0f);
+            sim.Frames(3, ui);
+            CHECK(printBlock >= 0 && !app.LiveLine(printBlock).empty());
+            if (printBlock >= 0) std::cerr << "  live line: " << app.LiveLine(printBlock) << "\n";
+            ed.Stop();
+            sim.Frames(1, ui);
+        }
+
+        // ---- Close Others / Close All (a changed tab asks first) ----
+        app.NewGraph(true);
+        app.Active().g.dirty = true;
+        CHECK(app.TabCount() >= 3);
+        app.CloseOthers(app.ActiveTab());
+        CHECK(app.ClosePromptOpen());
+        app.AnswerClosePrompt(1);   // close them without saving
+        CHECK(app.TabCount() == 1);
+        app.CloseAll();
+        CHECK(app.ClosePromptOpen());   // the one left is changed
+        app.AnswerClosePrompt(2);       // Cancel
+        CHECK(app.TabCount() == 1);
+
+        // ---- Density: the blocks grow with Spacious ----
+        app.FrameAll();
+        sim.Frames(3, ui);
+        int anyBlock = app.Active().g.nodes.empty() ? -1 : app.Active().g.nodes.front().id;
+        float d0 = 0, d1 = 0, d2 = 0, d3 = 0, e0 = 0, e1 = 0, e2 = 0, e3 = 0;
+        CHECK(app.BlockOnScreen(anyBlock, d0, d1, d2, d3));
+        const float z = app.Active().zoom;
+        oked::scriptui::SetDensity(2);
+        sim.Frames(2, ui);
+        app.Active().zoom = z;
+        sim.Frames(1, ui);
+        CHECK(app.BlockOnScreen(anyBlock, e0, e1, e2, e3));
+        CHECK(e3 - e1 > d3 - d1);
+        oked::scriptui::SetDensity(0);
+        (void)oked::scriptui::TakeDensityChanged();
+
+        vsed::VsHasComponent = nullptr;
+        vsed::VsAddComponentById = nullptr;
+        vsed::StepCatalog = nullptr;
+        vsed::VsBackups = nullptr;
     }
 
     fs::remove_all(dir, ec);

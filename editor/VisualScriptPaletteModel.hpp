@@ -1,8 +1,7 @@
 #pragma once
 // The Add Block list's rules (no drawing): which blocks it hides (one row per job; untested blocks wait), what kind a block is,
 // the blocks that fit a dragged wire, a block's missing component, and the favourites and recent list kept between runs. The
-// editor's Dear ImGui palette (VisualScriptPalette.hpp) and the Visual Script app's palette (shared/VisualScriptApp) read these.
-// Moved out of VisualScriptPalette.hpp unchanged. Written for this project.
+// Visual Script app's Add Block list (shared/VisualScriptAppCanvas.cpp) reads these. Written for this project.
 #include "VisualScriptNodeDocs.hpp"
 #include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "VisualScriptSearch.hpp"   // plain-word search, synonyms, starter boost
@@ -212,6 +211,33 @@ inline int VsWireSearchBoost(int pinRank) { return pinRank == 0 ? 35 : pinRank =
 inline bool VsPaletteStepIsDuplicate(const std::string& label) {
     for (const auto& h : Registry()) if (h.title && label == h.title) return true;
     return false;
+}
+
+/// Everything a search in the Add Block list finds a block by, besides its title: its own search words, what it is for ("move
+/// things"), synonyms, where it used to sit (Scene Atmosphere, Objects Survival ...: people who remember the old topic still find it
+/// by typing that name), its old category name, and "engine api" for a script-API block.
+inline std::string VsPaletteKeywords(const VsDef& d) {
+    const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+    const VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
+    const VsPlace was = api ? VsOldPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsOldPlaceForNode(d.type);
+    std::string k = VsNodeSearchText(d.type);
+    k += std::string(" ") + kVsIntents[VsIntentFor(d)];
+    if (const std::string syn = VsSynonymWords(std::string(d.title ? d.title : "") + " " + k); !syn.empty()) k += " " + syn;
+    if (api) k += " engine api";
+    if (const std::string moved = VsMovedFromWords(was, place); !moved.empty()) k += " " + moved;
+    if (d.cat >= 0 && d.cat < CAT_COUNT) {
+        static const char* oldCat[] = {"Events", "Flow", "Variables", "Math", "Logic", "Input", "Transform", "Actions", "Data",
+                                       "Multiplayer & Steam", "Engine API", "Script builtins"};
+        k += std::string(" ") + oldCat[d.cat];
+    }
+    return k;
+}
+/// The same for an Actions step shown as a row of its own (an Action or a Check block set to that step).
+inline std::string VsPaletteStepKeywords(const VsStepInfo& si, bool cond) {
+    std::string k = si.group + (cond ? " check something" : " do something");
+    const VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str()), was = VsOldPlaceForStep(si.op.c_str(), si.group.c_str());
+    if (const std::string moved = VsMovedFromWords(was, place); !moved.empty()) k += " " + moved;
+    return k;
 }
 
 /// What the add-node popup remembers between sessions, in okay_vsnodes.txt: the favourites, the last 8 nodes added, the

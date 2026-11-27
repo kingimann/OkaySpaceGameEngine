@@ -61,9 +61,20 @@ struct VisualScriptApp::Impl {
     char palBuf[96] = "";
     int palSel = 0;
     float palX = 0, palY = 0;                     // where it opens on screen
-    struct PalRow { const vsed::VsDef* def = nullptr; int score = 0; int fit = 0; std::string title, help, place; };
+    struct PalRow {   // a block, or an Actions step (an Action / Check block set to `arg`)
+        const vsed::VsDef* def = nullptr; int score = 0; int fit = 0; std::string title, help, place, key, keywords, arg;
+        vsed::VsLevel level = vsed::VsLevel::Intermediate; int catIndex = 0; bool browse = true;
+    };
+    std::vector<PalRow> palAll;                   // every row the list can show, made once (again when the registry or the steps change)
+    std::size_t palAllFor = (std::size_t)-1;
     std::vector<PalRow> palRows;
-    std::string palBuiltFor;                      // the query (and wire) the rows were made for
+    std::string palBuiltFor;                      // the query (and wire, side, level) the rows were made for
+    int palSide = -3;                             // what the list shows with nothing typed: -4 Starter, -5 Quick blocks, -2 Recent,
+                                                  // -1 Favourites, -3 everything, else a topic (kPaletteCategories)
+    bool palShowAll = false;                      // a wire is dragged: also the blocks that do not fit it
+    int palHidden = 0;                            // blocks the search found but the level and "everyday blocks" choice hide
+    bool palSearchAll = false;                    // "Search all blocks" was clicked
+    bool palSuggest = false;                      // the rows are the nearest names to what was typed, not matches
 
     // ---- what the canvas drew this frame (the next frame's clicks and the tests read it) ----
     struct Rect { float x0 = 0, y0 = 0, x1 = 0, y1 = 0; bool in(float x, float y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; } };
@@ -86,6 +97,68 @@ struct VisualScriptApp::Impl {
     bool wantsKeys = false;
     double lastCheckAt = -1.0;
 
+    // ---- the editor's parts, the beginner aids, the canvas's tools (VisualScriptAppAids.cpp, VisualScriptAppFields.cpp) ----
+    int promptMode = 0;                           // what "Save changes?" is for: 0 closing promptTab, 1 quitting, 2 Close Others, 3 Close All
+    bool recipeBox = false, templateBox = false;  // Pick a Recipe, Templates
+    char tplBuf[64] = "";
+    int tplLevel = 0;
+    int tabMenu = -1, commentMenu = -1, connectNode = -1;   // a tab's / a comment frame's right-click menu, a block's Connect to...
+    float popX = 0, popY = 0;                     // where that menu opens
+    std::vector<Rect> startCards;                 // the start cards as drawn (empty: not shown)
+    Rect startEmpty, startNever, helpCard, tryButton, helpToggle;
+    std::vector<std::pair<Rect, std::size_t>> chips;   // the help card's Next steps chips
+    std::string hintLine, helpTitle;
+    std::map<int, std::string> sentences, badges, liveLines;   // what each block showed under its title, its badge, its live line
+    std::vector<std::pair<int, UI::Vec2>> grips;  // each comment frame's resize grip (frame index, where)
+    std::vector<UI::Vec2> knotsDrawn;             // each knot as drawn
+    std::vector<Rect> commentRects;               // each comment frame as drawn
+    int resizeComment = -1;
+    bool nodeMoved = false;                       // the block being dragged has moved (let go: it may go onto a wire)
+    const okay::vs::NodeGraph* live = nullptr;    // the running copy of the shown graph (this frame), and the object it runs on
+    std::string liveName;
+    std::string keyWait;                          // the key field waiting for the next key press ("" none)
+    char declName[64] = "", newStruct[64] = "", newField[64] = "";   // the saved values panel
+    int declScope = 0;
+    std::string declType = "Number", declMsg;
+    std::size_t valueSig = 0;                     // the typed values' fingerprint (a change: the person edited a number)
+    bool wiredThisFrame = false;
+    std::map<std::string, Rect> fieldRects;       // where the Details pane's fields were drawn (FieldOnScreen: the tests click them)
+    void markField(const std::string& id) {
+        const UI::Vec2 a = UI::GetItemRectMin(), b = UI::GetItemRectMax();
+        fieldRects[id] = Rect{a.x, a.y, b.x, b.y};
+    }
+
+    okay::editor::EditorState* ed() const { return cfg.editor ? cfg.editor() : nullptr; }
+    std::string project() const;                  // the editor's project folder, else the app's folder
+    bool overCanvasCard(float x, float y) const;  // the help card or the start cards take the pointer there
+    void refreshLive();
+    void closeMany(int keep);                     // Close Others (keep >= 0) / Close All (-1), asking first when one is changed
+    void drawStartCards(float X, float Y, float W, float H, bool overlay);
+    void drawHelpCard(bool modal);
+    void drawHintBar(float X, float Y, float W, float H);
+    void drawRecipeBox(float X, float Y, float W, float H);
+    void drawTemplateBox(float X, float Y, float W, float H);
+    void drawTabMenu();
+    void drawCommentMenu();
+    void drawConnectMenu();
+    void drawOutline(float X, float Y, float W, float H, bool modal);
+    void drawPaused();
+    void drawBlockFields(vsed::VsEditNode& n, const vsed::VsDef& d, float W, bool modal);
+    void drawSavedValues(float W, bool modal);
+    void drawSteps(vsed::VsEditNode& n, const vsed::VsDef& d, float W);
+    bool keyField(const std::string& id, std::string& value, float width);
+    bool refSlot(const std::string& id, std::string& value, okay::vs::VsRefKind kind, bool defaultSelf, float width);
+    bool choiceField(const std::string& id, std::string& value, vsed::VsChoiceKind kind, float width);
+    bool quickField(vsed::VsEditNode& n, const okay::vs::QuickBlock& qb, int i, std::string& value, float width);
+    std::vector<std::string> recipeNames() const;
+    bool pickRecipe(std::size_t index);
+    bool attachSelected();
+    int menuBox(const std::string& id, float px, float py, const std::vector<std::string>& rows, bool& close);
+    bool connectFrom(int node, std::size_t row);
+    bool AddNextStepAt(std::size_t index);
+    bool TryBlock();
+    void restoreVersion(const std::string& text);
+
     explicit Impl(Config c);
     // tabs and files (VisualScriptApp.cpp)
     vsed::VsEditState& st();
@@ -97,7 +170,7 @@ struct VisualScriptApp::Impl {
     void requestClose(int index);
     void answerPrompt(int answer);
     void requestQuit();
-    bool modalOpen() const { return openBox || saveAsBox || promptOpen || renameBox; }
+    bool modalOpen() const { return openBox || saveAsBox || promptOpen || renameBox || recipeBox || templateBox; }
     void note(const std::string& line, int level = 0);
     void saveSettings();
     void frame(float X, float Y, float W, float H);
@@ -122,6 +195,8 @@ struct VisualScriptApp::Impl {
     void openPalette(float sx, float sy, float wx, float wy);
     void buildPalette();
     bool pickPalette(std::size_t index);
+    void buildPaletteAll();
+    void toggleFavourite(std::size_t index);
     void frameAll(bool selectionOnly);
     float scale() const;
     UI::Vec2 toScreen(float wx, float wy) const;

@@ -3,7 +3,7 @@
 // wire carries, and which wires the run went through this frame (lit while playing).
 // It reads the trace the running graph keeps while NodeGraph::Tracing() is on (VsNode::execCount and lastOut); it
 // never runs a node, so looking at a value can't change what the game does.
-// Included from inside VisualScriptEditor.hpp after the graph model (VsEditGraph). Written for this project from its
+// Included from inside VisualScriptModel.hpp after the graph model (VsEditGraph). Written for this project from its
 // own debugger rules (engine/include/okay/VisualScript/VsDebug.hpp).
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Scene/GameObject.hpp"

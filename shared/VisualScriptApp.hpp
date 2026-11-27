@@ -6,7 +6,12 @@
 // values typed into unwired inputs); the checker's problems with their quick fixes; the IDE tools of #1317 (align, distribute,
 // straighten, auto-arrange, collapse to function, bookmarks, find references in every graph of the folder, watch values, the
 // debugger's breakpoints and paused bar, compare with the saved file); the graph as OkayScript; undo and redo; copy, paste,
-// duplicate; Save, Save As, Save All, Reopen Closed Tab; a status line; settings kept in a file of their own.
+// duplicate; Save, Save As, Save All, Reopen Closed Tab, Close Others / Close All, Restore Previous Version; a status line; settings
+// kept in a file of their own. The beginner aids (start cards, the "What is this?" card with Next steps and Try this block, the
+// next-step hint, a plain sentence and a badge on every block, plug tips), a block's fields with the widget its kind calls for (keys,
+// object and file slots that take the editor's drops, choice lists, Quick block fields, Action steps, Switch cases), the outline and
+// the saved values panel, recipes and templates, Connect to..., blocks put on wires, knots, comment frames, the live run, Add
+// Component and Density (VisualScriptAppAids.cpp, VisualScriptAppFields.cpp). It replaced the editor's Dear ImGui window.
 // ONE implementation for two hosts (owner, 2026-11-26: the Visual Script editor "must be its own program as well as inside the
 // editor"), the same way as the Script Editor (shared/ScriptIdeApp.hpp) and the Browser (shared/BrowserApp.hpp):
 //   * the Visual Script program (visualscript/main.cpp, `okay-visual-script [FOLDER | FILE.okayvs ...]`) draws it over its window;
@@ -24,6 +29,7 @@
 #include <string>
 #include <vector>
 
+namespace okay::editor { class EditorState; }
 namespace okay::editor::vsed { struct VsEditState; }
 namespace okay::vs { class NodeGraph; }
 
@@ -35,6 +41,10 @@ struct AppSettings {
     bool showMinimap = true;     ///< the whole graph in the canvas's corner (click to jump)
     bool snapGrid = true;        ///< a moved block snaps to the grid when it is let go
     bool scrollPans = false;     ///< trackpad mode: the wheel pans, Ctrl+wheel zooms
+    bool showOutline = false;    ///< the outline beside the canvas (events, functions, breakpoints, saved values, inputs)
+    bool liveValues = true;      ///< while the game runs: the blocks that ran flash, values beside the plugs, the line under a block
+    bool showHint = true;        ///< the one-line next-step hint at the bottom of the canvas
+    int density = -1;            ///< View > Density in the program (0 Compact .. 2 Spacious; -1 not chosen). The editor keeps its own.
     int panel = 0;               ///< the panel under the canvas: 0 none, 1 Problems, 2 Navigator, 3 OkayScript, 4 Compare
     std::string lastFolder;      ///< the folder that was open last (the program opens it again with no argument)
     std::vector<std::string> recentFiles;   ///< most recent first, at most 10
@@ -71,6 +81,10 @@ public:
         std::function<void()> stopPlay;
         /// More items for View > Window (the editor: Float / Dock). Empty: none.
         std::function<std::vector<AppCommand>()> windowCommands;
+        /// The editor: its scene and project (object lists in a block's slots, objects dropped from the Hierarchy, Attach to Selected
+        /// Object, the component a block is missing and Add Component, the parts a recipe adds to the selected object, the running
+        /// object's name and saved values). Empty or null (the program, which has no scene): those parts are not shown.
+        std::function<okay::editor::EditorState*()> editor;
     };
 
     explicit VisualScriptApp(Config config);
@@ -154,6 +168,59 @@ public:
     int Panel() const;
     /// Toggle a breakpoint on the selected block (F9; kept per graph file in the engine's debugger).
     bool ToggleBreakpoint();
+
+    // ---- the beginner aids (what a test reads back of the last frame drawn) ----
+    /// The start cards over an empty graph: shown, and where card `i` was drawn (false when it was not).
+    bool StartCardsShown() const;
+    bool StartCardOnScreen(int i, float& x0, float& y0, float& x1, float& y1) const;
+    /// The next-step hint at the bottom of the canvas ("" when none was shown).
+    const std::string& HintLine() const;
+    /// The "What is this?" card of the selected block: its title ("" when not shown), its Next steps chips (titles) and taking one,
+    /// and Try this node (a small graph that uses the block).
+    const std::string& HelpCardTitle() const;
+    std::vector<std::string> NextStepChips() const;
+    bool AddNextStep(std::size_t index);
+    bool TryThisBlock();
+    /// The plain sentence drawn under a block's title, and its badge ("Ready", "Needs input", "Error"). "" when not drawn.
+    std::string BlockSentence(int node) const;
+    std::string BlockBadge(int node) const;
+
+    // ---- recipes, templates, the editor's actions ----
+    /// Pick a Recipe: recipe `index` of the model's list (VsRecipes()), then the "More recipes" (VsExtraRecipes()) after them.
+    std::vector<std::string> RecipeNames() const;
+    bool PickRecipe(std::size_t index);
+    /// Templates: the names matching `query` at `level` (a VsLevelFilter) and taking one (it replaces the graph on screen).
+    std::vector<std::string> TemplateNames(const std::string& query, int level) const;
+    bool ApplyTemplate(const std::string& name);
+    /// Attach to Selected Object (the editor): false with no editor, no selected object, or when the graph could not be saved.
+    bool AttachToSelected();
+    /// File > Restore Previous Version: the earlier saves' labels, and putting one on screen (Undo takes it back).
+    std::vector<std::string> PreviousVersions() const;
+    bool RestoreVersion(std::size_t index);
+    /// Close Others / Close All, as the tab's right-click menu does (changed tabs ask first).
+    void CloseOthers(int tab);
+    void CloseAll();
+    /// The outline's rows ("When this happens: On Start", "Named actions: Jump", "Saved values: score", ...).
+    std::vector<std::string> OutlineRows() const;
+
+    // ---- the canvas's tools ----
+    /// Open the Connect to... list for block `node`: its plugs; picking plug `row` opens the Add Block list with the blocks that fit it.
+    std::vector<std::string> ConnectRows(int node) const;
+    bool ConnectFrom(int node, std::size_t row);
+    /// Where a comment frame's resize grip and a knot were drawn (false when not drawn).
+    bool CommentGripOnScreen(int comment, float& x, float& y) const;
+    bool CommentOnScreen(int comment, float& x0, float& y0, float& x1, float& y1) const;
+    bool KnotOnScreen(int knot, float& x, float& y) const;
+    /// The text the live run shows under block `node` ("" when it has not run or the game is not running).
+    std::string LiveLine(int node) const;
+    /// A block's missing component (the editor; "" when nothing is missing) and Add Component for it.
+    std::string MissingComponent(int node) const;
+    bool AddMissingComponent(int node);
+
+    /// Where a field of the Details pane was drawn last frame: "key<block>" (a key field), "arg<block>" (a block's setting: its slot,
+    /// list or text), "pin<block>_<input>" (an unwired input's slot or text), "qk<block>_<field>" / "q<block>_<field>" (a Quick
+    /// block's key / other field), "addstep<block>", "case<block>", "newvar" and "addvar" (the saved values panel).
+    bool FieldOnScreen(const std::string& id, float& x0, float& y0, float& x1, float& y1) const;
 
     /// Draw the Visual Script app in (x, y, w, h) and act on what the person did. Between OkayUI::BeginFrame and EndFrame.
     void Frame(float x, float y, float w, float h);

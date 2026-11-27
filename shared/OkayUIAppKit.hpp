@@ -46,9 +46,9 @@ inline bool BeginDialog(const std::string& id, float X, float Y, float W, float 
     return true;
 }
 
-/// What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), and where the
-/// strip's tabs end (a host draws a "+" there).
-struct TabStripResult { int clicked = -1, close = -1; float endX = 0; };
+/// What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), the tab
+/// right-clicked (its menu; -1 none), and where the strip's tabs end (a host draws a "+" there).
+struct TabStripResult { int clicked = -1, close = -1, menu = -1; float endX = 0; };
 /// A strip of document tabs in (X, Y, W, h), drawn in the current window: each label (already with its "* " when changed) with
 /// a close "x", the `active` one marked. `fit(text, maxW)` cuts a label to a width. Clicks count unless `modal`.
 template <class Fit>
@@ -73,6 +73,7 @@ TabStripResult DrawTabStrip(float X, float Y, float W, float h, const std::vecto
         dl->AddText(UI::Vec2(cx + 3, Y + (h - lh) * 0.5f + 1), overClose ? kText : kDim, "x");
         if (hover && !modal && UI::IsMouseClicked(0)) { if (overClose) r.close = (int)i; else r.clicked = (int)i; }
         if (hover && !modal && UI::IsMouseClicked(2)) r.close = (int)i;
+        if (hover && !modal && UI::IsMouseClicked(1)) r.menu = (int)i;
         x += tw + 2;
     }
     r.endX = x;

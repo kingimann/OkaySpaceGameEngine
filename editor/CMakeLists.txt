@@ -65,8 +65,9 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptEditorAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeApp.cpp   # the Script Editor window: the Script Editor program's app
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppScene.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppNav.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppEdit.cpp
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppView.cpp   # its scene scripts, New Script, find, navigation, edits, the view and the disk
-    VisualScriptAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/VisualScriptApp.cpp   # the Visual Script (App) window: the Visual Script program's app
+    VisualScriptAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/VisualScriptApp.cpp   # the Visual Script window: the Visual Script program's app
     ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppCanvas.cpp   # its canvas and Add Block list
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppAids.cpp ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppFields.cpp   # its aids, panels and fields
     ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
     PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
     PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)

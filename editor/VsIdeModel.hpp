@@ -1,8 +1,8 @@
 #pragma once
 // The Visual Script IDE commands on a graph tab, with no drawing: arrange (align, distribute, straighten, auto-arrange), collapse
 // to function, bookmarks, find references (the Navigator's state), watch values, fix all; the per-tab IDE state (watches, drawn
-// block sizes, knots being dragged), knots, and the Compare diff. Run by the editor's Dear ImGui canvas (VsIdeCanvas.hpp) and the
-// Visual Script app (shared/VisualScriptApp). Moved out of VsIdeCanvas.hpp unchanged. Written for this project.
+// block sizes, knots being dragged), knots, and the Compare diff. Run by the Visual Script app (shared/VisualScriptApp). Written
+// for this project.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

@@ -362,7 +362,6 @@ inline std::vector<Entry> PanelsSubmenu() {
 inline std::vector<Entry> ToolsSubmenu() {
     std::vector<Entry> t;
     t.push_back(Toggle("tool.visualscript", "Visual Script"));
-    t.push_back(Toggle("tool.visualscriptapp", "Visual Script (App)"));
     t.push_back(Toggle("tool.scripteditor", "Script Editor"));
     t.push_back(Sep());
     t.push_back(Toggle("tool.animation", "Animation"));

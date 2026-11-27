@@ -2,9 +2,9 @@
 // Visual Script (docs/feature_map/14-visual-scripting.md 14.1, 14.9): the graph editor's model, with no drawing. The node registry (every block
 // the editor can place, from the engine's tables), the editable graph (VsEditGraph: blocks, wires, comments, knots, variables;
 // the .okayvs text it reads and writes), its OkayScript export, the checker's findings, a graph tab's state (VsEditState: the
-// selection, the view, undo and redo) and the open tabs (VsSession). Both views of it draw this one model: the editor's Dear
-// ImGui window (VisualScriptEditor.hpp) and the Visual Script app (shared/VisualScriptApp.hpp: the program okay-visual-script
-// and the editor's Visual Script window). Moved out of VisualScriptEditor.hpp unchanged, so nothing here needs imgui.h.
+// selection, the view, undo and redo) and the open tabs (VsSession). The Visual Script app (shared/VisualScriptApp.hpp: the
+// program okay-visual-script and the editor's Visual Script window) draws this one model. Nothing here needs imgui.h (it was the
+// editor's Dear ImGui window's model, VisualScriptEditor.hpp, until the app replaced that window).
 // Written for this project.
 #include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "EditorState.hpp"
@@ -1110,6 +1110,7 @@ private:
 public:
 
     VsEditNode* find(int id) { for (auto& n : nodes) if (n.id == id) return &n; return nullptr; }
+    const VsEditNode* find(int id) const { for (const auto& n : nodes) if (n.id == id) return &n; return nullptr; }
     int add(const std::string& type, float x, float y) {
         VsEditNode n; n.id = nextId++; n.type = type; n.x = x; n.y = y;
         const VsDef* d = FindDef(type);
@@ -3013,21 +3014,18 @@ inline void (*LogFn)(const std::string&, int) = nullptr;
 inline void Log(const std::string& m, int lv = 0) { if (LogFn) LogFn(m, lv); }
 /// When set, saving a graph goes through this (backups + atomic write). Otherwise ofstream.
 inline bool (*SaveTextFile)(const std::string& path, const std::string& content) = nullptr;
-/// Host draws "Restore previous version" entries for this path (BackupManager).
-inline void (*VsBackupMenu)(const std::string& path) = nullptr;
+/// The earlier saves of a graph file, newest first: (when it was saved, its text). The editor sets it (its BackupManager); null in the
+/// Visual Script program, whose File > Restore Previous Version then says there are none.
+inline std::vector<std::pair<std::string, std::string>> (*VsBackups)(const std::string& path) = nullptr;
 
 // ---- The Actions step library (the editor fills these in) -------------------
 // One graph editor covers both styles: wired nodes, and the no-code steps
 // (Move, Play Sound, Set Variable, Has Tag...) that the Actions component had.
-struct VsStepInfo { std::string op, label, group, desc; bool listOnly = false; };   // listOnly: only inside Action Steps
+struct VsStepInfo { std::string op, label, group, desc; bool listOnly = false; std::string hint; };   // listOnly: only inside Action Steps; hint: its values in words ("x y z")
 /// Every instruction (cond = false) or condition (cond = true) step, grouped.
 inline const std::vector<VsStepInfo>* (*StepCatalog)(bool cond) = nullptr;
-/// Draw the friendly editor row for one step. Returns 0, or 1 remove / 2 up / 3 down.
-inline int (*StepEditor)(okay::ActionList::Item& it, bool cond, int id, bool& changed) = nullptr;
 /// "score += 1", "toward Player @ 3": a one-line reading of a step's arguments.
 inline std::string (*StepSummary)(const okay::ActionList::Item& it) = nullptr;
-/// Ready-made behaviours: draw the picker popup `popupId`; fills `out` when one is chosen.
-inline bool (*TemplatePicker)(const char* popupId, okay::ActionList& out) = nullptr;
 
 inline std::string StepLabel(const std::string& op, bool cond) {
     if (op == "declare_var") return "Starting Value";
@@ -3632,17 +3630,19 @@ inline const std::vector<std::string>& VsAssetStems(const std::filesystem::path&
     return e.stems;
 }
 
-// Clips, tags, scenes and the rest of the named lists a dropdown shows.
-inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsChoiceKind kind) {
+// Clips, tags, scenes and the rest of the named lists a dropdown shows. `scene` null (the Visual Script program, which has no scene):
+// the lists come from the graph and the project's files only.
+inline VsChoiceLists VsGatherChoices(okay::Scene* scene, okay::GameObject* selected, const std::string& projectDir, const VsEditGraph& g,
+                                     VsChoiceKind kind) {
     VsChoiceLists lists;
-    okay::GameObject* target = ed.selected();
-    if (!target)
+    okay::GameObject* target = selected;
+    if (!target && scene)
         for (const auto& id : State().boundGuids)
-            if (okay::GameObject* o = ed.scene().FindByGuid(id)) { target = o; break; }
+            if (okay::GameObject* o = scene->FindByGuid(id)) { target = o; break; }
     auto addTarget = [&](const std::string& s) { VsPushUnique(lists.onTarget, s); };
     auto addFall = [&](const std::string& s) { VsPushUnique(lists.fallback, s); };
     namespace fs = std::filesystem;
-    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+    fs::path assets = projectDir.empty() ? fs::path("Assets") : fs::u8path(projectDir) / "Assets";
     auto scanExt = [&](const char* ext) { for (const std::string& st : VsAssetStems(assets, ext, VsNowSeconds())) addFall(st); };
     switch (kind) {
         case VsChoiceKind::Clip:
@@ -3668,8 +3668,9 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
                 if (n.type == "AnimTrigger" || n.type == "AnimSetFloat" || n.type == "AnimSetBool") addFall(n.arg);
             break;
         case VsChoiceKind::Tag:
-            for (const auto& up : ed.scene().Objects())
-                if (up && !up->tag.empty()) addTarget(up->tag);
+            if (scene)
+                for (const auto& up : scene->Objects())
+                    if (up && !up->tag.empty()) addTarget(up->tag);
             break;
         case VsChoiceKind::Layer:
             for (int i = 0; i < okay::Layers::kCount; ++i) {
@@ -3697,6 +3698,9 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
     }
     return lists;
 }
+inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsChoiceKind kind) {
+    return VsGatherChoices(&ed.scene(), ed.selected(), ed.projectDir(), g, kind);
+}
 
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
@@ -3714,3 +3718,4 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
 #include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VsIdeModel.hpp"            // the IDE commands on a graph tab (arrange, collapse, bookmarks, references, watches, fixes)
+#include "VsEditorActions.hpp"        // recipes, templates, attach, the outline, a block's readiness, Switch cases, the live flashes

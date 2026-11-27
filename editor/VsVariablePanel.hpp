@@ -1,40 +1,17 @@
 #pragma once
 #include "VisualScriptPanelWords.hpp"
-// The Visual Script editor's variable declarations: add a typed variable, pick its
-// scope, edit its default (numbers, vectors, colours, objects, lists, maps, structs)
-// and define struct types. The model lives in VsEditGraph (declare, setVarType...);
-// this is the ImGui for it. Header-only, included by VisualScriptEditor.hpp.
+// A Visual Script value edited with Dear ImGui (the Inspector's exposed graph variables, editor/main.cpp): numbers, vectors, colours,
+// objects, lists, maps and structs, and a type picker. The Visual Script app edits the same values with OkayUI
+// (shared/VisualScriptAppFields.cpp); the rules (VsExposedValue, VsVarTypeChoices, VsSetDeclDefaultInText) are in VsEditorActions.hpp.
 #include "imgui.h"
 #include "okay/VisualScript/VsDecl.hpp"
+#include "VisualScriptModel.hpp"   // VsVarTypeChoices
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
 namespace okay::editor::vsed {
-
-/// An old `var` row (or a typed one): its default as a value of its type.
-inline okay::vs::VsValue VsExposedValue(const std::string& type, const std::string& value, bool typed,
-                                        const std::vector<okay::vs::StructDef>& structs, okay::vs::VarType& vt) {
-    using namespace okay::vs;
-    if (!ParseVarType(type, structs, vt)) vt = VarType{};
-    VsValue v;
-    if (typed) {
-        if (VsParseTyped(vt, value, structs, v)) return v;
-        return VsDefaultFor(vt, structs);
-    }
-    if (vt.base == PinType::Number) { float f = 0; VsParseFinite(value, f); return VsValue(f); }
-    if (vt.base == PinType::Bool) return VsValue(value == "true");
-    return VsValue(value);
-}
-
-inline const std::vector<std::string>& VsVarTypeChoices() {
-    static const std::vector<std::string> c = {
-        "Number", "Bool", "Text", "Vector3", "Color", "Object", "List", "Map",
-        "List<Number>", "List<Text>", "List<Bool>", "List<Vector3>", "List<Color>", "List<Object>",
-        "Map<Number>", "Map<Text>", "Map<Bool>", "Map<Vector3>", "Map<Color>", "Map<Object>"};
-    return c;
-}
 
 /// A type picker: the fixed types, then the graph's structs. True when the choice changed.
 inline bool VsTypeCombo(const char* id, std::string& type, const std::vector<std::string>& structNames, bool structsToo) {
@@ -196,188 +173,6 @@ inline bool VsEditValue(const char* label, const okay::vs::VarType& t, okay::vs:
     }
     ImGui::PopID();
     return changed;
-}
-
-/// A graph's text with variable `name` (in `scope`) given the starting value `literal`. An old
-/// `var` line becomes a typed `decl` line with the type its value had. Everything else in the
-/// text is kept byte for byte. False when no such declaration is in `text`.
-inline bool VsSetDeclDefaultInText(const std::string& text, const std::string& name, okay::vs::VarScope scope,
-                                   const std::string& literal, const std::string& typeOfLegacy, std::string& out) {
-    std::string result;
-    bool done = false;
-    std::size_t pos = 0;
-    while (pos <= text.size()) {
-        std::size_t nl = text.find('\n', pos);
-        const bool last = nl == std::string::npos;
-        const std::string line = text.substr(pos, last ? std::string::npos : nl - pos);
-        std::string repl = line;
-        if (!done) {
-            const std::vector<std::string> t = okay::vs::TokenizeLine(line);
-            auto unq = [](std::string x) { if (x.size() >= 2 && x.front() == '"' && x.back() == '"') x = x.substr(1, x.size() - 2); return x; };
-            if (t.size() >= 4 && t[0] == "decl" && unq(t[1]) == name) {
-                okay::vs::VarScope sc;
-                if (okay::vs::VarScopeFromName(unq(t[3]), sc) && sc == scope) {
-                    repl = "decl " + name + " " + okay::vs::QuoteIfNeeded(unq(t[2])) + " " + okay::vs::VarScopeName(sc) + " " + okay::vs::QuoteText(literal);
-                    done = true;
-                }
-            } else if (t.size() >= 2 && t[0] == "var" && unq(t[1]) == name && scope == okay::vs::VarScope::Object) {
-                repl = "decl " + name + " " + typeOfLegacy + " object " + okay::vs::QuoteText(literal);
-                done = true;
-            }
-        }
-        result += repl;
-        if (last) break;
-        result += '\n';
-        pos = nl + 1;
-    }
-    if (done) out = result;
-    return done;
-}
-
-/// The Variables section of the sidebar: declarations, defaults and struct types.
-template <class Graph>
-inline void VsDrawVariableDecls(Graph& g) {
-    using namespace okay::vs;
-    static std::string msg;      // the last refusal ("there is already a ... variable")
-    static char newName[64] = "";
-    static std::string newType = "Number";
-    static int newScope = 0;
-    static char newStruct[64] = "";
-    static char newField[64] = "";
-    static std::string newFieldType = "Number";
-    static int fieldStruct = -1;
-    static const char* kScopes[] = {kPanelScopes[0], kPanelScopes[1], kPanelScopes[2]};
-    static const char* kScopeNames[] = {"object", "scene", "global"};
-
-    ImGui::Spacing();
-    ImGui::TextUnformatted(kPanelSaved);
-    ImGui::Separator();
-    ImGui::TextWrapped("%s", kPanelSavedHelp);
-    if (!g.declError().empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
-        ImGui::TextWrapped(kPanelSavedBad, g.declError().c_str());
-        ImGui::PopStyleColor();
-    }
-    std::vector<std::string> structNames;
-    for (const auto& s : g.structs) structNames.push_back(s.name);
-
-    int removeAt = -1;
-    for (std::size_t i = 0; i < g.vars.size(); ++i) {
-        auto& e = g.vars[i];
-        ImGui::PushID((int)i + 910000);
-        ImGui::Separator();
-        // Name (a rename also renames the nodes that use it), scope, remove.
-        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", e.name.c_str());
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 28.0f);
-        if (ImGui::InputText("##vname", nb, sizeof(nb), ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() && std::string(nb) != e.name)) {
-            std::string err; msg = g.renameVar(i, nb, &err) ? "" : err;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelNameTip);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("x")) removeAt = (int)i;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelRemoveTip);
-        int sc = e.scope == "scene" ? 1 : e.scope == "global" ? 2 : 0;
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##vscope", &sc, kScopes, 3)) { std::string err; msg = g.setVarScope(i, kScopeNames[sc], &err) ? "" : err; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelScopeTip);
-        std::string ty = e.type;
-        if (VsTypeCombo("##vtype", ty, structNames, true)) { std::string err; msg = g.setVarType(i, ty, &err) ? "" : err; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelTypeTip);
-        // The default, edited with the widget for its type.
-        VarType vt;
-        VsValue val = VsExposedValue(e.type, e.value, e.typed, g.structDefs(), vt);
-        if (VsEditValue(e.name.c_str(), vt, val, g.structDefs())) {
-            e.value = e.typed ? VsToLiteral(val) : (val.IsString() ? val.AsString() : VsToLiteral(val));
-            if (!e.typed) { e.typed = true; e.value = VsToLiteral(val); }
-            g.declsChanged();
-        }
-        // The same default as text, for pasting or typing a whole list at once.
-        if (vt.base == PinType::List || vt.base == PinType::Map || vt.IsStruct() || vt.base == PinType::Object) {
-            char lb[1024]; std::snprintf(lb, sizeof(lb), "%s", e.typed ? e.value.c_str() : VsToLiteral(val).c_str());
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputTextWithHint("##vlit", kPanelStartHint, lb, sizeof(lb), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                std::string err; msg = g.setVarDefault(i, lb, &err) ? "" : "default: " + err;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelStartTip);
-        }
-        ImGui::PopID();
-    }
-    if (removeAt >= 0) g.removeVar((std::size_t)removeAt);
-
-    ImGui::Separator();
-    ImGui::TextUnformatted(kPanelNewSaved);
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##newvar", kPanelNameHint, newName, sizeof(newName));
-    ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##newscope", &newScope, kScopes, 3);
-    VsTypeCombo("##newtype", newType, structNames, true);
-    if (ImGui::Button((std::string(kPanelAddSaved) + "##decl").c_str(), ImVec2(-1, 0))) {
-        std::string err;
-        if (g.declare(newName, newType, kScopeNames[newScope], &err)) { newName[0] = '\0'; msg.clear(); }
-        else msg = err;
-    }
-    if (!msg.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
-        ImGui::TextWrapped("%s", msg.c_str());
-        ImGui::PopStyleColor();
-    }
-
-    // ---- Struct types ----
-    ImGui::Spacing();
-    // Folded away unless the script uses a bundle.
-    if (ImGui::CollapsingHeader(kPanelBundles, g.structs.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::TextWrapped("%s", kPanelBundlesHelp);
-    int removeStruct = -1;
-    for (std::size_t si = 0; si < g.structs.size(); ++si) {
-        auto& st = g.structs[si];
-        ImGui::PushID((int)si + 950000);
-        const std::string head = st.name + "  (" + std::to_string(st.fields.size()) + " field" + (st.fields.size() == 1 ? "" : "s") + ")";
-        if (ImGui::TreeNodeEx(head.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-            int removeField = -1;
-            for (std::size_t fi = 0; fi < st.fields.size(); ++fi) {
-                auto& f = st.fields[fi];
-                ImGui::PushID((int)fi);
-                ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(f.name.c_str());
-                ImGui::SameLine(); if (ImGui::SmallButton("x")) removeField = (int)fi;
-                std::string fty = f.type;
-                std::vector<std::string> before;
-                for (std::size_t k = 0; k < si; ++k) before.push_back(g.structs[k].name);
-                if (VsTypeCombo("##ftype", fty, before, true)) {
-                    // A struct field can only use structs declared above it.
-                    std::vector<StructDef> names; for (const auto& b : before) names.push_back({b, {}});
-                    VarType probe; std::string err;
-                    if (ParseVarType(fty, names, probe, &err)) { f.type = VarTypeText(probe); f.value.clear(); g.declsChanged(); msg.clear(); }
-                    else msg = err;
-                }
-                char fb[256]; std::snprintf(fb, sizeof(fb), "%s", f.value.c_str());
-                ImGui::SetNextItemWidth(-1);
-                if (ImGui::InputTextWithHint("##fdef", kPanelPartStart, fb, sizeof(fb))) { f.value = fb; g.declsChanged(); }
-                ImGui::PopID();
-            }
-            if (removeField >= 0) g.removeStructField(si, (std::size_t)removeField);
-            if (fieldStruct != (int)si) { /* add-field row is per struct */ }
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-            ImGui::InputTextWithHint("##nfield", kPanelPartName, newField, sizeof(newField));
-            ImGui::SameLine();
-            if (ImGui::SmallButton(kPanelAddPart)) {
-                std::string err;
-                if (g.addStructField(si, newField, "Number", &err)) { newField[0] = '\0'; msg.clear(); } else msg = err;
-            }
-            if (ImGui::SmallButton(kPanelRemoveBundle)) removeStruct = (int)si;
-            ImGui::TreePop();
-        }
-        ImGui::PopID();
-    }
-    if (removeStruct >= 0) g.removeStruct((std::size_t)removeStruct);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-    ImGui::InputTextWithHint("##nstruct", kPanelBundleName, newStruct, sizeof(newStruct));
-    ImGui::SameLine();
-    if (ImGui::SmallButton(kPanelAddBundle)) {
-        std::string err;
-        if (g.declareStruct(newStruct, &err)) { newStruct[0] = '\0'; msg.clear(); } else msg = err;
-    }
-    }
-    (void)newFieldType;
 }
 
 } // namespace okay::editor::vsed

@@ -11,7 +11,9 @@ endif()
 # The Visual Script app without a window. The program and the test link it; the editor compiles these sources itself.
 add_library(okay_visual_script_app STATIC
     ${CMAKE_SOURCE_DIR}/shared/VisualScriptApp.cpp          # files, tabs, menus, Details, Problems / Navigator / OkayScript / Compare
-    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppCanvas.cpp)   # the canvas and the Add Block list
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppCanvas.cpp    # the canvas and the Add Block list
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppAids.cpp      # start cards, the help card, hints, recipes, templates, the outline, menus
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppFields.cpp)   # the Details pane's fields and the saved values
 target_include_directories(okay_visual_script_app PUBLIC ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(okay_visual_script_app PUBLIC okay_ui okay::engine)
 target_compile_features(okay_visual_script_app PUBLIC cxx_std_17)
@@ -31,7 +33,8 @@ endif()
 if(OKAY_BUILD_TESTS AND OKAY_BUILD_OKAYUI_TESTS AND TARGET okay_ui_render AND NOT WIN32)
     # The app drawn standalone and in a host's rectangle (goldens), opening, editing and saving graphs, the Add Block list, wiring
     # plugs, the IDE tools, the host hooks and the settings file (okayui/tests/test_okayui_visual_script_app.cpp).
-    add_executable(test_okayui_visual_script_app ${CMAKE_SOURCE_DIR}/okayui/tests/test_okayui_visual_script_app.cpp)
+    add_executable(test_okayui_visual_script_app ${CMAKE_SOURCE_DIR}/okayui/tests/test_okayui_visual_script_app.cpp
+        ${CMAKE_SOURCE_DIR}/editor/EditorState.cpp ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp)   # a real editor scene for the editor's parts
     target_link_libraries(test_okayui_visual_script_app PRIVATE okay_visual_script_app okay_ui_render)
     target_include_directories(test_okayui_visual_script_app PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests)
     target_compile_definitions(test_okayui_visual_script_app PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/okayui/tests/golden")

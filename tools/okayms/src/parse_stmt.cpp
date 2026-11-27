@@ -843,7 +843,11 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             const bool by_conversion =
                 !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
                 !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
-                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array());
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array() &&
+                  (value_type.struct_id == cur_ret.struct_id || derives_from(value_type.struct_id, cur_ret.struct_id)));
+            // (An object of another class is converted too, Round 33: `return [a](int k) { ... };` in a function that
+            // returns std::function copied the closure's bytes into the function object: silent wrong code, a call read
+            // whatever was in its holder pointer.)
             // return s; of an object that is not this function's own local and not a temporary (a reference parameter,
             // a member, a global, *p, a[i]): the result is copy-initialized from it ([stmt.return] 2,
             // [class.copy.ctor]) by the copy constructor. Before Round 31 its bytes were copied: the result shared the
@@ -1230,6 +1234,58 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                 init = std::move(sub);
             } else if (!decl.type.is_ref) {
                 class_ptr_convert(&init, decl.type);
+            }
+        }
+        if (has_init && !is_static && decl.type.is_ref && decl.type.base == 3 && decl.type.pointers == 0 &&
+            !decl.type.is_array() && decl.type.struct_id >= 0) {
+            // const T& k = f(); with f returning a T: the temporary lives as long as the reference ([class.temporary] 6;
+            // Round 33, ActionList.cpp's `const std::string& k = Str(c, i);`, before "not an address"). It is a hidden
+            // local of the block, made in place by the call (or moved from the statement's temporary) and destroyed at
+            // the end of the block like a named object; the reference is bound to it.
+            Type from;
+            const bool prvalue_call = init.kind == Node::Call && static_type(init, &from) && from.base == 3 &&
+                                      from.pointers == 0 && !from.is_ref && !from.is_array() && from.struct_id == decl.type.struct_id;
+            const bool stmt_temp = init.kind == Node::Name && init.text.compare(0, 4, "__bt") == 0 && static_type(init, &from) &&
+                                   from.base == 3 && from.pointers == 0 && !from.is_array() && from.struct_id == decl.type.struct_id;
+            if (prvalue_call || stmt_temp) {
+                Local held;
+                held.name = "__lx" + std::to_string(tmp_count++);
+                held.type = decl.type;
+                held.type.is_ref = false;
+                held.type.rref = false;
+                held.type.is_const = false;
+                held.type.pconst = false;
+                place_local(locals, held);
+                if (prvalue_call) {
+                    Node made;
+                    made.kind = Node::Assign;
+                    made.op = TAssign;
+                    made.number = 1;
+                    made.kids.push_back(node_name(held.name));
+                    made.kids.push_back(std::move(init));
+                    Node st;
+                    st.kind = Node::ExprStmt;
+                    st.kids.push_back(std::move(made));
+                    out->kids.push_back(std::move(st));
+                } else {
+                    std::vector<Node> margs;
+                    margs.push_back(std::move(init));
+                    Node call;
+                    if (!special_call(held.type.struct_id, "<ctor>", node_addr(node_name(held.name)), std::move(margs), &call))
+                        return false;
+                    out->kids.push_back(std::move(call));
+                }
+                if (obj_needs_dtor(held.type)) {
+                    std::vector<Node> rec_nodes;
+                    eh_push_object(&rec_nodes, node_addr(node_name(held.name)), held.type.struct_id, 0, locals);
+                    for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
+                    DObj obj;
+                    obj.name = held.name;
+                    obj.sid = held.type.struct_id;
+                    if (dscopes.empty()) dscopes.emplace_back();
+                    dscopes.back().push_back(std::move(obj));
+                }
+                init = node_name(held.name);
             }
         }
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);

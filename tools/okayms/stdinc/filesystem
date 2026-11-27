@@ -469,6 +469,7 @@ public:
     std::uintmax_t file_size() const;
     std::uintmax_t file_size(error_code& ec) const;
     file_time_type last_write_time() const;
+    file_time_type last_write_time(error_code& ec) const;  // (Round 33, AssetDatabase.cpp)
 };
 
 // A directory listing. Declarations only: the constructors that read a directory are not defined here.

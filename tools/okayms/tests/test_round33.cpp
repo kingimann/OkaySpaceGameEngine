@@ -440,6 +440,130 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// The Supabase and asset headers (15 and 6 survey files): an init-capture `[d = DirectSend(...)]`
+// ([expr.prim.lambda.capture] 6; before, "an init-capture is not supported"), including a moved unique_ptr; a member
+// function template whose result is std::function<R(A, B)> (the '(' inside the template arguments was taken for the
+// parameter list); `ns::C::f()` and `ns::C(args)` for a class whose name another namespace uses too ([namespace.qual]),
+// also inside a member function named like the class; `const T& k = f();` (the temporary lives as long as the
+// reference, [class.temporary] 6; before, "not an address"); `ok ? p : nullptr` with a shared_ptr p ([expr.cond] 4); a
+// default argument naming a member type of its class at a call from outside ([dcl.fct.default] 5); and map::extract,
+// vector's < and std::stable_partition.
+static void r33_backend(Tally& tally) {
+    std::printf("r33_backend\n");
+    okayms_test::run_both(kRun, tally, "backend", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+struct Direct { std::string base; std::string operator()(const std::string& p) const { return base + p; } };
+Direct Make(std::string b) { Direct d; d.base = std::move(b); return d; }
+struct Funcs {
+  std::function<std::string(const std::string&)> send_;
+  explicit Funcs(std::string url) { send_ = [d = Make(std::move(url))](const std::string& path) { return d(path); }; }
+};
+template <class T> struct Handle { T v; };
+struct Cache {
+  template <class T>
+  static std::function<int(const std::string&, int)> Wrap(std::function<int(Handle<T>, const std::string& error)> done) {
+    return [done](const std::string& e, int k) { Handle<T> h; h.v = (T)k; return done(h, e); };
+  }
+  int run() { auto w = Wrap<int>([](Handle<int> h, const std::string& e) { return h.v + (int)e.size(); }); return w("ab", 5); }
+};
+namespace okay { namespace backend {
+class Database { public: Database() {} virtual ~Database() {} virtual int Kind() const { return 1; } };
+namespace supabase {
+class Database final : public okay::backend::Database { public: explicit Database(int s) : s_(s) {} int Kind() const override { return s_; } int s_; static int Recover(int b) { return b + 40; } };
+}
+} namespace account {
+struct Service {
+  okay::backend::supabase::Database Database() const { return okay::backend::supabase::Database(7); }
+  int Two() const { return okay::backend::supabase::Database{8}.Kind(); }
+  static int Recover(int b) { return okay::backend::supabase::Database::Recover(b) + 1; }
+};
+} }
+int live = 0;
+struct C { int v; C(int x) : v(x) { ++live; } C(const C& o) : v(o.v) { ++live; } ~C() { --live; } };
+C make(int x) { return C(x); }
+int loop(int n) { int s = 0; for (int i = 0; i < n; ++i) { const C& r = make(i); s += r.v + live * 100; } return s; }
+struct Image { int w = 0; bool Load(const std::string& p) { w = (int)p.size(); return w > 2; } };
+std::shared_ptr<Image> Get(const std::string& p) { auto a = std::make_shared<Image>(); return a->Load(p) ? a : nullptr; }
+namespace m {
+struct POpt { int k = 4; };
+struct P { using Opt = POpt; int v = 0; static P From(int x, const Opt& o = Opt()) { P p; p.v = x + o.k; return p; } };
+int from(int x) { return P::From(x).v; }
+}
+struct Entry { int v = 0; };
+bool Rename(std::map<std::string, Entry>& mm, const std::string& from, const std::string& to) {
+  if (to.empty() || from == to || mm.count(to)) return false;
+  auto node = mm.extract(from);
+  if (node.empty()) return false;
+  node.key() = to;
+  mm.insert(std::move(node));
+  return true;
+}
+int entry(void) {
+  Funcs f("http://x/");
+  CK(1, f.send_("a") == "http://x/a");
+  int base = 5;
+  auto add = [n = base * 2, k = 1](int x) { return n + k + x; };
+  std::unique_ptr<int> up(new int(7));
+  auto own = [p = std::move(up)]() { return *p; };
+  CK(2, add(3) == 14 && own() == 7 && !up);
+  Cache cache;
+  CK(3, cache.run() == 7);
+  okay::account::Service svc;
+  CK(4, svc.Database().Kind() == 7 && svc.Two() == 8 && okay::account::Service::Recover(1) == 42);
+  {
+    const C& r = make(5);
+    CK(5, live == 1 && r.v == 5);
+    const C& q = C(6);
+    CK(6, live == 2 && q.v == 6);
+  }
+  CK(7, live == 0 && loop(3) == 303 && live == 0);
+  CK(8, Get("abcd") && Get("abcd")->w == 4 && !Get("a"));
+  CK(9, m::from(3) == 7);
+  std::map<std::string, Entry> mm; mm["a"].v = 1; mm["b"].v = 2;
+  CK(10, Rename(mm, "a", "c") && mm.size() == 2 && mm.count("a") == 0 && mm["c"].v == 1 && !Rename(mm, "zz", "q"));
+  std::vector<std::pair<int, int>> k1 = {{1, 2}}, k2 = {{1, 3}};
+  std::vector<int> s1 = {1, 2}, s2 = {1, 2, 0};
+  CK(11, k1 < k2 && !(k2 < k1) && k1 <= k2 && s1 < s2 && s2 >= s1);
+  std::vector<int> v = {1, 2, 3, 4, 5, 6};
+  auto mid = std::stable_partition(v.begin(), v.end(), [](int x) { return x % 2 == 0; });
+  CK(12, mid - v.begin() == 3 && v[0] == 2 && v[1] == 4 && v[2] == 6 && v[3] == 1 && v[5] == 5);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// `return [a](int k) { ... };` in a function whose result is std::function ([stmt.return] 2, [dcl.init] 17.6.3: the
+// result is copy-initialized from the closure by std::function's constructor). Silent wrong code before: the closure's
+// bytes were copied into the std::function object, so the call read its holder pointer from the captured value (the
+// first program returned 5 instead of 6; with a captured std::function it returned 10 instead of 11 or crashed).
+static void r33_return_convert(Tally& tally) {
+    std::printf("r33_return_convert\n");
+    okayms_test::run_both(kRun, tally, "return_convert", std::string(kAlloc) + R"OKMS(
+#include <functional>
+#include <string>
+std::function<int(int)> AddA(int a) { return [a](int k) { return k + a; }; }
+std::function<int(int)> PlusOne(std::function<int(int)> d) { return [d](int k) { return d(k) + 1; }; }
+struct Named { std::string s; };
+std::function<std::string()> Greet(Named n) { return [n]() { return "hi " + n.s; }; }
+int entry(void) {
+  auto w = AddA(1);
+  CK(1, w(5) == 6);
+  std::function<int(int)> base = [](int x) { return x * 2; };
+  CK(2, PlusOne(base)(5) == 11);
+  Named n;
+  n.s = "you";
+  CK(3, Greet(n)() == "hi you");
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -454,5 +578,7 @@ int main(int argc, char** argv) {
     r33_calloc(tally);
     r33_decls(tally);
     r33_lists_math(tally);
-    return tally.finish(10);
+    r33_backend(tally);
+    r33_return_convert(tally);
+    return tally.finish(12);
 }

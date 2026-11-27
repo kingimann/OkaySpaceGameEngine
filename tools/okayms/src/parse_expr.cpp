@@ -286,6 +286,9 @@ bool Parser::parse_lambda(Node* out) {
     struct Cap {
         std::string name;
         bool ref = false;
+        // An init-capture `[d = expr]` ([expr.prim.lambda.capture] 6): the hidden local the value is made in first; the
+        // closure's member d is then made from it (moved: the local is a temporary). Empty for a captured variable.
+        std::string src{};
     };
     std::vector<Cap> caps;
     bool default_value = false;
@@ -314,8 +317,54 @@ bool Parser::parse_lambda(Node* out) {
             c.name = cur().text;
             next();
             if (is(TAssign)) {
-                error = "an init-capture is not supported";
-                return false;
+                // [d = expr] (Round 33; Supabase.hpp:340, 15 files): the type is the one `auto d = expr;` deduces
+                // ([dcl.type.auto.deduct]: no reference, no top-level const, an array or function decays).
+                next();
+                if (cur_locals == nullptr) {
+                    error = "an init-capture needs a function around it";
+                    return false;
+                }
+                Node init;
+                if (!parse_expr(1, &init)) return false;
+                Type t;
+                if (!static_type(init, &t)) {
+                    error = "cannot tell the type of the init-capture " + c.name;
+                    return false;
+                }
+                t.is_ref = false;
+                t.rref = false;
+                t.is_const = false;
+                t.pconst = false;
+                if (t.is_array()) {
+                    t = peel_array(t);
+                    t.pointers += 1;
+                }
+                Local hidden;
+                hidden.name = "__bt" + std::to_string(tmp_count++);
+                hidden.type = t;
+                place_local(cur_locals, hidden);
+                if (obj_needs_ctor(t) && !class_prvalue(t, init)) {
+                    std::vector<Node> cargs;
+                    cargs.push_back(std::move(init));
+                    Node call;
+                    if (!special_call(t.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                        return false;
+                    stmt_pre.push_back(std::move(call));
+                } else {
+                    if (t.base != 3 && !convert_class(&init, t)) return false;
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;  // made in place (a class returned by a call writes the local itself)
+                    assign.kids.push_back(node_name(hidden.name));
+                    assign.kids.push_back(std::move(init));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    stmt_pre.push_back(std::move(stmt));
+                }
+                if (obj_needs_dtor(t)) stmt_temps.push_back(Temp{hidden.name, t.struct_id});
+                c.src = hidden.name;
             }
             caps.push_back(c);
         } else {
@@ -393,7 +442,7 @@ bool Parser::parse_lambda(Node* out) {
     // The captured variables: the named ones, then (for = or &) every visible local the body mentions.
     std::vector<Cap> list;
     for (const Cap& c : caps)
-        if (local_visible(c.name)) list.push_back(c);
+        if (!c.src.empty() || local_visible(c.name)) list.push_back(c);
     if (default_value || default_ref) {
         for (size_t i = body_at; i < body_end; ++i) {
             if (tokens[i].kind != TIdent || !local_visible(tokens[i].text) || tokens[i].text == "this") continue;
@@ -440,7 +489,7 @@ bool Parser::parse_lambda(Node* out) {
         def.lam_outer = cur_class;
     }
     for (const Cap& c : list) {
-        Node probe = node_name(c.name);
+        Node probe = node_name(c.src.empty() ? c.name : c.src);
         Type vt;
         if (!static_type(probe, &vt)) {
             error = "cannot tell the type of the captured variable " + c.name;
@@ -707,7 +756,7 @@ bool Parser::parse_lambda(Node* out) {
         target.op = TDot;
         target.text = c.name;
         target.kids.push_back(node_name(hidden.name));
-        Node value = node_name(c.name);
+        Node value = node_name(c.src.empty() ? c.name : c.src);
         Type vt;
         static_type(value, &vt);
         if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
@@ -1575,6 +1624,19 @@ bool Parser::parse_unary(Node* out) {
         const bool from_global = is(TColonColon);
         if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call
         std::string name = cur().text;
+        const size_t name_tok = at;  // its namespace qualifier (tokens[name_tok].qual) is read below
+        // The class a name written with namespaces in front means (okay::backend::supabase::Database(...) beside
+        // okay::backend::Database; [namespace.qual], Round 33), else the usual lookup.
+        std::string written_ns;  // ns::C(args): the namespaces a call keeps in front of the class name (set below)
+        auto struct_named = [&](const std::string& n) {
+            const std::string q = !written_ns.empty() ? written_ns
+                                  : (tokens[name_tok].nsq && tokens[name_tok].text == n ? tokens[name_tok].qual : std::string());
+            if (!q.empty())
+                for (size_t k = 0; k < structs.size(); ++k)
+                    if (structs[k].name == n && structs[k].parent < 0 && !structs[k].incomplete && ns_names(structs[k].ns, q))
+                        return static_cast<int>(k);
+            return find_struct(n);
+        };
         // A member function of the class being read hides a namespace function of the same name in a call
         // ([basic.lookup.unqual] 1, [class.member.lookup]): `Text(s)` in a member calls the member Text, even when it is
         // declared further down the class and a free Text exists.
@@ -1737,6 +1799,7 @@ bool Parser::parse_unary(Node* out) {
             if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
                 (class_name_text(suffix) || (typedefs.count(suffix) == 0 && find_struct(suffix) >= 0) ||
                  (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3))) {
+                written_ns = name.substr(0, name.rfind("::"));
                 name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
                 ns_class = true;
             }
@@ -1754,7 +1817,17 @@ bool Parser::parse_unary(Node* out) {
         // JointLimit.hpp:114; Round 31). Before, `Type` was taken as that class and `Hinge` as its member function.
         const bool scoped_enumerator = colons != std::string::npos && scope_sid < 0 && !is(TLParen) && !is(TLt) &&
                                        enum_values.count(name) > 0;
-        if (scope_sid < 0 && colons != std::string::npos && !scoped_enumerator) scope_sid = scope_class(name.substr(0, colons));
+        if (scope_sid < 0 && colons != std::string::npos && !scoped_enumerator) {
+            // okay::backend::supabase::Auth::RecoverUrl beside okay::backend::Auth (Round 33, AccountService.hpp:207): the
+            // class of the namespace written in front ([namespace.qual]).
+            const std::string cls = name.substr(0, colons);
+            if (tokens[name_tok].nsq && !tokens[name_tok].qual.empty() && tokens[name_tok].text == cls)
+                for (size_t k = 0; k < structs.size() && scope_sid < 0; ++k)
+                    if (structs[k].name == cls && structs[k].parent < 0 && !structs[k].incomplete &&
+                        ns_names(structs[k].ns, tokens[name_tok].qual))
+                        scope_sid = static_cast<int>(k);
+            if (scope_sid < 0) scope_sid = scope_class(cls);
+        }
         if (scope_sid >= 0 && colons != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
             // class has no member function of that name. Nested classes are kept under their plain name.
@@ -1904,7 +1977,9 @@ bool Parser::parse_unary(Node* out) {
             const StructDef& d = structs[static_cast<size_t>(c)];
             return d.parent >= 0 ? d.parent : d.local_in;
         };
-        if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos && enclosing(cur_class) >= 0 &&
+        // (Not for ns::C(args), ns_class: a name written with a namespace is no member, Round 33: AccountService.hpp's
+        // member Storage() returning okay::backend::supabase::Storage(...).)
+        if (cur_class >= 0 && !ns_class && !local_visible(name) && colons == std::string::npos && enclosing(cur_class) >= 0 &&
             find_field_named(structs[static_cast<size_t>(cur_class)], name) < 0) {
             // In a member function of a nested class: a static member of an enclosing class is found by its plain name
             // ([class.nest] 1, [basic.lookup.unqual] 8), after the nested class's own members.
@@ -1924,7 +1999,7 @@ bool Parser::parse_unary(Node* out) {
                         return parse_postfix(out);
                 }
         }
-        if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
+        if (cur_class >= 0 && !ns_class && !local_visible(name) && colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
                 return parse_postfix(out);
@@ -2029,7 +2104,7 @@ bool Parser::parse_unary(Node* out) {
                 if (btd->base == 3 && btd->pointers == 0 && btd->struct_id >= 0)
                     bsid = btd->struct_id;
             } else if (class_name_text(name) || find_struct(name) >= 0) {
-                bsid = find_struct(name);
+                bsid = struct_named(name);
             }
             bool named_function = false;
             for (const FuncDecl& known : funcs)
@@ -2069,7 +2144,7 @@ bool Parser::parse_unary(Node* out) {
                 if (td->base == 3 && td->pointers == 0 && td->struct_id >= 0)
                     csid = td->struct_id;
             } else if (class_name_text(name) || find_struct(name) >= 0) {
-                csid = find_struct(name);
+                csid = struct_named(name);
             }
             bool is_function = false;
             for (const FuncDecl& known : funcs)
@@ -2988,8 +3063,13 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     Node& cnode = a_class ? mid : els;
                     Node& onode = a_class ? els : mid;
                     const bool to_class = converts_by_ctor(ct.struct_id, onode, ot);
+                    // `ok ? a : nullptr` with a shared_ptr a (AssetManager.cpp; Round 33): a null pointer constant is made
+                    // into the class (shared_ptr(nullptr)); the class's explicit operator bool is not a way to int here
+                    // (okay-ms reads nullptr as 0).
+                    const bool null_const = onode.kind == Node::IntLit && onode.number == 0 && ot.pointers == 0;
                     const bool to_other = class_obj(ot) ? converts_by_ctor(ot.struct_id, cnode, ct)
-                                                        : (ot.memptr < 0 && conv_for(ct.struct_id, ot) != nullptr);
+                                                        : (ot.memptr < 0 && !(null_const && to_class) &&
+                                                           conv_for(ct.struct_id, ot) != nullptr);
                     if (to_class && !to_other) {
                         mixed = true;
                         ta = ct;

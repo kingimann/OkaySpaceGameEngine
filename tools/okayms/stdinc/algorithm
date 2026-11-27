@@ -227,6 +227,24 @@ template <typename It, typename Less> void stable_sort(It first, It last, Less l
         for (It j = i; j > first && less(*j, *(j - 1)); --j) swap(*j, *(j - 1));
     }
 }
+// stable_partition ([alg.partitions]; Round 33, Scene.cpp): the elements for which pred holds first, both groups in their
+// order. Own way: one pass moves each kept element left over the others by swaps (quadratic, no extra storage). Returns
+// the first element of the second group.
+template <typename It, typename Pred> It stable_partition(It first, It last, Pred pred) {
+    It out = first;
+    for (It it = first; it != last; ++it) {
+        if (!pred(*it)) continue;
+        for (It k = it; k != out; --k) {
+            It prev = k;
+            --prev;
+            auto tmp = std::move(*k);
+            *k = std::move(*prev);
+            *prev = std::move(tmp);
+        }
+        ++out;
+    }
+    return out;
+}
 template <typename It> void stable_sort(It first, It last) {
     for (It i = first + 1; i < last; ++i) {
         for (It j = i; j > first && *j < *(j - 1); --j) swap(*j, *(j - 1));

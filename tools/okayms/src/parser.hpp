@@ -2519,8 +2519,18 @@ struct Parser {
             if (d.kind == Node::Block && d.text == "tokdef") {
                 const size_t saved = at;
                 at = static_cast<size_t>(d.number);
+                const int owner = d.kids.empty() ? -1 : static_cast<int>(d.kids[0].number) - 1;
+                TdefSaves bound;
+                if (owner >= 0) {
+                    bound = bind_class_tdefs(owner);
+                    open_structs.push_back(owner);
+                }
                 Node made;
                 const bool ok = tokens[at].kind == TLBrace ? braced_temp(d.type.struct_id, &made) : parse_expr(1, &made);
+                if (owner >= 0) {
+                    open_structs.pop_back();
+                    unbind_class_tdefs(bound);
+                }
                 at = saved;
                 if (!ok) return false;
                 args->push_back(std::move(made));
@@ -2854,6 +2864,15 @@ struct Parser {
                     def_expr.text = "tokdef";
                     def_expr.number = at;
                     def_expr.type = pt;
+                    // The class it is written in: its member types are names in the default argument at every call
+                    // ([dcl.fct.default] 5, [basic.scope.class]; Round 33, PolyMesh.hpp's `const FromMeshOptions& opt =
+                    // FromMeshOptions()` called from another file's function). One kid holding the class index + 1.
+                    {
+                        Node owner;
+                        owner.kind = Node::IntLit;
+                        owner.number = static_cast<uint64_t>(open_structs.empty() ? 0 : open_structs.back() + 1);
+                        def_expr.kids.push_back(owner);
+                    }
                     int depth = 0;
                     while (!is(TEnd)) {
                         if (is(TLBrace) || is(TLParen) || is(TLBrack)) ++depth;
@@ -7801,7 +7820,17 @@ struct Parser {
     // return type (decltype(auto) f(...)).
     size_t first_decl_paren(size_t from, size_t end) const {
         size_t k = from;
-        while (k < end && tokens[k].kind != TLParen) {
+        int angle = 0;  // inside template arguments: std::function<void(A, B)> as the result (Round 33, AssetManager.hpp)
+        while (k < end && (tokens[k].kind != TLParen || angle > 0)) {
+            if (tokens[k].kind == TLt) ++angle;
+            else if (tokens[k].kind == TGt && angle > 0) --angle;
+            else if (tokens[k].kind == TLParen && angle > 0) {  // a function type inside the arguments: skip it whole
+                int depth = 0;
+                for (; k < end; ++k) {
+                    if (tokens[k].kind == TLParen) ++depth;
+                    else if (tokens[k].kind == TRParen && --depth == 0) break;
+                }
+            }
             if (tokens[k].kind == TIdent && tokens[k].text == "decltype" && k + 1 < end && tokens[k + 1].kind == TLParen) {
                 int depth = 0;
                 for (++k; k < end; ++k) {

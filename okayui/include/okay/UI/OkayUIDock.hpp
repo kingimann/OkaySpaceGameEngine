@@ -168,7 +168,8 @@ bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);
 /// screen pixels, the width it would like when the strip is not squeezed, and whether it is the chosen tab). Empty before the first DockSpace.
 /// `shown` is where the tab is drawn: while a tab is dragged along its strip it follows the pointer and the others slide to their new places
 /// over a few frames (`rect` is where each one belongs at once, and what clicks and hosts use).
-struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; Rect shown; };
+// held: the tab is being dragged along its strip (it is drawn over the others, under the pointer; a host drawing on tabs draws on it last).
+struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; Rect shown; bool held = false; };
 std::vector<DockTabInfo> GetDockTabs();
 /// The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
 Rect GetDockArea();

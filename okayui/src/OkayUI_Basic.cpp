@@ -182,6 +182,11 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
         g_active = id;
         setFromMouse();                      // jump to the click position
     }
+    if (const int st = navValue(id, x, y, w, h, h * 0.5f)) {   // Tab reaches it; Left / Right move it a hundredth of the range (Shift: a tenth)
+        float nv = *value + (float)st * (maxV - minV) * (g_io.keyShift ? 0.1f : 0.01f);
+        nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+        if (nv != *value) { *value = nv; changed = true; }
+    }
 
     // A thin groove in the sunken colour, the filled part in the accent, and a round thumb with a soft shadow that grows a
     // little under the pointer (motion) and shows an accent halo while dragged.

@@ -376,7 +376,8 @@ if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
     # okay mcp / okay automation (tools/okay-cli/Automation.cpp) run the automation commands on the editor's own state with
     # no window, so the program also builds the editor's EditorState and its automation commands (the editor links them itself).
     add_executable(okay_cli tools/okay-cli/main.cpp tools/okay-cli/Automation.cpp
-                   editor/AutomationEditor.cpp editor/AutomationVs.cpp editor/EditorState.cpp shared/FileDialog.cpp)
+                   editor/AutomationEditor.cpp editor/AutomationVs.cpp editor/AutomationOps.cpp editor/MenuActions.cpp
+                   editor/InspectorModel.cpp editor/EditorState.cpp shared/FileDialog.cpp)
     target_include_directories(okay_cli PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(okay_cli PRIVATE okay_cli_lib)
     if(WIN32)

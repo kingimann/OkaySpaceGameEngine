@@ -599,7 +599,6 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
                 if (ImGui::Button("Navigation Window##navsurf")) g_showNavigation = true;
             }
             StatsUI(ns);
-            if (ImGui::SmallButton("Remove##navsurf")) toRemove = ns;
         }
     }
     if (auto* na = dynamic_cast<NavMeshAgent*>(comp)) {
@@ -638,7 +637,6 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
             }
             if (ImGui::SmallButton(s_sendMode ? "Stop Sending##nava" : "Send To Click (Scene view)##nava")) { s_sendMode = !s_sendMode; if (s_sendMode) ed.Select(go); }
             Tip("Click the ground in the Scene view to order this agent there (it walks in Play).");
-            if (ImGui::SmallButton("Remove##navagent")) toRemove = na;
         }
     }
     if (auto* nm = dynamic_cast<NavMeshModifier*>(comp)) {
@@ -648,7 +646,6 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
             if (ImGui::Checkbox("Apply To Children##navm", &nm->applyToChildren)) ed.dirty = true;
             Tip("Also the colliders of child objects that have no modifier of their own.");
             if (!go->GetComponent<Collider3D>() && !nm->applyToChildren) ImGui::TextDisabled("No 3D collider on this object: nothing to mark.");
-            if (ImGui::SmallButton("Remove##navmod")) toRemove = nm;
         }
     }
     if (auto* nl = dynamic_cast<NavMeshLink*>(comp)) {
@@ -678,7 +675,6 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
                 if (!a || !b) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s is not on the baked mesh: the link is not used.", !a && !b ? "Neither end" : (!a ? "The start" : "The end"));
                 else ImGui::TextDisabled("Both ends are on the mesh.");
             } else ImGui::TextDisabled("Bake the surface to check the ends are on the mesh.");
-            if (ImGui::SmallButton("Remove##navlink")) toRemove = nl;
         }
     }
     if (auto* no = dynamic_cast<NavMeshObstacle*>(comp)) {
@@ -720,7 +716,6 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
                 else ImGui::TextDisabled("Not carving (carves in Play%s).", no->carveOnlyWhenStationary ? ", once still" : "");
             }
             ImGui::TextDisabled("Agents always steer around it locally; it is never baked.");
-            if (ImGui::SmallButton("Remove##navobst")) toRemove = no;
         }
     }
 }

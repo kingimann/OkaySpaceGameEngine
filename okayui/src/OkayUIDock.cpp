@@ -457,23 +457,18 @@ void DockSpace(Rect area) {
         }
     }
     {   // where each tab is drawn: a tab held and moved along its strip follows the pointer (where it was grabbed, kept inside the strip);
-        // the others ease from where they were drawn last frame to their slots (about 90% of the way in 0.13 s), so a tab that makes room
-        // slides aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
-        const float dt = std::isfinite(ui_core::g_io.deltaTime) ? std::clamp(ui_core::g_io.deltaTime, 0.0f, 0.1f) : 0.0f;
-        const float k = 1.0f - std::exp(-dt * 18.0f);
+        // the others slide from where they were drawn last frame to their slots (ui_core::tabSlideX, shared with reorderable tab bars), so
+        // a tab that makes room moves aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
         const bool held = c.kind == Ctx::TabPress && c.moving;
         std::map<std::string, Ctx::Slide> next;
         for (TabRect& t : c.tabs) {
             float x = t.r.x;
             const DockLayout::Node* n = c.layout.Find(t.node);
             if (held && t.name == c.dragWin && n) {
-                x = std::max(n->rect.x, std::min(m.x - c.grab.x, n->rect.x + n->rect.w - t.r.w));
+                x = ui_core::tabHeldX(m.x, c.grab.x, n->rect.x, n->rect.w, t.r.w);
             } else {
                 const auto it = c.slide.find(t.name);
-                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1 && std::isfinite(it->second.x)) {
-                    x = it->second.x + (t.r.x - it->second.x) * k;
-                    if (std::fabs(x - t.r.x) < 0.5f) x = t.r.x;
-                }
+                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1) x = ui_core::tabSlideX(it->second.x, t.r.x);
             }
             t.shownX = x;
             next[t.name] = Ctx::Slide{t.node, x, frame};
@@ -597,6 +592,7 @@ std::vector<DockTabInfo> GetDockTabs() {
         const DockLayout::Node* n = c.layout.Find(t.node);
         DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal; i.shown = t.r; i.shown.x = t.shownX;
         i.selected = n && n->active == t.index;
+        i.held = c.kind == Ctx::TabPress && c.moving && t.name == c.dragWin;
         out.push_back(i);
     }
     return out;

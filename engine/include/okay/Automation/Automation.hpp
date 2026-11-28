@@ -69,6 +69,7 @@ inline constexpr const char* Ambiguous = "ambiguous";         ///< a name matche
 inline constexpr const char* Refused = "refused";             ///< not now (Play is running, read-only, nothing to undo)
 inline constexpr const char* Unavailable = "unavailable";     ///< this host cannot do it (no editor, no project)
 inline constexpr const char* Failed = "failed";               ///< the engine tried and reported a problem
+inline constexpr const char* NeedsUi = "needs_ui";            ///< it opens a dialog a person must answer (details name a parameter that does it without one, when there is)
 inline constexpr const char* Internal = "internal";           ///< a C++ exception escaped the handler
 }
 
@@ -118,6 +119,11 @@ public:
         (void)eye; (void)target; (void)orthographic; (void)size;
         return false;
     }
+    /// Whether script.run may run code here. The running editor answers its "Allow scripts from Automation" option
+    /// (View > Automation Link); a host an agent started itself (okay mcp --headless) allows it.
+    virtual bool ScriptsAllowed() const { return true; }
+    /// script.run ran `lines` lines of `language` here: the editor writes a notice line in its Console.
+    virtual void NoteScriptRun(const std::string& language, int lines) { (void)language; (void)lines; }
 };
 
 /// What a handler gets: the host and the checked parameters, with readers that fill in the schema's defaults.
@@ -152,6 +158,7 @@ struct Command {
     unsigned flags = 0;
     std::string undoName;  ///< the undo step's name ("" = the command's summary is not used: the scene change names it)
     Handler handler;
+    std::string aliasOf;   ///< set on an alias: the command it runs (Registry::AddAlias)
 };
 
 class Registry {
@@ -159,6 +166,10 @@ public:
     /// Add a command. False (nothing added) for a name already taken (also as an MCP tool name, '.' read as '_'), a
     /// malformed name, a missing handler, or two parameters with one name.
     bool Add(Command c);
+    /// `alias` runs `target` (same parameters, flags and handler); its summary says so. For two names of one action
+    /// (an op of a menu item that a richer hand-written command already does): one handler, never two copies. False when
+    /// `target` does not exist or `alias` is taken.
+    bool AddAlias(const std::string& alias, const std::string& target);
     const Command* Find(const std::string& name) const;
     /// Every command, sorted by name; `prefix` ("scene.") keeps those that start with it.
     std::vector<const Command*> List(const std::string& prefix = {}) const;

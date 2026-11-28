@@ -92,6 +92,17 @@ bool BeginTabBar(const char* id, int tabBarFlags) {
 }
 bool BeginTabBar(const char* id) { return BeginTabBar(id, 0); }
 
+float ui_core::tabSlideX(float lastX, float slotX) {
+    if (!std::isfinite(lastX)) return slotX;
+    const float dt = std::isfinite(g_io.deltaTime) ? std::clamp(g_io.deltaTime, 0.0f, 0.1f) : 0.0f;
+    const float x = lastX + (slotX - lastX) * (1.0f - std::exp(-dt * 18.0f));
+    return std::fabs(x - slotX) < 0.5f ? slotX : x;
+}
+float ui_core::tabHeldX(float mouseX, float grab, float stripX, float stripW, float tabW) {
+    const float x = std::isfinite(mouseX) && std::isfinite(grab) ? mouseX - grab : stripX;
+    return std::max(stripX, std::min(x, stripX + stripW - tabW));
+}
+
 int TabDragTarget(const float* widths, int n, int from, float left, float gap, float mouseX) {
     if (!widths || n <= 0 || from < 0 || from >= n) return from;
     if (!std::isfinite(mouseX) || !std::isfinite(left) || !std::isfinite(gap)) return from;
@@ -131,20 +142,41 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
     if (tb.firstId == 0) tb.firstId = id;
     if (*tb.sel == 0) *tb.sel = id;                  // nothing chosen yet: the first tab
     if (flags & Tab_SetSelected) *tb.sel = id;
+    // A reorderable bar: the tab held and dragged follows the pointer (where it was grabbed); the others slide to their places instead of
+    // jumping (tabSlideX, shared with the dock's strips). A tab drawn after the held one leaves the held one's place uncovered.
+    const bool reorders = tb.ord && ordIdx >= 0 && !(flags & (Tab_Trailing | TabItem_NoReorder));
+    bool clipped = false;
+    if (reorders) {
+        TabOrder& o = *tb.ord;
+        const float slot = x;
+        if (g_active == id && g_in.mouseDown && IsMouseDragging(0, 4.0f)) { x = tabHeldX(g_in.mouseX, o.grab, tb.x, tb.w, w); tb.held = true; tb.heldX = x; tb.heldW = w; }
+        else if (o.shownFrame[ordIdx] + 1 >= g_frameCount && o.shownFrame[ordIdx] != 0) x = tabSlideX(o.shown[ordIdx], slot);
+        o.shown[ordIdx] = x; o.shownFrame[ordIdx] = g_frameCount;
+        if (tb.held && tb.heldX != x) {   // the held tab is drawn: show this one only beside it
+            const float l = std::max(x, std::min(tb.heldX, x + w)), r = std::min(x + w, std::max(tb.heldX + tb.heldW, x));
+            const float leftPart = l - x, rightPart = x + w - r;
+            if (leftPart < w || rightPart < w) {
+                if (leftPart >= rightPart) PushClipRect(x, tb.y, leftPart, tb.h); else PushClipRect(r, tb.y, rightPart, tb.h);
+                clipped = true;
+            }
+        }
+    }
     Tab(id, x, tb.y, w, tb.h, label, tb.sel, id);
+    if (reorders && g_pressed && g_active == id) tb.ord->grab = g_in.mouseX - x;   // where the pointer took it
     g_lay.prevX = x; g_lay.prevY = tb.y; g_lay.prevW = w; g_lay.prevH = tb.h;   // the item rect / hover queries that follow are about this tab's header
     if (flags & TabItem_UnsavedDocument) {            // a small dot after the label
         const float dx = x + w - closeW - 9.0f, dy = tb.y + tb.h * 0.5f - 2.0f;
         fillCircle(dx + 2.0f, dy + 2.0f, 3.0f, g_theme.accent, 16);
     }
-    if (tb.ord && ordIdx >= 0 && !(flags & (Tab_Trailing | TabItem_NoReorder)) && g_active == id && IsMouseDragging(0, 4.0f) && g_in.mouseDown) {
-        TabOrder& o = *tb.ord;   // dragging: the tab goes where the pointer is
+    if (reorders && g_active == id && IsMouseDragging(0, 4.0f) && g_in.mouseDown) {
+        TabOrder& o = *tb.ord;   // dragging: the tab goes where the pointer is (its drawn place and the slide state go with the ids)
         const int to = TabDragTarget(o.w, o.n, ordIdx, tb.x, gap, g_in.mouseX);
         if (to != ordIdx) {
-            const int tid = o.ids[ordIdx]; const float tw = o.w[ordIdx];
-            if (to > ordIdx) for (int i = ordIdx; i < to; ++i) { o.ids[i] = o.ids[i + 1]; o.w[i] = o.w[i + 1]; }
-            else for (int i = ordIdx; i > to; --i) { o.ids[i] = o.ids[i - 1]; o.w[i] = o.w[i - 1]; }
-            o.ids[to] = tid; o.w[to] = tw;
+            const int tid = o.ids[ordIdx]; const float tw = o.w[ordIdx], ts = o.shown[ordIdx]; const unsigned long long tf = o.shownFrame[ordIdx];
+            auto take = [&](int dst, int src) { o.ids[dst] = o.ids[src]; o.w[dst] = o.w[src]; o.shown[dst] = o.shown[src]; o.shownFrame[dst] = o.shownFrame[src]; };
+            if (to > ordIdx) for (int i = ordIdx; i < to; ++i) take(i, i + 1);
+            else for (int i = ordIdx; i > to; --i) take(i, i - 1);
+            o.ids[to] = tid; o.w[to] = tw; o.shown[to] = ts; o.shownFrame[to] = tf;
         }
     }
     bool visible = (*tb.sel == id);
@@ -179,6 +211,7 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
         if (g_mPressed && !(flags & TabItem_NoCloseWithMiddleMouseButton) && !(tb.flags & TabBar_NoCloseWithMiddleMouseButton) && hit(x, tb.y, w, tb.h)) *open = false;
         if (!*open) visible = false;
     }
+    if (clipped) PopClipRect();
     if (visible) tb.seenSel = true;
     return visible;
 }
@@ -244,7 +277,7 @@ void EndTabBar() {
         for (int i = 0; i < o.n; ++i) {
             bool seen = false;
             for (int j = 0; j < g_tabBar.nSeen; ++j) if (g_tabBar.seen[j] == o.ids[i]) { seen = true; break; }
-            if (seen) { o.ids[k] = o.ids[i]; o.w[k] = o.w[i]; ++k; }
+            if (seen) { o.ids[k] = o.ids[i]; o.w[k] = o.w[i]; o.shown[k] = o.shown[i]; o.shownFrame[k] = o.shownFrame[i]; ++k; }
         }
         o.n = k;
     }

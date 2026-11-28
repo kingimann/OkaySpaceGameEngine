@@ -2,6 +2,7 @@
 // elements in a vector and a front index; priority_queue is a binary heap in its container with the
 // comparison object (the top is the element no other is "less" than).
 #pragma once
+#include <__okay_heap>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -45,35 +46,12 @@ public:
     T &top() { return c_.front(); }
     void push(const T &v) {
         c_.push_back(v);
-        unsigned long i = c_.size() - 1;
-        while (i > 0) {
-            unsigned long parent = (i - 1) / 2;
-            if (!less_(c_[parent], c_[i])) break;
-            T t = c_[parent];
-            c_[parent] = c_[i];
-            c_[i] = t;
-            i = parent;
-        }
+        push_heap(c_.begin(), c_.end(), less_);
     }
     void pop() {
-        unsigned long n = c_.size();
-        if (n == 0) return;
-        c_[0] = c_[n - 1];
+        if (c_.empty()) return;
+        pop_heap(c_.begin(), c_.end(), less_);
         c_.pop_back();
-        n = n - 1;
-        unsigned long i = 0;
-        for (;;) {
-            unsigned long l = 2 * i + 1;
-            unsigned long r = l + 1;
-            unsigned long big = i;
-            if (l < n && less_(c_[big], c_[l])) big = l;
-            if (r < n && less_(c_[big], c_[r])) big = r;
-            if (big == i) break;
-            T t = c_[i];
-            c_[i] = c_[big];
-            c_[big] = t;
-            i = big;
-        }
     }
 
 private:

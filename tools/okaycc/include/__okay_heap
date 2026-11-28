@@ -1,0 +1,77 @@
+// Binary heaps for okay-cc's <algorithm> and <queue> (ISO/IEC 14882 [alg.heap.operations]). Our
+// own header, written from the definition of a binary heap in an array: element i has children
+// 2i+1 and 2i+2, and no child is "greater" (less(parent, child) is false). push_heap moves the new
+// last element up; pop_heap swaps the first and the last and moves the new first one down in the
+// rest; make_heap moves each inner element down, from the last parent to the first; sort_heap
+// pops until one is left (the range ends sorted ascending by less).
+#pragma once
+#include <utility>
+namespace std {
+template <typename It, typename Less>
+void __okay_heap_down(It first, long i, long n, Less &less) {
+    for (;;) {
+        long l = 2 * i + 1;
+        long r = l + 1;
+        long big = i;
+        if (l < n && less(first[big], first[l])) big = l;
+        if (r < n && less(first[big], first[r])) big = r;
+        if (big == i) return;
+        auto t = std::move(first[i]);
+        first[i] = std::move(first[big]);
+        first[big] = std::move(t);
+        i = big;
+    }
+}
+struct __okay_heap_less {
+    template <typename A, typename B>
+    bool operator()(const A &a, const B &b) const {
+        return a < b;
+    }
+};
+template <typename It, typename Less>
+void push_heap(It first, It last, Less less) {
+    long i = static_cast<long>(last - first) - 1;
+    while (i > 0) {
+        long parent = (i - 1) / 2;
+        if (!less(first[parent], first[i])) break;
+        auto t = std::move(first[parent]);
+        first[parent] = std::move(first[i]);
+        first[i] = std::move(t);
+        i = parent;
+    }
+}
+template <typename It>
+void push_heap(It first, It last) {
+    push_heap(first, last, __okay_heap_less());
+}
+template <typename It, typename Less>
+void pop_heap(It first, It last, Less less) {
+    long n = static_cast<long>(last - first);
+    if (n < 2) return;
+    auto t = std::move(first[0]);
+    first[0] = std::move(first[n - 1]);
+    first[n - 1] = std::move(t);
+    __okay_heap_down(first, 0, n - 1, less);
+}
+template <typename It>
+void pop_heap(It first, It last) {
+    pop_heap(first, last, __okay_heap_less());
+}
+template <typename It, typename Less>
+void make_heap(It first, It last, Less less) {
+    long n = static_cast<long>(last - first);
+    for (long i = n / 2 - 1; i >= 0; --i) __okay_heap_down(first, i, n, less);
+}
+template <typename It>
+void make_heap(It first, It last) {
+    make_heap(first, last, __okay_heap_less());
+}
+template <typename It, typename Less>
+void sort_heap(It first, It last, Less less) {
+    for (; last - first > 1; --last) pop_heap(first, last, less);
+}
+template <typename It>
+void sort_heap(It first, It last) {
+    sort_heap(first, last, __okay_heap_less());
+}
+}  // namespace std

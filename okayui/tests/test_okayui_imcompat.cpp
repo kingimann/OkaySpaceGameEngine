@@ -271,7 +271,7 @@ int main() {
             };
             sim.Frames(3, ui);
             sim.Move(CenterX(ra), CenterY(ra)); sim.Frame(ui); sim.Down(); sim.Frame(ui);
-            sim.Move(rc.x + rc.w - 3, CenterY(rc)); sim.Frames(3, ui); sim.Up(); sim.Frames(3, ui);
+            sim.Move(rc.x + rc.w - 3, CenterY(rc)); sim.Frames(3, ui); sim.Up(); sim.Frames(30, ui);   // (30: the tabs have slid to their places, round 6)
             CHECK(ra.x > rb.x && ra.x > rc.x);
             Check("imcompat_tabs_reordered", sim.Draw(28, 30, 36));
             UI::UseLauncherLook(false);

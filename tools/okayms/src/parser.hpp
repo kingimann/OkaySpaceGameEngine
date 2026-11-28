@@ -19,6 +19,10 @@ struct Parser {
     std::map<std::string, uint64_t> enum_values;
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
+    // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
+    // its static locals are COMDAT objects named from it (Round 36).
+    bool cur_fn_inline = false;
+    std::string cur_fn_symbol;
     // The namespaces open at the top level: "a::b" and its decorated form "b@a" (innermost first).
     std::string current_ns;
     // The namespaces named by `using namespace`, in the order written.
@@ -5469,6 +5473,7 @@ struct Parser {
             def.local_fn = true;
             def.local_body = cur_locals;
         }
+        def.in_anon = anon_depth > 0;
         if (pending_sym.empty() && def.parent < 0 && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0 &&
             !ns_mangled.empty())
             for (const StructDef& other : structs)
@@ -6356,6 +6361,14 @@ struct Parser {
         fn.symbol = m.symbol;
         fn.ret = m.ret;
         fn.is_static = !m.out_of_class;  // a member written in its class is an inline function: an internal symbol
+        {
+            // Inline, and shared by every file: not a member of a local class or of a class in an anonymous namespace.
+            const StructDef& owner_def = structs[static_cast<size_t>(sid)];
+            bool own_file = owner_def.local_fn || owner_def.in_anon;
+            for (int up = owner_def.parent; up >= 0; up = structs[static_cast<size_t>(up)].parent)
+                if (structs[static_cast<size_t>(up)].in_anon || structs[static_cast<size_t>(up)].local_fn) own_file = true;
+            fn.is_inline = !m.out_of_class && !own_file;
+        }
         Type self_ptr;
         self_ptr.base = 3;
         self_ptr.struct_id = sid;
@@ -7130,6 +7143,10 @@ struct Parser {
         const bool saved_ret_ref = cur_ret_ref;
         cur_ret_ref = fn->ret_ref;
         const std::string saved_fn = current_fn;
+        const bool saved_fn_inline = cur_fn_inline;
+        const std::string saved_fn_symbol = cur_fn_symbol;
+        cur_fn_inline = fn->is_inline;
+        cur_fn_symbol = fn->symbol.empty() ? fn->name : fn->symbol;
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
         const int saved_class = cur_class;
@@ -7222,6 +7239,8 @@ struct Parser {
         for (StructDef& sd : structs)  // this body's local classes are out of scope ([class.local])
             if (sd.local_body == &locals) sd.local_body = nullptr;
         current_fn = saved_fn;
+        cur_fn_inline = saved_fn_inline;
+        cur_fn_symbol = saved_fn_symbol;
         scope_depth = saved_depth;
         scope_parent = saved_parent;
         cur_class = saved_class;
@@ -9973,7 +9992,7 @@ struct Parser {
         for (FuncDecl& f : funcs)
             if (f.defined && f.symbol.find("?$") != std::string::npos) f.is_static = true;
         for (Global& g : globals)
-            if (g.vtable || g.name.find("?$") != std::string::npos) g.is_static = true;
+            if (!g.comdat && (g.vtable || g.name.find("?$") != std::string::npos)) g.is_static = true;
         for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
         static_objs.clear();
         // The start-up tables (Round 35; PE/COFF "Grouped Sections"). A file without main (or entry) puts the address of
@@ -10873,6 +10892,7 @@ struct Parser {
             for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
                 if (tokens[k].inl) inline_fn = true;
             fn.is_static = is_static || anon_depth > 0 || inline_fn;
+            fn.is_inline = inline_fn && !is_static && anon_depth == 0;
             finish_signature(&fn);
             if (c_single) {
                 --c_linkage;

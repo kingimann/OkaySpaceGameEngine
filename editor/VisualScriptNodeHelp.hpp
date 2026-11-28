@@ -63,7 +63,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (const std::size_t sl = file.find_last_of("/\\"); sl != std::string::npos) file = file.substr(sl + 1);
         std::string text = info.help.empty() ? std::string("A node you made.") : info.help;
         text += " Written in " + lang + (file.empty() ? std::string() : " in " + file + ", line " + std::to_string(info.line)) +
-                ". Right-click it and pick Edit node to change it.";
+                ". Right-click it to open its script and change it.";
         if (!info.base.empty()) text += " It is based on the built-in node " + info.base + ", which runs first.";
         std::string& slot = kept[type];
         slot = text;

@@ -492,7 +492,7 @@ Back to the [code index](../code_index.md). 83 headers, 524 names.
 
 ## `engine/include/okay/Core/Random.hpp`
 
-- `Random` class, line 18: Deterministic, seedable pseudo-random generator (xorshift128+ style), modeled
+- `Random` class, line 19: Deterministic, seedable pseudo-random generator (xorshift128+ style), modeled
 
 ## `engine/include/okay/Core/RandomExtras.hpp`
 
@@ -554,8 +554,8 @@ Back to the [code index](../code_index.md). 83 headers, 524 names.
 - `FacadeGuard` class, line 164: Holds the facade lock for the scope.
 - `IsReservedDeviceName` function, line 174: True for names a Windows file system treats as devices (CON, PRN, AUX, NUL, COM1-9,
 - `ReadFileCapped` function, line 177: Read a whole file, refusing one bigger than 'maxBytes' (error says why).
-- `SaveFile` class, line 206: A single save file — a typed key/value store you can write to disk and read
-- `Save` class, line 296: Easy-Save-style global facade: name a file once and Save/Load keys into it.
+- `SaveFile` class, line 211: A single save file — a typed key/value store you can write to disk and read
+- `Save` class, line 301: Easy-Save-style global facade: name a file once and Save/Load keys into it.
 
 ## `engine/include/okay/Core/SaveFramework.hpp`
 

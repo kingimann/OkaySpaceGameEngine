@@ -345,7 +345,7 @@ Tokens Resolve(const Options& in) {
     t.textSize = o.textSize;
     const Palette& p = t.c;
     const Rgba white = C(255, 255, 255), black = C(0, 0, 0);
-    t.controlHover = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.06f : 0.08f);
+    t.controlHover = Mix(p.control, WithAlpha(p.ink, 255), p.light ? 0.10f : 0.14f);   // clearly lit under the pointer (owner: "hovering doesn't anything")
     // Pressed: a step toward the deepest surface (a control pushed in); where that is too close to see (light schemes, flat black or
     // white controls) a stronger ink tint instead.
     t.controlPressed = Mix(p.control, p.deep, 0.45f);

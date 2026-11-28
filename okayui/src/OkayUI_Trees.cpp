@@ -6,7 +6,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
-#include <SDL.h>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"
@@ -71,16 +70,28 @@ bool treeNodeFramedLook(const char* label, unsigned flags, int id, bool* open, b
     const TreeRow row = treeRowPlace(id, flags, h, ax + th + padX * 2.0f, open, leaf);
     const float x = row.x, y = row.y, w = row.w; const bool inside = row.inside;
     const bool selected = (flags & TreeNode_Selected) != 0;
-    const int bg = (g_active == id && inside) ? Col_HeaderActive : (inside ? Col_HeaderHovered : ((selected || framed) ? Col_Header : -1));
-    if (bg >= 0) { unsigned char tmp[4]; quad(x, y, w, h, styleColor(bg, tmp)); }
+    // The row's fill, OkayUI's way in Dear ImGui's places: a rounded highlight (the design's small radius) that eases in under the
+    // pointer, the header colour while pressed or selected; a framed node is a rounded band. A selected row also gets a 2-pixel accent
+    // bar at its left end, so the selection reads at a glance in every design.
+    {
+        unsigned char tmp[4], st[4];
+        const float rd = std::min(g_theme.radiusSmall, h * 0.35f);
+        const float over = anim(id, 0, inside);
+        if (framed) {
+            const unsigned char* fill = stateColor(id, inside, g_active == id && inside, styleColor(Col_Header, tmp), pick(Col_HeaderHovered, g_theme.bgHover), pick(Col_HeaderActive, g_theme.bgDown), st);
+            rrect(x, y, w, h, rd, fill);
+        } else {
+            if (selected) rrect(x, y, w, h, rd, styleColor(g_active == id && inside ? Col_HeaderActive : Col_Header, tmp));
+            else if (g_active == id && inside) rrect(x, y, w, h, rd, styleColor(Col_HeaderActive, tmp));
+            else if (over > 0.0f) { unsigned char hv[4]; rrect(x, y, w, h, rd, withAlpha(styleColor(Col_HeaderHovered, tmp), over, hv)); }
+            if (selected) rrect(x + 1.0f, y + 2.0f, 2.0f, h - 4.0f, 1.0f, g_theme.accent);
+        }
+    }
     const float cy = y + h * 0.5f;
     const unsigned char* tc = g_theme.text;
-    if (flags & TreeNode_Bullet) fillCircle(ax + padX + th * 0.5f, cy, th * 0.2f, tc);
-    else if (!leaf) {   // a filled triangle a little under the font size: right when closed, down when open
-        const float r = th * 0.35f, ccx = ax + padX + th * 0.5f;
-        if (*open) tri(ccx - r, cy - r * 0.6f, ccx + r, cy - r * 0.6f, ccx, cy + r * 0.8f, tc);
-        else tri(ccx - r * 0.6f, cy - r, ccx - r * 0.6f, cy + r, ccx + r * 0.8f, cy, tc);
-    }
+    if (flags & TreeNode_Bullet) fillCircle(ax + padX + th * 0.5f, cy, th * 0.16f, pick(Col_TextDisabled, g_theme.textDim));
+    else if (!leaf)   // a chevron in the arrow's place: right when closed, down when open; brighter under the pointer
+        chevron(ax + padX + th * 0.5f, cy, std::max(7.0f, th * 0.5f), *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
     drawText(ax + th + padX * (framed ? 3.0f : 2.0f), y + (h - th) * 0.5f, VisLabel(label).b, s, tc);
     return leaf || *open;
 }

@@ -15,7 +15,6 @@
 // The window, events and drawing go through okay::platform (window mode of OkayUI: shared/OkayUIFrameLoop.hpp); no Dear ImGui.
 // The browser itself (tabs, toolbar, menus, find, downloads, games, the profile) is shared/BrowserApp.hpp, the same one the
 // launcher's Browser page draws (sidebar > Browser); this file is only the program's window around it.
-#define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
 #include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"

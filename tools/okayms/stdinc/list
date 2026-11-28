@@ -1,0 +1,232 @@
+// okay-ms own standard header: std::list, written from ISO/IEC 14882 [list] ([list.overview], [list.cons],
+// [list.capacity], [list.modifiers], [list.ops]). A doubly linked list of nodes around one sentinel node, so iterators
+// and references stay valid until their element is erased (as the standard says). Own simplifications: iterator and
+// const_iterator are one type (an element can be written through a const_iterator), no allocator argument, no
+// exceptions; sort, merge, unique and reverse are not here yet. Storage from new and delete. The node and the iterator
+// are class templates at namespace scope (okay-ms does not read member class templates).
+#pragma once
+#include <cstddef>
+#include <initializer_list>
+#include <iterator>
+#include <new>
+#include <utility>
+namespace std {
+template <typename T> class list;
+
+template <typename T> struct list__node {
+    list__node* prev;
+    list__node* next;
+    T* value;  // null in the sentinel
+};
+
+template <typename T> class list__iterator {
+public:
+    list__node<T>* node_;
+    typedef bidirectional_iterator_tag iterator_category;
+    typedef T value_type;
+    typedef long long difference_type;
+    typedef T* pointer;
+    typedef T& reference;
+    list__iterator() : node_(nullptr) {}
+    explicit list__iterator(list__node<T>* n) : node_(n) {}
+    T& operator*() const { return *node_->value; }
+    T* operator->() const { return node_->value; }
+    list__iterator& operator++() {
+        node_ = node_->next;
+        return *this;
+    }
+    list__iterator operator++(int) {
+        list__iterator was(node_);
+        node_ = node_->next;
+        return was;
+    }
+    list__iterator& operator--() {
+        node_ = node_->prev;
+        return *this;
+    }
+    list__iterator operator--(int) {
+        list__iterator was(node_);
+        node_ = node_->prev;
+        return was;
+    }
+    bool operator==(const list__iterator& o) const { return node_ == o.node_; }
+    bool operator!=(const list__iterator& o) const { return node_ != o.node_; }
+};
+
+template <typename T> class list {
+    list__node<T>* head_;  // the sentinel: head_->next is the first element, head_->prev the last
+    size_t count_;
+
+    void init() {
+        head_ = new list__node<T>;
+        head_->prev = head_;
+        head_->next = head_;
+        head_->value = nullptr;
+        count_ = 0;
+    }
+    // Puts node n (with its value) before pos.
+    list__node<T>* link(list__node<T>* pos, list__node<T>* n) {
+        n->next = pos;
+        n->prev = pos->prev;
+        pos->prev->next = n;
+        pos->prev = n;
+        ++count_;
+        return n;
+    }
+    static void unlink(list__node<T>* n) {
+        n->prev->next = n->next;
+        n->next->prev = n->prev;
+    }
+    list__node<T>* make(const T& v) {
+        list__node<T>* n = new list__node<T>;
+        n->value = new T(v);
+        return n;
+    }
+    list__node<T>* make_moved(T&& v) {
+        list__node<T>* n = new list__node<T>;
+        n->value = new T(std::move(v));
+        return n;
+    }
+
+public:
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef T& reference;
+    typedef const T& const_reference;
+    typedef list__iterator<T> iterator;
+    typedef list__iterator<T> const_iterator;
+
+    list() { init(); }
+    explicit list(size_t n) {
+        init();
+        for (size_t i = 0; i < n; ++i) push_back(T());
+    }
+    list(size_t n, const T& v) {
+        init();
+        for (size_t i = 0; i < n; ++i) push_back(v);
+    }
+    template <typename It> list(It first, It last) {
+        init();
+        for (; first != last; ++first) push_back(*first);
+    }
+    list(initializer_list<T> items) {
+        init();
+        for (size_t i = 0; i < items.size(); ++i) push_back(items.begin()[i]);
+    }
+    list(const list& o) {
+        init();
+        for (list__node<T>* n = o.head_->next; n != o.head_; n = n->next) push_back(*n->value);
+    }
+    list(list&& o) {
+        init();
+        swap(o);
+    }
+    ~list() {
+        clear();
+        delete head_;
+    }
+    list& operator=(const list& o) {
+        if (this != &o) {
+            clear();
+            for (list__node<T>* n = o.head_->next; n != o.head_; n = n->next) push_back(*n->value);
+        }
+        return *this;
+    }
+    list& operator=(list&& o) {
+        if (this != &o) {
+            clear();
+            swap(o);
+        }
+        return *this;
+    }
+    void swap(list& o) {
+        list__node<T>* h = head_;
+        head_ = o.head_;
+        o.head_ = h;
+        const size_t c = count_;
+        count_ = o.count_;
+        o.count_ = c;
+    }
+
+    size_t size() const { return count_; }
+    bool empty() const { return count_ == 0; }
+    iterator begin() const { return iterator(head_->next); }
+    iterator end() const { return iterator(head_); }
+    iterator cbegin() const { return iterator(head_->next); }
+    iterator cend() const { return iterator(head_); }
+    T& front() const { return *head_->next->value; }
+    T& back() const { return *head_->prev->value; }
+
+    void push_back(const T& v) { link(head_, make(v)); }
+    void push_back(T&& v) { link(head_, make_moved(std::move(v))); }
+    void push_front(const T& v) { link(head_->next, make(v)); }
+    void push_front(T&& v) { link(head_->next, make_moved(std::move(v))); }
+    template <typename... A> T& emplace_back(A&&... args) {
+        list__node<T>* n = new list__node<T>;
+        n->value = new T(std::forward<A>(args)...);
+        link(head_, n);
+        return *n->value;
+    }
+    template <typename... A> T& emplace_front(A&&... args) {
+        list__node<T>* n = new list__node<T>;
+        n->value = new T(std::forward<A>(args)...);
+        link(head_->next, n);
+        return *n->value;
+    }
+    iterator insert(iterator pos, const T& v) { return iterator(link(pos.node_, make(v))); }
+    iterator insert(iterator pos, T&& v) { return iterator(link(pos.node_, make_moved(std::move(v)))); }
+    // Removes the element at pos; the iterator after it ([list.modifiers] 3).
+    iterator erase(iterator pos) {
+        list__node<T>* n = pos.node_;
+        list__node<T>* after = n->next;
+        unlink(n);
+        --count_;
+        delete n->value;
+        delete n;
+        return iterator(after);
+    }
+    iterator erase(iterator first, iterator last) {
+        while (first != last) first = erase(first);
+        return last;
+    }
+    void pop_back() { erase(iterator(head_->prev)); }
+    void pop_front() { erase(iterator(head_->next)); }
+    void clear() {
+        list__node<T>* n = head_->next;
+        while (n != head_) {
+            list__node<T>* after = n->next;
+            delete n->value;
+            delete n;
+            n = after;
+        }
+        head_->next = head_;
+        head_->prev = head_;
+        count_ = 0;
+    }
+    // Moves the element at it of other to before pos ([list.ops] 6); no element is copied, iterators stay valid.
+    void splice(iterator pos, list& other, iterator it) {
+        list__node<T>* n = it.node_;
+        if (n == pos.node_ || n->next == pos.node_) return;
+        unlink(n);
+        --other.count_;
+        link(pos.node_, n);
+    }
+    // Moves every element of other to before pos ([list.ops] 3).
+    void splice(iterator pos, list& other) {
+        while (!other.empty() && &other != this) splice(pos, other, other.begin());
+    }
+    // Erases every element equal to v ([list.ops] 15; void as in ISO/IEC 14882:2017).
+    void remove(const T& v) {
+        for (iterator it = begin(); it != end();) {
+            if (*it == v) it = erase(it);
+            else ++it;
+        }
+    }
+    template <typename P> void remove_if(P pred) {
+        for (iterator it = begin(); it != end();) {
+            if (pred(*it)) it = erase(it);
+            else ++it;
+        }
+    }
+};
+}  // namespace std

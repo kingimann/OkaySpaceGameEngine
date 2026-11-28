@@ -1,18 +1,17 @@
 #pragma once
 // okay::platform - the seam between the engine and the OS / windowing library.
 //
-// Everything the engine takes from SDL2 (windows, events, keyboard and mouse,
+// Everything the engine needs from the OS (windows, events, keyboard and mouse,
 // the OpenGL context, timers, clipboard, audio devices, game controllers) goes
-// through the interfaces here, so SDL2 is one backend among several:
+// through the interfaces here. There is one backend, our own code (BackendKind::Own):
 //
-//   BackendKind::Sdl2  thin wrapper over SDL2 (the default).
-//   BackendKind::Own   our own code: Linux = X11/GLX + ALSA + evdev, all loaded
-//                      with dlopen at run time (no link dependency); Windows =
-//                      Win32/WGL (compiles, untested); macOS = not written.
+//   Linux    X11/GLX + ALSA + evdev, all loaded with dlopen at run time (no link dependency)
+//   Windows  Win32/WGL/WASAPI/XInput/HID
+//   web      the browser page through Emscripten's html5.h, WebGL 2, Web Audio and the Gamepad API
+//            (WebBackend.cpp, the WebAssembly player)
+//   macOS    not written
 //
-// The CMake option OKAY_PLATFORM_BACKEND=sdl2|own picks DefaultKind(). Both
-// backends can be created side by side with Get(kind), which is how the tests
-// run the same checks on each.
+// SDL2 was the other backend until 2026-11-27 and is gone from every program (docs/platform/sdl_removal_plan.md).
 //
 // Header rules (MinGW): no <mutex>/<thread> here, and no names that clash with
 // Windows or X11 macros (CreateWindow, None, Status, Bool, ...).
@@ -24,30 +23,29 @@
 
 namespace okay::platform {
 
-enum class BackendKind { Sdl2, Own };
+enum class BackendKind { Own };
 
-const char* BackendName(BackendKind k);                 // "sdl2" / "own"
-bool ParseBackendName(const char* s, BackendKind& out); // case-sensitive, "sdl2" or "own"
+const char* BackendName(BackendKind k);                 // "own"
+bool ParseBackendName(const char* s, BackendKind& out); // case-sensitive, "own" (anything else, "sdl2" too, is false)
 
 class Backend;
 
 /// True when `k` is compiled in on this build (not that a display exists).
 bool IsCompiledIn(BackendKind k);
-/// The backend the build selected (OKAY_PLATFORM_BACKEND), falling back to
-/// whichever one is compiled in. Null only when none is (e.g. no SDL2, no own).
+/// The backend of this build. Null only on a platform with no backend written (e.g. macOS).
 Backend* Default();
 /// A backend by kind, or null when it is not compiled in. The instance lives for
 /// the whole process. Creating it does not touch the OS; call Backend::Init.
 Backend* Get(BackendKind k);
-BackendKind DefaultKind();
+BackendKind DefaultKind();   // always BackendKind::Own
 /// True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
 /// main() returns, or inside std::exit). From then on no backend and none of its windows may be called: a window destroyed that
 /// late (owned by a global) lets its OS window go without any call; the OS takes it back when the process ends.
 bool BackendsShutDown();
 
 // ---- Keys ------------------------------------------------------------------
-// Physical keys, numbered with the USB HID usage ids (the same numbers as SDL
-// scancodes). Only the keys the engine uses have names; others come through as
+// Physical keys, numbered with the USB HID usage ids (HID Usage Tables, keyboard
+// page). Only the keys the engine uses have names; others come through as
 // their raw number (< kKeyCount) so nothing is lost.
 enum class Key : uint16_t {
     Unknown = 0,
@@ -92,12 +90,12 @@ enum class EventType {
     DropFile,          // text = the path
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
-    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 and the Xbox UWP backend (UNVERIFIED there); own desktop never fires them
+    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). Web and the Xbox UWP backend (UNVERIFIED there); the desktop never fires them
     WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
-    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. sdl2 (SDL_TEXTEDITING), own Windows and the Xbox UWP backend (UNVERIFIED there)
-    RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
-    RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
-    Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it
+    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. Windows and the Xbox UWP backend (UNVERIFIED there)
+    RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again (no backend fires it today)
+    RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created (no backend fires it today)
+    Other,             // an event the seam has no type for (a backend's internal marker; PollEvent never returns it)
 };
 
 struct Event {
@@ -117,13 +115,8 @@ struct Event {
     int deviceId = 0;
     std::string text;
     /// TextEditing only: clause boundaries of `text` in code points (first 0, last = length), from the input method. Empty when
-    /// the IME gave none (and always on the sdl2 backend, whose SDL_TEXTEDITING has no clauses).
+    /// the IME gave none.
     std::vector<int> clauses;
-    /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
-    /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
-    /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken
-    /// (and freed) in `text`, so do not read it from `native`. Temporary: it goes away with SDL2.
-    const void* native = nullptr;
 };
 
 // ---- Windows and the OpenGL context -----------------------------------------
@@ -180,7 +173,7 @@ public:
     virtual uint32_t Id() const = 0;
     /// Which backend made this window.
     virtual BackendKind Kind() const { return BackendKind::Own; }
-    /// SDL_Window* (sdl2), X11 Window id (own, Linux) or HWND (own, Windows).
+    /// X11 Window id (Linux), HWND (Windows) or the canvas's CSS selector as a const char* (web).
     virtual void* NativeHandle() const = 0;
     virtual void GetSize(int& w, int& h) const = 0;
     virtual void GetPosition(int& x, int& y) const = 0;
@@ -206,7 +199,7 @@ public:
     /// Ask for the keyboard focus for this window without raising it (SDL_SetWindowInputFocus). False = not supported.
     virtual bool SetInputFocus() { return false; }
     /// The Win32 HWND of this window (for the system-tray icon and other Win32 calls), or null off Windows. The
-    /// sdl2 backend asks SDL for it, the own Windows backend returns its own handle; Linux windows return null.
+    /// Windows backend returns its own handle; Linux and web windows return null.
     virtual void* Win32Handle() const { return nullptr; }
     /// True while in desktop fullscreen (set by WindowDesc::fullscreen or SetFullscreen).
     virtual bool IsFullscreen() const { return false; }
@@ -227,12 +220,12 @@ public:
     /// window gets focus, Stop to end it). False = not supported here (nothing happens).
     virtual bool Flash(FlashMode mode) { (void)mode; return false; }
     /// Keep the window above all normal windows (on) or put it back among them (off). False = not supported here
-    /// (sdl2 before 2.0.16, the own Linux backend). Win32: SetWindowPos with HWND_TOPMOST / HWND_NOTOPMOST.
+    /// (the Linux and web backends). Win32: SetWindowPos with HWND_TOPMOST / HWND_NOTOPMOST.
     virtual bool SetAlwaysOnTop(bool on) { (void)on; return false; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
-    /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
-    /// and GL windows through GL), or the server refused.
+    /// or leaves the rest as it was. False when the window cannot take pixels (web windows draw through WebGL), or the
+    /// server refused.
     virtual bool PresentPixels(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
 
     /// Create the GL context for this window (WindowDesc::opengl) and make it current.
@@ -364,23 +357,19 @@ public:
     virtual std::unique_ptr<Window> MakeWindow(const WindowDesc& desc) = 0;
     virtual bool PollEvent(Event& out) = 0;  // false when the queue is empty
     /// Let the system deliver pending input without taking any event out (keeps a window alive and mapped during a
-    /// wait loop). sdl2: SDL_PumpEvents. own: reads what is waiting into the backend's queue, so the next PollEvent
-    /// still returns it, in order. Never loses an event.
+    /// wait loop). Reads what is waiting into the backend's queue, so the next PollEvent still returns it, in order.
+    /// Never loses an event.
     virtual void PumpEvents() {}
     /// True when events are waiting (call PumpEvents first so the system's input has been read). For an idle throttle that
     /// only wants to know "did anything happen"; nothing is taken from the queue.
     virtual bool HasPendingEvents() { return false; }
     /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
-    /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
-    /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
+    /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event.
     virtual bool PushEvent(const Event& e) { (void)e; return false; }
-    /// With true, PollEvent also returns the events the seam has no type for, as EventType::Other with `native` set
-    /// (sdl2 only; default off). Lets an app that still feeds Dear ImGui's SDL backend see every event it needs.
-    virtual void ReportUnmappedEvents(bool on) { (void)on; }
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
     /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
-    /// The two pointers are the backend's own handles (SDL_Window* / SDL_GLContext on sdl2); give them back only to RestoreGL.
+    /// The two pointers are the backend's own handles (GLX / WGL / WebGL); give them back only to RestoreGL.
     virtual GLCurrent CurrentGL() { return GLCurrent(); }
     /// Make `state` current again (a null state releases the current context). False when the backend cannot.
     virtual bool RestoreGL(const GLCurrent& state) { (void)state; return false; }
@@ -438,7 +427,7 @@ public:
     virtual char CharForKey(Key k);
 
     /// Displays, primary first and then left to right. DisplayAt fills `out` and returns false for an index out of range.
-    /// The base versions know none (0 displays); the own Windows backend and the sdl2 backend list them.
+    /// The base versions know none (0 displays); the Linux, Windows and web backends list theirs.
     virtual int DisplayCount() { return 0; }
     virtual bool DisplayAt(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
     /// The video modes display `index` offers, the current one first. The base version gives only the current mode
@@ -479,19 +468,6 @@ public:
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
 };
-
-/// A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
-/// seam before windows are created by Backend::MakeWindow). Null when sdl2 is not compiled in or `sdlWindow` is
-/// null. The caller still owns and destroys the SDL window, and must destroy it only after this object. A GL
-/// context made through the wrapper (CreateGLContext) belongs to the wrapper and goes with it. Temporary: it goes
-/// away with SDL2.
-std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
-
-/// Turn one SDL_Event (passed as `const SDL_Event*`) into a platform Event, for code that still polls SDL itself but
-/// feeds a seam consumer (the ImGui platform feed). Handles quit, window, key, text, mouse and wheel events only and
-/// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
-/// compiled in. Temporary: it goes away with SDL2.
-bool TranslateSdl2Event(const void* sdlEvent, Event& out);
 
 /// Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
 int CpuCount();

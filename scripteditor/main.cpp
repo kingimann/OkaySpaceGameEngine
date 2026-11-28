@@ -8,7 +8,6 @@
 // FOLDER opens as the project; each FILE opens in a tab (its folder is the project when none was named). With nothing named, the
 // folder that was open last. --frames N: end after N frames (a start-and-quit check with no person at the window).
 // Settings are kept in the settings folder (okay::platform PrefPath "OkaySpace/ScriptEditor", script_editor.json).
-#define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
 #include "okay/UI/OkayUIDesign.hpp"
 #include "OkayUIFrameLoop.hpp"

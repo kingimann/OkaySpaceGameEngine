@@ -29,7 +29,7 @@ br::BrowserApp& App() {
     if (!g_app) {
         br::BrowserApp::Config cfg;
         cfg.textures.make = [](const std::uint8_t* rgba, int w, int h) -> void* { return TextureFromRgba(g_renderer, rgba, w, h); };
-        cfg.textures.destroy = [](void* t) { okay::pb::DestroyTexture(g_renderer, (SDL_Texture*)t); };
+        cfg.textures.destroy = [](void* t) { okay::pb::DestroyTexture(g_renderer, (okay::ui2d::Tex)t); };
         okay::platform::Backend* be = okay::platform::Default();
         cfg.runner.dataRoot = be ? be->PrefPath("OkaySpace", "Browser") : std::string();
         cfg.runner.playerExe = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});   // games run in the player, as in the program

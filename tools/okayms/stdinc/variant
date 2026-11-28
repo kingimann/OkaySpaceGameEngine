@@ -29,10 +29,13 @@ template <typename X, typename... T> struct variant_find__ { static const size_t
 template <typename X, typename H, typename... R> struct variant_find__<X, H, R...> {
     static const size_t value = is_same<X, H>::value ? 0 : 1 + variant_find__<X, R...>::value;
 };
-// The first alternative U converts to, not counting bool for a U that is not bool.
+// The first alternative U converts to, not counting bool for a number or pointer U (a narrowing conversion). A class
+// with `operator bool` does make bool (Round 34: the engine's ActiveFlag in `Value{go->active}`; before "typename names
+// no member type").
 template <typename U, typename... T> struct variant_conv__ { static const size_t value = 1000; };
 template <typename U, typename H, typename... R> struct variant_conv__<U, H, R...> {
-    static const size_t value = (is_convertible<U, H>::value && (is_same<U, bool>::value || !is_same<H, bool>::value))
+    static const size_t value = (is_convertible<U, H>::value &&
+                                 (is_same<U, bool>::value || is_class<U>::value || !is_same<H, bool>::value))
                                     ? 0
                                     : 1 + variant_conv__<U, R...>::value;
 };

@@ -177,7 +177,6 @@ int main() {
     CHECK(p->Kind() == PainterKind::OpenGL);
     CHECK(std::string(p->Name()) == "opengl");
     CHECK(p->DriverName() == "opengl");
-    CHECK(p->NativeRenderer() == nullptr);
     int ow = 0, oh = 0; p->OutputSize(&ow, &oh);
     CHECK(ow == W && oh == H);
     std::uint8_t dr = 0, dg = 0, db = 0, da = 0;

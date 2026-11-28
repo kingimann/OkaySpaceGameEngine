@@ -8,7 +8,6 @@
 #include "okay/Platform/Painter.hpp"
 #include "PainterBridge.hpp"
 
-#include <SDL.h>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -69,14 +68,12 @@ struct OkayUIScriptBridge : ScriptUIBridge {
         if (!painter || !path || !*path) return false;
         okay::ui2d::Tex tex = painter->LoadTexture(path);   // cached by the painter; a failed load is remembered too
         if (!tex) return false;
-        OkayUI::Image((SDL_Texture*)tex, w, h);   // OkayUI keeps the texture as an opaque handle
+        OkayUI::Image(tex, w, h);   // OkayUI keeps the texture as an opaque handle
         return true;
     }
     okay::platform::Painter* painter = nullptr;   ///< set by the host; lets Image() make textures
-    /// For a host that only has an SDL_Renderer (the editor): the sdl2 painter over it, owned here.
-    void SetRenderer(SDL_Renderer* r) {
-        painter = okay::pb::For(r);   // owned by the bridge table (sdl2 or software painter)
-    }
+    /// For a host that keeps an okay::pb renderer (the editor): its painter.
+    void SetRenderer(okay::pb::Renderer* r) { painter = okay::pb::For(r); }
 private:
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;

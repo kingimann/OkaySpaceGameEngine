@@ -455,6 +455,8 @@ class directory_entry {
 public:
     directory_entry() {}
     explicit directory_entry(const filesystem::path& p) : path_(p) {}
+    // (p, ec) ([fs.dir.entry.cons] 3; Round 33, AssetDatabase.cpp): the facts are asked for later, so nothing fails here.
+    directory_entry(const filesystem::path& p, error_code& ec) : path_(p) { ec.clear(); }
     const filesystem::path& path() const { return path_; }
     operator const filesystem::path&() const { return path_; }
     // These ask the operating system: declared only, like the free functions (an inline body here would make every
@@ -469,6 +471,7 @@ public:
     std::uintmax_t file_size() const;
     std::uintmax_t file_size(error_code& ec) const;
     file_time_type last_write_time() const;
+    file_time_type last_write_time(error_code& ec) const;  // (Round 33, AssetDatabase.cpp)
 };
 
 // A directory listing. Declarations only: the constructors that read a directory are not defined here.

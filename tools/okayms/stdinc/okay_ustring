@@ -56,6 +56,8 @@ public:
     size_t size() const { return units_.size() - 1; }
     size_t length() const { return units_.size() - 1; }
     bool empty() const { return units_.size() == 1; }
+    // capacity ([string.capacity] 9): code units that fit without new storage (the zero unit is not counted).
+    size_t capacity() const { return units_.capacity() - 1; }
     const C* data() const { return units_.data(); }
     C* data() { return units_.data(); }
     const C* c_str() const { return units_.data(); }
@@ -92,12 +94,36 @@ public:
         return *this;
     }
     basic_ustring__& append(const basic_ustring__& o) { return append(o.data(), o.size()); }
+    // append(str, pos, n) ([string.append] 3; Round 33, JsLibObject.cpp): at most n units of str from pos.
+    basic_ustring__& append(const basic_ustring__& o, size_t pos, size_t n) {
+        if (pos > o.size()) pos = o.size();
+        if (n > o.size() - pos) n = o.size() - pos;
+        return append(o.data() + pos, n);
+    }
     basic_ustring__& append(const C* s) { return append(s, length_of(s)); }
     // append(n, c) ([string.append] 9): n copies of c.
     basic_ustring__& append(size_t n, C c) {
         units_.pop_back();
         for (size_t i = 0; i < n; ++i) units_.push_back(c);
         units_.push_back((C)0);
+        return *this;
+    }
+    // insert and erase ([string.insert], [string.erase]; Round 33, JsLibNumber.cpp's s.insert(i - 3, 1, u',')).
+    basic_ustring__& insert(size_t pos, const C* s, size_t n) {
+        if (pos > size()) pos = size();
+        units_.insert(units_.begin() + pos, s, s + n);
+        return *this;
+    }
+    basic_ustring__& insert(size_t pos, size_t n, C c) {
+        if (pos > size()) pos = size();
+        for (size_t i = 0; i < n; ++i) units_.insert(units_.begin() + pos, c);
+        return *this;
+    }
+    basic_ustring__& insert(size_t pos, const basic_ustring__& o) { return insert(pos, o.data(), o.size()); }
+    basic_ustring__& erase(size_t pos = 0, size_t n = npos) {
+        if (pos > size()) pos = size();
+        if (n > size() - pos) n = size() - pos;
+        units_.erase(units_.begin() + pos, units_.begin() + pos + n);
         return *this;
     }
     basic_ustring__& operator+=(C c) {
@@ -149,9 +175,18 @@ public:
             if (units_[i] != o.units_[i]) return units_[i] < o.units_[i] ? -1 : 1;
         return size() == o.size() ? 0 : (size() < o.size() ? -1 : 1);
     }
+    // compare(pos, n, str) ([string.compare] 3; Round 33, JsLibString.cpp): the units [pos, pos + n) against str.
+    int compare(size_t pos, size_t n, const basic_ustring__& o) const { return substr(pos, n).compare(o); }
+    int compare(size_t pos, size_t n, const C* s) const { return substr(pos, n).compare(basic_ustring__(s)); }
+    int compare(size_t pos, size_t n, const basic_ustring__& o, size_t pos2, size_t n2) const {
+        return substr(pos, n).compare(o.substr(pos2, n2));
+    }
     bool operator==(const basic_ustring__& o) const { return compare(o) == 0; }
     bool operator!=(const basic_ustring__& o) const { return compare(o) != 0; }
     bool operator<(const basic_ustring__& o) const { return compare(o) < 0; }
+    bool operator>(const basic_ustring__& o) const { return compare(o) > 0; }
+    bool operator<=(const basic_ustring__& o) const { return compare(o) <= 0; }
+    bool operator>=(const basic_ustring__& o) const { return compare(o) >= 0; }
     basic_ustring__ operator+(const basic_ustring__& o) const {
         basic_ustring__ r(*this);
         r.append(o);
@@ -170,7 +205,55 @@ template <typename C> basic_ustring__<C> operator+(const basic_ustring__<C>& a, 
     r += b;
     return r;
 }
+// std::u16string_view, u32string_view and wstring_view ([string.view.template]): a pointer and a length naming code
+// units a basic_ustring__ (or an array) owns. Own minimal version: the members the engine uses (build from a string or a
+// pointer, size, data, index, iterate, substr, compare, ==, !=, <), so a view can be the key of a map (JavaScript.hpp's
+// atom table; okay-ms's unordered_map with the default hasher is ordered and needs <). Round 33.
+template <typename C>
+class basic_ustring_view__ {
+    const C* data_;
+    size_t size_;
+
+public:
+    typedef C value_type;
+    typedef size_t size_type;
+    typedef const C* iterator;
+    typedef const C* const_iterator;
+    static const size_t npos = (size_t)-1;
+
+    basic_ustring_view__() : data_(0), size_(0) {}
+    basic_ustring_view__(const C* s, size_t n) : data_(s), size_(n) {}
+    basic_ustring_view__(const C* s) : data_(s), size_(0) {
+        while (s[size_] != 0) ++size_;
+    }
+    basic_ustring_view__(const basic_ustring__<C>& s) : data_(s.data()), size_(s.size()) {}
+
+    size_t size() const { return size_; }
+    size_t length() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    const C* data() const { return data_; }
+    const C* begin() const { return data_; }
+    const C* end() const { return data_ + size_; }
+    const C& operator[](size_t i) const { return data_[i]; }
+    basic_ustring_view__ substr(size_t pos, size_t n = npos) const {
+        if (pos > size_) pos = size_;
+        if (n > size_ - pos) n = size_ - pos;
+        return basic_ustring_view__(data_ + pos, n);
+    }
+    int compare(basic_ustring_view__ o) const {
+        const size_t n = size_ < o.size_ ? size_ : o.size_;
+        for (size_t i = 0; i < n; ++i)
+            if (data_[i] != o.data_[i]) return data_[i] < o.data_[i] ? -1 : 1;
+        return size_ == o.size_ ? 0 : (size_ < o.size_ ? -1 : 1);
+    }
+    bool operator==(basic_ustring_view__ o) const { return compare(o) == 0; }
+    bool operator!=(basic_ustring_view__ o) const { return compare(o) != 0; }
+    bool operator<(basic_ustring_view__ o) const { return compare(o) < 0; }
+};
 typedef basic_ustring__<char16_t> u16string;
+typedef basic_ustring_view__<char16_t> u16string_view;
+typedef basic_ustring_view__<char32_t> u32string_view;
+typedef basic_ustring_view__<wchar_t> wstring_view;
 typedef basic_ustring__<char32_t> u32string;
 typedef basic_ustring__<wchar_t> wstring;
 // to_wstring ([string.conversions] 15): the text to_string gives, one wchar_t per character. A function template, so it

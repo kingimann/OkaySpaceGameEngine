@@ -4,10 +4,8 @@
 //   Marketplace browse starter templates to open in the editor
 //
 // It looks for OkayEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
-// sitting next to it, and launches them. Built with Dear ImGui + SDL2.
-#define SDL_MAIN_HANDLED
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+// sitting next to it, and launches them. Drawn with OkayUI on our own okay::platform.
+#include "okay/Platform/Platform.hpp"   // okay::platform: windows, events, timers
 #include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
 
 #include "WavPlayback.hpp"   // the one WAV loading seam: our own decoder (okay::wav) into an okay::platform::AudioSpec
@@ -142,10 +140,9 @@
 #include "GroupConversation.hpp"   // the open group conversation
 #include "Multiplayer.hpp"         // joining, inviting, presence, server browser, parties, the Multiplayer page
 
-// An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer`; null when it cannot be made. The same texture
-// SDL_CreateTextureFromSurface gave (static, alpha blended, nearest sampling); the caller still draws it with SDL_RenderCopy and
-// frees it with SDL_DestroyTexture. Goes through okay::platform::Painter, which wraps the renderer and does not own it.
-SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h) {
+// An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer` (static, alpha blended, nearest sampling); null
+// when it cannot be made. Free it with okay::pb::DestroyTexture.
+okay::ui2d::Tex TextureFromRgba(okay::pb::Renderer* renderer, const unsigned char* rgba, int w, int h) {
     return okay::pb::CreateTexture(renderer, w, h, okay::pb::Access::Static, true, false, rgba);
 }
 
@@ -184,8 +181,8 @@ namespace okl {
 std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 std::vector<std::string> g_libraryDirs;  // extra folders to scan for games (persisted)
-SDL_Renderer* g_renderer = nullptr;      // set in main(); used to upload cover-art textures
-// The chat can live in its own OS window (Steam-style) with its own SDL
+okay::pb::Renderer* g_renderer = nullptr;      // set in main(); used to upload cover-art textures
+// The chat can live in its own OS window (Steam-style) with its own
 // renderer. Textures belong to one renderer, so every texture cache keeps a
 // copy per "render slot": 0 = launcher window, 1 = chat window. g_renderer and
 // g_rslot are switched while the chat window's frame is drawn.
@@ -205,7 +202,7 @@ static void ChatApplyPlace(okaychat::Place p) {
 }
 static void ChatTogglePop() { ChatApplyPlace(okaychat::TogglePop({true, g_chatInOwnWindow})); }
 extern bool g_chatOnTop;
-// The pin in the popped-out chat's header: keep it above other windows (sdl2 2.0.16+ / own Windows backend).
+// The pin in the popped-out chat's header: keep it above other windows (own Windows and Linux backends).
 static void ChatToggleOnTop();
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
@@ -2130,7 +2127,7 @@ float g_splashBgBot[3] = {0.051f, 0.051f, 0.059f};// backdrop gradient (bottom)
 bool  g_splashAccentOverride = false;             // use a custom accent for the splash
 float g_splashAccent[3] = {0.235f, 0.475f, 0.800f};
 bool  g_splashShowBar = true;                     // show the progress bar
-SDL_Texture* g_splashLogoTex = nullptr;           // loaded at startup from g_splashLogo
+okay::ui2d::Tex g_splashLogoTex = nullptr;           // loaded at startup from g_splashLogo
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
@@ -2841,7 +2838,7 @@ static const char* kEmojiCatNames[] = {"Smileys & Emotion", "People & Body", "An
 static constexpr int kEmojiCatCount = 9;
 static std::vector<EmojiInfo> g_emojiAll;                        // picker order (category, then sort_order)
 static std::map<std::string, std::pair<int, int>> g_emojiCells;  // "1F44D-1F3FB" -> sheet cell (incl. skin tones)
-static SDL_Texture* g_emojiSheets[2] = {nullptr, nullptr};
+static okay::ui2d::Tex g_emojiSheets[2] = {nullptr, nullptr};
 #define g_emojiSheet g_emojiSheets[g_rslot]
 static int g_emojiSheetW = 0, g_emojiSheetH = 0;
 static int g_emojiState = 0;   // 0 idle, 1 downloading/parsing, 2 ready, -1 unavailable
@@ -2976,7 +2973,7 @@ static bool EmojiCellFor(const std::string& code, int& sx, int& sy) {
 }
 
 // ---- Animated / still chat images ---------------------------------------------
-struct AnimImage { std::vector<SDL_Texture*> frames; std::vector<int> ends; int total = 0, w = 0, h = 0; bool ok = false; };
+struct AnimImage { std::vector<okay::ui2d::Tex> frames; std::vector<int> ends; int total = 0, w = 0, h = 0; bool ok = false; };
 static std::map<std::string, AnimImage> g_animImagesS[2];
 #define g_animImages g_animImagesS[g_rslot]
 static bool IsGifUrl(const std::string& url) {
@@ -2986,10 +2983,10 @@ static bool IsGifUrl(const std::string& url) {
 }
 // The texture to draw for an image URL right now (GIFs advance with time);
 // nullptr while it downloads. w/h receive the image size.
-SDL_Texture* ChatImageTexture(const std::string& url, int* w, int* h) {
+okay::ui2d::Tex ChatImageTexture(const std::string& url, int* w, int* h) {
     if (url.empty() || !g_renderer) return nullptr;
     if (!IsGifUrl(url)) {
-        SDL_Texture* t = AvatarTexture(url);
+        okay::ui2d::Tex t = AvatarTexture(url);
         if (t && (w || h)) { int tw = 0, th = 0; okay::pb::QueryTexture(g_renderer, t, &tw, &th); if (w) *w = tw; if (h) *h = th; }
         return t;
     }
@@ -3018,7 +3015,7 @@ SDL_Texture* ChatImageTexture(const std::string& url, int* w, int* h) {
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Texture* tx = TextureFromRgba(g_renderer, px + (std::size_t)i * fw * fh * 4, fw, fh);
+                    okay::ui2d::Tex tx = TextureFromRgba(g_renderer, px + (std::size_t)i * fw * fh * 4, fw, fh);
                     if (!tx) continue;
                     a.frames.push_back(tx);
                     a.total += acc; a.ends.push_back(a.total); acc = 0;
@@ -3060,7 +3057,7 @@ void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string& tok) {
         std::size_t c2 = tok.find(':', 2);
         std::string url = tok.substr(c2 + 1, tok.size() - c2 - 2);
         int iw = 0, ih = 0;
-        if (SDL_Texture* t = ChatImageTexture(url, &iw, &ih)) {
+        if (okay::ui2d::Tex t = ChatImageTexture(url, &iw, &ih)) {
             float k = (iw > 0 && ih > 0) ? std::min(s / iw, s / ih) : 1.0f;
             float hw = iw * k * 0.5f, hh = ih * k * 0.5f;
             dl->AddImage((ImTextureID)(intptr_t)t, ImVec2(c.x - hw, c.y - hh), ImVec2(c.x + hw, c.y + hh));
@@ -3365,7 +3362,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                     const GifResult& g = items[i];
                     int c = y[0] <= y[1] ? 0 : 1;
                     int iw = g.w, ih = g.h;
-                    SDL_Texture* t = ChatImageTexture(g.preview, iw ? nullptr : &iw, ih ? nullptr : &ih);
+                    okay::ui2d::Tex t = ChatImageTexture(g.preview, iw ? nullptr : &iw, ih ? nullptr : &ih);
                     float h = (iw > 0 && ih > 0) ? colW * ih / iw : colW * 0.7f;
                     h = std::clamp(h, 50.0f, 220.0f);
                     ImVec2 p(o.x + c * (colW + 8), o.y + y[c]);
@@ -3436,7 +3433,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 ImDrawList* gdl = ImGui::GetWindowDrawList();
                 if (h) gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), okaytheme::Ink(18), 10.0f);
                 int iw = 0, ih = 0;
-                if (SDL_Texture* t = ChatImageTexture(st.url, &iw, &ih)) {
+                if (okay::ui2d::Tex t = ChatImageTexture(st.url, &iw, &ih)) {
                     float s = cell - 12, k = (iw > 0 && ih > 0) ? std::min(s / iw, s / ih) : 1.0f;
                     ImVec2 c(p.x + cell * 0.5f, p.y + cell * 0.5f);
                     gdl->AddImage((ImTextureID)(intptr_t)t, ImVec2(c.x - iw * k * 0.5f, c.y - ih * k * 0.5f), ImVec2(c.x + iw * k * 0.5f, c.y + ih * k * 0.5f));
@@ -6639,7 +6636,7 @@ static void SetMyStatus(okay::account::AccountService& account, int status, bool
 }
 // A round avatar: the picture when there is one, else two initials on the name's colour.
 static void DrawPersonAvatar(ImDrawList* dl, ImVec2 c, float A, const std::string& avatarUrl, const std::string& name) {
-    if (SDL_Texture* tex = AvatarTexture(avatarUrl)) {
+    if (okay::ui2d::Tex tex = AvatarTexture(avatarUrl)) {
         dl->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(c.x - A * 0.5f, c.y - A * 0.5f), ImVec2(c.x + A * 0.5f, c.y + A * 0.5f),
                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
         return;
@@ -7742,7 +7739,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImVec2 ts = ImGui::CalcTextSize(init);
                 rdl->AddText(ImVec2(ac.x + 6 - ts.x * 0.5f, ac.y + 6 - ts.y * 0.5f), IM_COL32_WHITE, init);
             } else {
-                SDL_Texture* tex = AvatarTexture(r.avatar);
+                okay::ui2d::Tex tex = AvatarTexture(r.avatar);
                 if (tex) rdl->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f),
                                               ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
                 else {
@@ -8074,7 +8071,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImVec4 nc = NameColor(nm);
                     td->AddCircleFilled(ImVec2(ac.x + 3, ac.y + 3), 8.0f, ImGui::GetColorU32(kChatWinBg), 16);
                     td->AddCircleFilled(ImVec2(ac.x + 3, ac.y + 3), 6.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.6f, nc.y * 0.6f, nc.z * 0.6f, 1)), 16);
-                } else if (SDL_Texture* at = AvatarTexture(t.avatar)) {
+                } else if (okay::ui2d::Tex at = AvatarTexture(t.avatar)) {
                     td->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f), ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f),
                                         ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
                 } else {
@@ -8324,7 +8321,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImVec2 tp = ImGui::GetCursorScreenPos();
                     if (ImGui::InvisibleButton("##thumb", ImVec2(th, th))) { lightboxUrl = imgs[k]; ImGui::CloseCurrentPopup(); }
                     ImDrawList* md = ImGui::GetWindowDrawList();
-                    if (SDL_Texture* tx = AvatarTexture(imgs[k]))
+                    if (okay::ui2d::Tex tx = AvatarTexture(imgs[k]))
                         md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th),
                                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
                     else
@@ -8614,7 +8611,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (!m.mine && !grouped) {
                     ImVec2 cp = ImGui::GetCursorScreenPos();
                     float ax = cp.x; float ay = cp.y;
-                    SDL_Texture* at = AvatarTexture(selAvatar);
+                    okay::ui2d::Tex at = AvatarTexture(selAvatar);
                     if (at) dl->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ax,ay), ImVec2(ax+avatarW,ay+avatarW), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, avatarW*0.5f);
                     else {
                         ImVec4 col = NameColor(selName);
@@ -8681,7 +8678,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImVec2 ip = ImGui::GetCursorScreenPos();
                     bool mclick = ImGui::InvisibleButton("##media", mediaSz);
                     bool mhov = ImGui::IsItemHovered();
-                    if (SDL_Texture* mt = ChatImageTexture(mediaUrl))
+                    if (okay::ui2d::Tex mt = ChatImageTexture(mediaUrl))
                         bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
                                              ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
                     else {   // loading placeholder
@@ -8711,7 +8708,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 // Inline image preview for an image link in the message.
                 if (!imgUrl.empty()) {
-                    if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
+                    if (okay::ui2d::Tex it = ChatImageTexture(imgUrl)) {
                         int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                         float availW = ImGui::GetContentRegionAvail().x;
                         float w = (iw > 0 && iw > availW) ? availW : (float)iw;
@@ -9271,7 +9268,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav)) {
             ImVec2 sz = ImGui::GetContentRegionAvail();
-            SDL_Texture* it = ChatImageTexture(lightboxUrl);
+            okay::ui2d::Tex it = ChatImageTexture(lightboxUrl);
             if (it) {
                 int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                 float w = (float)iw, h = (float)ih;
@@ -9330,7 +9327,7 @@ static void TrayApplySettings() {
 // game asking us to come forward, the --versions hand-off and the watchdog. okaytray::TrayController::Restore clears the
 // hidden state (so the loop draws at full speed again) and shows the window on Windows; the lw:: calls then bring it
 // back on every platform and keep the backend's own idea of the window (shown, not minimized) in step.
-static void RestoreLauncher(SDL_Window* window) {
+static void RestoreLauncher(okay::platform::Window* window) {
     if (g_tray) g_tray->Restore();
     if (!lw::IsVisible(window)) lw::Show(window);
     if (lw::IsMinimized(window)) lw::Restore(window);
@@ -10727,19 +10724,17 @@ static void DrawToastOverlay() {
 }
 
 // ---- The chat's own window (Steam-style) ------------------------------------
-// A second SDL window + renderer + ImGui context hosting DrawChatWindow, so
+// A second window + renderer + UI context hosting DrawChatWindow, so
 // chat can sit beside a game or stay open while the launcher is minimized.
 // Created on first open; closing it just hides it.
 struct ChatWindowHost {
-    SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
+    okay::platform::Window* win = nullptr; okay::pb::Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
     ImFont* mono = nullptr; std::uint32_t id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
 // The UI's input: our own okay::platform feed.
 // (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
 static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
-static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
-static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
 // One platform event for the UI: our own feed takes it.
 static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const okay::platform::Event& e) {
     feed.ProcessEvent(e, ImGui::GetIO());
@@ -10748,7 +10743,7 @@ static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.w
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
 // back in the middle of the first display, shrunk to fit.
-static void KeepWindowOnScreen(SDL_Window* w) {
+static void KeepWindowOnScreen(okay::platform::Window* w) {
     if (!w) return;
     if (lw::IsMinimized(w)) lw::Restore(w);
     int x = 0, y = 0, ww = 0, wh = 0;
@@ -10756,7 +10751,7 @@ static void KeepWindowOnScreen(SDL_Window* w) {
     okay::platform::Backend* pb = okay::platform::Default();
     const int nDisp = pb ? pb->DisplayCount() : 0;
     // Usable area (without the task bar) of display d, from okay::platform.
-    auto usable = [&](int d, SDL_Rect& r) {
+    auto usable = [&](int d, okay::ui2d::Rect& r) {
         okay::platform::DisplayInfo di;
         if (!pb || !pb->DisplayAt(d, di)) return false;
         const bool has = di.uw > 0 && di.uh > 0;
@@ -10764,13 +10759,13 @@ static void KeepWindowOnScreen(SDL_Window* w) {
         return true;
     };
     for (int d = 0; d < nDisp; ++d) {
-        SDL_Rect b;
+        okay::ui2d::Rect b;
         if (!usable(d, b)) continue;
         const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
         const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
         if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
     }
-    SDL_Rect b;
+    okay::ui2d::Rect b;
     if (!usable(0, b)) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
     lw::SetSize(w, ww, wh);
@@ -10787,17 +10782,16 @@ static void ChatHostSaveGeometry() {
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
-    const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
+    const int x = g_chatWinX >= 0 ? g_chatWinX : okay::platform::kCentered, y = g_chatWinY >= 0 ? g_chatWinY : okay::platform::kCentered;
     okay::platform::Backend* sb = okay::platform::Default();
     okay::platform::WindowDesc cd;
     cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
     cd.resizable = true; cd.highDpi = true; cd.hidden = true;
-    cd.opengl = okay::pb::OwnWindowsWantGL(sb);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
+    cd.opengl = okay::pb::OwnWindowsWantGL(sb);   // a GL pixel format for the OpenGL painter
     g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;
-    if (!g_chatHostOwner && sb && cd.opengl) { cd.opengl = false; g_chatHostOwner = sb->MakeWindow(cd).release(); }   // no GL here: the software painter   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
-    g_chatHost.win = g_chatHostOwner ? (SDL_Window*)g_chatHostOwner->NativeHandle() : nullptr;
+    if (!g_chatHostOwner && sb && cd.opengl) { cd.opengl = false; g_chatHostOwner = sb->MakeWindow(cd).release(); }   // no GL here: the software painter. Owning; the chat window lives until the process ends (never freed on purpose: it must not outlive the backend's shutdown in a static destructor)
+    g_chatHost.win = g_chatHostOwner;
     if (!g_chatHost.win) return false;
-    okay::pb::RegisterWindow(*g_chatHostOwner);   // the lw:: helpers find the window by its native handle
     lw::SetMinSize(g_chatHost.win, 520, 380);
     okay::SetAppIcon(*g_chatHostOwner);
     // No VSync here: the launcher's present already paces the loop.
@@ -10818,7 +10812,6 @@ static bool ChatHostCreate() {
     }
     {
         okay::platform::Window* feedWin = g_chatHostOwner;
-        if (g_chatHostOwner->Kind() == okay::platform::BackendKind::Sdl2) { g_imguiChatWrap = okay::platform::WrapSdl2Window(g_chatHost.win); feedWin = g_imguiChatWrap.get(); }
         g_imguiChatFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
     }
     okay::imguirender::Init(ImGui::GetIO());
@@ -10878,7 +10871,7 @@ static int NotifyGotoTab(const okl::notify::Target& t) {
     }
 }
 static bool NotifyAppFocused() {
-    SDL_Window* w = g_launcherWindow;
+    okay::platform::Window* w = g_launcherWindow;
     if (!w || (g_tray && g_tray->Hidden())) return false;
     if (okay::platform::IsBackgroundWindow(lw::IsVisible(w), lw::IsMinimized(w))) return ChatHostFocused();
     return lw::HasInputFocus(w) || ChatHostFocused();
@@ -11038,17 +11031,8 @@ static bool ChatHostEvent(const okay::platform::Event& e) {
         case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
         case EvT::MouseMove: case EvT::MouseButtonDown: case EvT::MouseButtonUp: case EvT::MouseWheel: case EvT::DropFile:
             wid = e.windowId; break;
-        case EvT::Other: {   // what the seam has no type for: other window events (pointer enter / leave, moved ...), IME composition, drop begin / complete
-            const SDL_Event* n = (const SDL_Event*)e.native;
-            if (!n) return false;
-            switch (n->type) {
-                case SDL_WINDOWEVENT: wid = n->window.windowID; break;
-                case SDL_TEXTEDITING: wid = n->edit.windowID; break;
-                case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = n->drop.windowID; break;
-                default: return false;
-            }
-            break;
-        }
+        case EvT::WindowDpiChanged:
+            wid = e.windowId; break;
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
@@ -11103,7 +11087,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
     const float fontScale = ImGui::GetIO().FontGlobalScale;
-    SDL_Renderer* prevRen = g_renderer; ImFont* prevMono = g_fontMono;
+    okay::pb::Renderer* prevRen = g_renderer; ImFont* prevMono = g_fontMono;
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
@@ -11516,7 +11500,7 @@ static void DrawOfficialCard() {
     // Cover (cropped to fill), or an accent tile with a play glyph.
     const ImVec2 ca(cp.x + pad, cp.y + (cardH - coverH) * 0.5f), cb(ca.x + coverW, ca.y + coverH);
     const std::string coverPath = OfficialCoverPath();
-    SDL_Texture* tex = coverPath.empty() ? nullptr : GameCover(coverPath);
+    okay::ui2d::Tex tex = coverPath.empty() ? nullptr : GameCover(coverPath);
     if (tex) {
         int tw = 0, th = 0;
         okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
@@ -11989,7 +11973,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     // ======================= Publish =======================
     card("##oa_pub");
     smallCaps("PUBLISH A NEW VERSION");
-    ImGui::TextDisabled("Pick the folder File > Build Game made (the game's .exe, SDL2.dll and Data/).");
+    ImGui::TextDisabled("Pick the folder File > Build Game made (the game's .exe and Data/).");
     ImGui::Dummy(ImVec2(0, 2));
     const bool publishing = s.job == Oa_Publish;
     ImGui::BeginDisabled(publishing);
@@ -12014,7 +11998,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         const float coverW = 192.0f, coverH = 108.0f;
         const ImVec2 cp = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        SDL_Texture* tex = pf.image.empty() ? nullptr : GameCover((fs::u8path(scannedDir) / fs::u8path(pf.image)).string());
+        okay::ui2d::Tex tex = pf.image.empty() ? nullptr : GameCover((fs::u8path(scannedDir) / fs::u8path(pf.image)).string());
         if (tex) {
             int tw = 0, th = 0;
             okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
@@ -13185,7 +13169,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
             ImGui::PopStyleColor();
             ImGui::PopItemFlag();
             ImGui::SetCursorScreenPos(after);
-            if (active && (SDL_GetModState() & KMOD_CAPS)) {   // caps lock warning
+            if (active && okay::platform::Default() && (okay::platform::Default()->ModState() & okay::platform::ModCaps)) {   // caps lock warning
                 ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().warning);
                 ImGui::TextUnformatted("Caps Lock is on.");
                 ImGui::PopStyleColor();
@@ -13329,7 +13313,6 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
-    // (SDL_SetMainReady is called by the sdl2 backend's Init, the first SDL call; nothing here needs it.)
     {
         std::error_code ec;
         fs::path self = okay::restart::CurrentExecutable();
@@ -13342,18 +13325,16 @@ int main(int argc, char** argv) {
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", sig.line);
     }
 
-    // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
-    // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
-    // The backend is the build's default (SDL2) unless OKAY_PLATFORM_BACKEND=own asks for our own one. On the own backend the launcher
-    // needs our own Dear ImGui input feed and renderer (the SDL ones cannot see an own window); those are then switched on below.
-    okay::platform::Backend* sdlSeam = okay::platform::Default();
-    if (!sdlSeam) return 1;
-    sdlSeam->SetPerMonitorDpiAware();
+    // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE the window system starts so
+    // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched. Our own okay::platform backend.
+    okay::platform::Backend* plat = okay::platform::Default();
+    if (!plat) return 1;
+    plat->SetPerMonitorDpiAware();
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
     {
         okay::platform::InitFlags vf; vf.audio = false; vf.gamepad = false;   // video (+ timers, events); audio is started later on demand
-        if (!sdlSeam->Init(vf)) return 1;
-        sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
+        if (!plat->Init(vf)) return 1;
+        plat->StartTextInput();   // text input on from the start (the UI feed relies on it)
     }
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
@@ -13368,7 +13349,7 @@ int main(int argc, char** argv) {
     // With --versions it also leaves a note for the running one to open that page.
     if (!AcquireSingleInstance()) {
         if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
-        sdlSeam->Shutdown();
+        plat->Shutdown();
         return 0;
     }
     // Only the instance that stays up removes the previous exe. A second launch
@@ -13401,24 +13382,23 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc mainDesc;
     mainDesc.title = "OkaySpace Launcher  v" OKAY_ENGINE_VERSION; mainDesc.width = g_winW; mainDesc.height = g_winH;
     mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
-    mainDesc.opengl = okay::pb::OwnWindowsWantGL(sdlSeam);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
-    std::unique_ptr<okay::platform::Window> mainWinOwner = sdlSeam->MakeWindow(mainDesc);   // owns the window
-    if (!mainWinOwner && mainDesc.opengl) { mainDesc.opengl = false; mainWinOwner = sdlSeam->MakeWindow(mainDesc); }   // no GL here: the software painter
+    mainDesc.opengl = okay::pb::OwnWindowsWantGL(plat);   // a GL pixel format for the OpenGL painter
+    std::unique_ptr<okay::platform::Window> mainWinOwner = plat->MakeWindow(mainDesc);   // owns the window
+    if (!mainWinOwner && mainDesc.opengl) { mainDesc.opengl = false; mainWinOwner = plat->MakeWindow(mainDesc); }   // no GL here: the software painter
     if (!mainWinOwner) return 1;
-    SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
-    okay::pb::RegisterWindow(*mainWinOwner);   // the lw:: helpers find the window by its native handle
+    okay::platform::Window* window = mainWinOwner.get();
     okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);   // own-backend windows: the OpenGL painter, else the software one (shared/OwnPainter.hpp)
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(*mainWinOwner);   // placeholder OkaySpace logo
 #if defined(_WIN32)
-    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // the second-launch broadcast also reaches the main window
+    plat->SetNativeMessageHook(OkayMsgHook, nullptr);   // the second-launch broadcast also reaches the main window
     g_trayShell = okaytray::MakeWin32Shell(lw::Win32Handle(window), TrayOnMessage);   // the icon's own window gets its clicks
     if (g_trayShell) okaytray::InstallCrashCleanup();   // no ghost icon after a crash
 #endif
     g_tray.reset(new okaytray::TrayController(g_trayShell.get(), g_trayShell != nullptr));
     TrayApplySettings();   // Settings > Behavior: the icon is there while either tray option is on
-    SDL_Renderer* renderer = okay::pb::CreateRenderer(*mainWinOwner, true);   // accelerated with vsync, else any; its painter owns it
+    okay::pb::Renderer* renderer = okay::pb::CreateRenderer(*mainWinOwner, true);   // accelerated with vsync, else any; its painter owns it
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
     // Paint a loading frame into the back buffer, reveal the window, then present
@@ -13472,14 +13452,8 @@ int main(int argc, char** argv) {
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     // The UI's input is our own okay::platform feed on every backend (no gamepad navigation; keys, text, mouse, wheel, focus,
     // clipboard and the cursor shape work); the UI is OkayUI, drawn through the window's okay::platform::Painter.
-    const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;
-    std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
-    sdlSeam->ReportUnmappedEvents(false);
-    {
-        okay::platform::Window* feedWin = mainWinOwner.get();   // an own-backend window is used as it is; an SDL window through a non-owning wrapper
-        if (!ownBackend) { g_imguiMainWrap = okay::platform::WrapSdl2Window(window); feedWin = g_imguiMainWrap.get(); }
-        g_imguiFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
-    }
+    std::fprintf(stderr, "platform backend: %s\n", plat->Name());
+    g_imguiFeed.Init(ImGui::GetIO(), mainWinOwner->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), mainWinOwner.get()));
     std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine());
     okay::imguirender::Init(ImGui::GetIO());
     OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
@@ -13616,7 +13590,7 @@ int main(int argc, char** argv) {
     bool running = true;
 #ifdef OKAY_ENABLE_TEST_HOOKS
     okay::testhooks::Runner testHooks;
-    testHooks.Start(sdlSeam, mainWinOwner->Id());
+    testHooks.Start(plat, mainWinOwner->Id());
     int testExitCode = 0;
 #endif
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
@@ -13674,7 +13648,7 @@ int main(int argc, char** argv) {
         if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
 #endif
         okay::platform::Event e;
-        while (sdlSeam->PollEvent(e)) {
+        while (plat->PollEvent(e)) {
             using EvT = okay::platform::EventType;
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             FeedImGuiEvent(g_imguiFeed, e);
@@ -13696,7 +13670,7 @@ int main(int argc, char** argv) {
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
-                    sdlSeam->GlobalMouseState(&gx, &gy, nullptr);
+                    plat->GlobalMouseState(&gx, &gy, nullptr);
                     lw::GetPos(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
@@ -14042,6 +14016,12 @@ int main(int argc, char** argv) {
                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
                 ImGui::Dummy(ImVec2(0, 10));
+                {   // the buttons at the bottom right of the box (it is as wide as the line above or the buttons)
+                    const float bw = okl::FitButtonW("Exit", okl::UiPx(120.0f)) + okl::FitButtonW("Minimize", okl::UiPx(120.0f)) +
+                                     okl::FitButtonW("Cancel", okl::UiPx(120.0f)) + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                    const float room = ImGui::GetContentRegionAvail().x - bw;
+                    if (room > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + room);
+                }
                 if (ImGui::Button("Exit", ImVec2(okl::FitButtonW("Exit", okl::UiPx(120.0f)), 0))) {
                     if (EditorRunning()) g_afterEditor = 1;   // the editor closes (saved) first
                     else running = false;
@@ -14790,7 +14770,7 @@ int main(int argc, char** argv) {
                 dl->AddCircleFilled(ac, A * 0.5f, okaytheme::Ink(22), 28);
                 DrawNavIcon(dl, 3, ImVec2(ac.x, ac.y + 1.0f), navIcon);
             } else {
-                SDL_Texture* at = AvatarTexture(g_myAvatarSlot ? *g_myAvatarSlot : std::string());
+                okay::ui2d::Tex at = AvatarTexture(g_myAvatarSlot ? *g_myAvatarSlot : std::string());
                 if (at) dl->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f),
                                             ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
                 else {
@@ -16724,7 +16704,7 @@ int main(int argc, char** argv) {
                 // Avatar disc: the image when there is one, else the initial on a tint.
                 auto avatarDisc = [&](ImDrawList* d, ImVec2 c, float r, const std::string& url) {
                     ImVec4 av = NameColor(myUser);
-                    if (SDL_Texture* tx = AvatarTexture(url))
+                    if (okay::ui2d::Tex tx = AvatarTexture(url))
                         d->AddImageRounded((ImTextureID)(intptr_t)tx, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r),
                                            ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, r);
                     else {
@@ -22444,11 +22424,11 @@ int main(int argc, char** argv) {
     }
     if (g_tray) g_tray->Shutdown();   // no stray tray icon after exit
     okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO());
-    g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset();
+    g_imguiFeed.Shutdown(ImGui::GetIO());
     ImGui::DestroyContext();
     okay::pb::DestroyRenderer(renderer);   // its painter owns it
     mainWinOwner.reset();   // destroys the main window (after its renderer)
-    sdlSeam->Shutdown();
+    plat->Shutdown();
 #ifdef OKAY_ENABLE_TEST_HOOKS
     return testExitCode;   // 0 unless the test script said `exit N`
 #endif

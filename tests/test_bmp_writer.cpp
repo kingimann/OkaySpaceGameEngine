@@ -1,4 +1,4 @@
-// okay::platform::EncodeBmp32 / WriteBmp32: the own replacement for SDL_SaveBMP in the screenshot tools.
+// okay::platform::EncodeBmp32 / WriteBmp32: the screenshot tools' BMP writer.
 // Expected bytes are worked out by hand from the BMP file format (BITMAPINFOHEADER, 32 bpp, bottom-up rows, BGRA).
 #include "okay/Platform/BmpWriter.hpp"
 #include <cstdio>

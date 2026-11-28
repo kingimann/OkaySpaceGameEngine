@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 74 headers, 1115 names.
+Back to the [code index](../code_index.md). 72 headers, 1094 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -788,7 +788,7 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 
 ## `shared/OkayScriptUIBridge.hpp`
 
-- `OkayUIScriptBridge` struct, line 20
+- `OkayUIScriptBridge` struct, line 19
 
 ## `shared/OkayTestPanel.hpp`
 
@@ -861,49 +861,30 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 - `TabStripResult` struct, line 62: What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), the tab
 - `ParseProgramArgs` function, line 97: A window program's command line: words that do not start with '-' are paths, "--frames N" ends the program after N frames
 
-## `shared/OkayUIBackend.hpp`
-
-- `Backend` enum, line 26
-- `CompiledIn` function, line 29: True when this binary can host OkayUI at all (the okay_ui library is linked in).
-- `BuildDefault` function, line 38: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
-- `Name` function, line 41: The short name stored in settings files and read from the environment: "imgui" or "okayui".
-- `Label` function, line 43: The words the settings screens show.
-- `Parse` function, line 47: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
-- `Normalize` function, line 58: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
-- `FromSettingInt` function, line 63: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
-- `ToSettingInt` function, line 65: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
-- `DevMode` function, line 68: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
-- `SettingRowVisible` function, line 71: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
-- `Resolve` function, line 76: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
-- `Source` function, line 85: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
-- `InspectorOn` function, line 95: The Inspector drawn by OkayUI (a preview; docs/ui/own_ui_toolkit.md sections 14-22; on by default through the Settings > Experimental items since 2026-11-23). I
-
 ## `shared/OkayUIFrame.hpp`
 
-- `OkayUIHostState` function, line 15: OkayUI's own renderer state for the app's SDL renderers (OKAY_UI_OWN_RENDER, OkayUIRenderSDL.hpp).
-- `OkayUILastFrame` function, line 17: Which renderer drew the last OkayUI frame and why (tests, the About line).
-- `OkayUIForgetRenderer` function, line 19: Called by okay::pb::Forget (DestroyRenderer) while the renderer is still alive: frees the own renderer's GL objects for it.
-- `OkayUIEndFrame` function, line 21
+- `OkayUIForgetRenderer` function, line 21: Called by okay::pb::Forget (DestroyRenderer) while the painter is still alive: frees the drawer's textures for it.
+- `OkayUIEndFrame` function, line 23
 
 ## `shared/OkayUIFrameLoop.hpp`
 
-- `FrameLoop` class, line 37
-- `ProgramHooks` struct, line 71: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
-- `ProgramDesc` struct, line 78
-- `AppHooks` function, line 86: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
-- `RunProgram` function, line 93: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
+- `FrameLoop` class, line 41
+- `ProgramHooks` struct, line 75: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
+- `ProgramDesc` struct, line 82
+- `AppHooks` function, line 90: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
+- `RunProgram` function, line 97: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
 
 ## `shared/OkayUIHost.hpp`
 
-- `HostKeys` enum, line 32: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
-- `InputCollector` class, line 35: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 316: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 371: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `HostedKeys` function, line 382: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
-- `WantsKeyboard` function, line 389: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 413: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 440: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 520: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostKeys` enum, line 24: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+- `InputCollector` class, line 27: Collects what OkayUI needs from okay::platform events between two frames.
+- `Region` class, line 224: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 279: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 290: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 297: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 321: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 348: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 428: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIImGuiMap.hpp`
 
@@ -928,84 +909,84 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 
 ## `shared/OwnStack.hpp`
 
-- `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
-- `Readers` function, line 40
-- `Setting` struct, line 53
-- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
-- `Requested` function, line 69: True when OKAY_OWN_STACK is "1" in the environment.
-- `SetIfUnset` function, line 74
-- `ApplyEnvironment` function, line 85: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
-- `Info` struct, line 94
-- `FormatLine` function, line 104: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 122: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 129: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 136: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 171
-- `Startup` function, line 175: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `ReaderSwitch` struct, line 36: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
+- `Readers` function, line 38
+- `Setting` struct, line 51
+- `RuntimeSettings` function, line 56: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers and the okay::platform backend (our HTTP client and
+- `Requested` function, line 66: True when OKAY_OWN_STACK is "1" in the environment.
+- `SetIfUnset` function, line 71
+- `ApplyEnvironment` function, line 82: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
+- `Info` struct, line 91
+- `FormatLine` function, line 101: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 119: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 126: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 133: What this process would use right now. 'ui' is the UI toolkit the caller names ("okayui" / "none"); null: "okayui" where
+- `Describe` function, line 173
+- `Startup` function, line 177: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
-- `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `Context` struct, line 59: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 74
-- `SplitIds` function, line 82
-- `JoinIds` function, line 91
-- `Has` function, line 96
-- `Find` function, line 100
-- `Select` function, line 106: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 115: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 125: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 132: The default: everything on.
-- `AllOff` function, line 134: "Back to the third-party parts": everything off.
-- `Set` function, line 135
-- `AppliedVar` function, line 144
-- `PutEnv` function, line 146
-- `DropEnv` function, line 153
-- `AppliedNow` function, line 160
-- `SetByUser` function, line 166: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 172: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 187
-- `StatusOf` function, line 190: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 197
-- `DefaultPath` function, line 208: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 222
-- `SaveFile` function, line 229
-- `State` struct, line 240: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 245
-- `Startup` function, line 248: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 255: Save the screen's choice to the file Startup() read.
+- `Items` function, line 50: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `Context` struct, line 58: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 73
+- `SplitIds` function, line 81
+- `JoinIds` function, line 90
+- `Has` function, line 95
+- `Find` function, line 99
+- `Select` function, line 105: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 114: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 124: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 131: The default: everything on.
+- `AllOff` function, line 133: "Back to the third-party parts": everything off.
+- `Set` function, line 134
+- `AppliedVar` function, line 143
+- `PutEnv` function, line 145
+- `DropEnv` function, line 152
+- `AppliedNow` function, line 159
+- `SetByUser` function, line 165: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 171: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 186
+- `StatusOf` function, line 189: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 196
+- `DefaultPath` function, line 207: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 221
+- `SaveFile` function, line 228
+- `State` struct, line 239: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 244
+- `Startup` function, line 247: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 254: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 
-- `OwnFactory` function, line 34
-- `SetOwnPainterFactory` function, line 35
-- `For` function, line 38: The painter that stands for 'ren' (made on first use; null for a null renderer).
-- `OnForget` function, line 48
-- `Forget` function, line 50: Forget the wrapper of a renderer that is about to be destroyed (a new renderer may get the same address).
-- `Access` enum, line 52
-- `DestroyTexture` function, line 66
-- `UpdateTexture` function, line 68: Replace the pixels of 't' (rect null = all) with RGBA8 laid out with 'pitch' bytes per row. 'rect' is {x, y, w, h}.
-- `QueryTexture` function, line 74
-- `SetTextureBlend` function, line 79
-- `SetTextureLinear` function, line 82
-- `Clear` function, line 87: ---- the frame ----
-- `Present` function, line 88
-- `OutputSize` function, line 89
-- `SetVSync` function, line 90
-- `SetScale` function, line 91
-- `SetDrawColor` function, line 92
-- `GetDrawColor` function, line 93
-- `DrawPoint` function, line 96
-- `Flush` function, line 97
-- `ReadPixels` function, line 98
-- `DriverName` function, line 99
-- `IsAccelerated` function, line 100
-- `GetRenderTarget` function, line 101
-- `SetRenderTarget` function, line 102
-- `CreateRenderer` function, line 108: A renderer for an SDL window made by the sdl2 backend: accelerated, else any (what the apps asked SDL for). Null on failure.
-- `DestroyRenderer` function, line 126: Destroys a renderer made by CreateRenderer (its painter owns it); for one the app made another way, only forgets the wrapper.
+- `OwnFactory` function, line 33
+- `SetOwnPainterFactory` function, line 34
+- `For` function, line 37: The painter that stands for 'ren' (it is the painter; kept so call sites read the same as before).
+- `OnForget` function, line 41
+- `Forget` function, line 43: Tell the hook that 'ren' is about to go and drop it from the table (destroying it when the table owns it).
+- `Access` enum, line 45
+- `DestroyTexture` function, line 58
+- `UpdateTexture` function, line 60: Replace the pixels of 't' (rect null = all) with RGBA8 laid out with 'pitch' bytes per row. 'rect' is {x, y, w, h}.
+- `QueryTexture` function, line 65
+- `SetTextureBlend` function, line 70
+- `SetTextureLinear` function, line 73
+- `Clear` function, line 78: ---- the frame ----
+- `Present` function, line 79
+- `OutputSize` function, line 80
+- `SetVSync` function, line 81
+- `SetScale` function, line 82
+- `SetDrawColor` function, line 83
+- `GetDrawColor` function, line 84
+- `DrawPoint` function, line 87
+- `Flush` function, line 88
+- `ReadPixels` function, line 89
+- `DriverName` function, line 90
+- `IsAccelerated` function, line 91
+- `GetRenderTarget` function, line 92
+- `SetRenderTarget` function, line 93
+- `CreateRenderer` function, line 97: The painter for window 'w', made by the registered factory (OwnPainter.hpp: OpenGL, else software). Null on failure ('err' says
+- `DestroyRenderer` function, line 108: Destroys a renderer made by CreateRenderer.
 
 ## `shared/PlatformClipboard.hpp`
 
@@ -1198,9 +1179,9 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 - `SplashClamp01` function, line 72
 - `ComputeSplashLayout` function, line 74
 - `DrawSplashStyled` function, line 110: Draw one animated splash frame (into 'style') and present it:
-- `DrawSplash` function, line 313: Backward-compatible helper: draw the splash with just an accent colour.
-- `SplashSteps` class, line 322: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
-- `SplashFinish` class, line 365: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
+- `DrawSplash` function, line 305: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashSteps` class, line 314: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
+- `SplashFinish` class, line 357: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
 
 ## `shared/StartupUpdate.hpp`
 
@@ -1332,11 +1313,3 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 ## `shared/VisualScriptAppImpl.hpp`
 
 - `VisualScriptApp` struct, line 54
-
-## `shared/WindowHandles.hpp`
-
-- `WindowTable` function, line 11
-- `RegisterWindow` function, line 15
-- `UnregisterWindow` function, line 16
-- `WindowRef` class, line 19: The Window for 'handle': the registered one, else (an SDL_Window* the app made itself) a non-owning wrapper made for the call.
-- `Win` function, line 32

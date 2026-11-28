@@ -2,14 +2,14 @@
 # Run the launcher or the editor headless on a private Xvfb display with a test script (shared/TestHooks.hpp), on one or both platform backends.
 # The program must be built with -DOKAY_ENABLE_TEST_HOOKS=ON (never a release build).
 #   scripts/run_app_script.sh <program> <script> <outdir> [seconds-limit] [backend ...]
-# For each backend (default: sdl2 own) it starts the program with OKAY_TEST_SCRIPT=<script> and OKAY_PLATFORM_BACKEND=<backend>, waits for it to leave by itself,
+# For each backend (own, the only one since 2026-11-27) it starts the program with OKAY_TEST_SCRIPT=<script> and OKAY_PLATFORM_BACKEND=<backend>, waits for it to leave by itself,
 # and checks that it exited with code 0 (or the code of the script's `exit N`; pass EXPECT_EXIT=N). Pictures the script saves with `shot NAME.png` land in
 # <outdir>/<backend>/ (outside the repository). With two backends it then compares every picture of one with the other (ImageMagick `compare`, per-pixel
 # fuzz 4 percent): MAX_DIFF_PIXELS (default 0) differing pixels allowed per picture. Exit 0 = all good. Environment: APP_ARGS (program arguments, the editor
 # needs --dev), EXPECT_EXIT, MAX_DIFF_PIXELS, FUZZ, SCREEN (the Xvfb screen size, default 1280x800; make it at least the window size in launcher.cfg),
 # APP_SEED (a folder whose contents are copied next to the program before it starts: a launcher.cfg with win_w / win_h / ui_scale, a community/ folder ...).
 prog=$1; script=$2; outdir=$3; limit=${4:-120}; shift 4 2>/dev/null || shift $#
-backends=${*:-sdl2 own}
+backends=${*:-own}
 [ -x "$prog" ] && [ -f "$script" ] || { echo "usage: $0 <program> <script> <outdir> [seconds] [backend...]" >&2; exit 2; }
 command -v Xvfb >/dev/null && command -v compare >/dev/null || { echo "needs Xvfb and ImageMagick" >&2; exit 77; }
 prog="$(cd "$(dirname "$prog")" && pwd)/$(basename "$prog")"; mkdir -p "$outdir"; outdir="$(cd "$outdir" && pwd)"   # absolute: the program runs inside the output folder
@@ -30,7 +30,7 @@ for b in $backends; do
     cprog="$tmp/app/$(basename "$prog")"
     # the script's `shot` paths are relative: they are written into the backend's folder
     ( cd "$outdir/$b" && env DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" \
-        SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1 OKAY_PLATFORM_BACKEND=$b OKAY_TEST_SCRIPT="$(cd "$(dirname "$script")" && pwd)/$(basename "$script")" \
+        OKAY_ALSA_DEVICE=null LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1 OKAY_PLATFORM_BACKEND=$b OKAY_TEST_SCRIPT="$(cd "$(dirname "$script")" && pwd)/$(basename "$script")" \
         timeout -s KILL "$limit" "$cprog" $APP_ARGS >"$outdir/$b/app.log" 2>&1 )
     code=$?
     kill $xp 2>/dev/null; wait $xp 2>/dev/null; rm -rf "$tmp"

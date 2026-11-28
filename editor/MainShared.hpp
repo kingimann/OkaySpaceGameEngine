@@ -3,13 +3,13 @@
 // This list shrinks as main.cpp is split further; each entry moves to the
 // header of the module that ends up owning it.
 #include "imgui.h"
+#include "okay/UI/UIPainter.hpp"   // okay::ui2d::Tex
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
-struct SDL_Texture;
 
 namespace oked {
 
@@ -21,16 +21,6 @@ extern bool g_consoleCollapse;     // Console 'Collapse' toggle: merge identical
 void SaveSettings();               // writes okay_settings.txt
 extern float g_editorFov;          // the Scene view's vertical field of view (degrees)
 extern float g_uiScale;            // the editor's UI scale (1.0 = 100%)
-// The opt-in OkayUI backend (docs/ui/own_ui_toolkit.md, section 5). True when the setting or OKAY_UI_BACKEND picked OkayUI and this
-// build has it: the panels with an OkayUI port (the Console, today) are drawn by OkayUI into a rectangle they reserve in ImGui.
-bool UseOkayUIBackend();
-// The Inspector drawn by OkayUI (preview, off by default): the backend above plus OKAY_DEV or OKAY_UI_INSPECTOR (Settings > Experimental).
-bool UseOkayUIInspector();
-// The Script Editor's code is drawn by our own OkayUI::CodeEdit: always true in a build with OkayUI (the vendored
-// ImGuiColorTextEdit it replaced is deleted). Works with the Dear ImGui backend too.
-bool UseOkayUICodeEdit();
-// OkayUI gets the mouse over its rectangles and the keys while one of its fields has the keyboard: the OkayUI backend, or the code editor above.
-bool OkayUIInputOn();
 
 // The timeline widgets the Animation window's editors share (main.cpp): the
 // Timeline window draws its transport, ruler, playhead and keys with the same
@@ -75,8 +65,8 @@ void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* m
 extern bool  g_snap;
 extern float g_snapSize;
 extern bool  g_gizmoLocal;
-// An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
-SDL_Texture* GetThumb(const std::string& path);
+// An image file (or "proc:" texture) as a cached painter texture, null when it can't load.
+okay::ui2d::Tex GetThumb(const std::string& path);
 
 // Run a shell command without flashing a console window (main.cpp); returns the exit code like std::system.
 int SysNoWindow(const std::string& cmd);

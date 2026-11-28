@@ -17,7 +17,7 @@
 #include <string>
 
 #ifndef OKAY_EXPECT_PLATFORM   // tests/CMakeLists.txt passes the configured OKAY_PLATFORM_BACKEND
-#define OKAY_EXPECT_PLATFORM "sdl2"
+#define OKAY_EXPECT_PLATFORM "own"
 #endif
 
 using namespace okay::ownstack;
@@ -117,15 +117,15 @@ static void TestTables() {
     for (const Setting& s : RuntimeSettings()) {
         CHECK(!Has(s.var, "CRYPTO") && !Has(s.var, "SODIUM") && !Has(s.value, "crypto"));
     }
-    // What the dogfood switch sets besides the readers: the okay::platform backend (Linux) and the UI toolkit. Not HTTP: our own
-    // client is the only one on Linux (no curl), so there is nothing to switch.
+    // What the dogfood switch sets besides the readers: the okay::platform backend (Linux). Not HTTP: our own client is the only
+    // one on Linux (no curl); not the UI toolkit: OkayUI is the only one (Dear ImGui left the repository), so nothing to switch.
     bool http = false, ui = false, plat = false;
     for (const Setting& s : RuntimeSettings()) {
         if (!std::strcmp(s.var, "OKAY_OWN_HTTP")) http = !std::strcmp(s.value, "1");
         if (!std::strcmp(s.var, "OKAY_UI_BACKEND")) ui = !std::strcmp(s.value, "okayui");
         if (!std::strcmp(s.var, "OKAY_PLATFORM_BACKEND")) plat = !std::strcmp(s.value, "own");
     }
-    CHECK(!http && ui);
+    CHECK(!http && !ui);
 #if defined(__linux__)
     CHECK(plat);
 #else
@@ -138,11 +138,11 @@ static void TestBuildDefaults() {
     ClearStackEnvironment();
     CHECK(!Requested());
     CHECK(ApplyEnvironment() == 0);   // not requested: nothing is set
-    const Info i = Gather("imgui");
+    const Info i = Gather("okayui");
     const std::string line = FormatLine(i);
     std::printf("%s\n", line.c_str());
     CHECK(line.rfind("[okay] stack: platform=", 0) == 0);
-    CHECK(Has(line, " http=") && Has(line, " readers=") && Has(line, " crypto=") && Has(line, " ui=imgui"));
+    CHECK(Has(line, " http=") && Has(line, " readers=") && Has(line, " crypto=") && Has(line, " ui=okayui"));
 
 #if defined(OKAY_OWN_STACK_BUILD)   // -DOKAY_OWN_STACK=ON: every own backend that exists on this system is the default
     CHECK(i.ownReaders.size() == Readers().size() + 1);   // + fbx
@@ -152,7 +152,7 @@ static void TestBuildDefaults() {
 #  if defined(OKAY_OWN_HTTP) && !defined(_WIN32) && !defined(__APPLE__)
     CHECK(i.http == "own");
     Set("OKAY_OWN_HTTP", "0");   // the old run-time opt-out does nothing any more: there is no curl to fall back to
-    CHECK(Describe("imgui").find("http=own") != std::string::npos);
+    CHECK(Describe("okayui").find("http=own") != std::string::npos);
     Unset("OKAY_OWN_HTTP");
 #  endif
     // Crypto: still the library, unless this is the test-only crypto build.
@@ -176,11 +176,12 @@ static void TestBuildDefaults() {
 #if !defined(OKAY_OWN_CRYPTO)
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
 #endif
-    // The ui field: the caller's word, "none" for a program without a toolkit, else the resolved default.
+    // The ui field: the caller's word, "none" for a program without a toolkit, else OkayUI where it is compiled in.
     CHECK(Describe("none").find(" ui=none") != std::string::npos);
     CHECK(Describe("okayui").find(" ui=okayui") != std::string::npos);
     const std::string def = Describe();
-    CHECK(Has(def, " ui=imgui") || Has(def, " ui=okayui"));
+    CHECK(Has(def, " ui=okayui") || Has(def, " ui=none"));
+    CHECK(!Has(def, " ui=imgui"));
 }
 
 // OKAY_OWN_STACK=1 at run time.
@@ -194,12 +195,10 @@ static void TestEnvironment() {
 
     Set("OKAY_OWN_STACK", "1");
     Set("OKAY_OWN_3DS", "0");                          // a developer's own choice wins
-    Set("OKAY_UI_BACKEND", "imgui");
     CHECK(Requested());
     const int n = ApplyEnvironment();
-    CHECK(n == (int)RuntimeSettings().size() - 2);     // every setting but the two already set
+    CHECK(n == (int)RuntimeSettings().size() - 1);     // every setting but the one already set
     CHECK(std::string(std::getenv("OKAY_OWN_3DS")) == "0");
-    CHECK(std::string(std::getenv("OKAY_UI_BACKEND")) == "imgui");
     CHECK(!std::getenv("OKAY_OWN_FBX") && std::string(std::getenv("OKAY_OWN_BVH")) == "1");   // FBX has no switch to set
     CHECK(ApplyEnvironment() == 0);                    // idempotent
     CHECK(!std::getenv("OKAY_OWN_CRYPTO") && !std::getenv("OKAY_OWN_STACK_CRYPTO_TEST"));

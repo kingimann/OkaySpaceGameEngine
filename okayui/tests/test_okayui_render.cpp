@@ -342,8 +342,8 @@ std::vector<std::uint8_t> ViaPainter(plat::Painter& p, const UI::DrawData& d, in
 
 void TestPainterBackend() {
     RUN_SUITE("render: okay::platform::Painter backend vs the software reference");
-    std::vector<Row> rowsSoft, rowsSdl;
-    double worstSoftMean = 0; int worstSoftMax = 0; double worstSdlMean = 0;
+    std::vector<Row> rowsSoft;
+    double worstSoftMean = 0; int worstSoftMax = 0;
     for (const auto& s : rscenes::All()) {
         Sim sim; rscenes::Run(s, sim);
         const UI::DrawData d = UI::GetDrawData();
@@ -357,20 +357,10 @@ void TestPainterBackend() {
             worstSoftMean = std::max(worstSoftMean, df.meanDiff); worstSoftMax = std::max(worstSoftMax, df.maxDiff);
             CHECK(df.sameSize && df.maxDiff == 0);      // the same rasteriser: must be identical
         }
-        auto sd = plat::CreateSdl2SurfacePainter(s.w, s.h);
-        if (sd) {
-            const auto img = ViaPainter(*sd, d, s.w, s.h, 1.0f, s.usesImage);
-            const rscenes::Diff df = rscenes::Compare(img, ref, s.w, s.h, 8);
-            rowsSdl.push_back({s.name, df});
-            worstSdlMean = std::max(worstSdlMean, df.meanDiff);
-            CHECK(df.sameSize && df.meanDiff < 4.0);
-        }
         UI::UseLauncherLook(false);
     }
     PrintTable("own software painter vs reference (tolerance 0)", rowsSoft);
-    if (!rowsSdl.empty()) PrintTable("sdl2 painter (SDL software renderer) vs reference (tolerance 8)", rowsSdl);
-    else std::cout << "  sdl2 painter: not available here\n";
-    std::cout << "  worst: own painter max " << worstSoftMax << " mean " << worstSoftMean << ", sdl2 painter mean " << worstSdlMean << "\n";
+    std::cout << "  worst: own painter max " << worstSoftMax << " mean " << worstSoftMean << "\n";
     {   // DPI through the painter: size mismatch is refused, scaling matches the reference
         Hand h; h.BeginSpan(true, 3, 3, 5, 5); h.Quad(0, 0, 100, 100, 255, 255, 255);
         auto sp = UI::soft::CreateBitmapPainter(40, 40);
@@ -380,12 +370,6 @@ void TestPainterBackend() {
         auto be = R::CreatePainterBackend(*sp); R::Renderer r(*be);
         R::FrameInfo fi; fi.fbWidth = 41; fi.fbHeight = 40;
         CHECK(r.Render(h.Get(), fi).refused);
-        auto sd = plat::CreateSdl2SurfacePainter(40, 40);
-        if (sd) {
-            const auto im2 = ViaPainter(*sd, h.Get(), 40, 40, 1.5f, false);
-            const rscenes::Diff df = rscenes::Compare(im2, ref, 40, 40, 0);
-            CHECK(df.maxDiff == 0);       // flat white clipped quad: SDL's clip rectangle is the same pixel rectangle
-        }
     }
     {   // the painter's own state is put back: blend mode and clip rectangle
         auto sp = UI::soft::CreateBitmapPainter(32, 32);

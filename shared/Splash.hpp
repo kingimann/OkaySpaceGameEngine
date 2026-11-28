@@ -301,16 +301,8 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
     if (!state || state->present) r->Present();
 }
 
-// The same on a bare SDL_Renderer (the editor's and the launcher's): the sdl2 painter over it, so the calls
-// are the SDL calls. `style.logo` is then an SDL_Texture*.
-inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& style, const SplashProgress* state = nullptr) {
-    if (!r) return;
-    okay::platform::Painter* p = okay::pb::For(r);   // the painter of this renderer (sdl2, or the software painter of an own-backend window)
-    if (p) DrawSplashStyled(p, w, h, style, state);
-}
-
 // Backward-compatible helper: draw the splash with just an accent colour.
-inline void DrawSplash(SDL_Renderer* r, int w, int h, float ar, float ag, float ab) {
+inline void DrawSplash(okay::platform::Painter* r, int w, int h, float ar, float ag, float ab) {
     SplashStyle s; s.ar = ar; s.ag = ag; s.ab = ab;
     DrawSplashStyled(r, w, h, s);
 }

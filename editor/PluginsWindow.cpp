@@ -320,7 +320,7 @@ static void SetPluginEnabled(EditorPlugin& p, bool on) {
 }
 void TickPlugins(EditorState& ed) {
     EnsurePluginPrefs();
-    static Uint32 nextScan = 0;
+    static std::uint32_t nextScan = 0;
     if (g_pluginsProject != ed.projectDir() || okay::platform::TicksMs32() >= nextScan) { ScanPlugins(ed); nextScan = okay::platform::TicksMs32() + 1000; }
     g_pluginEd = &ed;
     static GameObject* lastSel = nullptr;

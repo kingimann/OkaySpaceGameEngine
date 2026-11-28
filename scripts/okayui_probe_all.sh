@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.."
 out=${1:-/dev/stdout}
 files=$(grep -lE 'ImGui|imgui|ImDrawList' editor/*.cpp launcher/*.cpp 2>/dev/null)
-probe() { n=$(g++ -std=c++17 -fsyntax-only -DOKAY_HAVE_OKAYUI -Iokayui/probe -Iokayui/probe/backends -Iokayui/include -Iokayui/screens -Iokayui/soft -Ieditor -Ilauncher -Ishared -Iengine/include -I/usr/include/SDL2 "$1" 2>&1 | grep -c ' error: '); echo "$1 $n"; }
+probe() { n=$(g++ -std=c++17 -fsyntax-only -DOKAY_HAVE_OKAYUI -Iokayui/probe -Iokayui/probe/backends -Iokayui/include -Iokayui/screens -Iokayui/soft -Ieditor -Ilauncher -Ishared -Iengine/include "$1" 2>&1 | grep -c ' error: '); echo "$1 $n"; }
 export -f probe
 echo "$files" | xargs -P2 -I{} bash -c 'probe {}' | sort > "$out.tmp" 2>/dev/null || true
 cat "$out.tmp" > "$out"; rm -f "$out.tmp"

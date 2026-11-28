@@ -2,13 +2,15 @@
 // [function.objects]: hash for the integer types, and the comparison and arithmetic function objects.
 // std::function ([func.wrap.func]): a copyable holder of any callable with the call signature R(A...). Own version:
 // the callable is kept in a heap object behind a virtual call; okay-ms maps function<R(A...)> to function__fn<R, A...>
-// (see instantiate_class). No target(), target_type() or allocator; calling an empty function returns R() for a
+// (see instantiate_class). target<T>() and target_type() ([func.wrap.func.targ]) compare typeid of the kept callable
+// with T (Round 34; only the const form of target, which returns const T*). No allocator; calling an empty function returns R() for a
 // value type instead of throwing bad_function_call (there are no exceptions). okay-ms reads nullptr as the number 0, so
 // construction, assignment and comparison with nullptr take an int: any int would be taken as "empty" (not standard).
 #pragma once
 #include <cstddef>
 #include <cstdlib>
 #include <new>
+#include <typeinfo>
 #include <utility>
 namespace std {
 template <typename F> class function {};
@@ -19,6 +21,8 @@ struct function_holder__ {
     virtual ~function_holder__() {}
     virtual R call(A... args) = 0;
     virtual function_holder__* clone() const = 0;
+    virtual const type_info& type__() const = 0;
+    virtual const void* get__() const = 0;
 };
 template <typename F, typename R, typename... A>
 struct function_impl__ : public function_holder__<R, A...> {
@@ -26,6 +30,8 @@ struct function_impl__ : public function_holder__<R, A...> {
     function_impl__(const F& f) : fn(f) {}
     R call(A... args) { return fn(args...); }
     function_holder__<R, A...>* clone() const { return new function_impl__<F, R, A...>(fn); }
+    const type_info& type__() const { return typeid(F); }
+    const void* get__() const { return &fn; }
 };
 template <typename R, typename... A>
 class function__fn {
@@ -66,6 +72,10 @@ public:
     bool operator!=(int null_pointer) const { return (void)null_pointer, held_ != nullptr; }
     explicit operator bool() const { return held_ != nullptr; }
     R operator()(A... args) const { return held_->call(args...); }
+    const type_info& target_type() const { return held_ ? held_->type__() : typeid(void); }
+    template <typename T> const T* target() const {
+        return held_ && held_->type__() == typeid(T) ? (const T*)held_->get__() : nullptr;
+    }
     void swap(function__fn& o) {
         Holder* t = held_;
         held_ = o.held_;
@@ -73,7 +83,10 @@ public:
     }
 };
 
-template <typename T> struct hash;
+// The primary template turns the value into a size_t: the integer and enumeration types ([unord.hash] 4; Round 34:
+// once a specialization matched only its own type, hash<size_t> and hash<SomeEnum> found none). A class needs its
+// own specialization (std::string's is in <string>).
+template <typename T> struct hash { size_t operator()(T v) const { return (size_t)v; } };
 template <> struct hash<bool> { size_t operator()(bool v) const { return (size_t)v; } };
 template <> struct hash<char> { size_t operator()(char v) const { return (size_t)v; } };
 template <> struct hash<short> { size_t operator()(short v) const { return (size_t)v; } };
@@ -81,6 +94,8 @@ template <> struct hash<int> { size_t operator()(int v) const { return (size_t)v
 template <> struct hash<unsigned> { size_t operator()(unsigned v) const { return (size_t)v; } };
 template <> struct hash<long long> { size_t operator()(long long v) const { return (size_t)v; } };
 template <> struct hash<unsigned long long> { size_t operator()(unsigned long long v) const { return (size_t)v; } };
+// Pointers ([unord.hash] 2: hash<T*> for every T; Round 33, JsRuntime.cpp's std::hash<const void*>): the address.
+template <typename T> struct hash<T*> { size_t operator()(T* p) const { return (size_t)p; } };
 
 // less and greater are in <utility> (the ordered containers use them without the rest of this header).
 template <typename T> struct less_equal { bool operator()(const T& a, const T& b) const { return a <= b; } };

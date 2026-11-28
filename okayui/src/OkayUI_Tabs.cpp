@@ -6,7 +6,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
-#include <SDL.h>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"
@@ -51,6 +50,16 @@ int* tabSelSlot(int bar) {
 // until the inner one ends, as Dear ImGui's tab bars nest.
 TabBarCtx g_tabBarOuter[4];
 int g_tabBarOuterTop = 0;
+// The right-click menu of closable tabs (BeginTabItem with an open flag) that the program gives no menu of its own: Close, Close Others,
+// Close All, Close Tabs to the Right. A right press on such a tab asks for it (`ask*`); the bar opens it at EndTabBar unless the program
+// opened a popup that frame (its own BeginPopupContextItem); the chosen action is carried out on the bar's tabs in the next frame.
+struct TabMenuState {
+    int askBar = 0, askTab = 0; unsigned long long askFrame = 0;   // the tab right-clicked this frame
+    int bar = 0, tab = 0;                                          // the tab the open menu is about
+    int doBar = 0, doTab = 0, action = 0;                          // to do in the bar's next frame: 1 close, 2 others, 3 all, 4 to the right
+    bool pastTarget = false;                                       // (while doing 4) the target tab has been met this frame
+};
+TabMenuState g_tabMenu;
 } // namespace
 void ui_core::tabBarsReset() { g_tabBar.active = false; g_tabBarOuterTop = 0; }
 
@@ -139,6 +148,22 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
         }
     }
     bool visible = (*tb.sel == id);
+    if (open && *open) {                              // the built-in tab menu: a right press asks for it, its choice closes tabs
+        TabMenuState& m = g_tabMenu;
+        if (g_rPressed && hit(x, tb.y, w, tb.h)) { m.askBar = tb.id; m.askTab = id; m.askFrame = g_frameCount; }
+        if (m.action && m.doBar == tb.id) {
+            const bool target = id == m.doTab;
+            bool close = false;
+            switch (m.action) {
+                case 1: close = target; break;
+                case 2: close = !target; break;
+                case 3: close = true; break;
+                case 4: close = m.pastTarget; break;
+            }
+            if (target) m.pastTarget = true;
+            if (close) *open = false;
+        }
+    }
     if (open) {                                       // a small x on the right closes the tab
         const float cx = x + w - closeW, cy = tb.y + (tb.h - textH()) * 0.5f;
         const int cid = id ^ 0x7ab;
@@ -189,6 +214,29 @@ bool TabItemButton(const char* label, int flags) {
 
 void EndTabBar() {
     if (!g_tabBar.active) return;
+    {   // the built-in tab menu (see TabMenuState)
+        TabMenuState& m = g_tabMenu;
+        if (m.action && m.doBar == g_tabBar.id) { m.action = 0; m.pastTarget = false; }
+        char pid[40]; std::snprintf(pid, sizeof pid, "##okayui.tabmenu.%x", (unsigned)g_tabBar.id);
+        if (m.askBar == g_tabBar.id && m.askFrame == g_frameCount && g_openPopupThisFrame == 0) {
+            m.bar = m.askBar; m.tab = m.askTab; m.askBar = 0;
+            OpenPopup(pid);
+        }
+        if (m.bar == g_tabBar.id) {
+            const TabBarCtx saved = g_tabBar;
+            g_tabBar.active = false;   // the menu's rows are not tabs of this bar
+            if (BeginPopup(pid)) {
+                int act = 0;
+                if (MenuItem("Close")) act = 1;
+                if (MenuItem("Close Others")) act = 2;
+                if (MenuItem("Close Tabs to the Right")) act = 4;
+                if (MenuItem("Close All")) act = 3;
+                if (act) { m.doBar = m.bar; m.doTab = m.tab; m.action = act; m.pastTarget = false; m.bar = 0; CloseCurrentPopup(); }
+                EndPopup();
+            } else m.bar = 0;
+            g_tabBar = saved;
+        }
+    }
     // The chosen tab vanished (closed or removed): fall back to the first.
     if (!g_tabBar.seenSel && g_tabBar.firstId != 0) *g_tabBar.sel = g_tabBar.firstId;
     if (g_tabBar.ord) {   // forget tabs that were not shown this frame (closed or removed), so no gap is left
@@ -210,6 +258,7 @@ void EndTabBar() {
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(g_amend),
+    OKAYUI_CTX_VAR(g_tabMenu),
     OKAYUI_CTX_VAR(g_tabBarOuter),
     OKAYUI_CTX_VAR(g_tabBarOuterTop))
 } // namespace OkayUI

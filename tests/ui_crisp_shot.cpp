@@ -1,8 +1,7 @@
 // Headless picture of the crisp-UI scene (tests/ui_crisp_scene.hpp) through the same UI pass the
-// game uses, on SDL's software renderer. Usage: ui_crisp_shot <out.png> [zoom 1..6] [smooth|pixel]
+// game uses, on the software painter. Usage: ui_crisp_shot <out.png> [zoom 1..6] [smooth|pixel]
 // [nearest]. "nearest" renders at 1x and magnifies the picture with nearest-neighbour: what a
 // bitmap-scaled UI looks like. Set OKAY_UI_FILTER=pixel for the old hard-edged drawing.
-#define SDL_MAIN_HANDLED
 #include "ui_crisp_render.hpp"
 #include <cstdlib>
 #include <iostream>

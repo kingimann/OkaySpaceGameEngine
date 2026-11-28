@@ -599,6 +599,10 @@ bool Gen::gen_expr(const Node& node) {
                 if (local->reg != 0 && !is_bool_type(local->type)) {
                     if (!gen_expr(node.kids[1])) return false;
                     convert(last_type, local->type);
+                    // `unsigned char c = p[i];` kept in a register: the value is cut to the local's width, as a store to
+                    // its slot does (Round 34; before, 0xFF read as -1 stayed -1 at /O1 and /O2: silent wrong sums).
+                    const int width = slot_width(*local);
+                    if (width < 4) extend_reg(0, width, local->type.is_unsigned);
                     mov_reg_eax(local->reg);
                     return true;
                 }
@@ -739,7 +743,11 @@ bool Gen::gen_expr(const Node& node) {
             const int mark_depth = temp_depth;
             if (!gen_addr(node.kids[0])) return false;
             const Type target = last_type;
-            if (target.base == 3 && target.pointers == 0 && !target.is_array() && !fits_register(target)) {
+            // An array member copied whole (the implicit copy constructor's `this->f = o.f` for `bool f[3]`; Round 33):
+            // its bytes, as for a big struct. Before, nothing useful was stored (silent wrong copies).
+            const bool array_copy = target.is_array() && target.pointers == 0 && !target.is_ref && node.number == 1 &&
+                                    node.kids[1].kind != Node::Call;
+            if (array_copy || (target.base == 3 && target.pointers == 0 && !target.is_array() && !fits_register(target))) {
                 const int dest = spill_addr();
                 if (!error.empty()) return false;
                 if (node.kids[1].kind == Node::Call) {
@@ -957,7 +965,17 @@ bool Gen::gen_expr(const Node& node) {
         }
         Local* fp_local = node.text.empty() ? nullptr : find_local(node);
         if (fp_local != nullptr && fp_local->type.func_id < 0) fp_local = nullptr;
-        const bool indirect = node.text.empty() || fp_local != nullptr;
+        // A global (or namespace-scope) variable that holds a function pointer, called by its name ([expr.call] 1;
+        // Round 33, BehaviorTreeRunner.cpp's `g_pauseHook(*this, nodeId)`): its value is the target. Before, "unknown
+        // function".
+        Global* fp_global = nullptr;
+        if (fp_local == nullptr && !node.text.empty() && find_func(node.text) == nullptr) {
+            fp_global = find_global(node.text);
+            if (fp_global != nullptr && !(fp_global->type.func_id >= 0 && fp_global->type.pointers == 1 &&
+                                          !fp_global->type.is_array()))
+                fp_global = nullptr;
+        }
+        const bool indirect = node.text.empty() || fp_local != nullptr || fp_global != nullptr;
         FuncDecl* fn = nullptr;
         FuncType sig;
         int callee_slot = 0;
@@ -979,6 +997,18 @@ bool Gen::gen_expr(const Node& node) {
                 return false;
             }
             sig = (*func_types)[static_cast<size_t>(fp_local->type.func_id)];
+            callee_slot = spill();
+            if (!error.empty()) return false;
+        } else if (fp_global != nullptr) {
+            Node name;
+            name.kind = Node::Name;
+            name.text = node.text;
+            if (!gen_expr(name)) return false;
+            if (func_types == nullptr || static_cast<size_t>(fp_global->type.func_id) >= func_types->size()) {
+                error = "call target is not a function";
+                return false;
+            }
+            sig = (*func_types)[static_cast<size_t>(fp_global->type.func_id)];
             callee_slot = spill();
             if (!error.empty()) return false;
         } else if (indirect) {

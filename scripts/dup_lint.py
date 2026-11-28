@@ -739,6 +739,11 @@ DEPRECATED_RE = re.compile(
     r"|(?:OKAY_DEPRECATED\s*\((?:[^()\"]|\"(?:\\.|[^\"\\])*\")*\)|\[\[\s*deprecated[^\]]*\]\])\s*(?:template\s*<[^;{>]*>\s*)?[^;{(=]*?\b([A-Za-z_]\w*)\s*[(=;{]")
 
 
+# C++ programs our own compilers are tested on (tools/okaycc, tools/okayms): a [[deprecated]] in them tests the compiler and
+# retires nothing (attr29.cpp's `Size` once made every new `.Size()` call in the repository an error).
+COMPILER_TEST_PROGRAMS = ("tools/okaycc/tests/", "tools/okayms/tests/")
+
+
 def deprecated_names(root, rev):
     """{name: (path, line)} of everything marked OKAY_DEPRECATED or [[deprecated]] at `rev`."""
     p = subprocess.run(["git", "-C", root, "grep", "-l", "-z", "-E", r"OKAY_DEPRECATED *\(|\[\[ *deprecated", rev, "--"],
@@ -749,6 +754,8 @@ def deprecated_names(root, rev):
     for path in paths:
         lf = lang_of(path)
         if not lf or lf[1] not in C_LIKE or path == "engine/include/okay/Core/Deprecated.hpp":
+            continue
+        if path.startswith(COMPILER_TEST_PROGRAMS):   # programs that test our compilers' [[deprecated]]: not our API
             continue
         text = read_blob(root, rev, path) or ""
         clean = strip_comments(text, lf[1])

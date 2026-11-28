@@ -98,6 +98,47 @@ Outcome RoundTrip(const char* name) {
     return o;
 }
 
+// Helpers a component makes for itself (collision boxes, music voices, build-mode ghosts) must not be written with the
+// scene: a save and two loads, each followed by Start and a few frames as SaveGame::LoadNow does, must end with as many
+// objects as the first run had (#888 F54 and its addenda: they grew by one set per load). Returns objects after the
+// second load minus objects at the start; `setup` fills the host before Start.
+template <class T>
+int GrowthAfterLoads(void (*setup)(GameObject*), int* startCount = nullptr) {
+    auto frames = [](Scene& s) { s.Start(); for (int i = 0; i < 3; ++i) s.Update(1.0f / 60.0f); };
+    std::string text;
+    int first = 0;
+    {
+        Scene a("a");
+        a.CreateGameObject("Player")->tag = "Player";
+        GameObject* cam = a.CreateGameObject("Main Camera");
+        cam->AddComponent<Camera>();
+        cam->tag = "MainCamera";
+        GameObject* host = a.CreateGameObject("Host");
+        if (setup) setup(host);
+        if (!host->GetComponent<T>()) host->AddComponent<T>();
+        frames(a);
+        first = (int)a.Objects().size();
+        text = SceneSerializer::Serialize(a);
+    }
+    int last = first;
+    for (int load = 0; load < 2; ++load) {
+        Scene b("b");
+        if (!SceneSerializer::Deserialize(b, text, nullptr, nullptr)) return 1000;
+        frames(b);
+        last = (int)b.Objects().size();
+        text = SceneSerializer::Serialize(b);
+    }
+    if (startCount) *startCount = first;
+    return last - first;
+}
+
+void SolidRow(GameObject* g) {
+    auto* map = g->AddComponent<Tilemap>();
+    map->Resize(10, 2);
+    for (int x = 0; x < 10; ++x) map->SetTile(x, 0, 1);
+    g->AddComponent<TilemapCollider2D>();
+}
+
 }  // namespace
 
 int main() {
@@ -162,6 +203,18 @@ int main() {
         CHECK(listed.count(info->name) != 0);
     }
     CHECK(registry >= 26);
+
+    // ---- helpers a component makes are not saved (#888 F54) -----------------------------------------------
+    {
+        std::vector<std::string> grows;
+#define X(T) { const int g = GrowthAfterLoads<T>(nullptr); if (g != 0) { grows.push_back(#T); std::cerr << "    " #T " grew by " << g << " objects over two loads\n"; } }
+        OKAY_SAVE_COMPONENTS(X)
+#undef X
+        CHECK(grows.empty());
+        int start = 0;
+        CHECK(GrowthAfterLoads<TilemapCollider2D>(SolidRow, &start) == 0);
+        CHECK(start == 4);   // Player, Main Camera, the tilemap and its one collision box (the row is one merged box)
+    }
 
     // ---- two of one type -------------------------------------------------------------------------------
     {

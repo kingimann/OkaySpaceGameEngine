@@ -840,11 +840,10 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir) {
     return out;
 }
 
-int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor) {
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor, fs::file_time_type now) {
     int removed = 0;
     std::error_code ec;
     std::vector<fs::path> stale;
-    const fs::file_time_type now = fs::file_time_type::clock::now();
     auto busy = [&](const fs::path& dir) {                         // anything in it (the folder itself included) written within `busyFor`
         if (busyFor.count() <= 0) return false;
         std::error_code e;

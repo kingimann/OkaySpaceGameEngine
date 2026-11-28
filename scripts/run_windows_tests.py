@@ -85,6 +85,19 @@ def map_baked_paths(build_root, bin_dir, source_dir):
     return made
 
 
+def safe_stdout(stream=None):
+    """Make `stream` (default sys.stdout) write letters its code page lacks as \\u escapes instead of raising.
+
+    The Windows runner's console is cp1252: one test printing a path with Japanese letters stopped the whole run with
+    UnicodeEncodeError before the other failures were shown. The encoding is kept; only the error handling changes."""
+    stream = stream if stream is not None else sys.stdout
+    try:
+        stream.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
+    return stream
+
+
 def run_one(item, default_timeout, dll_dir):
     name, argv, cwd, env, to, _, will_fail = item[:7]
     e = dict(os.environ); e.update(env)
@@ -110,6 +123,7 @@ def main(argv=None):
     ap.add_argument("--build-failures", default=None, help="file listing targets that failed to compile")
     ap.add_argument("--strict", action="store_true"); ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args(argv)
+    safe_stdout()
     if a.self_test:
         return self_test()
     with open(a.tests, encoding="utf-8") as f:
@@ -192,6 +206,15 @@ def self_test():
     assert r[1] == "passed", r
     r = run_one(("slow", [py, "-c", "import time; time.sleep(5)"], d, {}, 0.5, None, False), 10, d)
     assert r[1] == "failed (timeout)", r
+    # A test's output with letters the console code page has no room for (a path with "\u65e5\u672c", the Windows runner's
+    # cp1252 console) must print, not stop the whole run with UnicodeEncodeError (main's Windows tests, 2026-11-27).
+    import io
+    raw = io.BytesIO()
+    cp1252 = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    safe_stdout(cp1252)
+    print("  | path '\u00e4\u65e5\u672c'", file=cp1252)
+    cp1252.flush()
+    assert b"path" in raw.getvalue(), raw.getvalue()
     print("run_windows_tests self-test: ok")
     return 0
 

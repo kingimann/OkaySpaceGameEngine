@@ -228,7 +228,8 @@ Module['preRun'].push(function () {
 
 // ---- 3. browser manners ----------------------------------------------------------------------------------------------
 // Audio: browsers create every AudioContext suspended until the person clicks, presses a key or touches. Keep a list of
-// the contexts the game makes (SDL's audio makes one) and resume them all on the first gesture.
+// the contexts the game makes (the player's sound makes one, engine/src/Platform/WebBackend.cpp) and resume them all on the
+// first gesture.
 var okayAudioContexts = [];
 (function () {
     var names = ['AudioContext', 'webkitAudioContext'];
@@ -256,8 +257,9 @@ function okayGesture() {
 }
 ['pointerdown', 'keydown', 'touchstart', 'mousedown'].forEach(function (t) { window.addEventListener(t, okayGesture, true); });
 
-// Keys the browser scrolls with. SDL already blocks the arrows (keydown) and Space (keypress, which is when browsers
-// scroll with it); these four make no text, so blocking their keydown loses nothing and keeps an embedding page still.
+// Keys the browser scrolls with. The player already blocks the arrows (keydown) and Space (keypress, which is when browsers
+// scroll with it; WebBackend.cpp); these four make no text, so blocking their keydown loses nothing and keeps an embedding
+// page still.
 window.addEventListener('keydown', function (e) {
     if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home' || e.key === 'End') e.preventDefault();
 });

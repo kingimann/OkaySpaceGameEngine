@@ -75,7 +75,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a collider is bigger or smaller than the mesh | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a colour comes out too dark | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a Combo list draws under other widgets | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
-| a component body is still Dear ImGui with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
+| a component bar's tooltip does not show | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
+| a component body looks different from the others | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
@@ -391,7 +392,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an event arrives on the host but not on the other players | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | an example has no camera | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an example opens and shows only text | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
-| an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | an image is missing | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
@@ -774,7 +774,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no idea where players quit a level | [48.2](43-proposals.md#482-opt-in-analytics-events) Opt-in analytics events |
 | no in-game console | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | no log file after a crash | [1.10](01-core-scene.md#110-logging-and-profiling) Logging and profiling |
-| no MinGW" or "SDL2_MINGW_PREFIX not set" errors | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| no MinGW" errors | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | no place to find or install mods | [47.3](43-proposals.md#473-mod-packaging-and-sharing) Mod packaging and sharing |
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
@@ -1104,7 +1104,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | the head stares at the origin or the target behind | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the Inspector is slow with many components | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
-| the Inspector looks the same with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | the installer asks to close OkaySpace | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the Issues tab shows missing waypoints | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
 | the item does not snap to the zone | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
@@ -1263,7 +1262,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | typing in a text field also moves the player | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
-| typing in an OkayUI field triggers an editor shortcut | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
 | UI is slow with many widgets | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |

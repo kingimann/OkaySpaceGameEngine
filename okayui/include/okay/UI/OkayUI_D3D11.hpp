@@ -3,7 +3,7 @@
 // OkayUI Direct3D 11 backend (Windows only).
 //
 // Renders OkayUI's batched geometry (OkayUI::GetDrawData) through Direct3D 11 — a
-// raw DX11 path, separate from the cross-platform SDL_Renderer path. Use it from a
+// raw DX11 path, separate from the cross-platform painter path. Use it from a
 // host that owns a D3D11 device + immediate context and has a render target bound
 // (e.g. the standalone okayui_d3d11_demo, or any DX11 app).
 //
@@ -14,7 +14,7 @@
 // Usage per frame:
 //     OkayUI::BeginFrame(input);
 //     ... widgets ...
-//     OkayUI::EndFrameData();              // finalize interaction (no SDL draw)
+//     OkayUI::EndFrameData();              // finalize interaction (no drawing)
 //     backend.Render(ctx, width, height);  // submit the geometry via D3D11
 // ---------------------------------------------------------------------------
 #if defined(_WIN32)

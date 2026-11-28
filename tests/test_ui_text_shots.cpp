@@ -1,18 +1,16 @@
 // Headless pictures of the nameplate, the rich-text sign and the shipped sample scene (examples/ui_text), drawn with the same UI
-// pass as the game on SDL's software renderer (no window, no GPU): so they show what the engine draws, not what a real window
+// pass as the game on the software painter (no window, no GPU): so they show what the engine draws, not what a real window
 // does. They go to OKAY_SHOT_DIR (or the first argument, or <build>/ui_text) and are checked for what they show: a nameplate whose
 // pieces all sit inside its card, a sign whose lines do not overlap, health bars that shrink when a character is hurt.
 // Written for this engine; no other project's code or assets were used.
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/UIGallery.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
-#include <SDL.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -29,41 +27,36 @@ namespace {
 
 constexpr int W = 1280, H = 720;
 
-// A 1280x720 software surface with the UI painter on it.
+// A 1280x720 canvas on the software painter (ui_soft_render.hpp's painter, kept for the whole run).
 struct Canvas2D {
-    SDL_Surface* surf = nullptr;
-    SDL_Renderer* ren = nullptr;
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    Canvas2D() {
-        surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
-        ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-        if (ren) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    }
-    ~Canvas2D() {
-        for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-        if (ren) SDL_DestroyRenderer(ren);
-        if (surf) SDL_FreeSurface(surf);
-    }
-    bool Ok() const { return ren != nullptr; }
-    void Clear(int r, int g, int b) { SDL_SetRenderDrawColor(ren, (Uint8)r, (Uint8)g, (Uint8)b, 255); SDL_RenderClear(ren); }
+    std::unique_ptr<okay::platform::Painter> p;
+    Canvas2D() : p(OkayUI::soft::CreateBitmapPainter(W, H)) { if (p) p->SetBlendMode(okay::platform::BlendMode::Blend); }
+    bool Ok() const { return p != nullptr; }
+    void Clear(int r, int g, int b) { p->SetDrawColor((std::uint8_t)r, (std::uint8_t)g, (std::uint8_t)b, 255); p->Clear(); }
     void Fill(float x, float y, float w, float h, Color c) {
-        SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255));
-        SDL_Rect r{(int)std::lround(x), (int)std::lround(y), (int)std::lround(w), (int)std::lround(h)};
-        SDL_RenderFillRect(ren, &r);
+        p->SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255));
+        ui2d::Rect r{(int)std::lround(x), (int)std::lround(y), (int)std::lround(w), (int)std::lround(h)};
+        p->FillRect(&r);
+    }
+    /// A full-canvas RGBA picture (top row first) copied over everything (no blending), as the 3D view under the UI.
+    void Put(const std::uint32_t* rgba) {
+        okay::platform::TextureDesc d; d.width = W; d.height = H; d.blend = okay::platform::BlendMode::None;
+        ui2d::Tex t = p->CreateTexture(d, (const std::uint8_t*)rgba);
+        if (!t) return;
+        p->Copy(t, nullptr, nullptr);
+        p->DestroyTexture(t);
     }
     Image ToImage() const {
         Image img(W, H);
-        for (int y = 0; y < H; ++y) {
-            const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
-            for (int x = 0; x < W; ++x) img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], 255));
-        }
+        std::vector<std::uint8_t> px; int w = 0, h = 0;
+        if (!p->ReadPixels(px, w, h) || w != W || h != H) return img;
+        for (std::size_t i = 0; i + 3 < px.size(); i += 4) px[i + 3] = 255;
+        std::memcpy(img.Data(), px.data(), px.size());
         return img;
     }
 };
 
-// The font atlas textures are kept per font for the whole process (SDLFontAtlas: "one renderer per process, as in the player"),
-// so every picture is drawn on the same surface and renderer; a renderer made per picture would leave the later pictures
-// pointing at textures of a renderer that is gone, and their smooth text would not show.
+// One canvas for every picture (the painter keeps its font atlases between pictures).
 Canvas2D& SharedCanvas() {
     static Canvas2D cv;
     return cv;
@@ -126,14 +119,13 @@ Image Plates3D(bool scaled) {
     Canvas2D& cv = SharedCanvas();
     Image empty(W, H);
     if (!cv.Ok()) return empty;
-    for (int y = 0; y < H; ++y) std::memcpy((unsigned char*)cv.surf->pixels + y * cv.surf->pitch, &r.color[(size_t)y * W], W * 4);
+    cv.Put(r.color.data());
     UIWorld().active = true; UIWorld().screenW = W; UIWorld().screenH = H; UIWorld().right = {1, 0, 0};
     UIWorld().project = [vp](const Vec3& wp, Vec2& o, float& d) {
         Vec4 c = vp * Vec4{wp.x, wp.y, wp.z, 1.0f}; if (c.w <= 0.05f) return false;
         o = Vec2{W * 0.5f + c.x / c.w * W * 0.5f, H * 0.5f - c.y / c.w * H * 0.5f}; d = c.w; return true; };
-    ui2d::SDLPainter painter(cv.ren, &cv.cache, "");
+    okay::platform::Painter& painter = *cv.p;
     ui2d::RenderSceneUI(s, painter, W, H);
-    SDL_RenderPresent(cv.ren);
     UIWorld().active = false;
     ActionList::ResetVars();
     return cv.ToImage();
@@ -158,9 +150,8 @@ Image Sign(bool coloured) {
     cv.Fill(0, 520, W, 200, Color::FromBytes(70, 120, 60));
     cv.Fill(620, 400, 40, 320, Color::FromBytes(90, 60, 35));
     cv.Fill(100, 90, 1080, 330, Color::FromBytes(70, 45, 28));                     // the board
-    ui2d::SDLPainter painter(cv.ren, &cv.cache, "");
+    okay::platform::Painter& painter = *cv.p;
     ui2d::DrawWorldText(painter, *tr, 140.0f, 120.0f, 3.5f);
-    SDL_RenderPresent(cv.ren);
     return cv.ToImage();
 }
 
@@ -182,7 +173,7 @@ Image Example(Scene& s, float camY = 0.0f) {
         const Vec2 c = toScreen(sr->gameObject->transform->Position());
         cv.Fill(c.x - sr->size.x * scale * 0.5f, c.y - sr->size.y * scale * 0.5f, sr->size.x * scale, sr->size.y * scale, sr->color);
     }
-    ui2d::SDLPainter painter(cv.ren, &cv.cache, "");
+    okay::platform::Painter& painter = *cv.p;
     for (const auto& o : s.Objects()) {                                             // world text, as the player's flat pass draws it
         auto* tr = o->GetComponent<TextRenderer>();
         if (!tr || !o->active || tr->screenSpace) continue;
@@ -193,7 +184,6 @@ Image Example(Scene& s, float camY = 0.0f) {
     UIWorld().project = [=](const Vec3& wp, Vec2& out, float& depth) { out = toScreen(wp); depth = 10.0f; return true; };
     ui2d::RenderSceneUI(s, painter, W, H);
     UIWorld().active = false;
-    SDL_RenderPresent(cv.ren);
     return cv.ToImage();
 }
 

@@ -81,7 +81,20 @@ info. Tooltip bg and text. Radii: small (check boxes, chips, row highlights), me
 - First start with designs: the launcher's old theme maps Slate to Graphite (the new default), Midnight to Midnight, Light to
   Slate's light scheme; a non-default accent preset becomes a custom accent; the editor's light mode becomes the light scheme.
 
-## Left for round 2
+## Round 4 (2026-11-27, `docs/ui/own_ui_toolkit.md` section 34)
 
-Tables (row hover, sticky headers), docking tabs and splitters, CodeEdit chrome, Tab-key keyboard navigation so the focus ring
-shows on every control (OkayUI has keyboard focus only for text fields today), a design editor for custom designs.
+- Hover must read on an ordinary monitor: the hovered colour is at least 1.18:1 (luminance contrast) from the resting one for buttons,
+  rows, tabs and scroll bar thumbs and 1.10:1 for fields, in every design and scheme (`launcher_theme` checks all of them). The design's
+  `controlHover` is the control mixed 14% (dark) or 10% (light) toward the ink; OkayTheme's Dear ImGui colours follow the same rule.
+- Rows in Dear ImGui's look (Selectable, tree nodes, popup menu rows) keep Dear ImGui's places and sizes but draw OkayUI's way: a rounded
+  highlight (the small radius) that eases in, a chevron instead of a filled triangle, and a 2-pixel accent bar on a selected row.
+- Data tables (striped or sortable) light the row under the pointer across all its columns.
+- Dock tabs: the label is dim unless the tab is chosen or under the pointer; the close cross shows on those two only. A dragged tab
+  leaves a dimmed place, follows the pointer as a raised chip, and the area it would fill is shown before release (guide tiles: five over
+  the leaf, four at the dock area's edges).
+
+## Left
+
+Sticky table headers, CodeEdit chrome, Tab-key keyboard navigation so the focus ring shows on every control (OkayUI has keyboard focus
+only for text fields today), labels on the left of Inspector fields (Dear ImGui puts them after the field), a design editor for custom
+designs.

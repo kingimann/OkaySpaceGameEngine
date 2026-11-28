@@ -1,10 +1,9 @@
 #pragma once
 // The OkayUI render backends (see OkayUIRender.hpp for the contract). Each one is a render::Backend in its own file
-// under okayui/render/. All of them are OWN CODE, OFF BY DEFAULT; the OpenGL and Direct3D 11 ones are wired, behind
-// OKAY_UI_OWN_RENDER=1 (OkayUIRenderSDL.hpp).
+// under okayui/render/. All of them are own code.
 //
 //   Soft      OkayUIRender_Soft.cpp      CPU, into an RGBA bitmap. The REFERENCE: every other backend is compared with it.
-//   Painter   OkayUIRender_Painter.cpp   through okay::platform::Painter (sdl2 painter or the own software painter).
+//   Painter   OkayUIRender_Painter.cpp   through okay::platform::Painter (the OpenGL or the software painter).
 //   OpenGL    OkayUIRender_GL.cpp        OpenGL 3.3 core or OpenGL ES 3.0, entry points through a get-proc function
 //                                        (no link-time GL dependency, like okay::GLRenderer::LoadGL).
 //   D3D11     OkayUIRender_D3D11.cpp     Direct3D 11 (Windows only; the file is empty elsewhere).
@@ -36,7 +35,7 @@ std::unique_ptr<Backend> CreatePainterBackend(okay::platform::Painter& painter);
 enum class GLFlavor { Core33, ES30 };
 using GLGetProc = void* (*)(const char*);
 /// A GL context of the right kind must be current, now and for every later call on the backend. `getProc` resolves
-/// entry points (SDL_GL_GetProcAddress, eglGetProcAddress, wglGetProcAddress ...). Returns null and sets `err` when
+/// entry points (Backend::GLProcAddress, eglGetProcAddress, wglGetProcAddress ...). Returns null and sets `err` when
 /// an entry point is missing or the shader does not build. Draws into the framebuffer bound at BeginFrame, over a
 /// viewport of the frame size, and restores the GL state it changed.
 std::unique_ptr<Backend> CreateGLBackend(GLGetProc getProc, GLFlavor flavor, std::string* err = nullptr);

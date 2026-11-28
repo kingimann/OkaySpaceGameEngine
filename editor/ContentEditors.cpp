@@ -145,7 +145,7 @@ std::string FirstItem() {
         if (!d.loose && !d.id.empty()) return d.id;
     return "item";
 }
-SDL_Texture* Icon(const std::string& id) {
+okay::ui2d::Tex Icon(const std::string& id) {
     const std::string path = ItemIconPath("", id);
     return path.empty() ? nullptr : GetThumb(path);
 }
@@ -399,7 +399,7 @@ bool ItemDropdown(const char* label, std::string& id) {
             if (d.loose || d.id.empty()) continue;
             if (!f.empty() && Lower(d.id + " " + d.name + " " + d.category).find(f) == std::string::npos) continue;
             any = true;
-            if (SDL_Texture* t = Icon(d.id)) { ImGui::Image((ImTextureID)t, ImVec2(18, 18)); ImGui::SameLine(); }
+            if (okay::ui2d::Tex t = Icon(d.id)) { ImGui::Image((ImTextureID)t, ImVec2(18, 18)); ImGui::SameLine(); }
             const std::string row = d.DisplayName() + (d.name.empty() || d.name == d.id ? "" : "    " + d.id);
             if (ImGui::Selectable((row + "##" + d.id).c_str(), d.id == id)) {
                 if (d.id != id) {
@@ -476,7 +476,7 @@ void DrawItemTab(EditorState& ed) {
         std::string row = d.DisplayName();
         if (d.loose) row += "  (not defined)";
         else if (!d.name.empty() && d.name != d.id) row += "    " + d.id;
-        if (SDL_Texture* t = Icon(d.id)) { ImGui::Image((ImTextureID)t, ImVec2(18, 18)); ImGui::SameLine(); }
+        if (okay::ui2d::Tex t = Icon(d.id)) { ImGui::Image((ImTextureID)t, ImVec2(18, 18)); ImGui::SameLine(); }
         if (ImGui::Selectable((row + "##" + d.id).c_str(), s_itemSel == d.id)) s_itemSel = d.id;
     }
     if (db.Items().empty()) ImGui::TextDisabled("No items yet.");
@@ -502,7 +502,7 @@ void DrawItemTab(EditorState& ed) {
         TouchString("Name", d->name, "What players see. Rename this freely.");
         TouchString("Description", d->description, nullptr);
         TouchString("Icon", d->icon, "Image path. Blank uses the icon folder plus the id.");
-        if (SDL_Texture* t = Icon(d->id)) ImGui::Image((ImTextureID)t, ImVec2(56, 56));
+        if (okay::ui2d::Tex t = Icon(d->id)) ImGui::Image((ImTextureID)t, ImVec2(56, 56));
         TouchInt("Stack Size", d->maxStack, 0.2f, 0, 100000);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most in one stack. 0 uses only the container's own limit.");
         TouchFloat("Weight", d->weight, 0.05f, 0.0f, 10000.0f, "%.2f");

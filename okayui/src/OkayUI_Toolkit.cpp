@@ -6,7 +6,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
-#include <SDL.h>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"
@@ -218,7 +217,7 @@ void Spinner(float size) {
     unsigned char tmp[4];
     for (int i = 0; i < 20; ++i) {   // a 270-degree arc fading toward its tail
         const float t0 = a0 + i * 0.2356f, t1 = t0 + 0.2356f;
-        line(cx + r * SDL_cosf(t0), cy + r * SDL_sinf(t0), cx + r * SDL_cosf(t1), cy + r * SDL_sinf(t1),
+        line(cx + r * std::cos(t0), cy + r * std::sin(t0), cx + r * std::cos(t1), cy + r * std::sin(t1),
              d * 0.1f, withAlpha(g_theme.accent, 0.15f + 0.85f * (float)i / 19.0f, tmp));
     }
 }

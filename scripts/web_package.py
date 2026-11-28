@@ -26,7 +26,7 @@ import sys
 import zipfile
 
 MAGIC = b"OKWPACK1"
-# The licences of the parts written by others (Emscripten's runtime, SDL2, the Roboto font, ...): every web build ships them.
+# The licences of the parts written by others (Emscripten's runtime, the Roboto font, ...): every web build ships them.
 NOTICES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dist", "THIRD_PARTY_NOTICES.txt")
 CONFIG_MARK = "OKAY_WEB_CONFIG"   # the shell reads window.OKAY_WEB_CONFIG; the config script goes in <head>
 

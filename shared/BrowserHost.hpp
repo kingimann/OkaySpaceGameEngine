@@ -4,7 +4,7 @@
 // shows pages: the launcher's Browser page (launcher/BrowserPage.cpp) and the browser program (browser/main.cpp).
 //   * Pages and images are fetched through the one HTTP seam (okay/Platform/NativeFetch.hpp) on a worker thread (our own
 //     okay::thr threads, CLAUDE.md rule 21a) and handed to the tab; images are read by our own decoders
-//     (okay/Core/ImageDecode.hpp) and turned into textures through the host's callbacks (an SDL renderer or a Painter).
+//     (okay/Core/ImageDecode.hpp) and turned into textures through the host's callbacks (a Painter).
 //   * Games (step 2, docs/platform/browser_plan.md): a page's OkaySpace web game (okay/Browser/GameLaunch.hpp says which
 //     boxes) is downloaded into the site's own folder (size-capped), checked and unpacked (okay/Browser/GamePack.hpp) on a
 //     worker thread, then run natively by the player as its own process (okaycli::Child, tools/okay-cli/Process.hpp: no

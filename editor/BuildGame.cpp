@@ -473,8 +473,8 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
                     fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
 
-    // Bundle the runtime libraries the game needs beside it — most importantly
-    // SDL2.dll on Windows, without which the game won't launch. Look next to the
+    // Bundle the runtime libraries the game needs beside it (the MinGW runtime DLLs on Windows, when the player was not
+    // linked statically; the player has no other library of its own since SDL2 left on 2026-11-27). Look next to the
     // player, then next to the editor (and common subfolders). Nothing else is copied: no editor files,
     // no tools, no symbols.
     {
@@ -482,9 +482,9 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
         fs::path edir = updater::SelfPath().empty() ? fs::path() : fs::path(updater::SelfPath()).parent_path();
         std::vector<fs::path> roots2 = {pdir, edir, edir / "bin", edir.parent_path(), pdir.parent_path()};
 #if defined(_WIN32)
-        const char* libs[] = {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
+        const std::vector<const char*> libs = {"libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
 #else
-        const char* libs[] = {"libSDL2-2.0.so.0"};
+        const std::vector<const char*> libs;
 #endif
         for (const char* lib : libs) {
             for (const fs::path& r2 : roots2) {
@@ -494,7 +494,7 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
                 if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, lib, "runtime library the player needs", ce); break; }
             }
         }
-        // The licences of the parts written by others that the game carries (runtimes, SDL2, the built-in font):
+        // The licences of the parts written by others that the game carries (runtimes, the built-in font):
         // the release package has the file beside the launcher and beside the editor (scripts/build-windows-dist.sh).
         for (const fs::path& r2 : roots2) {
             if (r2.empty()) continue;
@@ -712,7 +712,7 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
 // ready-to-build project for a non-desktop target. The editor can't run Emscripten
 // (web) or the Android NDK itself, so it lays down everything those toolchains need
 // and a build script / README with the exact commands. `target`: 1 = Web (WASM +
-// WebGL via Emscripten), 2 = Android (SDL2 + NDK).
+// WebGL via Emscripten), 2 = Android (data only: there is no Android player).
 std::string ExportForPlatform(EditorState& ed, const std::string& outDirAsTyped,
                               const std::string& gameName, const Options& opt, int target) {
     const std::string outDir = okayproj::layout::ResolveInProject(ed.projectDir(), outDirAsTyped);   // relative: inside the project
@@ -794,22 +794,18 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDirAsTyped,
         return msg;
     }
 
-    // target == 2: ---- Android (SDL2 + NDK) ----
+    // target == 2: ---- Android (data only) ----
     std::ofstream rd((dir / "README.txt").string());
     rd << "OkaySpace - Android export of '" << gameName << "'\n"
           "==============================================\n\n"
           "assets/   your scene + assets, ready to drop into an Android app's\n"
           "          app/src/main/assets/ folder.\n\n"
-          "Building an APK needs Android Studio + the NDK and SDL2's Android project\n"
-          "(the OkaySpace player is C++ on SDL2, which has an official Android port):\n"
-          "  1. Start from SDL2's androidproject template (SDL/build-scripts).\n"
-          "  2. Add the OkaySpace engine + player sources as the app's native code;\n"
-          "     they build against SDL2's Android port.\n"
-          "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
-          "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
+          "There is no Android player yet: the OkaySpace player runs on our own platform\n"
+          "layer (okay::platform), which has Windows and Linux backends but no Android one.\n"
+          "This folder is the game's data, ready for when it does.\n\n"
           "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
     return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
-           " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
+           " asset(s)). See README.txt: there is no Android player yet.";
 }
 // ---- Dedicated server export ---------------------------------------------------
 // A ready-to-run server folder: the game's data + the player runtime for the
@@ -876,7 +872,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
     } else {
         fs::remove(hostExe, ec);
         for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
-            fs::remove(dir / lib, ec);
+            fs::remove(dir / lib, ec);   // (also what an export made before 2026-11-27 left: SDL2.dll is no longer used)
         auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
             const std::string url = updater::RawUrl("latest", asset);   // the newest release in the releases bucket (never GitHub)
             if (url.empty() || !updater::Download(url, dest.string())) return false;
@@ -890,7 +886,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
                        "(okay-server-linux-x64 from the latest release). Check your connection, or export a Windows server.";
             fetched = "the Linux server runtime";
         } else {
-            if (!fetch("OkaySpacePlayer.exe", bin, 100000) || !fetch("SDL2.dll", dir / "SDL2.dll", 10000))
+            if (!fetch("OkaySpacePlayer.exe", bin, 100000))
                 return "Built the game data to " + dir.string() + ", but couldn't download the Windows runtime.";
             fetched = "the Windows runtime";
         }
@@ -949,9 +945,9 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
             "PORT=${PORT:-" + portS + "}\n"
             "SUDO=; [ \"$(id -u)\" -ne 0 ] && SUDO=sudo\n"
             "if command -v apt-get >/dev/null; then\n"
-            "  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libsdl2-2.0-0 libsodium23 >/dev/null || true\n"
+            "  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libsodium23 >/dev/null || true\n"
             "elif command -v dnf >/dev/null; then\n"
-            "  $SUDO dnf install -y -q SDL2 libsodium >/dev/null || true\n"
+            "  $SUDO dnf install -y -q libsodium >/dev/null || true\n"
             "fi\n"
             "id okayspace >/dev/null 2>&1 || $SUDO useradd --system --home-dir \"$DIR\" --shell /usr/sbin/nologin okayspace\n"
             "chmod +x \"$DIR/" + binName + "\" \"$DIR\"/*.sh\n"
@@ -1010,7 +1006,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
             "#   docker build -t " + slug + "-server .\n"
             "#   docker run -d -p " + portS + ":" + portS + "/udp --restart unless-stopped " + slug + "-server\n"
             "FROM ubuntu:22.04\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends libsdl2-2.0-0 libsodium23 ca-certificates \\\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends libsodium23 ca-certificates \\\n"
             "    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home okayspace\n"
             "WORKDIR /srv/game\n"
             "COPY . .\n"
@@ -1084,7 +1080,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const
         const std::string fn = e.path().filename().string();
         int cat = CAT_ASSET;
         if (fn == binName) cat = CAT_EXE;
-        else if (ext == ".dll" || ext == ".so" || fn.rfind("libSDL2", 0) == 0) cat = CAT_LIB;
+        else if (ext == ".dll" || ext == ".so" || fn.find(".so.") != std::string::npos) cat = CAT_LIB;
         else if (ext == ".okayscene" || ext == ".okayconfig" || fn == "server.cfg") cat = CAT_DATA;
         rep->files.push_back({fs::relative(e.path(), dir, se).generic_string(), sz, cat});
         rep->catBytes[cat] += sz; rep->total += sz;

@@ -3,6 +3,7 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
+#include "okay/UI/UIImageScale.hpp"
 
 namespace okay::platform {
 
@@ -31,6 +32,8 @@ void Painter::GeometryRaw(ui2d::Tex t, const float* xy, int xyStride, const std:
 void Painter::ReleaseCachedTextures() {
     for (auto& kv : m_cache) if (kv.second) DestroyTexture(kv.second);
     m_cache.clear();
+    for (auto& kv : m_sized) if (kv.second) DestroyTexture(kv.second);
+    m_sized.clear();
     for (auto& kv : m_fonts) if (kv.second.tex) DestroyTexture(kv.second.tex);
     m_fonts.clear();
 }
@@ -55,6 +58,22 @@ ui2d::Tex Painter::LoadTexture(const std::string& path) {
     ui2d::Tex tex = CreateTexture(d, (const std::uint8_t*)img.Data());
     m_cache[path] = tex;
     return tex;
+}
+
+ui2d::Tex Painter::LoadTextureSized(const std::string& path, int w, int h) {
+    if (path.empty() || w <= 0 || h <= 0) return LoadTexture(path);
+    const std::string key = path + "@" + std::to_string(w) + "x" + std::to_string(h);
+    auto it = m_sized.find(key);
+    if (it != m_sized.end()) return it->second ? it->second : LoadTexture(path);
+    okay::Image img;
+    if (!img.Load(path) && !img.Load(m_baseDir + path)) { m_sized[key] = nullptr; return LoadTexture(path); }
+    const okay::Image scaled = okay::ui2d::UIDownscaleImage(img, w, h, false);
+    TextureDesc d;
+    d.width = scaled.Width(); d.height = scaled.Height();
+    d.scale = ScaleMode::Linear;
+    ui2d::Tex tex = CreateTexture(d, (const std::uint8_t*)scaled.Data());
+    m_sized[key] = tex;
+    return tex ? tex : LoadTexture(path);
 }
 
 void Painter::SetImageFilter(bool linear) {

@@ -161,8 +161,7 @@ int main() {
         auto pp = UI::soft::CreateBitmapPainter(W, H);
         auto pb = R::CreatePainterBackend(*pp);
         const Res rp = TimeBackend(*pb, d, 3, nullptr, nullptr);
-        auto sd = plat::CreateSdl2SurfacePainter(W, H);
-        Res rd; if (sd) { auto sb = R::CreatePainterBackend(*sd); rd = TimeBackend(*sb, d, 3, nullptr, nullptr); }
+        Res rd;   // (was the sdl2 painter's column; SDL2 left the desktop builds on 2026-11-27, so it stays 0)
         // OpenGL core
         Res rg;
         if (hasCore) {

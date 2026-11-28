@@ -1643,18 +1643,12 @@ add_executable(test_script_ui test_script_ui.cpp)
 target_link_libraries(test_script_ui PRIVATE okay::engine)
 add_test(NAME script_ui COMMAND test_script_ui)
 
-# OkayUI renders through SDL_Renderer, so this test drives a headless SOFTWARE
-# renderer and reads pixels back. Only built when SDL2 (hence okay_ui) is present.
-if(TARGET okay_ui)
+# OkayUI's widgets drawn on the software painter (okayui/soft) and read back pixel by pixel.
+if(TARGET okay_ui_soft)
     add_executable(test_okayui test_okayui.cpp)
-    target_link_libraries(test_okayui PRIVATE okay_ui)
+    target_link_libraries(test_okayui PRIVATE okay_ui_soft)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
-
-# The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
-add_executable(test_ui_backend test_ui_backend.cpp)
-target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
-add_test(NAME ui_backend COMMAND test_ui_backend)
 
 # The own-stack dogfood switch (OKAY_OWN_STACK build option, OKAY_OWN_STACK=1 at run time) and the one-line startup stack report.
 # Two entries because the platform and FBX choices are cached on first use: what the build does alone, and what the variable does.
@@ -1664,7 +1658,7 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_executable(test_own_switches test_own_switches.cpp)
 target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME own_switches COMMAND test_own_switches)
-# The configured okay::platform default (cmake/OkayPlatform.cmake: own on Linux since #1341, sdl2 elsewhere): the default-build check expects it.
+# The configured okay::platform default (cmake/OkayPlatform.cmake: own on every desktop since SDL2 left, sdl2 only on the web): the default-build check expects it.
 target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_PLATFORM="${OKAY_PLATFORM_BACKEND}")
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
@@ -3095,53 +3089,39 @@ add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)
 add_test(NAME script_paths COMMAND test_script_paths)
 
-# Golden images for the engine UI renderer, drawn on SDL's software renderer
-# (needs SDL2; skipped quietly without it).
-find_package(SDL2 QUIET)
-if(SDL2_FOUND)
-    if(TARGET SDL2::SDL2)
-        set(OKAY_TEST_SDL_LIB SDL2::SDL2)
-    else()
-        set(OKAY_TEST_SDL_LIB ${SDL2_LIBRARIES})
-    endif()
+# Golden images and pictures of the engine UI renderer, drawn on our own software painter (okayui/soft, tests/ui_soft_render.hpp).
+if(TARGET okay_ui_soft)
     add_executable(test_ui_widgets_more_shots test_ui_widgets_more_shots.cpp)
-    target_link_libraries(test_ui_widgets_more_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_widgets_more_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
 
     add_executable(test_ui_library_shots test_ui_library_shots.cpp)
-    target_link_libraries(test_ui_library_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_library_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_library_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
     add_executable(test_ui_library2_shots test_ui_library2_shots.cpp)
-    target_link_libraries(test_ui_library2_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_library2_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
 
     add_executable(test_ui_library3_shots test_ui_library3_shots.cpp)
-    target_link_libraries(test_ui_library3_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_library3_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_library3_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_library3_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ui_library3_shots COMMAND test_ui_library3_shots)
 
     add_executable(test_ui_library4_shots test_ui_library4_shots.cpp)
-    target_link_libraries(test_ui_library4_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_library4_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_library4_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_library4_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ui_library4_shots COMMAND test_ui_library4_shots)
 
     # Picture tool for the typed-input Controls screen (no add_test: it writes nothing without an output folder).
     add_executable(shot_controls_screen shot_controls_screen.cpp)
-    target_link_libraries(shot_controls_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(shot_controls_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(shot_controls_screen PRIVATE okay::engine okay_ui_soft)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
-    target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_renderer_golden PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
@@ -3150,8 +3130,8 @@ if(SDL2_FOUND)
     # the steps and the finish, and one golden picture (tests/golden/splash/loading_50.png).
     if(TARGET okay_ui_soft)
         add_executable(test_splash test_splash.cpp)
-        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${SDL2_INCLUDE_DIRS})
-        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine ${OKAY_TEST_SDL_LIB})
+        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine)
         target_compile_definitions(test_splash PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
         target_compile_features(test_splash PRIVATE cxx_std_17)
         add_test(NAME splash COMMAND test_splash)
@@ -3159,50 +3139,39 @@ if(SDL2_FOUND)
 
     # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
     add_executable(test_accessibility_render test_accessibility_render.cpp)
-    target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_accessibility_render PRIVATE okay::engine okay_ui_soft)
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
 
     # 1280x720 menu picture for the crisp-UI before/after. Not a ctest.
     add_executable(crisp_ui_shot crisp_ui_shot.cpp)
-    target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(crisp_ui_shot PRIVATE okay::engine okay_ui_soft)
     # Crisp-UI picture tool (headless renders at 1x..6x) and its numeric test.
     add_executable(test_ui_quality test_ui_quality.cpp)
-    target_link_libraries(test_ui_quality PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_quality PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_quality PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_quality PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_quality COMMAND test_ui_quality)
     add_executable(ui_quality_shot ui_quality_shot.cpp)
-    target_link_libraries(ui_quality_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(ui_quality_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(ui_quality_shot PRIVATE okay::engine okay_ui_soft)
     add_executable(ui_crisp_shot ui_crisp_shot.cpp)
-    target_link_libraries(ui_crisp_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(ui_crisp_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(ui_crisp_shot PRIVATE okay::engine okay_ui_soft)
     add_executable(test_ui_crisp test_ui_crisp.cpp)
-    target_link_libraries(test_ui_crisp PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_crisp PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_crisp PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_crisp PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_crisp COMMAND test_ui_crisp)
     add_executable(test_display_screen test_display_screen.cpp)
-    target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_display_screen PRIVATE okay::engine okay_ui_soft)
     add_test(NAME display_screen COMMAND test_display_screen)
     add_executable(test_ui_focus_render test_ui_focus_render.cpp)
-    target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_focus_render PRIVATE okay::engine okay_ui_soft)
     add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
 
     # Pictures of the nameplate, the rich-text sign and the shipped sample scene (examples/ui_text), drawn headless
     # through the same UI pass as the game. They are written to OKAY_SHOT_DIR (or argv[1]) and checked for what they show.
     add_executable(test_ui_text_shots test_ui_text_shots.cpp)
-    target_link_libraries(test_ui_text_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_ui_text_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_text_shots PRIVATE okay::engine okay_ui_soft)
     target_compile_definitions(test_ui_text_shots PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_text_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_text_shots COMMAND test_ui_text_shots)
-else()
-    message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
 
 # Untrusted network input + thread safety of the shared net state (also run under ASan/UBSan/TSan)
@@ -3216,13 +3185,10 @@ add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
 target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
 add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
-# The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
-if(SDL2_FOUND)
-    add_executable(test_voice_races test_voice_races.cpp)
-    target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
-    target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
-    add_test(NAME voice_races COMMAND test_voice_races)
-endif()
+# The launcher's voice session (header-only): its net thread's failure text vs the per-frame Error() read.
+add_executable(test_voice_races test_voice_races.cpp)
+target_link_libraries(test_voice_races PRIVATE okay::engine)
+add_test(NAME voice_races COMMAND test_voice_races)
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)
@@ -3501,7 +3467,7 @@ if(TARGET okay_cli_panel AND TARGET okay_ui_soft)
     target_include_directories(test_command_line_panel PRIVATE ${PROJECT_SOURCE_DIR}/okayui/tests ${PROJECT_SOURCE_DIR}/okayui/soft)
     target_compile_definitions(test_command_line_panel PRIVATE OKAYUI_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/okayui/tests/golden")
     add_test(NAME command_line_panel COMMAND test_command_line_panel)
-    set_tests_properties(command_line_panel PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    set_tests_properties(command_line_panel PROPERTIES TIMEOUT 120)
 endif()
 
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
@@ -3936,25 +3902,21 @@ add_test(NAME accessibility_remaining COMMAND test_accessibility_remaining)
 add_executable(test_ui_focus test_ui_focus.cpp)
 target_link_libraries(test_ui_focus PRIVATE okay::engine)
 add_test(NAME ui_focus COMMAND test_ui_focus)
-# okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
-# platform: registry, timers, audio devices, controllers on each compiled-in backend (no
-# display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.
+# okay::platform (engine/include/okay/Platform): our own backends (the sdl2 one exists only in the web build).
+# platform: registry, timers, audio devices, controllers on the compiled-in backend (no
+# display needed; ALSA's null device) + the own evdev mapping.
 # platform_window_*: windows, GL clear colour, keyboard / mouse / text / clipboard on a real
 # X server (Xvfb) with xdotool injecting the input. They skip (exit 77) without Xvfb / xdotool.
 if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_executable(test_platform test_platform.cpp)
     target_link_libraries(test_platform PRIVATE okay::platform)
     target_include_directories(test_platform PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(test_platform PRIVATE SDL2::SDL2)   # the Key / SDL scancode numbering check
-    endif()
     add_test(NAME platform COMMAND test_platform)
-    # OKAY_PLATFORM_BACKEND in the environment overrides the build's default backend at run time.
-    foreach(_okay_pb sdl2 own)
-        add_test(NAME platform_default_env_${_okay_pb} COMMAND test_platform --print-default)
-        set_tests_properties(platform_default_env_${_okay_pb} PROPERTIES
-            ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
-    endforeach()
+    # OKAY_PLATFORM_BACKEND in the environment picks a backend at run time; one this build lacks (sdl2 on the desktop) is ignored.
+    add_test(NAME platform_default_env_own COMMAND test_platform --print-default)
+    set_tests_properties(platform_default_env_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own" PASS_REGULAR_EXPRESSION "default=own")
+    add_test(NAME platform_default_env_sdl2_ignored COMMAND test_platform --print-default)
+    set_tests_properties(platform_default_env_sdl2_ignored PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2" PASS_REGULAR_EXPRESSION "default=own")
 
     # File drops on the own X11 backend (XDND) with a fake drag source on a second X connection, and the URI list parser.
     add_executable(test_platform_xdnd test_platform_xdnd.cpp)
@@ -3973,16 +3935,13 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
     add_test(NAME platform_tray COMMAND test_platform_tray)
 
-    # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
+    # The event queue (push, poll, pump, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)
     target_link_libraries(test_platform_events PRIVATE okay::platform)
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(test_platform_events PRIVATE SDL2::SDL2)
-    endif()
     add_test(NAME platform_events COMMAND test_platform_events)
     set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
 
-    # Own BMP writer (replaces SDL_SaveBMP in the screenshot tools): header only, no display needed.
+    # Own BMP writer (the screenshot tools' BMP files): header only, no display needed.
     add_executable(test_bmp_writer test_bmp_writer.cpp)
     target_include_directories(test_bmp_writer PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
     add_test(NAME bmp_writer COMMAND test_bmp_writer)
@@ -3990,18 +3949,15 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
 
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(test_platform_window PRIVATE SDL2::SDL2)   # pushes touch / natural-scroll events through the sdl2 backend
-    endif()
     target_include_directories(test_platform_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb own)
         add_test(NAME platform_window_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
 
     # Displays through the seam (shared/PlatformDisplays.cpp, which replaced shared/SdlDisplays.cpp): pure checks, then the own
-    # X11 RandR list against the sdl2 backend on the same Xvfb server.
+    # X11 RandR list on an Xvfb server.
     add_executable(test_platform_displays test_platform_displays.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
     target_link_libraries(test_platform_displays PRIVATE okay::engine)
     target_include_directories(test_platform_displays PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
@@ -4013,26 +3969,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     # windows must then let go without calling them. Must end with 0 (the editor crashed with 139 on OKAY_UI_QUIT runs).
     add_executable(test_platform_exit test_platform_exit.cpp)
     target_link_libraries(test_platform_exit PRIVATE okay::platform)
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb own)
         add_test(NAME platform_exit_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_exit> ${_okay_pb})
         set_tests_properties(platform_exit_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
-endif()
-
-# The apps' renderer bridge (shared/PainterBridge.hpp) against the raw SDL calls it replaced, on two identical SDL software renderers.
-if(NOT WIN32 AND NOT EMSCRIPTEN AND SDL2_FOUND)
-    if(TARGET SDL2::SDL2)
-        set(_okay_bridge_sdl SDL2::SDL2)
-    else()
-        set(_okay_bridge_sdl ${SDL2_LIBRARIES})
-    endif()
-    add_executable(test_painter_bridge_vs_sdl test_painter_bridge_vs_sdl.cpp)
-    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
-    target_link_libraries(test_painter_bridge_vs_sdl PRIVATE okay::engine ${_okay_bridge_sdl})
-    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_compile_features(test_painter_bridge_vs_sdl PRIVATE cxx_std_17)
-    add_test(NAME painter_bridge_vs_sdl COMMAND test_painter_bridge_vs_sdl)
 endif()
 
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
@@ -4072,6 +4013,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_include_directories(test_platform_win32_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
     target_compile_features(test_platform_win32_pure PRIVATE cxx_std_17)
     add_test(NAME platform_win32_pure COMMAND test_platform_win32_pure)
+    # The web backend's decisions with no browser (engine/src/Platform/WebInput.hpp): DOM key codes, which keys the page must
+    # not act on, wheel units, the Gamepad API's standard layout, the canvas's device pixels, the learned keyboard layout.
+    add_executable(test_platform_web_pure test_platform_web_pure.cpp)
+    target_include_directories(test_platform_web_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
+    target_compile_features(test_platform_web_pure PRIVATE cxx_std_17)
+    add_test(NAME platform_web_pure COMMAND test_platform_web_pure)
     add_executable(test_platform_selftest_logic test_platform_selftest_logic.cpp)
     target_include_directories(test_platform_selftest_logic PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/tools/platform_selftest)
     target_compile_features(test_platform_selftest_logic PRIVATE cxx_std_17)
@@ -4404,7 +4351,6 @@ if(TARGET okay_ui)
     target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
-set_tests_properties(launcher_page_layout PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 # The launcher's themes (shared/OkayTheme.hpp): text contrast in every theme, the themes differ, and no hard-coded colour in
 # launcher/ (it reads the sources). Needs only imgui.h: OkayUI's, as in the launcher.
 if(TARGET okay_ui)

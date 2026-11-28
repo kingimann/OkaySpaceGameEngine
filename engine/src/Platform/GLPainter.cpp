@@ -1,6 +1,7 @@
 // The OpenGL okay::platform::Painter (own code, off by default). See Painter.hpp.
 //
-// Written from the OpenGL 3.3 core and 3.0 specifications (Khronos) and the GLSL 1.30 / 3.30 language specifications, and from
+// Written from the OpenGL 3.3 core and 3.0 specifications (Khronos), the OpenGL ES 3.0 specification (what WebGL 2 is, for the
+// browser build: WebBackend.cpp) and the GLSL 1.30 / 3.30 / ES 3.00 language specifications, and from
 // our own software painter (okayui/soft/OkayUI_SoftPainter.cpp), whose rules it follows: the same rounding from logical to device
 // pixels, source-over blending with the destination alpha kept as a + d * (1 - a), "None" writing the colour as it is, nearest
 // sampling at floor(u * w), the clip as a device rectangle. No other renderer's code was read or followed.
@@ -183,6 +184,7 @@ public:
             if (m_vbo) m_gl.DeleteBuffers(1, &m_vbo);
             if (m_vao) m_gl.DeleteVertexArrays(1, &m_vao);
             if (m_prog) m_gl.DeleteProgram(m_prog);
+            if (m_white) m_gl.DeleteTextures(1, &m_white);
         }
         for (GTex* t : m_texs) delete t;
         m_texs.clear();
@@ -203,9 +205,13 @@ public:
         if (!m_gl.Load(b, missing)) { err = "OpenGL 3.0 entry point missing: " + missing; return false; }
         const char* ver = (const char*)m_gl.GetString(kVersion);
         int major = 0;
-        if (ver) major = std::atoi(ver);
+        if (ver) {
+            // OpenGL ES (WebGL 2 in the browser) says "OpenGL ES 3.0 ..."; desktop GL starts with the number.
+            m_es = std::strncmp(ver, "OpenGL ES ", 10) == 0;
+            major = std::atoi(m_es ? ver + 10 : ver);
+        }
         if (major < 3) { err = std::string("OpenGL 3.0 or newer needed, the driver offers ") + (ver ? ver : "nothing"); return false; }
-        if (!BuildProgram()) { err = "the painter's shaders did not compile (GLSL 3.30 and 1.30 tried)"; return false; }
+        if (!BuildProgram()) { err = m_es ? "the painter's shaders did not compile (GLSL ES 3.00)" : "the painter's shaders did not compile (GLSL 3.30 and 1.30 tried)"; return false; }
         m_gl.GenVertexArrays(1, &m_vao);
         m_gl.GenBuffers(1, &m_vbo);
         m_gl.BindVertexArray(m_vao);
@@ -217,12 +223,20 @@ public:
         m_gl.VertexAttribPointer(1, 4, kUnsignedByte, 1, sizeof(GVert), (const void*)offsetof(GVert, r));
         m_gl.VertexAttribPointer(2, 2, kFloat, 0, sizeof(GVert), (const void*)offsetof(GVert, u));
         m_gl.Disable(kCullFace); m_gl.Disable(kDepthTest); m_gl.Disable(kStencilTest);
-        m_gl.Disable(kFramebufferSrgb);
+        if (!m_es) m_gl.Disable(kFramebufferSrgb);   // not a capability in OpenGL ES 3.0 / WebGL 2 (its default framebuffer is not sRGB)
         m_gl.BlendEquation(kFuncAdd);
         m_gl.BlendFuncSeparate(kSrcAlpha, kOneMinusSrcAlpha, kOne, kOneMinusSrcAlpha);
         m_gl.ActiveTexture(kTexture0);
         m_gl.PixelStorei(kUnpackAlignment, 1);
         m_gl.PixelStorei(kPackAlignment, 1);
+        if (m_es) {   // WebGL warns about a sampler with no texture on its unit even when the shader skips it: untextured draws get a white texel
+            static const std::uint8_t kWhite[4] = {255, 255, 255, 255};
+            m_gl.GenTextures(1, &m_white);
+            m_gl.BindTexture(kTexture2D, m_white);
+            m_gl.TexParameteri(kTexture2D, kMinFilter, (GLint_)kNearest);
+            m_gl.TexParameteri(kTexture2D, kMagFilter, (GLint_)kNearest);
+            m_gl.TexImage2D(kTexture2D, 0, (GLint_)kRgba8, 1, 1, 0, kRgba, kUnsignedByte, kWhite);
+        }
         if (const char* r = (const char*)m_gl.GetString(kRenderer)) m_rendererName = r;
         m_swapSynced = m_win.SetSwapInterval(m_vsync ? 1 : 0) && m_vsync;
         SyncSize();
@@ -231,7 +245,6 @@ public:
     }
 
     PainterKind Kind() const override { return PainterKind::OpenGL; }
-    void* NativeRenderer() override { return nullptr; }
     std::string DriverName() override { return "opengl"; }
     bool IsAccelerated() override { return true; }
     /// The GL_RENDERER string (for a log line: "llvmpipe" means Mesa's CPU rasteriser).
@@ -492,7 +505,12 @@ private:
         m_gl.Viewport(0, 0, m_w, m_h);
     }
     bool BuildProgram() {
-        for (const char* version : {"#version 330 core\n", "#version 130\n"}) {
+        static const char* const kDesktop[] = {"#version 330 core\n", "#version 130\n"};
+        static const char* const kEs[] = {"#version 300 es\nprecision highp float;\n"};
+        const char* const* versions = m_es ? kEs : kDesktop;
+        const int count = m_es ? 1 : 2;
+        for (int vi = 0; vi < count; ++vi) {
+            const char* version = versions[vi];
             auto compile = [&](GLenum_ kind, const char* body) -> GLuint_ {
                 GLuint_ sh = m_gl.CreateShader(kind);
                 const GLchar_* src[2] = {version, body};
@@ -553,7 +571,7 @@ private:
         m_gl.Uniform2f(m_uFlip, 1.0f, m_target ? 1.0f : -1.0f);
         m_gl.Uniform1i(m_uTex, 0);
         m_gl.Uniform1i(m_uUseTex, m_state.tex ? 1 : 0);
-        m_gl.BindTexture(kTexture2D, m_state.tex);
+        m_gl.BindTexture(kTexture2D, m_state.tex ? m_state.tex : m_white);   // m_white is 0 on desktop GL
         if (m_state.blend) m_gl.Enable(kBlend); else m_gl.Disable(kBlend);
         if (m_state.clipOn) {
             m_gl.Enable(kScissorTest);
@@ -646,11 +664,12 @@ private:
     void* m_ctx = nullptr;          // the backend's handle of this painter's context; null when the backend cannot tell
     Gl m_gl;
     bool m_ready = false;
+    bool m_es = false;   // OpenGL ES 3.0 (WebGL 2): GLSL ES shaders, no GL_FRAMEBUFFER_SRGB
     bool m_vsync;
     bool m_swapSynced = false;
     std::uint64_t m_lastPresent = 0;
     std::string m_rendererName;
-    GLuint_ m_prog = 0, m_vao = 0, m_vbo = 0;
+    GLuint_ m_prog = 0, m_vao = 0, m_vbo = 0, m_white = 0;
     GLint_ m_uView = -1, m_uFlip = -1, m_uTex = -1, m_uUseTex = -1;
     int m_w = 1, m_h = 1;
     GTex* m_target = nullptr;
@@ -668,10 +687,6 @@ private:
 } // namespace
 
 std::unique_ptr<Painter> CreateGLPainter(Window& w, Backend& b, const PainterDesc& d, std::string* err) {
-    if (w.Kind() == BackendKind::Sdl2) {
-        if (err) *err = "an sdl2 window is drawn through SDL_Renderer; the OpenGL painter needs a window of the own backend";
-        return nullptr;
-    }
     std::unique_ptr<GLPainter> p(new GLPainter(w, d.vsync));
     std::string e;
     if (!p->Start(b, e)) {

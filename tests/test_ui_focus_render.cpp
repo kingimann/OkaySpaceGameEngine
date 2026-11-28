@@ -1,14 +1,12 @@
 // The focus ring in pixels: keyboard focus draws it, a click hides it, and high-visibility
 // focus changes the colour and the thickness. Set OKAY_FOCUS_SHOTS to a directory to save
 // focus-normal.png and focus-high-visibility.png.
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/UINavigation.hpp"
 #include "okay/UI/UIFocus.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
-#include <SDL.h>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -71,10 +69,8 @@ void Build(Scene& s) {
     make("Quit", 140);
 }
 
-Frame Render(SDL_Renderer* ren, SDL_Surface* surf) {
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_RenderSetClipRect(ren, nullptr);
-    SDL_RenderSetScale(ren, 1.0f, 1.0f);
+Frame Render() {
+    Image shot;
     {
         Scene scene("focus");
         Build(scene);
@@ -84,24 +80,16 @@ Frame Render(SDL_Renderer* ren, SDL_Surface* surf) {
         Input::FeedKeys({});
         Input::FeedKeys({'s'});
         NavigateUI(scene);                                    // down moves to Quit
-        SDL_SetRenderDrawColor(ren, 16, 18, 22, 255);
-        SDL_RenderClear(ren);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        ui2d::SDLPainter painter(ren, &cache, "");
-        ui2d::RenderSceneUI(scene, painter, kW, kH);
-        SDL_RenderPresent(ren);
+        okaytest::SoftRenderSceneUI(scene, kW, kH, shot, false, 16, 18, 22);
     }
     Frame f;
-    f.rgba.resize((std::size_t)kW * kH * 4);
-    for (int y = 0; y < kH; ++y)
-        std::memcpy(&f.rgba[(std::size_t)y * kW * 4], (const unsigned char*)surf->pixels + y * surf->pitch, (std::size_t)kW * 4);
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    if (shot.Valid()) f.rgba.assign(shot.Data(), shot.Data() + (std::size_t)kW * kH * 4);
+    else f.rgba.assign((std::size_t)kW * kH * 4, 0);
     return f;
 }
 
-Frame RenderHidden(SDL_Renderer* ren, SDL_Surface* surf) {
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_RenderSetClipRect(ren, nullptr);
+Frame RenderHidden() {
+    Image shot;
     {
         Scene scene("hidden");
         Build(scene);
@@ -112,24 +100,16 @@ Frame RenderHidden(SDL_Renderer* ren, SDL_Surface* surf) {
         Input::FeedMouse({80, 60}, 0);
         Input::FeedMouse({80, 60}, 1u);
         NavigateUI(scene);                                    // the click hides the ring
-        SDL_SetRenderDrawColor(ren, 16, 18, 22, 255);
-        SDL_RenderClear(ren);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        ui2d::SDLPainter painter(ren, &cache, "");
-        ui2d::RenderSceneUI(scene, painter, kW, kH);
-        SDL_RenderPresent(ren);
+        okaytest::SoftRenderSceneUI(scene, kW, kH, shot, false, 16, 18, 22);
     }
     Frame f;
-    f.rgba.resize((std::size_t)kW * kH * 4);
-    for (int y = 0; y < kH; ++y)
-        std::memcpy(&f.rgba[(std::size_t)y * kW * 4], (const unsigned char*)surf->pixels + y * surf->pitch, (std::size_t)kW * 4);
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    if (shot.Valid()) f.rgba.assign(shot.Data(), shot.Data() + (std::size_t)kW * kH * 4);
+    else f.rgba.assign((std::size_t)kW * kH * 4, 0);
     return f;
 }
 
-Frame RenderHigh(SDL_Renderer* ren, SDL_Surface* surf) {
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_RenderSetClipRect(ren, nullptr);
+Frame RenderHigh() {
+    Image shot;
     {
         Scene scene("high");
         Build(scene);
@@ -142,18 +122,11 @@ Frame RenderHigh(SDL_Renderer* ren, SDL_Surface* surf) {
         Input::FeedKeys({});
         Input::FeedKeys({'s'});
         NavigateUI(scene);
-        SDL_SetRenderDrawColor(ren, 16, 18, 22, 255);
-        SDL_RenderClear(ren);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        ui2d::SDLPainter painter(ren, &cache, "");
-        ui2d::RenderSceneUI(scene, painter, kW, kH);
-        SDL_RenderPresent(ren);
+        okaytest::SoftRenderSceneUI(scene, kW, kH, shot, false, 16, 18, 22);
     }
     Frame f;
-    f.rgba.resize((std::size_t)kW * kH * 4);
-    for (int y = 0; y < kH; ++y)
-        std::memcpy(&f.rgba[(std::size_t)y * kW * 4], (const unsigned char*)surf->pixels + y * surf->pitch, (std::size_t)kW * 4);
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    if (shot.Valid()) f.rgba.assign(shot.Data(), shot.Data() + (std::size_t)kW * kH * 4);
+    else f.rgba.assign((std::size_t)kW * kH * 4, 0);
     return f;
 }
 
@@ -174,10 +147,6 @@ void SaveShot(const Frame& f, const char* name) {
 
 int main() {
     RUN_SUITE("ui_focus_render");
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, kW, kH, 32, SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    CHECK(ren != nullptr);
-    if (!ren) TEST_MAIN_RESULT();
     UICanvas::Set((float)kW, (float)kH);
     UIFocus::Reset();
     Accessibility::Reset();
@@ -187,7 +156,7 @@ int main() {
     // Quit sits at y=140. The ring is the band just outside it, not the button fill.
     const int bandY0 = 112, bandY1 = 140, bandX0 = 40, bandX1 = 280;
 
-    const Frame normal = Render(ren, surf);
+    const Frame normal = Render();
     SaveShot(normal, "focus-normal.png");
     const int cyanQuit = Count(normal, bandX0, bandY0, bandX1, bandY1, Cyan);
     const int cyanPlay = Count(normal, bandX0, 20, bandX1, 48, Cyan);
@@ -195,10 +164,10 @@ int main() {
     CHECK(cyanPlay == 0);                                     // and not on Play
     CHECK(Count(normal, bandX0, bandY0, bandX1, bandY1, Yellow) == 0);
 
-    const Frame hidden = RenderHidden(ren, surf);
+    const Frame hidden = RenderHidden();
     CHECK(Count(hidden, 0, 0, kW, kH, Cyan) == 0);            // a click hides the ring
 
-    const Frame high = RenderHigh(ren, surf);
+    const Frame high = RenderHigh();
     SaveShot(high, "focus-high-visibility.png");
     const int yellow = Count(high, bandX0, bandY0 - 8, bandX1, bandY1, Yellow);
     CHECK(yellow > cyanQuit);                                 // thicker than the normal ring
@@ -208,7 +177,5 @@ int main() {
     Accessibility::Reset();
     Input::FeedKeys({});
     Input::FeedMouse({0, 0}, 0);
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     TEST_MAIN_RESULT();
 }

@@ -49,6 +49,38 @@ WindowRef* GetTopMostPopupModal() {
 }
 namespace { bool g_barReserved = false; LayoutState g_barSavedLay; }   // a Window_MenuBar row in use: the layout to give back at EndMenuBar
 void ui_core::menuBarReset() { g_barReserved = false; }
+
+// The menu bars' buttons, as drawn this frame and last frame, so a bar behaves as one control (standard menu-bar behaviour): while one
+// of its menus is open, moving the pointer onto another of its buttons switches to that menu without a click; Left / Right in an open menu
+// (with no sub-menu taking the key) go to the neighbouring menu; a tap of Alt alone opens the first menu of the first bar, keyboard-ready.
+namespace {
+struct BarBtn { unsigned bar; int id; float x, y, w, h; bool open; };
+constexpr int kBarBtnMax = 48;
+struct BarMem { BarBtn b[kBarBtnMax]; int n = 0; };
+BarMem g_barPrev, g_barNow;
+unsigned long long g_barFrame = ~0ull;
+unsigned g_curBar = 0;                 // the bar being drawn (from its place on screen)
+bool g_altAlone = false;               // Alt went down and nothing else happened since
+int g_barOpenReq = 0;                  // a menu to open when its button is drawn (Alt, Left / Right)
+int g_barKbOpen = 0;                   // that menu was opened from the keyboard: highlight its first row
+unsigned long long g_barKeyFrame = ~0ull;   // the frame Left / Right last switched menus (one switch per key press)
+void barFrame() {
+    if (g_barFrame == g_frameCount) return;
+    g_barFrame = g_frameCount;
+    g_barPrev = g_barNow; g_barNow.n = 0;
+}
+const BarBtn* barPrevOpen(unsigned bar) {
+    for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == bar && g_barPrev.b[i].open) return &g_barPrev.b[i];
+    return nullptr;
+}
+// The neighbour of menu `id` on its bar (last frame's order), `dir` -1 or +1, wrapping round.
+int barNeighbour(unsigned bar, int id, int dir) {
+    int idx[kBarBtnMax]; int n = 0, at = -1;
+    for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == bar) { if (g_barPrev.b[i].id == id) at = n; idx[n++] = i; }
+    if (at < 0 || n < 2) return 0;
+    return g_barPrev.b[idx[(at + dir + n) % n]].id;
+}
+}
 bool BeginMenuBar() {
     if (!g_lay.active) return false;
     const float h = rowH();
@@ -62,6 +94,23 @@ bool BeginMenuBar() {
         g_lay.ox = x; g_lay.bottom = y + h;
     } else {
         place(bw, h, x, y);
+    }
+    barFrame();
+    g_curBar = ((unsigned)(int)std::floor(x) * 73856093u) ^ ((unsigned)(int)std::floor(y) * 19349663u) ^ 0x6ba5u;
+    {   // Alt tapped alone: open the first menu of the first bar (Windows' menu key); Alt again or Escape closes it
+        bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown || g_in.ctrl || g_in.shift
+                  || g_in.enter || g_in.escape || g_in.up || g_in.down || g_in.left || g_in.right || g_in.backspace || g_in.del || (g_in.text && *g_in.text);
+        for (int k = 1; k < KeyId_COUNT && !other; ++k) if (k != KeyId_Alt && k != KeyId_RightAlt && k != KeyId_ModAlt && IsKeyDown((KeyId)k)) other = true;   // any other key held with it: a chord
+        if (IsKeyPressed(KeyId_Alt, false) || IsKeyPressed(KeyId_RightAlt, false)) g_altAlone = !other;
+        else if (other) g_altAlone = false;
+        if (g_altAlone && !IsKeyDown(KeyId_Alt) && !IsKeyDown(KeyId_RightAlt) && (IsKeyReleased(KeyId_Alt) || IsKeyReleased(KeyId_RightAlt))) {
+            g_altAlone = false;
+            const bool firstBar = g_barNow.n == 0;
+            if (firstBar && g_popupTop == 0) {
+                if (const BarBtn* o = barPrevOpen(g_curBar)) *openState(o->id, false) = false;   // a bar menu is open: Alt closes it
+                else for (int i = 0; i < g_barPrev.n; ++i) if (g_barPrev.b[i].bar == g_curBar) { g_barOpenReq = g_barKbOpen = g_barPrev.b[i].id; break; }
+            }
+        }
     }
     if (colorIsSet(Col_MenuBarBg)) quad(x, y, bw, h, pick(Col_MenuBarBg, g_theme.track));
     quad(x, y + h - 1.0f, bw, 1.0f, g_theme.border);   // a hairline under the bar
@@ -319,8 +368,21 @@ bool BeginMenu(const char* label) {
 
     const bool inside = hit(x, y, bw, h);
     g_lastId = id; if (inside) g_hot = id;
+    barFrame();
+    {   // the bar as one control: hovering another button while a menu of this bar is open switches to it
+        const BarBtn* was = barPrevOpen(g_curBar);
+        if (inside && !*open && was && was->id != id) *open = true;
+        if (*open && !inside) {   // this menu is open and the pointer moved onto another button of the bar: it closes
+            for (int i = 0; i < g_barPrev.n; ++i) {
+                const BarBtn& o = g_barPrev.b[i];
+                if (o.bar == g_curBar && o.id != id && pointIn(g_in.mouseX, g_in.mouseY, o.x, o.y, o.w, o.h) && (g_mouseDX != 0.0f || g_mouseDY != 0.0f)) { *open = false; break; }
+            }
+        }
+        if (g_barOpenReq == id) { g_barOpenReq = 0; *open = true; }
+    }
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    if (g_barNow.n < kBarBtnMax) g_barNow.b[g_barNow.n++] = BarBtn{g_curBar, id, x, y, bw, h, *open};
     {   // a soft rounded chip under the pointer or while its menu is open
         unsigned char tmp[4];
         const float over = anim(id, 0, *open || inside);
@@ -333,6 +395,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.active = true; g_curMenu.menuId = id;
         g_curMenu.x = x; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
+        if (g_barKbOpen == id) { g_barKbOpen = 0; kbSlot(id)->idx = 0; }   // opened from the keyboard: its first row is highlighted
         menuListBegin(id, y + h, false);
         menuKeysBegin(id, false);
     } else kbSlot(id)->idx = -1;
@@ -350,7 +413,12 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
     x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
     const bool ih = enabled && hit(x, y, w, h);
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
-    if (ih || lit) rrect(x, y, w, h, g_framedWidgets ? 0.0f : g_theme.radiusSmall, pick(Col_HeaderHovered, g_theme.bgHover));
+    {   // the row's real need (label, a gap and the shortcut, the tick or arrow): the popup grows to it, so a long row keeps a margin
+        // on the right instead of running into the edge ("Find References in Scene")
+        const float need = labelW(label) + (shortcut && shortcut[0] ? labelW(shortcut) + 24.0f : 0.0f) + (selected || arrow ? th + 4.0f : 0.0f) + g_lay.spacingX * 0.5f;
+        if (ix + need > g_lay.maxRight) g_lay.maxRight = ix + need;
+    }
+    if (ih || lit) rrect(x + 2.0f, y, w - 4.0f, h, std::min(g_theme.radiusSmall, h * 0.3f), pick(Col_HeaderHovered, g_theme.bgHover));   // a rounded highlight inset from the popup's sides
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     drawText(ix, iy, label, s, col);
     const float right = ix + w - g_lay.spacingX;
@@ -498,6 +566,12 @@ void EndMenu() {
         }
         return;
     }
+    // Left / Right in an open bar menu that no sub-menu took: the neighbouring menu of the bar opens instead (Escape closes, as before)
+    if (g_inMenuBar && g_curMenu.kb && !g_curMenu.kb->childOpen && !g_curMenu.kb->childOpenNext && (g_in.left || g_in.right) && *openState(g_curMenu.menuId, false)
+        && g_barKeyFrame != g_frameCount) {
+        const int nb = barNeighbour(g_curBar, g_curMenu.menuId, g_in.right ? 1 : -1);
+        if (nb != 0) { *openState(g_curMenu.menuId, false) = false; g_barOpenReq = g_barKbOpen = nb; *openState(nb, false) = true; g_barKeyFrame = g_frameCount; }
+    }
     g_curMenu.active = false;
     // a bar menu ends: its button is the last item again (SameLine in the bar continues after it, not after the list's last row)
     g_lay.prevX = g_curMenu.bx; g_lay.prevY = g_curMenu.by; g_lay.prevW = g_curMenu.bw; g_lay.prevH = g_curMenu.bh; g_prevInOverlay = !g_inMenuBar && g_popupTop > 0;
@@ -533,13 +607,18 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
     const float ty = itemY + (itemH - textH()) * 0.5f;
-    if ((flags & Selectable_Header) || imguiRow) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
-        unsigned char tmp[4];
+    if ((flags & Selectable_Header) || imguiRow) {   // Dear ImGui's rows in their places, drawn OkayUI's way: the header colours on a rounded
+                                                     // highlight that eases in under the pointer; a selected row has an accent bar at its left end
+        unsigned char tmp[4], hv[4];
         const unsigned char* bg = nullptr;
+        const float over = anim(id, 0, inside && g_active != id);
         if (inside && g_active == id) bg = pick(Col_HeaderActive, g_theme.accent);
-        else if (inside)              bg = pick(Col_HeaderHovered, g_theme.bgHover);
         else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
-        if (bg) quad(x, y, w, hh, bg);
+        else if (over > 0.0f)         bg = withAlpha(pick(Col_HeaderHovered, g_theme.bgHover), over, hv);
+        const float rd = std::min(g_theme.radiusSmall, hh * 0.3f);
+        if (bg) rrect(x, y, w, hh, rd, bg);
+        if (selected && inside && g_active != id && over > 0.0f) rrect(x, y, w, hh, rd, withAlpha(g_theme.ink, 0.06f * over, hv));   // a selected row still reacts
+        if (selected && imguiRow && hh >= 10.0f) rrect(x + 1.0f, y + 3.0f, 2.0f, hh - 6.0f, 1.0f, g_theme.accent);
         drawText(imguiRow ? textX : textX + g_lay.spacingX * 0.5f, ty, imguiRow ? VisLabel(label).b : label, s, tcol);
     } else {   // the design's rows: a soft accent tint and a bar on the left when selected, a faint ink wash under the pointer
         unsigned char tmp[4];
@@ -565,7 +644,7 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
     if (p && id && !p->open) { std::snprintf(p->name, sizeof p->name, "%s", id); p->opened = g_frameCount; }
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; p->shownW = 0.0f; g_openPopupThisFrame = p->id; }
 }
 
 void CloseCurrentPopup() {
@@ -586,14 +665,22 @@ bool ui_core::beginPopupBody(int id) {
     p->drawn = g_frameCount;
     // StyleVar_PopupWidth / StyleVar_PopupPadding (when pushed) give the size; with a pushed padding the height is the content's
     // exactly (no item spacing after the last item), as in Dear ImGui.
-    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
+    // A modal is a window: its padding is the window padding in force when it begins (Dear ImGui's WindowPadding, which the launcher's
+    // dialogs push; without it a dialog's text sat 6 pixels from its edge and the Software Update dialog's notes touched it).
+    const float modalPadX = std::clamp(std::isfinite(g_theme.windowPadding) ? g_theme.windowPadding : 14.0f, 6.0f, 40.0f);
+    const float modalPadY = std::clamp(g_childPadY >= 0.0f && std::isfinite(g_childPadY) ? g_childPadY : modalPadX, 6.0f, 40.0f);
+    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : (p->modal ? modalPadX : 6.0f), padY = g_popupPadY >= 0.0f ? g_popupPadY : (p->modal ? modalPadY : 6.0f);
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float* wSlot = floatState(id ^ 0x9091, 0.0f);   // the widest line of last frame's content (plus padding): the popup grows to fit it
-    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * (g_popupPadY >= 0.0f ? g_popupPadY : 6.0f));   // a height asked for: the box keeps it
+    if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * padY);   // a height asked for: the box keeps it
     float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
-    if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
+    // A modal with a least width grows to its content in the frames after it opens; later only for a line that is clearly longer (more than
+    // 24 px over): a control sized from the space left (a field filling the row, a suffix after it) would otherwise widen it a little every frame.
+    const bool mayGrow = !p->leastW || g_frameCount <= p->opened + 3 || *wSlot > w + 24.0f;
+    if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w && mayGrow) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
     if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
-    if (p->modal && g_dispW > 0.0f) p->x = (g_dispW - w) * 0.5f;   // a modal stays centred when it grew
+    if (p->modal && g_dispW > 0.0f) { p->x = (g_dispW - w) * 0.5f; if (!p->fixedW) p->w = w; }
+    p->shownW = w;   // a modal stays centred when it grew (and reports the width it has)
     float px = p->x, py = p->y;
     // A combo's list goes where Dear ImGui's documented combo placement puts it: under the box toward the right; if that does not fit
     // in the display, above the box toward the right; then under it toward the left (its right edge on the box's right edge); then
@@ -675,13 +762,15 @@ void EndPopup() {
 bool BeginPopup(const char* id) {
     const int pid = hashLabel(id);
     if (id) if (PopupSlot* p = popupSlot(pid, false); p && p->open && !p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", id);   // (opened by id: the name for IsPopupOpen)
-    return beginPopupBody(pid);
+    const bool r = beginPopupBody(pid);
+    if (!r) { g_nextWinSize.set = false; g_nextWinPos.set = false; }   // used up even when it is not open (Dear ImGui's rule; see BeginPopupModal)
+    return r;
 }
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
     PopupSlot* p = popupSlot((int)id, true);
     if (p && !p->open) p->opened = g_frameCount;
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; p->fixedH = 0.0f; p->shownW = 0.0f; g_openPopupThisFrame = p->id; }
 }
 bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
 
@@ -696,16 +785,34 @@ bool IsPopupOpen(const char* name) {
 }
 
 static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
-bool BeginPopupModal(const char* name, bool* open, int flags) { g_modalNoTitle = (flags & Window_NoTitleBar) != 0; const bool r = BeginPopupModal(name, open); g_modalNoTitle = false; return r; }
+static bool g_modalAutoFit = false;   // BeginPopupModal(.., Window_AlwaysAutoResize): the box is its content's size
+bool BeginPopupModal(const char* name, bool* open, int flags) {
+    g_modalNoTitle = (flags & Window_NoTitleBar) != 0; g_modalAutoFit = (flags & Window_AlwaysAutoResize) != 0;
+    const bool r = BeginPopupModal(name, open);
+    g_modalNoTitle = false; g_modalAutoFit = false;
+    return r;
+}
 bool BeginPopupModal(const char* name, bool* open) {
     if (!name) return false;   // (outside any window too: a modal is a top-level window in Dear ImGui, begun wherever the code is)
     const int id = hashLabel(name);
     PopupSlot* p = popupSlot(id, false);
-    if (!p || !p->open) { if (open) *open = false; return false; }
+    // Not open: the SetNextWindow* calls made for it are used up all the same, as Dear ImGui's BeginPopupModal does; they reached the
+    // next modal instead (the launcher's closed New Project dialog left 820 x 680 for "Close OkaySpace?").
+    if (!p || !p->open) { if (open) *open = false; g_nextWinSize.set = false; g_nextWinPos.set = false; return false; }
     p->modal = true;
     if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
+    if (g_modalAutoFit) {
+        // AlwaysAutoResize: the box is as big as last frame's content in both directions (no 320-pixel floor, no size left over from a
+        // SetNextWindowSize meant for something else); only a size given to it in this frame's SetNextWindowSize counts, axis by axis,
+        // as in Dear ImGui. (The launcher's "Close OkaySpace?" box was 820 x 680 around one line and three buttons.)
+        p->fixedW = false; p->fixedH = 0.0f; p->leastW = false;
+        const float* wSlot = floatState(id ^ 0x9091, 0.0f);
+        p->w = *wSlot > 0.0f ? *wSlot : 320.0f;
+    }
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
-        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
+        // An AlwaysAutoResize modal takes the width as its least: a longer line makes it grow to hold the line (beginPopupBody), as Dear
+        // ImGui's auto-fit does after the frame the size is given on (the editor's Project panel Delete dialog ran its text past the edge).
+        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = !g_modalAutoFit; p->leastW = g_modalAutoFit; if (p->leastW && p->shownW > p->w) p->w = std::min(p->shownW, g_dispW > 32.0f ? g_dispW - 16.0f : p->shownW); }
         // a height too (Dear ImGui sizes the modal to it; the editor's file browser lays its list out from GetContentRegionAvail().y)
         if (g_nextWinSize.y > 0.0f && std::isfinite(g_nextWinSize.y)) p->fixedH = g_dispH > 0.0f && g_nextWinSize.y > g_dispH - 16.0f ? g_dispH - 16.0f : g_nextWinSize.y;
         g_nextWinSize.set = false;
@@ -713,7 +820,7 @@ bool BeginPopupModal(const char* name, bool* open) {
     g_nextWinPos.set = false;   // consumed: it must not move the next window
     if (p->w <= 0.0f) p->w = 320.0f;
     if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
-    const float pad = 6.0f;
+    const float pad = g_popupPadY >= 0.0f ? g_popupPadY : std::clamp(g_childPadY >= 0.0f && std::isfinite(g_childPadY) ? g_childPadY : (std::isfinite(g_theme.windowPadding) ? g_theme.windowPadding : 14.0f), 6.0f, 40.0f);   // as beginPopupBody pads it
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     if (p->fixedH > 0.0f) *hSlot = std::max(0.0f, p->fixedH - 2.0f * pad);   // centred by the height it was given
     const float titleH = rowH() + 4.0f;
@@ -778,6 +885,10 @@ bool BeginCombo(const char* label, const char* preview) {
             g_comboCloseId = 0; g_active = 0;
         }
     } else if (takesPress && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
+    if (navItem(id, x, y, boxW, h, rnd()) && ps) {   // Tab reaches it; Space or Enter opens (or closes) its list
+        if (ps->open) ps->open = false;
+        else { ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id; ps->combo = true; ps->boxTop = y; ps->boxRight = x + boxW; }
+    }
     const bool open = ps && ps->open;
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, preview);
     else comboBox(id, x, y, boxW, h, insideBox, open, preview);
@@ -809,7 +920,16 @@ bool BeginPopupContextItem(const char* id) {
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(g_barReserved),
+    OKAYUI_CTX_VAR(g_barPrev),
+    OKAYUI_CTX_VAR(g_barNow),
+    OKAYUI_CTX_VAR(g_barFrame),
+    OKAYUI_CTX_VAR(g_curBar),
+    OKAYUI_CTX_VAR(g_altAlone),
+    OKAYUI_CTX_VAR(g_barOpenReq),
+    OKAYUI_CTX_VAR(g_barKbOpen),
+    OKAYUI_CTX_VAR(g_barKeyFrame),
     OKAYUI_CTX_VAR(g_barSavedLay),
     OKAYUI_CTX_VAR(g_comboCloseId),
-    OKAYUI_CTX_VAR(g_modalNoTitle))
+    OKAYUI_CTX_VAR(g_modalNoTitle),
+    OKAYUI_CTX_VAR(g_modalAutoFit))
 } // namespace OkayUI

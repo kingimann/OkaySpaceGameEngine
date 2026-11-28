@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Cross-compile the full Windows distribution — launcher, editor, player, and the
-# multiplayer relay — from Linux with MinGW-w64, bundling SDL2.dll. Output goes to
-# build-win-dist/ laid out as: OkaySpace.exe + SDL2.dll at the top (double-click
+# multiplayer relay — from Linux with MinGW-w64. No third-party DLL is bundled (SDL2 left the programs on 2026-11-27:
+# the window, input and audio are our own okay::platform). Output goes to
+# build-win-dist/ laid out as: OkaySpace.exe at the top (double-click
 # the launcher), with the rest in a Tools/ subfolder. See the "Distribution
 # layout" section below and docs/release/packaging.md.
 #
@@ -10,25 +11,11 @@
 #
 # Requirements:
 #   * MinGW-w64:            sudo apt-get install -y mingw-w64 cmake ninja-build
-#   * SDL2 MinGW dev files: download SDL2-devel-<ver>-mingw.tar.gz from
-#                           https://github.com/libsdl-org/SDL/releases, extract,
-#                           and point SDL2_MINGW_PREFIX at its x86_64-w64-mingw32
-#                           subfolder (the one containing bin/SDL2.dll and
-#                           lib/cmake/SDL2).
-#
-# Env:
-#   SDL2_MINGW_PREFIX  (required) SDL2 MinGW prefix, see above.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${SDL2_MINGW_PREFIX:?Set SDL2_MINGW_PREFIX to the SDL2 MinGW prefix (contains bin/SDL2.dll and lib/cmake/SDL2)}"
-
 if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
     echo "error: MinGW-w64 not found. Install it with: sudo apt-get install -y mingw-w64" >&2
-    exit 1
-fi
-if [ ! -f "$SDL2_MINGW_PREFIX/bin/SDL2.dll" ]; then
-    echo "error: SDL2.dll not found under SDL2_MINGW_PREFIX=$SDL2_MINGW_PREFIX" >&2
     exit 1
 fi
 
@@ -92,8 +79,7 @@ cmake -S . -B "$BUILD_DIR" \
       -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
       -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON \
       -DOKAY_BUILD_XBOX_UWP=ON \
-      -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
-      -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
+      -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32" \
       -DOKAY_MAIN_COUNT="${OKAY_MAIN_COUNT:-0}" \
       "${EXTRA[@]}"
 # Every model reader is our own (Assimp was removed on 2026-11-24, ufbx on 2026-11-23). A tree configured before that may still
@@ -115,27 +101,21 @@ cmake --build "$BUILD_DIR" -j "$JOBS"
 # Keep the thing you double-click at the top and tuck the rest away:
 #
 #   OkaySpace.exe        <- the launcher (start here)
-#   SDL2.dll             <- required next to OkaySpace.exe (load-time linked)
 #   README.txt
 #   Tools/
 #     OkayEngine.exe         (the editor)
 #     OkaySpacePlayer.exe    (standalone game runtime)
 #     okayspace-relay.exe    (multiplayer NAT relay, if built)
-#     SDL2.dll               (copy — each exe needs the DLL beside it on Windows)
 #     VERSION.txt
-#
-# Note: Windows resolves load-time DLLs from the exe's own directory, so SDL2.dll
-# is intentionally duplicated next to the Tools/ exes — that's required, not waste.
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR/Tools"
 
-# Top level: the launcher + its SDL2.dll.
-cp "$BUILD_DIR/bin/OkaySpace.exe" "$SDL2_MINGW_PREFIX/bin/SDL2.dll" "$OUT_DIR/"
+# Top level: the launcher.
+cp "$BUILD_DIR/bin/OkaySpace.exe" "$OUT_DIR/"
 
-# Tools/: the editor, player, relay (if present), and their own SDL2.dll copy.
+# Tools/: the editor, player and relay (if present).
 cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
-   "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # The Script Editor program (scripteditor/, the editor shows the same one in View > Editors & Tools > Script Editor (Files)).
@@ -153,7 +133,7 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/OkaySpaceBrowser.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceBrowser.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
-# OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
+# OkayUI's standalone Direct3D 11 demo: a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
 # Own platform layer check (built only with -DOKAY_BUILD_PLATFORM_SELFTEST=ON; docs/try_it/11-*.md).
 [ -f "$BUILD_DIR/bin/okay-platform-selftest.exe" ] && cp "$BUILD_DIR/bin/okay-platform-selftest.exe" "$OUT_DIR/Tools/"
@@ -167,7 +147,7 @@ OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.
 : "${OKAY_VER:=0.0.0}"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
-# The licences of the parts written by others (GCC and MinGW-w64 runtimes, libsodium, SDL2, Dear ImGui, fonts):
+# The licences of the parts written by others (GCC and MinGW-w64 runtimes, libsodium, fonts):
 # beside the launcher and beside the editor, whose Build exports copy it into every game (editor/BuildGame.cpp).
 cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/"
 cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/Tools/"
@@ -283,7 +263,6 @@ OkaySpace
 =========
 
 Double-click  OkaySpace.exe  to start (the launcher: sign in, create/play games).
-Keep SDL2.dll next to it.
 THIRD_PARTY_NOTICES.txt lists the parts written by others and their licences.
 
 Everything else lives in  Tools/:
@@ -319,9 +298,6 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         engine: a tower, a pyramid, cone-twist limb chains, a powered
                         arm and fast shots at a thin wall; physics_engine_5k has 5,000).
                         More in docs/try_it.md.
-
-Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
-launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.
 EOF
 
 echo

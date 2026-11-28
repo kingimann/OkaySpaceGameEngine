@@ -44,17 +44,15 @@ constexpr int kDefaultKeepPrevious = 1;
 
 // ---- the files of a release ----------------------------------------------------------------------------------------------
 
-/// The three files that make a complete copy of a release's Tools folder.
+/// The files that make a complete copy of a release's Tools folder. Asset::Sdl (SDL2.dll) belongs to releases made before
+/// 2026-11-27 only: they still need it beside their exes, and it is installed when the version list has it (or the launcher has
+/// a copy); the current programs use no SDL2.dll.
 enum class Asset { Editor, Player, Sdl };
 const char* IndexName(Asset a);          ///< the name in versions.json and on the server ("OkayEngine.exe")
 std::string DiskName(Asset a);           ///< the name inside Versions/<v>/Tools (the editor uses okayver::EditorExeName())
-/// Windows needs SDL2.dll beside every exe; other platforms use the system library.
-constexpr bool kRequireSdl =
-#if defined(_WIN32)
-    true;
-#else
-    false;
-#endif
+/// Whether a version without SDL2.dll is refused. No longer: the current programs have none, and an older version's copy comes
+/// from the version list when it has one.
+constexpr bool kRequireSdl = false;
 
 // ---- versions.json -------------------------------------------------------------------------------------------------------
 

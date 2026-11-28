@@ -1,52 +1,22 @@
-# okay_platform: the seam between the engine and SDL2 / the OS (engine/include/okay/Platform).
+# okay_platform: the seam between the engine and the OS (engine/include/okay/Platform).
 #
-#   -DOKAY_PLATFORM_BACKEND=own    okay::platform::Default() is our own backend (Linux X11/ALSA/evdev
-#                                  through dlopen, Windows Win32). The default on Linux (rule 17: own
-#                                  code on by default; tested under Xvfb).
-#   -DOKAY_PLATFORM_BACKEND=sdl2   Default() is the SDL2 backend. Still the default on Windows (the Win32
-#                                  backend has never run on real Windows) and on the web (no own backend).
-#
-# Both backends are always built when they can be; the option only picks the default, and
-# OKAY_PLATFORM_BACKEND=sdl2|own in the environment overrides it at run time (the way back).
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
-    set(_okay_platform_default "own")
-else()
-    set(_okay_platform_default "sdl2")
-endif()
-set(OKAY_PLATFORM_BACKEND "${_okay_platform_default}" CACHE STRING "Default okay::platform backend: sdl2 or own (own on Linux, sdl2 elsewhere)")
-set_property(CACHE OKAY_PLATFORM_BACKEND PROPERTY STRINGS sdl2 own)
-if(NOT OKAY_PLATFORM_BACKEND STREQUAL "sdl2" AND NOT OKAY_PLATFORM_BACKEND STREQUAL "own")
-    message(FATAL_ERROR "OKAY_PLATFORM_BACKEND must be sdl2 or own (got '${OKAY_PLATFORM_BACKEND}')")
-endif()
+# One backend, our own code, everywhere: Linux X11/GLX + ALSA + evdev through dlopen; Windows Win32/WGL/WASAPI/XInput/HID;
+# the web (Emscripten) the browser page through html5.h, WebGL 2, Web Audio and the Gamepad API (src/Platform/WebBackend.cpp).
+# SDL2 left the desktop programs and then the web player on 2026-11-27 (docs/platform/sdl_removal_plan.md); no program uses it.
+# OKAY_PLATFORM_BACKEND stays as a read-only cache value ("own") because tests/CMakeLists.txt passes it to test_own_stack.
+set(OKAY_PLATFORM_BACKEND "own" CACHE STRING "okay::platform backend: our own on every platform" FORCE)
 
 function(okay_add_platform_library)
-    set(_srcs src/Platform/Platform.cpp src/Platform/SdlBackend.cpp)
+    set(_srcs src/Platform/Platform.cpp)
     set(_defs "")
     set(_libs "")
     set(_incs "")
 
-    # --- sdl2 backend -------------------------------------------------------------
     if(EMSCRIPTEN)
-        list(APPEND _defs OKAY_PLATFORM_HAVE_SDL2)
-        set(_sdl_opts "-sUSE_SDL=2")
-    else()
-        find_package(SDL2 QUIET)
-        set(_sdl_opts "")
-        if(SDL2_FOUND)
-            list(APPEND _defs OKAY_PLATFORM_HAVE_SDL2)
-            if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
-                list(APPEND _libs SDL2::SDL2-static)
-            elseif(TARGET SDL2::SDL2)
-                list(APPEND _libs SDL2::SDL2)
-            else()
-                list(APPEND _libs ${SDL2_LIBRARIES})
-                list(APPEND _incs ${SDL2_INCLUDE_DIRS})
-            endif()
-        endif()
-    endif()
-
-    # --- own backend ----------------------------------------------------------------
-    if(WIN32)
+        # The browser: Emscripten's own html5 / WebGL / JavaScript libraries, which emcc links by itself.
+        list(APPEND _srcs src/Platform/WebBackend.cpp)
+        list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
+    elseif(WIN32)
         list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp src/Platform/OwnWin32Hid.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
         list(APPEND _libs user32 gdi32 opengl32 shell32 ole32 imm32 hid)
@@ -71,23 +41,15 @@ function(okay_add_platform_library)
     if(NOT EMSCRIPTEN AND NOT TARGET Threads::Threads)
         find_package(Threads REQUIRED)
     endif()
-    # The painter files (engine/src/Platform/Painter.cpp, SdlPainter.cpp) are compiled into okay_engine, not
-    # into this library (they need the engine's image decoder); okay_engine takes the SDL include path and
-    # options from here.
-    set(OKAY_PLATFORM_SDL_INCLUDES ${_incs} PARENT_SCOPE)
-    set(OKAY_PLATFORM_SDL_OPTIONS ${_sdl_opts} PARENT_SCOPE)
+    # The painter files (engine/src/Platform/Painter.cpp, GLPainter.cpp) are compiled into okay_engine, not into this library
+    # (they need the engine's image decoder).
     add_library(okay_platform STATIC ${_srcs})
     target_include_directories(okay_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_include_directories(okay_platform PRIVATE ${_incs})
     target_compile_features(okay_platform PUBLIC cxx_std_17)
     target_compile_definitions(okay_platform PRIVATE ${_defs})
-    if(_sdl_opts)
-        target_compile_options(okay_platform PRIVATE ${_sdl_opts})
-    endif()
-    # OKAY_OWN_STACK=ON (docs/status/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
-    if(OKAY_PLATFORM_BACKEND STREQUAL "own" OR (OKAY_OWN_STACK AND CMAKE_SYSTEM_NAME STREQUAL "Linux"))
-        target_compile_definitions(okay_platform PRIVATE OKAY_PLATFORM_DEFAULT_OWN)
-    endif()
+    # Kept for CI's check that a configured build uses our own backend (.github/workflows/ci.yml greps build.ninja for it).
+    target_compile_definitions(okay_platform PRIVATE OKAY_PLATFORM_DEFAULT_OWN)
     # PUBLIC: the test programs and apps ask which backends exist.
     foreach(_d ${_defs})
         target_compile_definitions(okay_platform PUBLIC ${_d})

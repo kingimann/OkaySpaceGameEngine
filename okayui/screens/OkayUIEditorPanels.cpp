@@ -3123,7 +3123,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 break;
             }
             case InspRowImage: {   // the editor's TexFieldThumb
-                if (r.texture) UI::Image(static_cast<SDL_Texture*>(r.texture), r.texW, r.texH);
+                if (r.texture) UI::Image(static_cast<OkayUI::Tex>(r.texture), r.texW, r.texH);
                 else UI::Dummy(r.texW, r.texH);
                 const UI::Rect b = UI::GetItemRect();
                 // On hover: the path and the hint. Dear ImGui's tooltip also shows the picture 180 pixels wide; OkayUI cannot draw a texture
@@ -3602,7 +3602,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                             if (q % 4 != 0) UI::SameLine();
                             UI::PushID((int)q);
                             bool hit;
-                            if (pc.thumbs[q]) hit = UI::ImageButton("##pt", static_cast<SDL_Texture*>(pc.thumbs[q]), 48.0f, 48.0f);
+                            if (pc.thumbs[q]) hit = UI::ImageButton("##pt", static_cast<OkayUI::Tex>(pc.thumbs[q]), 48.0f, 48.0f);
                             else hit = UI::Button(pc.names[q].c_str(), UI::Vec2{54.0f, 54.0f});
                             if (UI::IsItemHovered()) UI::SetTooltip("%s", pc.values[q].c_str());
                             if (hit) { *target = pc.values[q]; r.changed = true; UI::CloseCurrentPopup(); }

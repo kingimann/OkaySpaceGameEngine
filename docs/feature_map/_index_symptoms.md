@@ -656,6 +656,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I want a minimal two-window multiplayer test | [42.2](42-examples-samples.md#422-network-demo) Network demo |
 | I want a node for my own system | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
 | I want a quick check that 2D physics works | [42.3](42-examples-samples.md#423-physics-demo) Physics demo |
+| I want a script to drive the editor | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
+| I want an AI agent to build my level | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
 | I want an example plugin to copy | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | I want players to design their character | [30.1](20-35-planned.md#301-customization) Customization |
 | I want to commit from the editor | [28.1](20-35-planned.md#281-git-integration) Git integration |
@@ -811,6 +813,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | objects shake far from the centre | [45.2](43-proposals.md#452-large-world-coordinates) Large world coordinates |
 | objects vanish at screen edges | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | odd files named `x` or `map` at the repo root | [19.6](19-docs-tests-health.md#196-repository-hygiene) Repository hygiene |
+| okay mcp does not see my open editor | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
 | okayscript: can't read | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | OkaySpace crashed" box | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
 | OkayUI draws under ImGui or the game | [40.3](40-okayui-library.md#403-backends-and-frame-loop) Backends and frame loop |

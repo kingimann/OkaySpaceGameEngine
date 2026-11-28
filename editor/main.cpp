@@ -1007,6 +1007,8 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectList.hpp"        // okayproj::Normalized / IsSameOrInside / RootOfScene / SceneIn: the launcher's project rules (includes ProjectDelete.hpp)
 #include "WebRun.hpp"             // Build Settings > Web: the web build's size and the local Run in browser server
 #include "AutomationEditor.hpp"   // View > Automation Link: the automation commands for okay mcp, on this editor's state
+#include "AutomationOps.hpp"      // every menu item as an automation op (op.<id>), run here through the code below
+#include "MenuActions.hpp"        // the menus' scene actions (Edit, GameObject, the Hierarchy menus), shared with the ops
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
@@ -5779,22 +5781,8 @@ bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& la
 }
 
 // The ready-made screens, grouped by the registry's sections, for the menu model.
-const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
-    static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
-        std::vector<oked::uimenu::ScreenGroup> v;
-        for (const okay::UIScreens::Section& sec : okay::UIScreens::Sections()) {
-            oked::uimenu::ScreenGroup g; g.name = sec.name; g.tip = sec.tip;
-            for (const okay::UIScreens::Def& d : okay::UIScreens::Screens())
-                if (d.section == sec.id) g.items.push_back({d.id, d.name, d.desc});
-            if (!g.items.empty()) v.push_back(std::move(g));
-        }
-        return v;
-    }();
-    return groups;
-}
-
 void DrawUIWidgetItems(EditorState& ed, bool& created) {
-    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(UIScreenGroups());
+    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(oked::menuactions::UIScreenGroups());
     std::function<void(const std::vector<oked::menubar::Entry>&)> draw = [&](const std::vector<oked::menubar::Entry>& es) {
         for (const auto& e : es) {
             using oked::menubar::Kind;
@@ -5943,20 +5931,27 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
 // MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor/editor_menus.md. The code below draws the parts
 // the model leaves to the editor (lists that depend on live data, and the object creators) and runs the item ids.
 // ============================================================================================================================
-static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
 static void FocusSelected(EditorState& ed);                                          // (the Scene view section, below)
 static bool g_openAddComponentFromHierarchy = false;   // Hierarchy > Add Component...: the Inspector opens its Add Component browser (read in the Inspector)
 
-// Wrap one object in a new empty parent that sits where the object is (Hierarchy > Create Parent, GameObject > Create Empty Parent).
-static void CreateEmptyParentOf(EditorState& ed, GameObject* node) {
-    if (!node || !node->transform) return;
-    ed.PushUndo();
-    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
-    parent->transform->SetPosition(node->transform->Position());
-    if (Transform* op = node->transform->Parent())
-        parent->transform->SetParent(op, true);
-    node->transform->SetParent(parent->transform, true);  // keep world pose
-    ed.Select(parent); ed.dirty = true;
+// What the menus' shared actions (MenuActions.hpp) use of this editor: the Console, the clipboard, the Modeling window's
+// mesh history, the snap size, Isolate and the save prompt.
+static oked::menuactions::Env& MenuEnv() {
+    static oked::menuactions::Env env = [] {
+        oked::menuactions::Env e;
+        e.log = [](const std::string& text, int level) { ConsoleLog(text, level); };
+        e.clipboard = &g_clipboard;
+        e.meshHas = [](bool redo) { return redo ? !g_meshRedo.empty() : !g_meshUndo.empty(); };
+        e.meshUndo = [](bool redo) { return MeshUndo(redo); };
+        e.isolate = &g_isolate;
+        e.afterSavePrompt = [](EditorState& ed, const char* what, std::function<void()> then) {
+            RunAfterSavePrompt(ed, what, std::move(then));
+            return true;
+        };
+        return e;
+    }();
+    env.snapSize = g_snapSize;
+    return env;
 }
 
 // The panel and tool windows the Window menu lists: its toggle ids (MenuBarModel.hpp) -> the live "is it open" flags.
@@ -5974,7 +5969,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
-        {"view.automation", &oked::automation::LinkFlag()},   // View > Automation Link (AutomationEditor.hpp)
+        {"view.automation", &oked::automation::PanelFlag()},   // View > Automation Link: the Connect to Claude panel (AutomationPanel.cpp)
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
     return nullptr;
@@ -6668,10 +6663,10 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
 
 // An item of the menu bar was clicked: do it.
 static void RunMenuAction(EditorState& ed, const std::string& id) {
+    oked::menuactions::After after;
+    if (oked::menuactions::Run(ed, id, nullptr, MenuEnv(), after) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
     // File
-    if (id == "file.new2d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
-    else if (id == "file.new3d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
-    else if (id == "file.open") g_showOpen = true;
+    if (id == "file.open") g_showOpen = true;
     else if (id == "file.save") SaveSceneCmd(ed);
     else if (id == "file.saveas") SaveSceneAsCmd(ed);
     else if (id == "file.saveproject") SaveProject(ed, true);
@@ -6687,75 +6682,18 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     }
     else if (id == "file.build") g_showBuildGame = true;
     else if (id == "file.exit") g_quitRequested = true;
-    // Edit
-    else if (id == "edit.undo" || id == "edit.redo") {
-        const bool redo = id == "edit.redo";
-        const bool mesh = redo ? !g_meshRedo.empty() : !g_meshUndo.empty();
-        const std::string nm = mesh ? std::string("Mesh Edit") : (redo ? ed.RedoName() : ed.UndoName());
-        const std::string verb = redo ? "Redo " : "Undo ";
-        if (MeshUndo(redo)) { ed.dirty = true; ConsoleLog(verb + nm); }
-        else if (redo ? ed.Redo() : ed.Undo()) ConsoleLog(verb + nm);
-        else ConsoleLog("Can't " + std::string(redo ? "redo " : "undo ") + nm + ": " + ed.UndoError(), 1);
-    }
-    else if (id == "edit.cut" && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Cut " + ed.selected()->name + " (Ctrl+V to paste)");
-        ed.DeleteSelected();
-    }
-    else if (id == "edit.copy" && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Copied " + ed.selected()->name);
-    }
-    else if (id == "edit.paste" && !g_clipboard.empty()) {
-        ed.PushUndo();
-        if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-            go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f};
-            ed.Select(go); ed.dirty = true; ConsoleLog("Pasted " + go->name);
-        }
-    }
-    else if (id == "edit.duplicate" && ed.selected()) { ed.DuplicateSelected(); ConsoleLog("Duplicated selection"); }
-    else if (id == "edit.delete" && ed.selected()) { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
-    else if (id == "edit.selectall") {
-        std::vector<GameObject*> all;
-        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
-        HierSelectMany(ed, all);
-    }
-    else if (id == "edit.deselect") ed.Select(nullptr);
+    // Edit (undo, redo, the clipboard, duplicate, delete and select are MenuActions.cpp's)
     else if (id == "edit.darkmode" || id == "edit.lightmode") {   // the design's dark or light scheme (Edit > Appearance has the rest)
         OkayUI::design::Options o = OkayUI::design::Current();
         o.scheme = id == "edit.darkmode" ? OkayUI::design::Scheme::Dark : OkayUI::design::Scheme::Light;
         okayappearance::Commit(o); ApplyTheme(); SaveSettings();
     }
     else if (id == "edit.projectsettings") g_showProjectSettings = true;
-    // GameObject
-    else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
-    else if (id == "go.emptychild" && ed.selected()) {
-        GameObject* parent = ed.selected();
-        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
-        child->transform->SetParent(parent->transform, false);
-        ed.Select(child); ed.dirty = true;
-        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
-    }
-    else if (id == "go.emptyparent" && ed.selected()) {
-        if (ed.MultiSelection().size() > 1) ed.GroupSelected();
-        else CreateEmptyParentOf(ed, ed.selected());
-        ConsoleLog("Created an empty parent");
-    }
+    // GameObject (create empty, child, parent and snap are MenuActions.cpp's)
     else if (id == "go.instantiate") g_showInstPrefab = true;
     else if (id == "go.arraydup") g_showArrayDup = true;
-    else if (id == "go.snap" && ed.selected()) {
-        ed.PushUndo();
-        float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
-        Vec3& p = ed.selected()->transform->localPosition;
-        p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
-        ed.dirty = true; ConsoleLog("Snapped to grid");
-    }
     // View
     else if (id == "view.frame") FocusSelected(ed);
-    else if (id == "view.isolate") {
-        g_isolate = g_isolate ? nullptr : ed.selected();
-        ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)" : "Isolation off");
-    }
     // Help
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
@@ -13626,11 +13564,6 @@ static bool g_hierDropOpenSeen = false;
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
 static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
 // Select a set of objects in the Hierarchy (the first becomes the active one).
-static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs) {
-    if (objs.empty()) return;
-    ed.Select(objs.back());   // ToggleSelect makes each added object active, so go back to front
-    for (std::size_t i = objs.size() - 1; i-- > 0;) if (!ed.IsSelected(objs[i])) ed.ToggleSelect(objs[i]);
-}
 // Hierarchy path of an object ("Canvas/Lobby/Title"), for Copy Path.
 static std::string HierPath(GameObject* g) {
     std::string path = g->name;
@@ -13698,20 +13631,7 @@ static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowM
 }
 
 // Lock/unlock an object and its whole subtree.
-static void SetLockedRecursive(GameObject* go, bool on) {
-    if (!go) return;
-    go->editorLocked = on;
-    if (go->transform)
-        for (Transform* c : go->transform->Children())
-            if (c) SetLockedRecursive(c->gameObject, on);
-}
-
-// The objects a Hierarchy action should affect: the whole multi-selection when the
-// clicked node is part of it, otherwise just that node.
-static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
-    if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) return ed.MultiSelection();
-    return {node};
-}
+using oked::menuactions::SetLockedRecursive;   // MenuActions.cpp (the Hierarchy's Lock, and the Inspector's)
 
 // A small mark on the corner of a row's icon: this object is (part of) a prefab instance. Blue square: an instance root;
 // violet: an instance of a variant; a square with an inner square: a prefab nested inside a bigger one; faint blue: a part of
@@ -13812,7 +13732,7 @@ static const char* HierKindName(GameObject* go) {
 // The right-clicked row, as plain values for the model. `recount`: count the other objects of its kind (once, when the menu opens).
 static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, bool recount) {
     oked::hiermenu::RowState r;
-    r.selectedCount = (int)HierTargets(ed, node).size();
+    r.selectedCount = (int)oked::menuactions::RowTargets(ed, node).size();
     r.active = node->active;
     r.locked = node->editorLocked;
     r.childCount = node->transform->ChildCount();
@@ -13862,7 +13782,7 @@ static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
 }
 
 // What a row menu asks the panel to do after the tree is drawn (the rows below are still being walked).
-struct HierRowResult { bool cut = false, deleteSelection = false, deleteChildren = false, revealSelection = false; };
+using HierRowResult = oked::menuactions::After;
 
 // Parent To >: every object that is not inside this one (so no cycle), world pose kept.
 static void HierParentToSlot(EditorState& ed, GameObject* node) {
@@ -13927,87 +13847,21 @@ static void HierModelToolsSlot(EditorState& ed, GameObject* node) {
 
 // An item of a row's right-click menu was clicked: do it. The menu has already selected the row (unless it was part of a multi-selection).
 static void HierRowAction(EditorState& ed, GameObject* node, const std::string& id, HierRowResult& out) {
-    if (id == "h.copy") g_clipboard = SceneSerializer::SerializeObject(*node);
-    else if (id == "h.cut") { g_clipboard = SceneSerializer::SerializeObject(*node); out.cut = true; }   // deleted after the tree is drawn
-    else if (id == "h.paste" || id == "h.pastechild") {
-        ed.PushUndo();
-        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-            if (id == "h.pastechild") p->transform->SetParent(node->transform, false);
-            else if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
-            ed.Select(p); ed.dirty = true;
-        }
-    }
-    else if (id == "h.rename") {
+    if (oked::menuactions::Run(ed, id, node, MenuEnv(), out) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
+    if (id == "h.rename") {
         g_hierRename.Set(node); g_hierRenameOpen = true;
         std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
         g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
-    else if (id == "h.duplicate") { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-    else if (id == "h.delete") out.deleteSelection = true;   // deleted after the tree is drawn: the rows below still use this object this frame
-    else if (id == "h.deletechildren") out.deleteChildren = true;   // empties a container, keeps the object
-    else if (id == "h.emptychild") {
-        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
-        child->transform->SetParent(node->transform, false);
-        ed.Select(child); ed.dirty = true;
-    }
-    else if (id == "h.createparent") {   // one object: wrap it, keeping its on-screen transform; several: group them
-        if (HierTargets(ed, node).size() > 1) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
-        else CreateEmptyParentOf(ed, node);
-    }
-    else if (id == "h.unparent") {
-        ed.PushUndo();
-        node->transform->SetParent(nullptr, true);   // keep world pose
-        ed.dirty = true;
-    }
-    else if (id == "h.moveup")     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
-    else if (id == "h.movedown")   { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
-    else if (id == "h.movetop")    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
-    else if (id == "h.movebottom") { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
-    else if (id.rfind("h.sel.", 0) == 0) {
+    else if (id == "h.sel.sametype") {
         std::vector<GameObject*> pick;
-        Transform* par = node->transform->Parent();
-        if (id == "h.sel.children") { for (Transform* c : node->transform->Children()) pick.push_back(c->gameObject); }
-        else if (id == "h.sel.below") {
-            for (const auto& up : ed.scene().Objects())
-                if (up.get() != node && up->IsSelfOrDescendantOf(node)) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.parent") { if (par) pick.push_back(par->gameObject); }
-        else if (id == "h.sel.siblings") {
-            for (const auto& up : ed.scene().Objects()) if (up->transform->Parent() == par) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.samename") {
-            for (const auto& up : ed.scene().Objects()) if (up->name == node->name) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.sametype") {
-            const std::string kind = HierKindName(node);
-            for (const auto& up : ed.scene().Objects()) if (kind == HierKindName(up.get())) pick.push_back(up.get());
-        }
-        if (!pick.empty()) { HierSelectMany(ed, pick); out.revealSelection = true; }   // open their parents so they show
+        const std::string kind = HierKindName(node);
+        for (const auto& up : ed.scene().Objects()) if (kind == HierKindName(up.get())) pick.push_back(up.get());
+        if (!pick.empty()) { oked::menuactions::SelectMany(ed, pick); out.revealSelection = true; }   // open their parents so they show
     }
     else if (id == "h.expandbelow")   { g_hierExpandRoot = node; g_hierExpandRootVal = 1; }
     else if (id == "h.collapsebelow") { g_hierExpandRoot = node; g_hierExpandRootVal = 0; }
-    else if (id == "h.active") {
-        ed.PushUndo();
-        const bool on = !node->active;
-        for (GameObject* g : HierTargets(ed, node)) oked::SetObjectActive(g, on);   // the whole selection; children follow their parent
-        ed.dirty = true;
-    }
-    else if (id == "h.lock") {
-        ed.PushUndo();
-        const bool on = !node->editorLocked;
-        for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
-        ed.dirty = true;
-    }
     else if (id == "h.focus") FocusSelected(ed);
-    else if (id == "h.isolate") g_isolate = (g_isolate == node) ? nullptr : node;
-    else if (id.rfind("h.tf.", 0) == 0) {
-        auto each = [&](auto fn) { ed.PushUndo(); for (GameObject* g : HierTargets(ed, node)) fn(g->transform); ed.dirty = true; };
-        if (id == "h.tf.resetpos") each([](Transform* t) { t->localPosition = Vec3::Zero; });
-        else if (id == "h.tf.resetrot") each([](Transform* t) { t->localRotation = Quat::Identity; });
-        else if (id == "h.tf.resetscale") each([](Transform* t) { t->localScale = Vec3::One; });
-        else if (id == "h.tf.resetall") each([](Transform* t) { t->localPosition = Vec3::Zero; t->localRotation = Quat::Identity; t->localScale = Vec3::One; });
-        else if (id == "h.tf.movetoview") each([&](Transform* t) { t->SetPosition(ed.camTarget); });
-    }
     else if (id == "h.addcomponent") {   // the Inspector's own browser: select this object, show the Inspector, open the browser there
         ed.Select(node);
         g_showInspector = true;
@@ -14037,26 +13891,9 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
 
 // An item of the empty-space menu or of the [+] popup was clicked: do it.
 static void HierEmptyAction(EditorState& ed, const std::string& id) {
-    if (id == "h.createempty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
-    else if (id == "h.emptychild" && ed.selected()) {
-        GameObject* parent = ed.selected();
-        GameObject* child = ed.CreateEmpty("Child");
-        child->transform->SetParent(parent->transform, false);
-        ed.Select(child); ed.dirty = true;
-        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
-    }
-    else if (id == "h.groupselected") { if (ed.GroupSelected()) ConsoleLog("Grouped selection under an empty parent"); }
-    else if (id == "h.paste" && !g_clipboard.empty()) {
-        ed.PushUndo();
-        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
-    }
-    else if (id == "h.selectall") {
-        std::vector<GameObject*> all;
-        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
-        HierSelectMany(ed, all);
-    }
-    else if (id == "h.deselect") ed.Select(nullptr);
-    else if (id == "h.expandall") g_hierExpand = 1;
+    oked::menuactions::After after;
+    if (oked::menuactions::Run(ed, id, nullptr, MenuEnv(), after) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
+    if (id == "h.expandall") g_hierExpand = 1;
     else if (id == "h.collapseall") g_hierExpand = 2;
 }
 
@@ -14500,11 +14337,10 @@ void DrawHierarchy(EditorState& ed) {
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
     if (g_hierDropOpenSeen) { g_hierDropOpen.Clear(); g_hierDropOpenSeen = false; }
-    if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
-    else if (deletePending) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
-    if (deleteKidsPending) {
-        const int n = ed.DeleteChildrenOfSelected();
-        ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");
+    {
+        oked::menuactions::After pending;
+        pending.cut = cutPending; pending.deleteSelection = deletePending; pending.deleteChildren = deleteKidsPending;
+        oked::menuactions::ApplyAfter(ed, pending, MenuEnv());
     }
     oked::RunPrefabRequests(ed);   // Prefab menu of a row: Revert All / Apply All / Unpack / Update All
     // Shift+click: select the whole range between the active object and the
@@ -44314,6 +44150,33 @@ static void DrawStartSplashOverlay(okay::platform::Painter* painter) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+// The automation ops (AutomationOps.hpp): an agent's op.<id> runs the very functions these menus' clicks run, with the
+// state they grey items out by.
+static void InstallAutomationOpHooks() {
+    oked::automation::OpHooks& h = oked::automation::Hooks();
+    h.menuState = [](EditorState& ed) { return MenuBarState(ed); };
+    h.rowState = [](EditorState& ed, GameObject* g) { return HierRowState(ed, g, true); };
+    h.emptyState = [](EditorState& ed) { return HierEmptyState(ed); };
+    h.flag = [](const std::string& menu, const std::string& id) -> bool* {
+        (void)menu;
+        if (id == "h.sortaz") return &g_hierSort;
+        return MenuFlag(id);
+    };
+    h.run = [](EditorState& ed, const std::string& menu, const std::string& id, GameObject* row) {
+        if (menu == "menubar") { RunMenuAction(ed, id); return true; }
+        if (menu == "hierarchy.row" && row) {
+            HierRowResult after;
+            HierRowAction(ed, row, id, after);
+            oked::menuactions::ApplyAfter(ed, after, MenuEnv());   // between frames: no rows are being drawn
+            return true;
+        }
+        if (menu == "hierarchy.empty" || menu == "hierarchy.create") { HierEmptyAction(ed, id); return true; }
+        if (menu == "gameobject.ui") { bool created = false; RunUIMenuItem(ed, id, id, created); return true; }
+        if (menu == "scene.add") { SceneAddRun(ed, id, id); return true; }
+        return false;
+    };
+}
+
 const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
@@ -45613,6 +45476,8 @@ int main(int argc, char** argv) {
             okay::textures::Pump();
         }
         oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
+        static const bool s_opHooks = (InstallAutomationOpHooks(), true);
+        (void)s_opHooks;
         oked::automation::LinkFrame(ed);   // View > Automation Link: answer okay mcp between frames (never waits; off by default)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
@@ -46300,6 +46165,7 @@ int main(int argc, char** argv) {
         okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
+        oked::automation::DrawConnectPanel(ed, OkayExeDir());   // View > Automation Link: Connect to Claude
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying(), [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); });
         okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());

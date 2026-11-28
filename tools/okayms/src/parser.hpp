@@ -6888,17 +6888,27 @@ struct Parser {
         block.kind = Node::Block;
         block.text = "scope";
         auto source_part = [&](Node lvalue) { return move ? xvalue_of(node_addr(std::move(lvalue))) : lvalue; };
+        // The body may be made while another statement is being read (a class template instance named in it): only
+        // what this body's calls put into stmt_pre and stmt_temps is its own.
+        const size_t pre_base = stmt_pre.size();
+        const size_t temps_base = stmt_temps.size();
         auto call_assign = [&](int sid, Node target, Node source) -> bool {
             std::vector<Node> args;
             args.push_back(std::move(source));
             Node call;
             if (!method_call(&call, std::move(target), false, "operator=", {}, &args)) return false;
-            for (Node& n : stmt_pre) block.kids.push_back(std::move(n));
-            stmt_pre.clear();
+            for (size_t h = pre_base; h < stmt_pre.size(); ++h) block.kids.push_back(std::move(stmt_pre[h]));
+            stmt_pre.resize(pre_base);
             Node stmt;
             stmt.kind = Node::ExprStmt;
             stmt.kids.push_back(std::move(call));
             block.kids.push_back(std::move(stmt));
+            for (size_t i = stmt_temps.size(); i-- > temps_base;) {
+                Node end;
+                if (!temp_end_call(stmt_temps[i], &end)) return false;
+                block.kids.push_back(std::move(end));
+            }
+            stmt_temps.resize(temps_base);
             (void)sid;
             return true;
         };

@@ -44137,11 +44137,7 @@ int main(int argc, char** argv) {
     okay::platform::Backend* plat = okay::platform::Default();
     if (!plat) { std::cerr << "no okay::platform backend in this build\n"; return 1; }
     okay::thr::ThreadFinishedHook() = &okay::platform::WakeMainLoop;   // a finished background job ends the idle wait at once
-    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT (okay/Core/Memory.hpp): the big owners the report lists
-        okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
-        okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
-        okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return OkayUI::UserFontMemoryBytes(); });
-    }
+    if (okay::MemoryReportWanted()) OkayUI::AddMemoryReportCounters();   // OKAY_MEMORY_REPORT (okay/Core/Memory.hpp): the big owners
     plat->SetPerMonitorDpiAware();
     if (!plat->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
         std::cerr << "the window system could not start: " << plat->LastError() << "\n";

@@ -451,6 +451,9 @@ Font* AddFontTtfFile(const char* path, float px);
 /// The memory the fonts above hold (their file bytes and glyph atlases, okay::TtfFont::MemoryBytes, and the file bytes
 /// AddFontTtfFile keeps), for the memory report.
 std::size_t UserFontMemoryBytes();
+/// Registers the memory report's counters every OkayUI program has (okay/Core/Memory.hpp): every painter's textures, the engine
+/// font cache and the fonts above. The editor and the launcher call it when OKAY_MEMORY_REPORT is set.
+void AddMemoryReportCounters();
 /// Dear ImGui hosts load the editor's two faces from base-85 compressed arrays. OkayUI has no decoder for that format (the engine dropped it on purpose;
 /// the same fonts ship as our own OKF1 data, decoded by okay::EmbeddedUIFontData). A host maps each array to the decoded TTF bytes once, and
 /// AddFontFromMemoryCompressedBase85TTF(array, px) then registers that font. An array that was not mapped gives the default font (and is recorded).

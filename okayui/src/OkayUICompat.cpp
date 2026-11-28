@@ -3,6 +3,8 @@
 #include <vector>
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/OkayUICompat.hpp"
+#include "okay/Core/Memory.hpp"        // AddMemoryReportCounters
+#include "okay/Platform/Painter.hpp"   // PainterTextures
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 #include "OkayUIInternal.hpp"   // wrappedTextSize
@@ -453,6 +455,11 @@ std::size_t UserFontMemoryBytes() {
     for (int i = 0; i < g_nTtfs; ++i) if (g_ttfs[i].font) n += g_ttfs[i].font->MemoryBytes();
     for (const auto& f : KeptFontFiles()) n += f.capacity();
     return n;
+}
+void AddMemoryReportCounters() {
+    okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
+    okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
+    okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return UserFontMemoryBytes(); });
 }
 Font* AddFontTtfFile(const char* path, float px) {
     if (!path || !*path) return nullptr;

@@ -10800,9 +10800,7 @@ static std::size_t TextureMapBytes(const std::map<std::string, okay::ui2d::Tex>*
     return n;
 }
 static void AddLauncherMemoryCounters() {
-    okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
-    okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
-    okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return OkayUI::UserFontMemoryBytes(); });
+    OkayUI::AddMemoryReportCounters();   // textures, fonts (the editor's too)
     okay::AddMemoryCounter("Chat: emoji sheet pixels (kept for the chat window)", [] {
         return g_emojiPixels ? (std::size_t)g_emojiPxW * (std::size_t)g_emojiPxH * 4 : 0;
     });

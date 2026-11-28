@@ -86,6 +86,10 @@ const ScriptApiEntry* FindScriptApi(const std::string& okayName);
 /// ScriptApiError becomes a warning (logged once per `warned` flag) and the empty result.
 vs::VsValue CallScriptApiDynamic(const ScriptApiEntry& e, GameObject* self, const std::vector<vs::VsValue>& raw,
                                  bool* warned);
+/// The same call for a caller that reports the problem itself (the automation API's script.call): a ScriptApiError
+/// is written to `error` (cleared first) and the result is the empty value; nothing is logged.
+vs::VsValue CallScriptApiChecked(const ScriptApiEntry& e, GameObject* self, const std::vector<vs::VsValue>& raw,
+                                 std::string& error);
 
 /// How many times a language tried to define a function the shared table already has (a second copy).
 /// Tests require 0: a function lives in the shared table or in a language's own map, never both.

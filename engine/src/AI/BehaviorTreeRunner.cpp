@@ -1,4 +1,5 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Core/Random.hpp"
 
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
@@ -298,7 +299,7 @@ void BehaviorTreeRunner::Start() {
     if (m_agent) m_agentSpeed0 = m_agent->speed;
     if (m_npc) m_npc->SetExternalBrain(true);
     m_home = homeOverride ? homePoint : Position();
-    m_seed = (std::uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 7u;
+    m_seed = Random::PositionSeed(m_home.x, m_home.z, 7u);   // defined at any distance (#888 F52)
     if (!m_tree && !treePath.empty()) {
         std::string err;
         if (!LoadTree(std::string(), &err))

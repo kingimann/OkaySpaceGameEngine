@@ -1512,7 +1512,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
     // Every graph on the object (each `visualscriptpath` belongs to the graph above it).
     for (auto* vsc : go->GetComponents<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
-        if (!vsc->Path().empty()) out << "  visualscriptpath " << Quote(vsc->Path()) << "\n";
+        if (!vsc->ScenePath().empty()) out << "  visualscriptpath " << Quote(vsc->ScenePath()) << "\n";   // as the scene had it (#888 F42)
     }
     for (auto* al : go->GetComponents<ActionList>()) {
         out << "  actions " << Quote(al->ToText()) << "\n";

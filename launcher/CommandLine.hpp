@@ -136,6 +136,20 @@ std::vector<std::string> TerminalArgv();
 /// False with a plain reason.
 bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::string& error);
 
+// ---- git for a project (the Projects page's Clone, Pull, Commit and push, Publish and new-project Git buttons) --------
+
+/// One git step: the words after `git -C <folder>`. Each word is one argument to git: a commit message, URL or folder
+/// with quotes, `$(...)`, `;` or `&` in it stays text, because no shell ever sees it (#888 F50: the buttons used to build
+/// a shell line with hand-made quotes, so a commit message could run a command).
+using GitStep = std::vector<std::string>;
+/// The argument list of one step: { git, "-C", folder, step... }.
+std::vector<std::string> GitArgv(const std::string& git, const std::string& folder, const GitStep& step);
+/// Run `steps` one after another (okaycli::Run, output captured, no console window, no shell). Every step runs, as
+/// before; the last one's exit code is the result (-1 when git could not start). `git` "" means "git" from PATH.
+int RunGitSteps(const std::string& folder, const std::vector<GitStep>& steps, const std::string& git = std::string());
+/// git can be started (`git --version` exits 0).
+bool GitWorks(const std::string& git = std::string());
+
 // ---- the programs of their own -------------------------------------------------------------------------------------
 
 /// A program the page offers to start in a window of its own (owner, 2026-11-26: the browser, the command line, the Script

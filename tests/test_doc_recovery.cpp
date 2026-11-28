@@ -137,7 +137,7 @@ static void RestoreQuestion(const std::string& dir) {
         CHECK(found.size() == 1 && !next->Restore(found[0], payload, &err));   // the relative path no longer resolves
         CHECK(offers.size() == 1 && offers[0].readable && offers[0].docs.size() == 1 && offers[0].docs[0].text == "cwd");
     }
-    // A recovery folder with non-ASCII letters in its path (a user name like "Jöhn"). Linux only here; Windows unverified.
+    // A recovery folder with non-ASCII letters in its path (a user name like "Jöhn"). ReadFileCapped opens it by its wide name on Windows (it used the ANSI code page and failed here on the Windows runner).
     {
         const std::string folder = dir + "/rq_J\xC3\xB6hn/okay_recovery";
         KilledSession(folder, "killed", {EncodeBundle({{"graph", "untitled:1", "utf8"}})});

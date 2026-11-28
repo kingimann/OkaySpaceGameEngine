@@ -112,6 +112,9 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/run_windows_tests.py runs the cross-compiled tests on the Windows runner; its self-test includes printing a
+    # test's non-ASCII output to a cp1252 console without stopping the run.
+    add_test(NAME run_windows_tests_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/run_windows_tests.py --self-test)
     # SDL use may only go down: fails and lists the words when a file uses more SDL than tests/data/sdl_ratchet.json
     # (docs/platform/platform_layer.md). Reads the working tree, so it sees an uncommitted new SDL call too.
     add_test(NAME sdl_ratchet COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/sdl_inventory.py --ratchet)
@@ -3464,6 +3467,23 @@ if(TARGET okay_cli_lib)
     add_test(NAME okay_cli_run COMMAND test_okay_cli_run)
     set_tests_properties(okay_cli_run PROPERTIES TIMEOUT 120)
 endif()
+# Automation (okay/Automation, editor/AutomationEditor.hpp, docs/engine/automation.md): the command table, its checks and errors, MCP
+# in process, the editor link, and each command group against the real system (scene text, undo, properties, bindings, physics, Play,
+# animation, modeling, UI layout, visual script files, screenshots, the log). tests/scripts/test_automation_mcp.py runs a real okay mcp.
+add_executable(test_automation test_automation.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationEditor.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationVs.cpp
+               ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_automation PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+target_link_libraries(test_automation PRIVATE okay::engine)
+if(WIN32)
+    target_link_libraries(test_automation PRIVATE comdlg32 ole32 shell32 user32)
+endif()
+add_test(NAME automation COMMAND test_automation)
+set_tests_properties(automation PROPERTIES TIMEOUT 300)
+if(TARGET okay_cli AND OKAY_PYTHON AND NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME automation_mcp COMMAND ${OKAY_PYTHON} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_automation_mcp.py $<TARGET_FILE:okay_cli>)
+    set_tests_properties(automation_mcp PROPERTIES TIMEOUT 300)
+endif()
+
 # The Command Line panel (shared/CommandLinePanel.hpp, View > Panels > Command Line in the editor): its model (history, Tab completion,
 # problems apart, Copy, the folder) and, drawn headless with OkayUI, keys and the golden picture (okayui/tests/golden).
 if(TARGET okay_cli_panel AND TARGET okay_ui_soft)
@@ -5109,6 +5129,13 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+# asset_streaming_stress holds streaming work per frame to a few-millisecond budget. On Linux it measures the main thread's
+# CPU time, so sharing the machine does not matter; Windows has no fine thread-CPU clock and it measures wall time, which
+# counts the moments the OS gave the CPU to the other tests (it failed one of its 620 checks on the Windows runner while
+# sharing it, 2026-11-27). There it runs alone, as the timing tests above do.
+if(WIN32 AND TEST asset_streaming_stress)
+    set_tests_properties(asset_streaming_stress PROPERTIES RUN_SERIAL TRUE)
+endif()
 
 # Typed actions, composites, processors and control schemes (Input/ActionSet.hpp), with the real Input fed by hand; pictures with OKAY_SHOT_DIR.
 add_executable(test_action_set test_action_set.cpp)

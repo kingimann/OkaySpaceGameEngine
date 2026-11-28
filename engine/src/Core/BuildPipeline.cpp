@@ -214,8 +214,8 @@ FileKind KindOf(const std::string& relPath) {
     static const std::set<std::string> mdl = {"obj", "fbx", "gltf", "glb", "dae", "okaymesh", "mtl", "okaymat"};
     static const std::set<std::string> fnt = {"ttf", "otf", "fnt", "ttc"};
     static const std::set<std::string> scr = {"okayvs", "okayscript", "lua", "cs", "okaybt"};
-    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclips", "okaydialogue",
-                                              "okayquests", "okayseq", "okaysequence", "json", "txt", "csv", "xml", "okaynav", "okayanimator"};
+    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclip", "okaydialog",
+                                              "okayquest", "okayseq", "okaysequence", "json", "txt", "csv", "xml", "okaynav", "okayanimator"};
     if (e == "exe") return FileKind::Executable;
     if (e == "dll" || e == "so" || e == "dylib" || p.find(".so.") != std::string::npos) return FileKind::Library;   // (libfoo.so.1: a versioned shared library)
     if (e == "okayscene") return FileKind::Scene;
@@ -308,7 +308,7 @@ enum class Scan { None, Scene, Material, Text };
 Scan ScanKindFor(const std::string& ext) {
     if (ext == "okayscene" || ext == "okayprefab") return Scan::Scene;
     if (ext == "okaymat") return Scan::Material;
-    static const std::set<std::string> text = {"okayanim", "okayclips", "okaydialogue", "okayquests", "okaybt", "okayseq", "okaysequence",
+    static const std::set<std::string> text = {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayseq", "okaysequence",
                                                "okayitems", "okayweapon", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
                                                "json", "okayloc", "okayac"};   // okayac: anti-cheat rules (their "spawn <prefab>" lines name files)
     return text.count(ext) ? Scan::Text : Scan::None;

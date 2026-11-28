@@ -10,11 +10,18 @@
 //   okay-content 1
 //   game <id>                       the game this content is for ([a-z0-9._-], 1..64); a client only accepts its own game's id
 //   version <n>                     content version, a whole number 1..2^53; a client never goes to a LOWER number (replay floor)
-//   min-app <x.y.z>                 optional: the whole manifest needs at least this app version
+//   min-app <x.y.z>                 optional: the whole manifest needs at least this app (engine) version
+//   min-game <x.y.z>                optional: the whole manifest needs at least this version of the exported game itself
+//   apply <when>                    optional: when the game may make it visible (immediately, loading-screen, between-matches,
+//                                   next-launch); absent = the game's own choice (ContentPolicy.hpp DecideApply)
 //   file <TAB> <sha256 hex> <TAB> <size> <TAB> <kind> <TAB> <group or -> <TAB> <min-app or -> <TAB> <path>
 //
-// kind: model texture animation scene audio dialogue script data. "script" is Visual Script / OkayScript text and "data" is plain data
-// (.okaydata, strings, items). There is NO kind for programs or libraries: content is data and scripts only, never native code.
+// Headers may come in any order, each at most once; Serialize writes them in the order above. An older client refuses a manifest with a
+// header or kind it does not know (it keeps its last good content), which is the safe answer.
+//
+// kind: model texture animation scene audio dialogue script data config. "script" is Visual Script / OkayScript text, "data" is plain data
+// (.okaydata, strings, items) and "config" is a live config file (.okaylive: remote settings and scheduled toggles, ContentLiveConfig.hpp).
+// There is NO kind for programs or libraries: content is data and scripts only, never native code.
 //
 // Signature: content.manifest.sig, "okay-sig1 <128 hex>" (the same line format as versions.json.sig), over the message
 // "okayspace-content-manifest-v1\n" + the manifest bytes. The domain differs from the release index's, so a signature made for one can
@@ -39,7 +46,7 @@ inline constexpr const char* kSigName = "content.manifest.sig";
 inline constexpr const char* kSigDomain = "okayspace-content-manifest-v1\n";
 inline constexpr const char* kMagicLine = "okay-content 1";
 
-enum class Kind { Model, Texture, Animation, Scene, Audio, Dialogue, Script, Data };
+enum class Kind { Model, Texture, Animation, Scene, Audio, Dialogue, Script, Data, Config };
 
 inline const char* KindName(Kind k) {
     switch (k) {
@@ -51,11 +58,12 @@ inline const char* KindName(Kind k) {
         case Kind::Dialogue: return "dialogue";
         case Kind::Script: return "script";
         case Kind::Data: return "data";
+        case Kind::Config: return "config";
     }
     return "data";
 }
 inline bool KindFromName(const std::string& s, Kind& out) {
-    static const Kind all[] = {Kind::Model, Kind::Texture, Kind::Animation, Kind::Scene, Kind::Audio, Kind::Dialogue, Kind::Script, Kind::Data};
+    static const Kind all[] = {Kind::Model, Kind::Texture, Kind::Animation, Kind::Scene, Kind::Audio, Kind::Dialogue, Kind::Script, Kind::Data, Kind::Config};
     for (Kind k : all) if (s == KindName(k)) { out = k; return true; }
     return false;
 }
@@ -78,10 +86,31 @@ struct Entry {
     std::string minApp;        ///< "" = any app version; else the entry is skipped by an older app
 };
 
+/// When the publisher wants a version made visible (the manifest's `apply` line). GameDefault = no line: the game decides.
+enum class ApplyWhen { GameDefault, Immediately, AtLoadingScreen, BetweenMatches, NextLaunch };
+
+inline const char* ApplyWhenName(ApplyWhen a) {
+    switch (a) {
+        case ApplyWhen::GameDefault: return "";
+        case ApplyWhen::Immediately: return "immediately";
+        case ApplyWhen::AtLoadingScreen: return "loading-screen";
+        case ApplyWhen::BetweenMatches: return "between-matches";
+        case ApplyWhen::NextLaunch: return "next-launch";
+    }
+    return "";
+}
+inline bool ApplyWhenFromName(const std::string& s, ApplyWhen& out) {
+    static const ApplyWhen all[] = {ApplyWhen::Immediately, ApplyWhen::AtLoadingScreen, ApplyWhen::BetweenMatches, ApplyWhen::NextLaunch};
+    for (ApplyWhen a : all) if (s == ApplyWhenName(a)) { out = a; return true; }
+    return false;
+}
+
 struct Manifest {
     std::string game;
     std::uint64_t version = 0;
     std::string minApp;
+    std::string minGame;            ///< "" = any game version
+    ApplyWhen apply = ApplyWhen::GameDefault;
     std::vector<Entry> entries;     ///< sorted by path (Serialize and Parse both enforce it)
     std::uint64_t TotalBytes() const { std::uint64_t t = 0; for (const Entry& e : entries) t += e.size; return t; }
 };
@@ -175,6 +204,7 @@ inline std::string Problem(const Manifest& m, const Limits& lim = Limits()) {
     if (!detail::IdOk(m.game, 64)) return "the game id is missing or not [a-z0-9._-] (at most 64)";
     if (m.version == 0 || m.version > (1ull << 53)) return "the content version must be 1 to 2^53";
     if (!m.minApp.empty() && !detail::VersionOk(m.minApp)) return "min-app is not a version like 2.886.0";
+    if (!m.minGame.empty() && !detail::VersionOk(m.minGame)) return "min-game is not a version like 1.4.0";
     if (m.entries.size() > lim.maxEntries) return "too many files (limit " + std::to_string(lim.maxEntries) + ")";
     std::set<std::string> seen;          // lower-cased paths: two names that differ only by case would collide on Windows
     std::set<std::string> dirs, files;   // a name cannot be both a file and a folder ("a" and "a/b")
@@ -201,6 +231,8 @@ inline std::string Serialize(Manifest m) {
     s += "game " + m.game + "\n";
     s += "version " + std::to_string(m.version) + "\n";
     if (!m.minApp.empty()) s += "min-app " + m.minApp + "\n";
+    if (!m.minGame.empty()) s += "min-game " + m.minGame + "\n";
+    if (m.apply != ApplyWhen::GameDefault) s += std::string("apply ") + ApplyWhenName(m.apply) + "\n";
     for (const Entry& e : m.entries) {
         s += "file\t" + e.sha256 + "\t" + std::to_string(e.size) + "\t" + KindName(e.kind) + "\t" + (e.group.empty() ? "-" : e.group) + "\t" +
              (e.minApp.empty() ? "-" : e.minApp) + "\t" + e.path + "\n";
@@ -220,7 +252,7 @@ inline bool Parse(const std::string& text, Manifest& out, std::string* why = nul
     std::vector<std::string> lines = detail::Split(text.substr(0, text.size() - 1), '\n');
     if (lines.empty() || lines[0] != kMagicLine) return fail("not an okay-content 1 manifest");
     std::size_t i = 1;
-    bool haveGame = false, haveVersion = false, haveMin = false;
+    bool haveGame = false, haveVersion = false, haveMin = false, haveMinGame = false, haveApply = false;
     for (; i < lines.size() && lines[i].compare(0, 5, "file\t") != 0; ++i) {
         const std::string& l = lines[i];
         const std::size_t sp = l.find(' ');
@@ -231,6 +263,11 @@ inline bool Parse(const std::string& text, Manifest& out, std::string* why = nul
             if (!detail::Digits(val, out.version, 1ull << 53)) return fail("line " + std::to_string(i + 1) + ": bad version number");
             haveVersion = true;
         } else if (key == "min-app" && !haveMin) { out.minApp = val; haveMin = true; }
+        else if (key == "min-game" && !haveMinGame) { out.minGame = val; haveMinGame = true; }
+        else if (key == "apply" && !haveApply) {
+            if (!ApplyWhenFromName(val, out.apply)) return fail("line " + std::to_string(i + 1) + ": unknown apply time '" + val + "'");
+            haveApply = true;
+        }
         else return fail("line " + std::to_string(i + 1) + ": unknown or repeated header '" + key + "'");
     }
     if (!haveGame || !haveVersion) return fail("the manifest needs 'game' and 'version' lines");
@@ -250,6 +287,38 @@ inline bool Parse(const std::string& text, Manifest& out, std::string* why = nul
     }
     if (std::string w = Problem(out, lim); !w.empty()) return fail(w);
     return true;
+}
+
+// ---- Delta between two versions ---------------------------------------------------------------------------------------------------
+
+/// What changed from one manifest to the next, by path: a file is "changed" when its bytes (SHA-256 or size) differ. Kind, group or
+/// min-app changes alone are not byte changes (nothing to transfer). Both lists come out in path order.
+struct Delta {
+    std::vector<Entry> added, changed;
+    std::vector<std::string> removed;
+    std::size_t unchanged = 0;
+    std::uint64_t BytesToSend() const { std::uint64_t t = 0; for (const Entry& e : added) t += e.size; for (const Entry& e : changed) t += e.size; return t; }
+    bool Empty() const { return added.empty() && changed.empty() && removed.empty(); }
+};
+
+/// The delta from `from` (what a client or the server has; an empty Manifest for nothing yet) to `to`.
+inline Delta Diff(const Manifest& from, const Manifest& to) {
+    Delta d;
+    std::map<std::string, const Entry*> old;
+    for (const Entry& e : from.entries) old[e.path] = &e;
+    for (const Entry& e : to.entries) {
+        const auto it = old.find(e.path);
+        if (it == old.end()) d.added.push_back(e);
+        else {
+            if (it->second->sha256 != e.sha256 || it->second->size != e.size) d.changed.push_back(e); else ++d.unchanged;
+            old.erase(it);
+        }
+    }
+    for (const auto& kv : old) d.removed.push_back(kv.first);
+    auto byPath = [](const Entry& a, const Entry& b) { return a.path < b.path; };
+    std::sort(d.added.begin(), d.added.end(), byPath);
+    std::sort(d.changed.begin(), d.changed.end(), byPath);
+    return d;
 }
 
 // ---- Signature (reuses shared/UpdateSignature.hpp: key list and signature line parsing; ed25519 from AntiCheatCrypto.hpp) ----

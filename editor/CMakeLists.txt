@@ -9,6 +9,7 @@ if(NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
 endif()
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    AutomationEditor.cpp AutomationVs.cpp                              # automation: the editor's commands and View > Automation Link (okay mcp talks to it)
     HangWatchdog.cpp                                                   # the hang watchdog: a stuck main loop is reported (okay_hang.txt) and, on Windows, Wait / Close is offered
     BuildStamp.cpp                                                     # __DATE__ " " __TIME__ for the crash handler, out of main.cpp so ccache can reuse main.cpp
     UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)

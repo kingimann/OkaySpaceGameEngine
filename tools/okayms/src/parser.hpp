@@ -10493,6 +10493,16 @@ struct Parser {
                         error = "no static member " + mname + " in the class";
                         return false;
                     }
+                    // T C::a[N] = {...}; an array member: the bounds were given in the class ([class.static.data] 3;
+                    // Round 36, Input.cpp's `Input::s_padFamily[Input::kMaxGamepads] = {};`), so they are passed over.
+                    while (is(TLBrack)) {
+                        int depth = 0;
+                        do {
+                            if (is(TLBrack)) ++depth;
+                            else if (is(TRBrack)) --depth;
+                            next();
+                        } while (depth > 0 && !is(TEnd));
+                    }
                     Node sinit;
                     bool has_init = false;
                     if (is(TLBrace) && !sm->second.has_const && obj_needs_ctor(sm->second.type)) {
@@ -10729,6 +10739,62 @@ struct Parser {
                     }
                     if (!expect(TRBrace, "'}'")) return false;
                     gctor_args = true;
+                }
+                if (!decl.type.is_array() && !gctor_args && decl.type.struct_id >= 0 &&
+                    (is(TLBrace) || (is(TAssign) && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrace)) &&
+                    has_init_list_ctor(decl.type.struct_id, &gil_type)) {
+                    // std::vector<std::pair<float, float>> g = {{0, 1}, {2, 3}}; and C g{a, b}; for a class with an
+                    // initializer-list constructor ([dcl.init.list] 3.6, [over.match.list]; Round 36, GuidedHuman.cpp's
+                    // kUpperArm): the list's array and the constructor call are made in the start-up function, and the
+                    // array's elements are destroyed there after the call. Before: "a global object with a constructor
+                    // takes arguments in parentheses".
+                    accept(TAssign);
+                    std::vector<Local>* saved_locals = cur_locals;
+                    const int saved_depth = scope_depth;
+                    cur_locals = &init_locals;
+                    scope_depth = 0;
+                    const size_t pre_base = stmt_pre.size();
+                    const size_t temps_base = stmt_temps.size();
+                    Node list;
+                    const bool list_ok = init_list_temp(gil_type, &list);
+                    cur_locals = saved_locals;
+                    scope_depth = saved_depth;
+                    if (!list_ok) return false;
+                    if (init_body.kind != Node::Block) init_body.kind = Node::Block;
+                    for (size_t h = pre_base; h < stmt_pre.size(); ++h) init_body.kids.push_back(std::move(stmt_pre[h]));
+                    stmt_pre.resize(pre_base);
+                    std::vector<Temp> list_temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(temps_base), stmt_temps.end());
+                    stmt_temps.resize(temps_base);
+                    if (!is(TComma) && !expect(TSemi, "';'")) return false;
+                    Global global;
+                    global.name = decl.name;
+                    global.type = decl.type;
+                    global.bss = true;
+                    global.is_static = is_static || anon_depth > 0 || (decl.type.is_const && !decl_extern);
+                    global.tls = decl_tls;
+                    globals.push_back(global);
+                    std::vector<Node> largs;
+                    largs.push_back(std::move(list));
+                    const size_t call_at = init_body.kids.size();
+                    if (!register_global_object(decl.name, decl.type, std::move(largs))) return false;
+                    cur_locals = &init_locals;
+                    // What the constructor call's arguments put before it (a copy of the list) goes before the call.
+                    init_body.kids.insert(init_body.kids.begin() + static_cast<std::ptrdiff_t>(call_at),
+                                          std::make_move_iterator(stmt_pre.begin() + static_cast<std::ptrdiff_t>(pre_base)),
+                                          std::make_move_iterator(stmt_pre.end()));
+                    stmt_pre.resize(pre_base);
+                    for (size_t ti = list_temps.size(); ti-- > 0;) {
+                        Node dcall;
+                        if (!special_call(list_temps[ti].sid, "<dtor>", node_addr(node_name(list_temps[ti].name)), {}, &dcall))
+                            return false;
+                        init_body.kids.push_back(std::move(dcall));
+                    }
+                    cur_locals = saved_locals;
+                    if (accept(TComma)) {
+                        error = "a declaration of several objects after an initializer list is not supported";
+                        return false;
+                    }
+                    continue;
                 }
                 if (!decl.type.is_array() && !gctor_args && is(TAssign) && at + 1 < tokens.size() &&
                     tokens[at + 1].kind != TLBrace) {

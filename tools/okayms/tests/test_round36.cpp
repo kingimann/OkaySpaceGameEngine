@@ -134,7 +134,7 @@ int entry(void) {
 )OKMS", 0);
 }
 
-// unique_ptr<Derived> to unique_ptr<Base> ([unique.ptr.single.ctor] 18, [unique.ptr.single.asgn] 6): NodeGraph::Add's
+// unique_ptr<Derived> to unique_ptr<Base> ([unique.ptr.single.ctor] 18; an assignment goes through it too): NodeGraph::Add's
 // `AddNode(std::make_unique<T>(...))` with AddNode taking unique_ptr<VsNode>. Before Round 36 our <memory> had no such
 // constructor: "not an address: a call of make_unique".
 static void r36_unique_ptr_convert(Tally& tally) {
@@ -424,6 +424,42 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Namespace-scope objects (Round 36):
+// - a class with an initializer-list constructor, initialized from a braced list, with or without `=`
+//   ([dcl.init.list] 3.6, [over.match.list]; GuidedHuman.cpp's `const std::vector<std::pair<float, float>> kUpperArm =
+//   {{...}}`, before "a global object with a constructor takes arguments in parentheses"); the elements of the list are
+//   made and destroyed in the start-up function;
+// - the definition of a static data member that is an array, with its bounds written again ([class.static.data] 3;
+//   Input.cpp's `Input::PadFamily Input::s_padFamily[Input::kMaxGamepads] = {};`, before "expected ';'").
+static void r36_globals(Tally& tally) {
+    std::printf("r36_globals\n");
+    okayms_test::run_both(kRun, tally, "globals", std::string(kAlloc) + R"OKMS(
+#include <vector>
+#include <utility>
+#include <string>
+const std::vector<std::pair<float, float>> kArm = {{0.0f, 1.25f}, {0.25f, 1.2f}, {1.0f, 0.84f}};
+std::vector<int> g_nums{4, 5, 6, 7};
+static std::vector<std::string> s_names = {"jump", "a longer name that lives on the heap", "land"};
+struct Pads {
+  enum Family { None, Xbox, Other };
+  static constexpr int kMax = 4;
+  static Family s_family[kMax];
+  static int s_count[kMax];
+};
+Pads::Family Pads::s_family[Pads::kMax] = {};
+int Pads::s_count[Pads::kMax] = {1, 2, 3, 4};
+int entry(void) {
+  CK(1, kArm.size() == 3 && kArm[1].second == 1.2f && kArm[2].first == 1.0f);
+  CK(2, g_nums.size() == 4 && g_nums[3] == 7);
+  CK(3, s_names.size() == 3 && s_names[1] == "a longer name that lives on the heap" && s_names[2] == "land");
+  CK(4, Pads::s_family[3] == Pads::None && Pads::s_count[2] == 3);
+  Pads::s_family[1] = Pads::Xbox;
+  CK(5, Pads::s_family[1] == Pads::Xbox);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -435,5 +471,6 @@ int main(int argc, char** argv) {
     r36_by_value_params(tally);
     r36_single_file_blockers(tally);
     r36_library_and_lambdas(tally);
-    return tally.finish(7);
+    r36_globals(tally);
+    return tally.finish(8);
 }

@@ -285,12 +285,20 @@ DragDrop g_dd;
 WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
-struct OpenSlot { int id = 0; bool open = false; bool used = false; };
-OpenSlot g_opens[128];
+// Open / closed state of tree nodes, collapsing headers and combos, by id. When every slot is taken, the one used longest ago (not this
+// frame) is given to the new id. (It was 128 slots and then one shared fallback: an editor that had shown many components ran out, and
+// once a default-open header had set the shared one, every combo past the table drew its list open, seen in round 6's Inspector pass.)
+struct OpenSlot { int id = 0; bool open = false; bool used = false; unsigned long long seen = 0; };
+OpenSlot g_opens[1024];
 bool* openState(int id, bool dflt) {
-    for (OpenSlot& s : g_opens) if (s.used && s.id == id) return &s.open;
-    for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
-    static bool sink = false; return &sink;   // table full: harmless fallback
+    for (OpenSlot& s : g_opens) if (s.used && s.id == id) { s.seen = g_frameCount; return &s.open; }
+    OpenSlot* pick = nullptr;
+    for (OpenSlot& s : g_opens) {
+        if (!s.used) { pick = &s; break; }
+        if (s.seen != g_frameCount && (!pick || s.seen < pick->seen)) pick = &s;
+    }
+    if (pick) { pick->used = true; pick->id = id; pick->open = dflt; pick->seen = g_frameCount; return &pick->open; }
+    static bool sink = false; sink = dflt; return &sink;   // all 1024 used this very frame: this frame's default
 }
 // Per-id float state (child-region scroll offsets), persisted across frames.
 struct FloatSlot { int id = 0; float v = 0.0f; bool used = false; };
@@ -2388,7 +2396,10 @@ static float sizeOr(float v, float automatic) { return (v > 0.0f && std::isfinit
 bool Button(const char* label, Vec2 size) {
     if (!g_lay.active) return false;
     const float sx = std::isfinite(size.x) ? size.x : 0.0f, sy = std::isfinite(size.y) ? size.y : 0.0f;
-    const float w = sx > 0.0f ? sx : (sx < 0.0f ? availW() : visW(label) + 24.0f), h = sy > 0.0f ? sy : rowH();
+    float w = sx > 0.0f ? sx : (sx < 0.0f ? availW() : visW(label) + 24.0f), h = sy > 0.0f ? sy : rowH();
+    // A width given in pixels that its label does not fit (the editor's 220-pixel "Open a project folder..." at 150%): the button grows to
+    // hold the label with 8 pixels each side, as far as the row has room, instead of the label running out of it.
+    if (sx > 0.0f) { const float need = visW(label); if (need > 0.0f && need + 16.0f > w) w = std::max(w, std::min(need + 16.0f, realAvailW())); }
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -2466,14 +2477,21 @@ void PopStyleVar(int count) {
 }
 
 // ---- The label column (StyleVar_LabelColumn) -------------------------------------------------------------------------------------
-LabelColumn::LabelColumn(const char* label) {
-    if (!(g_labelCol > 0.0f) || !g_lay.active || g_lay.pendingSameLine || g_posOverride || !label) return;
-    const VisLabel vis(label);
-    if (!vis.b[0]) return;
+// The column's width for a field that starts a line here (0: no column: off, after SameLine, or the row too narrow).
+static float labelColumnHere() {
+    if (!(g_labelCol > 0.0f) || !g_lay.active || g_lay.pendingSameLine || g_posOverride) return 0.0f;
     const float row = fullW();
     float col = g_labelCol < 1.0f ? g_labelCol * row : g_labelCol;
     col = std::floor(std::min(col, row * 0.6f));
-    if (col < 40.0f || row - col < 40.0f) return;   // too narrow for a column: the plain layout
+    return col < 40.0f || row - col < 40.0f ? 0.0f : col;   // too narrow for a column: the plain layout
+}
+float LabelColumnWidth() { return labelColumnHere(); }
+LabelColumn::LabelColumn(const char* label) {
+    if (!label) return;
+    const VisLabel vis(label);
+    if (!vis.b[0]) return;
+    const float col = labelColumnHere();
+    if (col <= 0.0f) return;
     on = true; this->col = col; savedIndent = g_lay.indent; left = leftEdge();
     std::snprintf(text, sizeof text, "%s", vis.b);
     g_lay.indent += col;   // the field is placed after the column

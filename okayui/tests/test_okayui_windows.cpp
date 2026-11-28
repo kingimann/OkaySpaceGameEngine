@@ -1440,6 +1440,31 @@ void TestTextAlignment() {
     CHECK(std::fabs(CenterY(dot) - CenterY(note)) < 1.0f);             // the dot is on the note's first line
 }
 
+// Round 6 audit: more open / closed states than the table held made every later combo draw its list open (the shared fallback slot was
+// set by a header opened with SetNextItemOpen). The least recently used state is reused instead.
+void TestManyOpenStates() {
+    RUN_SUITE("windows: many tree / header / combo states: a new one starts closed");
+    Reset();
+    Sim sim(640, 480);
+    bool lateOpen = true;
+    int round = 0;
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(0, 0), UI::Cond_Always); UI::SetNextWindowSize(V(640, 480), UI::Cond_Always);
+        if (UI::Begin("Many", nullptr, 0)) {
+            char name[32];
+            for (int i = 0; i < 300; ++i) {   // 300 new default-open headers each round (an Inspector showing object after object)
+                std::snprintf(name, sizeof name, "H%d_%d", round, i);
+                UI::PushID(name); UI::SetNextItemOpen(true); UI::CollapsingHeader("Section"); UI::PopID();   // (the editor opens its headers this way)
+            }
+            lateOpen = UI::TreeNode("A late node");
+            if (lateOpen) UI::TreePop();
+        }
+        UI::End();
+    };
+    for (round = 0; round < 6; ++round) sim.Frame(ui);
+    CHECK(!lateOpen);   // a tree node nobody opened is closed
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -1468,6 +1493,7 @@ int main() {
     TestTabBarSlides();
     TestLabelColumn();
     TestTextAlignment();
+    TestManyOpenStates();
     TestDragAcrossWindows();
     TestDragSourceThatMoves();
     TEST_MAIN_RESULT();

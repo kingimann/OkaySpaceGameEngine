@@ -1431,6 +1431,10 @@ enum StyleVar : int {
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);
+/// With StyleVar_LabelColumn: the label column's width for a field that would start a line here (0 when there is none: off, after
+/// SameLine, or a row too narrow). A composite row the host builds itself (three drag cells and a label) puts its label in it with
+/// AlignTextToFramePadding, Text, SameLine(LabelColumnWidth()) and its fields after.
+float LabelColumnWidth();
 void PopStyleVar(int count = 1);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
 /// About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it

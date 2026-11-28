@@ -818,6 +818,8 @@ int CmdDoctor(const std::vector<std::string>& args, const std::string& project, 
 
 } // namespace
 
+AutomationFn& AutomationEntry() { static AutomationFn fn = nullptr; return fn; }
+
 int Main(const std::vector<std::string>& argsIn, const Io& io) {
     // --project FOLDER (or -C FOLDER) may come before the command, and only there: after the command every word
     // belongs to it (a save message, a file name, anything after --).
@@ -858,6 +860,13 @@ int Main(const std::vector<std::string>& argsIn, const Io& io) {
             a.push_back("--zip");
         for (const std::string& x : a) if (x == "--help" || x == "-h") { io.Say(HelpText("export")); return 0; }
         return CmdBuild(a, project, io);
+    }
+    if (cmd == "mcp" || cmd == "automation") {
+        if (!AutomationEntry()) {
+            io.Warn("okay " + cmd + " runs from a terminal (the okay program). Inside the editor, turn on View > Automation Link instead.");
+            return 1;
+        }
+        return AutomationEntry()(args, project, io);
     }
     if (cmd == "project") return detail::ProjectMain(rest, project, io);
     if (cmd == "scene") return detail::SceneMain(rest, project, io);

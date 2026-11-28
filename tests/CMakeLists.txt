@@ -3459,6 +3459,23 @@ if(TARGET okay_cli_lib)
     add_test(NAME okay_cli_run COMMAND test_okay_cli_run)
     set_tests_properties(okay_cli_run PROPERTIES TIMEOUT 120)
 endif()
+# Automation (okay/Automation, editor/AutomationEditor.hpp, docs/engine/automation.md): the command table, its checks and errors, MCP
+# in process, the editor link, and each command group against the real system (scene text, undo, properties, bindings, physics, Play,
+# animation, modeling, UI layout, visual script files, screenshots, the log). tests/scripts/test_automation_mcp.py runs a real okay mcp.
+add_executable(test_automation test_automation.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationEditor.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationVs.cpp
+               ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_automation PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+target_link_libraries(test_automation PRIVATE okay::engine)
+if(WIN32)
+    target_link_libraries(test_automation PRIVATE comdlg32 ole32 shell32 user32)
+endif()
+add_test(NAME automation COMMAND test_automation)
+set_tests_properties(automation PROPERTIES TIMEOUT 300)
+if(TARGET okay_cli AND OKAY_PYTHON AND NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME automation_mcp COMMAND ${OKAY_PYTHON} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_automation_mcp.py $<TARGET_FILE:okay_cli>)
+    set_tests_properties(automation_mcp PROPERTIES TIMEOUT 300)
+endif()
+
 # The Command Line panel (shared/CommandLinePanel.hpp, View > Panels > Command Line in the editor): its model (history, Tab completion,
 # problems apart, Copy, the folder) and, drawn headless with OkayUI, keys and the golden picture (okayui/tests/golden).
 if(TARGET okay_cli_panel AND TARGET okay_ui_soft)

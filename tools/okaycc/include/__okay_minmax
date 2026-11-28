@@ -1,0 +1,30 @@
+// std::min and std::max ([alg.min.max]) for okay-cc's <algorithm>, also given by <string>, as a
+// program that includes only <string> finds them with g++ (Render/OkayShader.cpp). Our own header.
+#pragma once
+#include <initializer_list>
+namespace std {
+template <typename T>
+const T &min(const T &a, const T &b) {
+    if (b < a) return b;
+    return a;
+}
+template <typename T>
+const T &max(const T &a, const T &b) {
+    if (a < b) return b;
+    return a;
+}
+template <typename T>
+T min(initializer_list<T> l) {
+    const T *m = l.begin();
+    for (const T *p = l.begin(); p != l.end(); ++p)
+        if (*p < *m) m = p;
+    return *m;
+}
+template <typename T>
+T max(initializer_list<T> l) {
+    const T *m = l.begin();
+    for (const T *p = l.begin(); p != l.end(); ++p)
+        if (*m < *p) m = p;
+    return *m;
+}
+}  // namespace std

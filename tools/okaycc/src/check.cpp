@@ -2221,6 +2221,24 @@ private:
         checkVar(d);
         return true;
     }
+    // e, a call of the placeholder c0 ("dtorauto:", "dtorref:") with an object's address: the
+    // destructor of class cls when it has one, else nothing (the call becomes 0).
+    ET dtorOrNothing(Expr& e, Expr& c0, const Type* cls) {
+        const Param* d = nullptr;
+        if (cls && cls->kind == Type::Kind::Struct)
+            if (const Type* st = canonOf(cls))
+                for (const Param& q : st->params)
+                    if (q.name == "<dtor>" && !q.mangled.empty()) d = &q;
+        if (!d) {
+            e.kind = Expr::Kind::Int;
+            e.ival = 0;
+            e.kids.clear();
+            e.text.clear();
+            return checkExpr(e);
+        }
+        c0.text = d->mangled;
+        return checkCall(e);
+    }
     // A conditional of two lvalues of one type is an lvalue ([expr.cond] p4): x becomes
     // *(c ? &a : &b), so a reference can bind to it (T &r = c ? a : b; return c ? a : b; from a
     // function returning T&).
@@ -3844,47 +3862,24 @@ private:
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "dtorref:") {
             // The end of a reference local's block: if it was bound to a temporary (which then
             // became the local itself, materializeRef), that object's destructor; else nothing.
-            const Param* d = nullptr;
+            const Type* rt = nullptr;
             if (e.kids.size() == 2 && e.kids[1] && e.kids[1]->kind == Expr::Kind::Unary && e.kids[1]->text == "&" &&
                 !e.kids[1]->kids.empty() && e.kids[1]->kids[0] && e.kids[1]->kids[0]->kind == Expr::Kind::Name) {
                 const std::string& rn = e.kids[1]->kids[0]->text;
                 int at = scopeOf(rn);
-                const Type* rt = at >= 0 ? scopes_[static_cast<std::size_t>(at)][rn].type.get() : nullptr;
-                if (rt && rt->kind == Type::Kind::Struct)
-                    if (const Type* st = canonOf(rt))
-                        for (const Param& q : st->params)
-                            if (q.name == "<dtor>" && !q.mangled.empty()) d = &q;
+                rt = at >= 0 ? scopes_[static_cast<std::size_t>(at)][rn].type.get() : nullptr;
             }
-            if (!d) {
-                e.kind = Expr::Kind::Int;
-                e.ival = 0;
-                e.kids.clear();
-                e.text.clear();
-                return checkExpr(e);
-            }
-            c0.text = d->mangled;
-            return checkCall(e);
+            return dtorOrNothing(e, c0, rt);
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "dtorauto:") {
             // The end of an "auto x = e;" local: its class's destructor, if it has one.
-            const Param* d = nullptr;
+            std::unique_ptr<Type> cls;
             if (e.kids.size() == 2 && e.kids[1]) {
                 ++quiet_;
                 ET a = decay(checkExpr(*e.kids[1]));
                 --quiet_;
-                if (!a.bad && a.type && isPtr(*a.type) && a.type->inner && a.type->inner->kind == Type::Kind::Struct)
-                    if (const Type* st = canonOf(a.type->inner.get()))
-                        for (const Param& q : st->params)
-                            if (q.name == "<dtor>" && !q.mangled.empty()) d = &q;
+                if (!a.bad && a.type && isPtr(*a.type) && a.type->inner) cls = cloneType(*a.type->inner);
             }
-            if (!d) {
-                e.kind = Expr::Kind::Int;
-                e.ival = 0;
-                e.kids.clear();
-                e.text.clear();
-                return checkExpr(e);
-            }
-            c0.text = d->mangled;
-            return checkCall(e);
+            return dtorOrNothing(e, c0, cls.get());
         } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, 8, "\x01" "dtorif:") == 0) {
             // The destructor of a local of a class used inside its own body: run it if the
             // finished class has one.

@@ -21,7 +21,9 @@ struct Preprocessor {
     std::vector<std::string> files;
     std::vector<std::pair<int, int>> origin;
 
-    bool defined(const std::string& name) const { return macros.find(name) != macros.end(); }
+    // __has_include counts as defined ([cpp.cond] 6), so `#ifdef __has_include` holds.
+    bool defined(const std::string& name) const { return name == "__has_include" || macros.find(name) != macros.end(); }
+    std::string if_dir_;  // the folder of the file whose #if is being evaluated (for __has_include of a quoted name)
 
     // Integer constant expression for #if / #elif. An undefined name is 0.
     // defined(name) is replaced before macro expansion, as C requires.
@@ -51,6 +53,26 @@ struct Preprocessor {
                     }
                     step += defined(name) ? "1" : "0";
                     i = k;
+                    continue;
+                }
+                if (word == "__has_include") {
+                    // __has_include(<name>) or __has_include("name") ([cpp.cond] 1, 5; Round 35): 1 when the header
+                    // is found the way #include would find it from the file being read, else 0.
+                    size_t k = j;
+                    while (k < raw.size() && raw[k] != '(') ++k;
+                    size_t q1 = raw.find_first_of("\"<", k);
+                    const char close = q1 != std::string::npos && raw[q1] == '"' ? '"' : '>';
+                    const size_t q2 = q1 == std::string::npos ? q1 : raw.find(close, q1 + 1);
+                    size_t r = q2 == std::string::npos ? q2 : raw.find(')', q2);
+                    if (k >= raw.size() || r == std::string::npos) {
+                        *ok = false;
+                        return 0;
+                    }
+                    std::string found;
+                    const std::string name = raw.substr(q1 + 1, q2 - q1 - 1);
+                    find_include(name, close == '"', if_dir_, &found);
+                    step += found.empty() ? "0" : "1";
+                    i = r + 1;
                     continue;
                 }
                 step += word;
@@ -737,8 +759,12 @@ struct Preprocessor {
                     size_t b = 0;
                     while (b < expr.size() && (expr[b] == ' ' || expr[b] == '\t')) ++b;
                     expr = expr.substr(b);
+                    // In a group that is skipped, #if and #elif are only counted for nesting; their expressions are
+                    // not evaluated ([cpp.cond] 13; Round 35: OwnLinuxX11.cpp's __has_include in a skipped #else).
+                    const bool evaluate = is_elif ? (!stack.empty() && stack.back().parent && !stack.back().any) : active();
                     bool good = true;
-                    const int64_t value = eval_pp(expr, &good);
+                    if_dir_ = dir;
+                    const int64_t value = evaluate ? eval_pp(expr, &good) : 0;
                     if (!good) {
                         error = error.empty() ? "bad preprocessor expression: #if " + expr : error;
                         --depth;

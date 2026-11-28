@@ -481,6 +481,14 @@ void DrawBrowserIcon(BrowserIcon icon, float cx, float cy, float size, UI::Color
         dl->AddRectFilled(P(-7, -5.5f), P(0, -2.5f), col, 1.0f * s);
         break;
     }
+    case BrowserIcon::OwnWindow: {   // a window with an arrow leaving it at the top right
+        const float t = std::max(1.2f, 1.3f * s);
+        dl->AddRect(P(-7, -4), P(4, 7), col, 1.5f * s, t);
+        dl->AddLine(P(-1, 1), P(7, -7), col, t);
+        dl->AddLine(P(2, -7), P(7, -7), col, t);
+        dl->AddLine(P(7, -7), P(7, -2), col, t);
+        break;
+    }
     case BrowserIcon::Globe: {
         dl->AddCircle(P(0, 0), 7.0f * s, col, 0, std::max(1.1f, 1.2f * s));
         dl->AddEllipse(P(0, 0), UI::Vec2(3.0f * s, 7.0f * s), col, 0.0f, 0, std::max(1.0f, 1.1f * s));
@@ -661,6 +669,12 @@ void ProgramToolbar(br::BrowserTab& tab, float x, float y, float w, float tbH, c
     const float menuX = x + w - 8.0f - bs;
     if (BrowserIconButton("##menu", BrowserIcon::Menu, menuX, by, bs, true, "Menu")) res.menu = true;
     res.menuButton = UI::Rect{menuX, by, bs, bs};
+    float barEnd = menuX;   // the address bar ends before the buttons on the right
+    if (o.ownWindowButton) {
+        barEnd = menuX - 2.0f - bs;
+        if (BrowserIconButton("##ownwindow", BrowserIcon::OwnWindow, barEnd, by, bs, true, "Open in its own window: this page in the OkaySpace Browser program"))
+            res.ownWindow = true;
+    }
 
     AddressField* af = o.address;
     const std::string& url = tab.Url();
@@ -670,7 +684,7 @@ void ProgramToolbar(br::BrowserTab& tab, float x, float y, float w, float tbH, c
         std::snprintf(af->text, sizeof af->text, "%s", ownPage ? "" : url.c_str());
         af->shownFor = url;
     }
-    const float ph = 34.0f, py = y + (tbH - ph) * 0.5f, px0 = bx, px1 = std::max(bx + 120.0f, menuX - 8.0f);
+    const float ph = 34.0f, py = y + (tbH - ph) * 0.5f, px0 = bx, px1 = std::max(bx + 120.0f, barEnd - 8.0f);
     const bool overBar = !o.blockInput && UI::IsMouseHoveringRect(UI::Vec2(px0, py), UI::Vec2(px1, py + ph));
     dl->AddRectFilled(UI::Vec2(px0, py), UI::Vec2(px1, py + ph), overBar && !af->focused ? lk::kFieldHover : lk::kField, ph * 0.5f);
     if (af->focused) dl->AddRect(UI::Vec2(px0, py), UI::Vec2(px1, py + ph), lk::kAccent, ph * 0.5f, 2.0f);

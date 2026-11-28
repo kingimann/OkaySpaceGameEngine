@@ -33,6 +33,9 @@ public:
         std::string userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OkaySpaceBrowser/1.0";
         bool switchedOff = false;       ///< Settings > Experimental > Browser is off: nothing is loaded, a line says why
         bool quitItem = false;          ///< the menu has Quit (Ctrl+Q): the program's own window
+        /// Set: an "Open in its own window" button beside the address bar calls it with the shown page's address ("" for our
+        /// own pages). The launcher's Browser page sets it to start the browser program; the program itself leaves it unset.
+        std::function<void(const std::string& url)> openOwnWindow;
         std::string idPrefix = "##browser";   ///< prefix of the OkayUI window names (unique in the host's frame)
     };
 

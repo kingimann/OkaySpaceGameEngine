@@ -69,10 +69,12 @@ inline fs::path ScenesDir(const fs::path& root) { return root / kAssets / kScene
 /// ".okay/scene_build.txt"). The new place when the file is there; else the old place when the file is there; else the new
 /// place when the project has a ProjectSettings folder (a new or tidied project); else the old place (an older project
 /// keeps writing where it always did, so it is never half in one layout and half in the other).
+/// `legacyRel` is written with '/'; on Windows it is turned into '\' so the path text has one kind of separator
+/// ("C:\Game\.okay\scene_build.txt", not "C:\Game\.okay/scene_build.txt": equal as paths, different as text).
 inline fs::path SettingsFile(const fs::path& root, const std::string& name, const std::string& legacyRel) {
     std::error_code ec;
     const fs::path now = SettingsDir(root) / name;
-    const fs::path old = root / fs::path(legacyRel);
+    const fs::path old = root / fs::path(legacyRel).make_preferred();
     if (fs::is_regular_file(now, ec)) return now;
     if (fs::is_regular_file(old, ec)) return old;
     if (fs::is_directory(SettingsDir(root), ec)) return now;

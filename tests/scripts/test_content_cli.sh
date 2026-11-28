@@ -59,6 +59,19 @@ out="$("$TOOL" sync "$T/pub" "$T/c1" --game cli --keys "$pub" 2>&1)" && [[ "$out
 "$TOOL" sync "$T/tam" "$T/c3" --game cli --keys "$pub" >/dev/null 2>&1 && bad "sync accepted a tampered file"
 [ ! -e "$T/c3/current.txt" ] && [ ! -d "$T/c3/trees/1" ] || bad "a tampered file became visible"
 
+# publish to a local / LAN folder (only changed files are sent, the manifest last), then sync from it; a version that does not go up is refused
+cp -r "$T/pub" "$T/publ"
+out="$("$TOOL" publish "$T/publ" "$T/lan" --keys "$pub" 2>&1)" || bad "publish failed: $out"
+[[ "$out" == *"3 new"* ]] || bad "first publish should send 3 files: $out"
+"$TOOL" publish "$T/publ" "$T/lan" --keys "$pub" >/dev/null 2>&1 && bad "publish accepted the same version twice"
+printf 'x=2\n' > "$T/publ/scripts/boss.okayvs"
+OKAY_CONTENT_SIGNING_SEED="$seed" "$TOOL" make-manifest "$T/publ" --game cli --version 2 --apply between-matches >/dev/null 2>&1 || bad "make-manifest version 2"
+grep -q '^apply between-matches$' "$T/publ/content.manifest" || bad "make-manifest did not write the apply line"
+out="$("$TOOL" publish "$T/publ" "$T/lan" --keys "$pub2" 2>&1)" && bad "publish accepted a signature of another key: $out"
+out="$("$TOOL" publish "$T/publ" "$T/lan" --keys "$pub" 2>&1)" || bad "second publish failed: $out"
+[[ "$out" == *"0 new, 1 changed"*"4 bytes sent"* ]] || bad "second publish should send only the changed file: $out"
+out="$("$TOOL" sync "$T/lan" "$T/c5" --game cli --keys "$pub" 2>&1)" && [[ "$out" == *"status=updated"*"version=2"* ]] || bad "sync from the published folder: $out"
+
 # over HTTP with a cut download (needs the own HTTP client in the tool and python3)
 if command -v python3 >/dev/null 2>&1; then
     CONTENT_SERVER_CUT="audio/hit.wav:20000" python3 -I "$REPO/tests/scripts/content_range_server.py" "$T/pub" "$T/port" & SRV=$!

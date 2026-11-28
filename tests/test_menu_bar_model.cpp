@@ -263,7 +263,7 @@ int main() {
     {   // View: the windows (each listed once) and the layouts, then the Scene view's commands, overlays and rendering settings.
         State s;
         const auto v = ViewMenu(s);
-        CHECK((Ids(v) == std::vector<std::string>{"view.panels", "view.tools", "view.layout", "---", "view.frame", "view.isolate", "view.uionly", "---",
+        CHECK((Ids(v) == std::vector<std::string>{"view.panels", "view.tools", "view.layout", "---", "view.frame", "view.isolate", "view.uionly", "view.automation", "---",
                                                   "view.overlays", "view.bookmarks", "---", "view.rendering"}));
         CHECK(FindLabel(v, "Hierarchy")->kind == Kind::Toggle);
         CHECK(FindLabel(v, "Items, Loot & Recipes")->kind == Kind::Toggle);

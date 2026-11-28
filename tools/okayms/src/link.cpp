@@ -323,9 +323,10 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             for (size_t si = 0; si < objects[oi].sections.size(); ++si) {
                 const std::string& name = objects[oi].sections[si].name;
                 const size_t dollar = name.find('$');
-                const std::string base = dollar == std::string::npos ? name : name.substr(0, dollar);
+                // One name per section, read once (no tail copies in a loop).
+                const std::string base = dollar == std::string::npos ? name : std::string(name, 0, dollar);
                 const auto seen = first_seen.emplace(base, first_seen.size()).first;
-                items.push_back({seen->second, dollar == std::string::npos ? std::string() : name.substr(dollar + 1), oi, si});
+                items.push_back({seen->second, dollar == std::string::npos ? std::string() : std::string(name, dollar + 1), oi, si});
             }
         }
         std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {

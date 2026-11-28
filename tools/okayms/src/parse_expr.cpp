@@ -1608,6 +1608,7 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = cur().real != 0 ? cur().real : 1;
         if (cur().real == 0) {
             out->type.wide = cur().ity >= 2;
+            out->type.long_word = cur().long_lit;
             out->type.is_unsigned = cur().ity == 1 || cur().ity == 3;
             // A number is kept in the form its type gives: sign-extended int, zero-extended unsigned int.
             if (cur().ity == 0) out->number = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(out->number)));

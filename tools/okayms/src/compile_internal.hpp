@@ -38,6 +38,9 @@ struct Token {
     int real = 0;
     // Type of an integer literal ([lex.icc]): 0 int, 1 unsigned int, 2 long long, 3 unsigned long long.
     int ity = 0;
+    // An integer literal with one `l` suffix that fits 32 bits (2L, 5ul): of type long or unsigned long ([lex.icon] 3;
+    // Round 35).
+    bool long_lit = false;
     // Line of the preprocessed text, counted from 1.
     int line = 0;
     // A '>' written directly after another '>' (no space), used to read '>>' and '>>='.

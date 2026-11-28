@@ -319,6 +319,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 if (suf_l >= 2) tok.ity = suf_u ? 3 : (fits_ll ? 2 : 3);
                 else if (!suf_u) tok.ity = fits_int ? 0 : (!dec && fits_uint) ? 1 : fits_ll ? 2 : 3;
                 else tok.ity = fits_uint ? 1 : 3;
+                tok.long_lit = suf_l == 1 && tok.ity <= 1;
             }
             i = j;
             tokens.push_back(tok);

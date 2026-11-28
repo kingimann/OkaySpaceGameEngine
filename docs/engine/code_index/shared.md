@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 72 headers, 1094 names.
+Back to the [code index](../code_index.md). 72 headers, 1100 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -746,6 +746,12 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 
 - `SceneKey` function, line 20: The same file always gives the same key, whichever folder it was reached through ("a/../b", symlinks).
 - `FindScenesUnder` function, line 35: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
+- `IsGameProgram` function, line 68: Is 'f' a program a Build put at a game's root: a '.exe' (any case), or on other systems an executable file without
+- `HasProjectFile` function, line 85: Does folder 'd' hold a project file (*.okayproj)?
+- `HasGameProgram` function, line 96: Does folder 'd' hold a game program (IsGameProgram)?
+- `ExportedGameRoot` function, line 107: The root folder of the exported game that 'p' belongs to, or "" when it is not one. 'p' is a scene (*.okayscene)
+- `IsExportedGame` function, line 138: THE check for "may the launcher play this?": only an exported game (ExportedGameRoot). A project folder, an
+- `NotExportedMessage` function, line 141: What the launcher says when it refuses to play something that is not an exported game.
 
 ## `shared/OfficialGame.hpp`
 

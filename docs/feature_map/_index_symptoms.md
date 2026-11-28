@@ -571,6 +571,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | every object using the shared file changes at once | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | every tree in the forest looks the same | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
 | everything the same volume | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
+| Export this project from the editor (Build) to play it. | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | F-keys or Alt cannot be bound | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
 | faces look dark or inside out after a weld or mirror | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
@@ -747,6 +748,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | my built game doesn't show in Play | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | my component's range is invisible in the Scene view | [54.2](43-proposals.md#542-gizmos-for-components) Gizmos for components |
 | my player moves a beat late | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
+| my project is not on Play | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | my script does something odd and I can only add prints | [55.1](43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) Breakpoints and stepping for text scripts |
 | NaN positions after a pause | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | need a browser to read the manual | [57.3](43-proposals.md#573-docs-inside-the-editor) Docs inside the editor |

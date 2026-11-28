@@ -16,6 +16,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -782,6 +783,78 @@ int main() {
         vsed::VsAddComponentById = nullptr;
         vsed::StepCatalog = nullptr;
         vsed::VsBackups = nullptr;
+    }
+
+    // ---- custom nodes (feature map 24.3): the Custom group, Edit node and Make a custom version on the right-click menu ----
+    {
+        const fs::path cproj = dir / "Custom Nodes";
+        WriteFile(cproj / "Assets/Nodes/math.okay",
+                  "// @node Double It\n// @category Math\n// @help Doubles the number you give it.\n// @in Value: Number = 1\n"
+                  "// @out Result: Number\nfunction double_it(value) {\n    return value * 2;\n}\n\n"
+                  "// @node Shout\n// @flow\n// @in Word: Text\n// @out Loud: Text\nfunction shout(word) {\n    return word + \"!\";\n}\n");
+        vsed::VsEditGraph g;
+        const int ev = g.add("OnStart", 40, 40), pr = g.add("Print", 320, 40);
+        g.linkExec(ev, 0, pr);
+        WriteFile(cproj / "Assets/Graphs/Main.okayvs", g.toText());
+        const float W = 1000, H = 640;
+        Sim sim(W, H);
+        std::string opened;
+        vsapp::VisualScriptApp::Config ccfg = cfg;
+        ccfg.idPrefix = "##test_vs_custom";
+        ccfg.openScript = [&opened](const std::string& path, int line) { opened = path + ":" + std::to_string(line); };
+        vsapp::VisualScriptApp app(ccfg);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        CHECK(app.OpenPath(cproj.u8string()));
+        CHECK(app.OpenFile((cproj / "Assets/Graphs/Main.okayvs").u8string()));
+        sim.Frames(3, ui);   // the folder's custom-node scripts are found
+        CHECK(vsed::FindDef("Custom.double_it") != nullptr);
+        app.FrameAll();
+        sim.Frames(2, ui);
+        // the Add Block list's Custom group lists them
+        app.OpenPalette(200, 300);
+        CHECK(app.ShowPaletteTopic("Custom"));
+        sim.Frames(2, ui);
+        const std::vector<std::string> types = app.PaletteTypes();
+        CHECK(std::find(types.begin(), types.end(), "Custom.double_it") != types.end());
+        CHECK(std::find(types.begin(), types.end(), "Custom.shout") != types.end());
+        if (const char* shots = std::getenv("OKAY_SHOT_DIR")) WritePng(std::string(shots) + "/vs_custom_palette.png", Picture(sim, 24, 26, 31));
+        app.SetPaletteQuery("double");
+        CHECK(!app.PaletteTypes().empty() && app.PaletteTypes().front() == "Custom.double_it");
+        CHECK(app.PickPaletteRow(0));
+        int dbl = -1;
+        for (const auto& n : app.Active().g.nodes) if (n.type == "Custom.double_it") dbl = n.id;
+        CHECK(dbl >= 0);
+        sim.Frames(2, ui);
+        // a custom node's menu: Edit node opens its script at the function
+        const std::vector<std::string> crow = app.NodeMenuRows(dbl);
+        CHECK(std::find(crow.begin(), crow.end(), "Edit node") != crow.end());
+        CHECK(app.PickNodeMenuRow(dbl, "Edit node"));
+        CHECK(opened.find("math.okay:6") != std::string::npos);
+        // a built-in block's menu: Make a custom version, in each language
+        const std::vector<std::string> prow = app.NodeMenuRows(pr);
+        CHECK(std::find(prow.begin(), prow.end(), "Make a custom version (OkayScript)") != prow.end());
+        CHECK(std::find(prow.begin(), prow.end(), "Make a custom version (Lua)") != prow.end());
+        CHECK(std::find(prow.begin(), prow.end(), "Make a custom version (C#)") != prow.end());
+        float bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+        CHECK(app.BlockOnScreen(pr, bx0, by0, bx1, by1));
+        app.OpenNodeMenu(pr, bx1 - 20, by0 + 20);
+        sim.Frames(2, ui);
+        if (const char* shots = std::getenv("OKAY_SHOT_DIR")) WritePng(std::string(shots) + "/vs_custom_menu.png", Picture(sim, 24, 26, 31));
+        sim.Press(Key_Escape);
+        sim.Frames(2, ui);
+        const std::size_t wires = app.Active().g.execLinks.size();
+        CHECK(app.PickNodeMenuRow(pr, "Make a custom version (Lua)"));
+        const vsed::VsEditNode* pn = app.Active().g.find(pr);
+        CHECK(pn && pn->type.rfind("Custom.", 0) == 0);
+        CHECK(app.Active().g.execLinks.size() == wires);
+        CHECK(opened.find(".lua:") != std::string::npos);
+        CHECK(opened.find("Assets/Nodes/") != std::string::npos && fs::exists(fs::u8path(opened.substr(0, opened.rfind(':')))));
+        sim.Frames(2, ui);
+        CHECK(app.Undo());   // one step: the built-in block is back
+        CHECK(app.Active().g.find(pr) && app.Active().g.find(pr)->type == "Print");
+        // C# says why it can't take Print (its Message plug takes anything)
+        CHECK(!app.MakeCustomVersion(pr, "cs"));
+        CHECK(app.Notice().find("C#") != std::string::npos);
     }
 
     fs::remove_all(dir, ec);

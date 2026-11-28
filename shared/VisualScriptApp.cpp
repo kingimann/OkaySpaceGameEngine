@@ -882,9 +882,28 @@ void VisualScriptApp::Impl::shortcuts(bool modal) {
 
 // ---- one frame ----------------------------------------------------------------------------------------------------------------
 
+// Custom nodes: the project's scripts that declare nodes are found (when the folder changes, then every few seconds for new
+// files) and the loaded ones reloaded when saved (hot reload: the open graphs' nodes, the palette and the checks follow).
+void VisualScriptApp::Impl::followCustomNodes(bool rescan) {
+    const double now = UI::GetTime();
+    if (rescan || customScanAt < 0 || now - customScanAt > 5.0) {
+        customScanAt = now;
+        const std::string p = project();
+        if (!p.empty()) okay::vs::ScanCustomNodeFolder(p);
+    }
+    okay::vs::PollCustomNodeScripts();
+    static int seen = -1;
+    if (const int rev = okay::vs::CustomNodesRevision(); rev != seen) {
+        seen = rev;
+        for (auto& tab : vsed::Session().tabs) if (tab) tab->checkedText.clear();   // the pins may have changed: check again
+        palBuiltFor = "\x01";
+    }
+}
+
 void VisualScriptApp::Impl::frame(float X, float Y, float W, float H) {
     const bool modal = modalOpen();
     shortcuts(modal);
+    followCustomNodes(false);
     vsed::VsEditState& s = st();
     if (UI::GetTime() - lastCheckAt > 0.25) { lastCheckAt = UI::GetTime(); checkNow(); }   // checked again only when the graph changed
     if (s.refuseTime > 0) s.refuseTime -= UI::GetIO().DeltaTime > 0 ? UI::GetIO().DeltaTime : 1.0f / 60.0f;
@@ -938,6 +957,7 @@ bool VisualScriptApp::OpenFolder(const std::string& folder) {
     m->folder = (ec ? fs::u8path(folder) : a).generic_u8string();
     m->settings.lastFolder = m->folder;
     m->saveSettings();
+    m->customScanAt = -1.0;   // its custom-node scripts are looked for on the next frame
     return true;
 }
 bool VisualScriptApp::OpenFile(const std::string& path) { return m->openFile(path); }
@@ -975,6 +995,15 @@ void VisualScriptApp::SetPaletteQuery(const std::string& query) {
     std::snprintf(m->palBuf, sizeof m->palBuf, "%s", query.c_str());
     m->palSel = 0;
     m->buildPalette();
+}
+bool VisualScriptApp::ShowPaletteTopic(const std::string& topic) {
+    const int i = vsed::VsPaletteCategoryIndex(topic.c_str());
+    if (i < 0) return false;
+    m->palBuf[0] = 0;
+    m->palSide = i;
+    m->palSel = 0;
+    m->buildPalette();
+    return true;
 }
 std::vector<std::string> VisualScriptApp::PaletteRows() const {
     m->buildPalette();
@@ -1039,6 +1068,24 @@ bool VisualScriptApp::CommentSelection() {
 }
 void VisualScriptApp::FrameAll() { m->st().frameAll = true; }         // done in the next frame, when the canvas's size is known
 void VisualScriptApp::FrameSelection() { m->st().frameSel = true; }
+std::vector<std::string> VisualScriptApp::NodeMenuRows(int node) {
+    std::vector<std::string> out;
+    for (const auto& it : m->nodeMenuItems(node)) out.push_back(it.first);
+    return out;
+}
+bool VisualScriptApp::PickNodeMenuRow(int node, const std::string& title) {
+    for (const auto& it : m->nodeMenuItems(node))
+        if (it.first == title && !it.second.empty()) { m->runNodeMenu(node, it.second); return true; }
+    return false;
+}
+void VisualScriptApp::OpenNodeMenu(int node, float x, float y) {
+    if (!m->st().g.find(node)) return;
+    m->nodeMenu = node; m->menuX = x; m->menuY = y;
+}
+bool VisualScriptApp::EditCustomNode(int node) { return m->editCustomNode(node); }
+bool VisualScriptApp::MakeCustomVersion(int node, const std::string& language) { return m->makeCustomVersion(node, language); }
+const std::string& VisualScriptApp::LastScriptOpened() const { return m->lastScriptOpened; }
+
 bool VisualScriptApp::PlugOnScreen(int node, bool exec, bool output, int pin, float& x, float& y) const {
     for (const auto& p : m->plugs)
         if (p.node == node && p.exec == exec && p.output == output && p.pin == pin) { x = p.x; y = p.y; return true; }

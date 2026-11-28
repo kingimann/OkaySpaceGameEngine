@@ -142,6 +142,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Server Security | Anti-cheat: validate what clients send, rate limits, kicks and budgets. |  |
 |  | Accounts & Online Saves | Log in, cloud saves, leaderboards and PlayFab. | Accounts, Cloud Saves, Leaderboards & PlayFab |
 | **Debugging** | Debug | Messages for you while building, not for the player. |  |
+| **Your Nodes** | Custom | Nodes you made yourself in a script, and your custom versions of built-in blocks. |  |
 <!-- topics:end -->
 
 The table above is printed by `test_vs_categories --topic-table`, and the test fails when it differs from the code, so it

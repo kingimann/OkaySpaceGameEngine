@@ -12,6 +12,7 @@
 #include "okay/Components/Damage.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -53,7 +54,7 @@ ConsoleSource GraphLogSource(GameObject* go, const std::string& path) {
 
 bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* error) {
     std::string err;
-    auto graph = vs::NodeGraph::Parse(text, &err);
+    auto graph = vs::NodeGraph::Parse(text, &err, m_path);   // its custom-node scripts are found beside the file
     if (!graph) {
         if (error) *error = err;
         m_error = err;
@@ -230,6 +231,7 @@ void VisualScriptComponent::Update(float dt) {
     if (m_startDeferred) Start();
     ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
     if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame
+    vs::PollCustomNodeScripts();   // a saved custom-node script updates its nodes (hot reload; looks at most twice a second)
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;
     m_ctx.transform = transform;

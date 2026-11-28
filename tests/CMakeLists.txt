@@ -2099,6 +2099,12 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+# Custom nodes (feature map 24.3): the registry, script nodes in OkayScript / Lua / C#, hot reload, placeholders, Make a custom version.
+add_executable(test_vs_custom_nodes test_vs_custom_nodes.cpp)
+target_include_directories(test_vs_custom_nodes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_UI_COMPAT_INCLUDE})
+target_link_libraries(test_vs_custom_nodes PRIVATE okay::engine)
+target_compile_definitions(test_vs_custom_nodes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_custom_nodes COMMAND test_vs_custom_nodes)
 
 # The Visual Script editor's IDE tools (model level): pin-aware search, watches and the lit path while stepping in a
 # GameFiber, collapse to function (same results before and after), layout, references across graph files, bookmarks,

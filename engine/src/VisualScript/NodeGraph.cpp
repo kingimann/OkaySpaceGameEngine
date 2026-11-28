@@ -12,6 +12,7 @@
 #include "okay/VisualScript/NodesInventory.hpp"
 #include "okay/VisualScript/NodesCombat.hpp"
 #include "okay/VisualScript/VsNodeRegistry.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
@@ -389,6 +390,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
                                  std::string* err) {
     if (const std::string canon = CanonicalNodeType(type); canon != type)
         return MakeNode(canon, argsIn, err);
+    // Registered nodes (VsNodeRegistry.hpp): a module's nodes (weapons: swing, fire, reload, ammo, set; with the
+    // module off they are refused) and custom nodes (a script's nodes, VsCustomNodes.hpp).
+    if (std::unique_ptr<VsNode> reg; MakeRegisteredVsNode(type, argsIn, err, reg)) return reg;
     // A node whose text field was left blank gets a sensible default instead of
     // failing — one empty "Set Var" used to stop the whole graph from loading.
     std::vector<std::string> args = argsIn;
@@ -479,16 +483,6 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "CraftItem")      return std::make_unique<InvCraftNode>(a0("item"));
         if (type == "LootRoll")       return std::make_unique<InvLootRollNode>(a0("table"));
         if (type == "SpawnPickup")    return std::make_unique<InvSpawnPickupNode>(a0("item"));
-        // Nodes a module registered (weapons: swing, fire, reload, ammo, set). With the
-        // module on this is the same node as the old hard-coded line. With it off, refuse.
-        okay::ModuleRegistry::Get();
-        if (const VsNodeEntry* reg = FindRegisteredVsNode(type)) {
-            if (!reg->module.empty() && !okay::ModuleRegistry::Get().IsEnabled(reg->module)) {
-                if (err) *err = "the " + reg->module + " module is off";
-                return nullptr;
-            }
-            return reg->make(args, err);
-        }
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);
@@ -1060,6 +1054,12 @@ bool ParseQuoted(const std::string& field, std::string& out) {
 }
 
 std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::string* error) {
+    return Parse(savedText, error, std::string());
+}
+
+std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::string* error, const std::string& graphFile) {
+    // The custom-node scripts this graph uses come first, so their node types exist when the nodes are made.
+    if (savedText.find("nodelib") != std::string::npos) LoadCustomNodeLibs(savedText, graphFile);
     // A quick block is one node in the file; it runs as the ordinary nodes it stands for (QuickBlocks.hpp).
     std::vector<std::pair<int, int>> blockRanges;
     const std::string text = ExpandQuickBlocks(savedText, &blockRanges);
@@ -1119,8 +1119,17 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::s
                     if (a.size() >= 2 && a.front() == '"' && a.back() == '"') a = a.substr(1, a.size() - 2);
             std::string e;
             auto node = MakeNode(type, args, &e);
+            bool missing = false;
+            if (!node && IsCustomNodeType(type)) {
+                // A custom node whose script is gone: keep a placeholder (its wires and typed values load as usual),
+                // so the graph still loads and saves; it says why when flow reaches it.
+                OKAY_WARN("VisualScript: line ", lineNo, ": custom node '", type, "' is missing; it is kept but does not run");
+                node = MakeMissingCustomNode(type);
+                missing = true;
+            }
             if (!node) return fail(e);
             VsNode* added = graph->AddNode(std::move(node));
+            if (missing) graph->m_missing.push_back(fileId);
             added->fileId = fileId;
             added->type = type;
             added->targetPin = TargetPinFor(type);
@@ -1188,6 +1197,8 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::s
                 if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
             if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
             pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
+        } else if (kind == "nodelib") {
+            // A custom-node script the graph uses: loaded before the nodes (above).
         } else if (kind == "pos" || kind == "comment" || kind == "knot") {   // editor layout only
             // Editor layout (node positions, comment frames): nothing to run.
         } else {

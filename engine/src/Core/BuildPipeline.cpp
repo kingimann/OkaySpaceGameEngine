@@ -2,6 +2,7 @@
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ImageWrite.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"   // the custom-node scripts a graph names (nodelib lines)
 
 #include <algorithm>
 #include <cctype>
@@ -304,9 +305,10 @@ std::string DestinationFor(const std::string& ref) {
 
 namespace {
 // Which assets are read for the files they use, and how.
-enum class Scan { None, Scene, Material, Text };
+enum class Scan { None, Scene, Material, Text, Graph };
 Scan ScanKindFor(const std::string& ext) {
     if (ext == "okayscene" || ext == "okayprefab") return Scan::Scene;
+    if (ext == "okayvs") return Scan::Graph;   // a visual script: the custom-node scripts it names (nodelib lines)
     if (ext == "okaymat") return Scan::Material;
     static const std::set<std::string> text = {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayseq", "okaysequence",
                                                "okayitems", "okayweapon", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
@@ -351,7 +353,12 @@ WalkResult WalkAssets(const std::vector<AssetRef>& roots, const WalkSettings& s)
         if (how == Scan::None) continue;
         std::string text;
         if (!ReadTextFile(src, text, s.maxScanBytes)) continue;
-        std::vector<FoundRef> found = how == Scan::Scene ? ExtractSceneRefs(text) : how == Scan::Material ? ExtractMaterialRefs(text) : ExtractTextRefs(text);
+        std::vector<FoundRef> found;
+        if (how == Scan::Graph) {
+            for (const std::string& lib : vs::CustomNodeLibsInGraphText(text)) { FoundRef f; f.path = lib; found.push_back(f); }
+        } else found = how == Scan::Scene ? ExtractSceneRefs(text) : how == Scan::Material ? ExtractMaterialRefs(text) : ExtractTextRefs(text);
+        if (how == Scan::Scene)   // the graphs a scene embeds name their custom-node scripts too
+            for (const std::string& lib : vs::CustomNodeLibsInGraphText(text)) { FoundRef f; f.path = lib; found.push_back(f); }
         for (const FoundRef& f : found)
             if (!f.path.empty() && f.path != "-") queue.push_back({f.path, src});
     }

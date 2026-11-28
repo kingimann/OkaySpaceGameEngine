@@ -687,6 +687,16 @@ vs::VsValue ToVs(const LV& v) {
                 };
                 if (num("r", -1) >= 0 || num("g", -1) >= 0 || num("b", -1) >= 0)
                     return vs::VsValue::Color((float)num("r", 0), (float)num("g", 0), (float)num("b", 0), (float)num("a", 1));
+                // {a, b, c}: a sequence is a list (a custom visual-script node's several outputs, VsCustomNodes.hpp).
+                // Only plain values go in: a table inside stays nil, so a cycle cannot recurse.
+                if (const std::int64_t n = t->Length(); n > 0 && n <= 4096) {
+                    vs::VsValue list = vs::VsValue::MakeArray();
+                    for (std::int64_t k = 1; k <= n; ++k) {
+                        const LV x = t->GetInt(k);
+                        list.AsArray()->push_back(x.IsTable() ? vs::VsValue{} : ToVs(x));
+                    }
+                    return list;
+                }
             }
             return vs::VsValue{};
     }

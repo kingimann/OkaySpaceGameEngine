@@ -25,6 +25,7 @@
 #include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"   // custom nodes: the registry rows, nodelib lines, placeholders
 #include "VisualScriptNodeHelp.hpp"
 #include "ScriptingDensity.hpp"      // the Density choice: one table of sizes for the graph, palette and toolbar
 #include "VisualScriptChoices.hpp"
@@ -120,6 +121,10 @@ struct VsDef {
     const char* paramHint;
     // How hard this node is. Registry() fills it from VisualScriptLevels.hpp.
     VsLevel     level = VsLevel::Intermediate;
+    // A custom node (feature map 24.3): its row comes from the engine's node registry (VsNodeRegistry.hpp) and is kept up to
+    // date by VsSyncCustomDefs; `gone` when its script no longer declares it (the row stays so pointers to it stay good).
+    bool        custom = false;
+    bool        gone = false;
 };
 
 // Node types that act on an object get a last "Target" input (empty = this
@@ -227,10 +232,61 @@ inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
     return defs;
 }
 
+inline std::vector<VsDef> VsBuiltinRegistry();
+// The most custom-node rows Registry() keeps (its storage is reserved once, so a row never moves).
+inline constexpr std::size_t kVsCustomRowCap = 4096;
+/// Counts up whenever Registry()'s rows change (a custom node added, changed or gone). Caches over the registry key on it.
+inline int& VsRegistryRevisionRef() { static int r = 0; return r; }
+/// A custom node's row, its strings kept for the program's life.
+inline VsDef VsCustomDef(const std::string& type, const okay::vs::VsNodeInfo& info) {
+    VsDef d{VsIntern(type), VsIntern(info.title.empty() ? type : info.title), CAT_SCRIPT, info.execIn, {}, {}, {}, 0, nullptr};
+    for (const std::string& e : info.exits) d.execOut.push_back(VsIntern(e));
+    for (const okay::vs::VsPinSpec& p : info.ins) d.dataIn.push_back(VsIntern(p.name));
+    for (const okay::vs::VsPinSpec& p : info.outs) d.dataOut.push_back(VsIntern(p.name));
+    d.level = VsLevel::Basic;
+    d.custom = true;
+    return d;
+}
+/// Bring the custom rows in line with the engine's node registry: a new type gets a row at the end, a changed one is rewritten
+/// in place, and a type taken out is marked gone. Cheap when nothing changed (one counter compare).
+inline void VsSyncCustomDefs(std::vector<VsDef>& defs, std::size_t builtins) {
+    static int seen = -1;
+    const int rev = okay::vs::VsNodeRegistryRevision();
+    if (rev == seen) return;
+    seen = rev;
+    std::set<std::string> live;
+    for (const std::string& t : okay::vs::CustomVsNodeTypes()) {
+        okay::vs::VsNodeInfo info;
+        if (!okay::vs::CustomVsNodeInfo(t, info)) continue;
+        live.insert(t);
+        VsDef d = VsCustomDef(t, info);
+        VsDef* slot = nullptr;
+        for (std::size_t i = builtins; i < defs.size(); ++i) if (t == defs[i].type) slot = &defs[i];
+        if (slot) *slot = d;
+        else if (defs.size() < defs.capacity()) defs.push_back(d);
+        else std::fprintf(stderr, "Visual Script: more than %d custom nodes; '%s' is not listed\n", (int)kVsCustomRowCap, t.c_str());
+    }
+    for (std::size_t i = builtins; i < defs.size(); ++i) defs[i].gone = !live.count(defs[i].type);
+    ++VsRegistryRevisionRef();
+}
+/// Every node row: the built-in nodes, then the custom nodes the project's scripts declare (VsCustomNodes.hpp).
+inline const std::vector<VsDef>& Registry() {
+    static std::size_t builtins = 0;
+    static std::vector<VsDef> defs = [] {
+        std::vector<VsDef> v = VsBuiltinRegistry();
+        builtins = v.size();
+        v.reserve(v.size() + kVsCustomRowCap);   // custom rows are added in place: nothing moves
+        return v;
+    }();
+    VsSyncCustomDefs(defs, builtins);
+    return defs;
+}
+inline int VsRegistryRevision() { Registry(); return VsRegistryRevisionRef(); }
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
-inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyLevels(ApplyPlainTitles(ApplyFriendlyNames(VsWithQuickBlockDefs(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
+inline std::vector<VsDef> VsBuiltinRegistry() {
+    const std::vector<VsDef> defs = ApplyLevels(ApplyPlainTitles(ApplyFriendlyNames(VsWithQuickBlockDefs(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -943,11 +999,14 @@ inline okay::vs::QbContext& VsQuickContext() { static okay::vs::QbContext c; ret
 inline const VsDef* FindDef(const std::string& type) {
     // Asked several times per node per frame by the canvas; the registry has hundreds of entries and never changes after it is
     // built, so an index (the first entry of a type wins, as the scan did) replaces a string compare against every entry.
-    static const std::unordered_map<std::string, const VsDef*> index = [] {
-        std::unordered_map<std::string, const VsDef*> m;
-        for (const auto& d : Registry()) m.emplace(d.type, &d);
-        return m;
-    }();
+    // Built again when a custom node is added, changed or taken out (VsRegistryRevision).
+    static std::unordered_map<std::string, const VsDef*> index;
+    static int indexFor = -1;
+    if (const int rev = VsRegistryRevision(); rev != indexFor) {
+        indexFor = rev;
+        index.clear();
+        for (const auto& d : Registry()) if (!d.gone) index.emplace(d.type, &d);
+    }
     auto it = index.find(type);
     return it == index.end() ? nullptr : it->second;
 }
@@ -1084,6 +1143,9 @@ struct VsEditGraph {
     int nextId = 1;
     std::string path;      // .okayvs file (empty = unsaved)
     bool dirty = false;
+    /// The `nodelib` lines the file had (custom-node scripts). Saved again while a node of a missing type is in the graph;
+    /// the scripts of the custom nodes it has are always saved (nodeLibText).
+    std::vector<std::string> nodeLibs;
 private:
     mutable std::string m_declKey, m_declError;
     mutable std::vector<okay::vs::VarDecl> m_decls;
@@ -1134,6 +1196,13 @@ public:
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
             {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}, {"SetWeapon", "sword"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
+        // A custom node starts with the defaults its script declares (@in Value: Number = 1), shown in its input boxes.
+        if (okay::vs::IsCustomNodeType(type)) {
+            okay::vs::VsNodeInfo info;
+            if (okay::vs::CustomVsNodeInfo(type, info))
+                for (std::size_t i = 0; i < info.ins.size(); ++i)
+                    if (!info.ins[i].def.empty()) n.pinDefault[(int)i] = info.ins[i].def;
+        }
         // A quick block starts with the values its fields show, so it works the moment it is dropped.
         if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
             int pin = 0;
@@ -1307,9 +1376,45 @@ public:
     /// Call after editing `vars` / `structs` fields directly.
     void declsChanged() { m_declKey.clear(); dirty = true; }
 
+    /// The `nodelib` path a graph saved at `graphPath` uses for the script `script`: relative to the deepest folder above the
+    /// graph that holds the script (so a project's Assets/ folder when both are in it), which is where ResolveCustomNodeLib
+    /// looks. The script's path as given when the graph has no file yet.
+    static std::string NodeLibPath(const std::string& script, const std::string& graphPath) {
+        namespace fsys = std::filesystem;
+        if (graphPath.empty() || script.empty()) return script;
+        std::error_code ec;
+        const fsys::path s = fsys::weakly_canonical(fsys::u8path(script), ec);
+        fsys::path dir = fsys::weakly_canonical(fsys::u8path(graphPath), ec).parent_path();
+        for (int up = 0; up < 16 && !dir.empty(); ++up) {
+            const fsys::path rel = s.lexically_relative(dir);
+            const std::string r = rel.generic_u8string();
+            if (!r.empty() && r.rfind("..", 0) != 0 && !rel.is_absolute()) return r;
+            if (dir.parent_path() == dir) break;
+            dir = dir.parent_path();
+        }
+        return script;
+    }
+    /// The `nodelib` lines to save: the script of each custom node in the graph, then (while one of its custom nodes is missing)
+    /// the lines the file had.
+    std::string nodeLibText() const {
+        std::vector<std::string> libs;
+        bool missing = false;
+        for (const auto& n : nodes) {
+            if (!okay::vs::IsCustomNodeType(n.type)) continue;
+            okay::vs::VsNodeInfo info;
+            if (!okay::vs::CustomVsNodeInfo(n.type, info) || info.source.empty()) { missing = true; continue; }
+            const std::string p = NodeLibPath(info.source, path);
+            if (std::find(libs.begin(), libs.end(), p) == libs.end()) libs.push_back(p);
+        }
+        if (missing) for (const auto& l : nodeLibs) if (std::find(libs.begin(), libs.end(), l) == libs.end()) libs.push_back(l);
+        std::string o;
+        for (const auto& l : libs) o += "nodelib " + okay::vs::QuoteText(l) + "\n";
+        return o;
+    }
     std::string toText() const {
         std::ostringstream o;
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
+        o << nodeLibText();
         o << declText();
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
@@ -1347,11 +1452,12 @@ public:
     void pruneKnots() {
         knots.erase(std::remove_if(knots.begin(), knots.end(), [&](const VsKnot& k) { return !knotWireExists(k); }), knots.end());
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); knots.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); knots.clear(); vars.clear(); structs.clear(); nodeLibs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
         std::stringstream ss; ss << f.rdbuf();
+        path = p;   // first: the graph's custom-node scripts are found beside it
         fromText(ss.str());
         path = p; dirty = false;
         return true;
@@ -1360,6 +1466,11 @@ public:
     void fromText(const std::string& text) {
         std::string keepPath = path;
         clear(); path = keepPath;
+        // The custom-node scripts it names: loaded (once; again when they changed) so their nodes have pins.
+        if (text.find("nodelib") != std::string::npos) {
+            nodeLibs = okay::vs::CustomNodeLibsInGraphText(text);
+            okay::vs::LoadCustomNodeLibs(text, path);
+        }
         std::istringstream f(text);
         std::string line;
         int maxId = 0;
@@ -1592,9 +1703,41 @@ inline void VsMoveSwitchDefault(VsEditGraph& g, int node, int oldDef, int newDef
 }
 inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
     const VsDef* base = FindDef(n.type);
-    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type))) return base;
     struct Dyn { std::string key; std::vector<std::string> labels; VsDef def; };
     static std::map<int, std::unique_ptr<Dyn>> cache;   // node id -> its pins
+    if (!base && okay::vs::IsCustomNodeType(n.type)) {
+        // A custom node whose script is missing: a placeholder with as many plugs as its wires and typed values use, so it
+        // is drawn, keeps them and saves them back unchanged (the runtime keeps the same placeholder; it does not run).
+        int execOuts = 0, ins = 0, outs = 0;
+        bool execIn = false;
+        for (const auto& l : g.execLinks) { if (l.from == n.id) execOuts = std::max(execOuts, l.pin + 1); if (l.to == n.id) execIn = true; }
+        for (const auto& l : g.dataLinks) {
+            if (l.consumer == n.id) ins = std::max(ins, l.inPin + 1);
+            if (l.producer == n.id) outs = std::max(outs, l.outPin + 1);
+        }
+        for (const auto& kv : n.pinDefault) ins = std::max(ins, kv.first + 1);
+        const std::string key = "missing|" + n.type + "|" + std::to_string(execOuts) + "|" + std::to_string(ins) + "|" +
+                                std::to_string(outs) + "|" + (execIn ? "1" : "0");
+        auto& slot = cache[n.id];
+        if (slot && slot->key == key) return &slot->def;
+        slot = std::make_unique<Dyn>();
+        slot->key = key;
+        slot->labels.push_back(n.type);
+        slot->labels.push_back("Missing: " + n.type.substr(std::strlen(okay::vs::CustomNodePrefix())));
+        for (int i = 0; i < execOuts; ++i) slot->labels.push_back("Out " + std::to_string(i + 1));
+        for (int i = 0; i < ins; ++i) slot->labels.push_back("In " + std::to_string(i + 1));
+        for (int i = 0; i < outs; ++i) slot->labels.push_back("Out " + std::to_string(i + 1));
+        VsDef d{slot->labels[0].c_str(), slot->labels[1].c_str(), CAT_SCRIPT, execIn || execOuts > 0, {}, {}, {}, 0, nullptr};
+        std::size_t k = 2;
+        for (int i = 0; i < execOuts; ++i) d.execOut.push_back(slot->labels[k++].c_str());
+        for (int i = 0; i < ins; ++i) d.dataIn.push_back(slot->labels[k++].c_str());
+        for (int i = 0; i < outs; ++i) d.dataOut.push_back(slot->labels[k++].c_str());
+        d.custom = true;
+        d.gone = true;
+        slot->def = d;
+        return &slot->def;
+    }
+    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type))) return base;
     okay::vs::FunctionSig sig;
     const bool ok = VsSigFor(g, n, sig);
     std::string key = n.type + "|" + n.arg + "|";

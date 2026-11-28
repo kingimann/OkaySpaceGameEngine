@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "okay/VisualScript/QuickBlocks.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"
 
 namespace okay::editor::vsed {
 
@@ -188,6 +189,7 @@ inline bool VsIsStarter(const char* type) { return VsStarterIndex(type) >= 0; }
 inline VsLevel VsLevelForNode(const char* type) {
     if (!type || !type[0]) return VsLevel::Intermediate;
     if (okay::vs::FindQuickBlock(type)) return VsLevel::Basic;   // quick blocks are for beginners
+    if (okay::vs::IsCustomNodeType(type)) return VsLevel::Basic;  // nodes you made yourself
     for (const VsSharedLevel& s : kSharedLevels)
         if (std::strcmp(s.type, type) == 0) return s.level;
     for (const char* b : kBasicTypes)

@@ -402,7 +402,13 @@ public:
 
     /// Parse a graph from the simple OkayVS text format (see docs/scripting/visual_scripting.md).
     static std::unique_ptr<NodeGraph> Parse(const std::string& text, std::string* error = nullptr);
+    /// The same, for a graph read from `graphFile`: its `nodelib "<script>"` lines (the custom-node scripts it uses,
+    /// VsCustomNodes.hpp) are found as written, then beside the graph file, and loaded before its nodes are made.
+    static std::unique_ptr<NodeGraph> Parse(const std::string& text, std::string* error, const std::string& graphFile);
+    /// Placeholders the last load kept for custom nodes whose type was not found (their file ids).
+    const std::vector<int>& MissingNodes() const { return m_missing; }
 private:
+    std::vector<int> m_missing;
     std::vector<std::pair<int, int>> m_blockRanges;   // {first expanded id, block id} per Quick block
 public:
 

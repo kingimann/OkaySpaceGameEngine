@@ -4,6 +4,7 @@
 // whole library. Search can still find a hidden node: it is marked "Advanced" and needs the switch or a click on
 // "Search all nodes". Pure data and functions, no ImGui. Written for this project.
 #include "okay/VisualScript/QuickBlocks.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"   // IsCustomNodeType: a person's own nodes are always listed
 
 #include <cstring>
 
@@ -58,7 +59,9 @@ inline int VsBeginnerGroup(const char* type) {
     for (const VsBeginnerEntry& e : kVsBeginner) if (std::strcmp(e.type, type) == 0) return e.group;
     return -1;
 }
-inline bool VsVisibleByDefault(const char* type) { return VsBeginnerGroup(type) >= 0; }
+inline bool VsVisibleByDefault(const char* type) {
+    return VsBeginnerGroup(type) >= 0 || (type && okay::vs::IsCustomNodeType(type));   // nodes you made are never hidden
+}
 
 /// True when a node is left out of the browse list. `levelFilter` is the existing level buttons (0 = All): a person
 /// who picked a level button wants that level, so the rule only applies to "All".

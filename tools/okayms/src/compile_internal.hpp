@@ -317,6 +317,10 @@ struct StructDef {
     bool local_fn = false;
     // Declared in an anonymous namespace ([namespace.unnamed]): its members are this file's own (Round 36).
     bool in_anon = false;
+    // A lambda's closure class written in an inline function (Round 37): the enclosing function's symbol and the
+    // lambda's number in it, the same in every file. Its member functions' static locals are then one object in the
+    // program ([dcl.inline] 6, [expr.prim.lambda.closure] 1-2), named from this. Empty otherwise.
+    std::string inline_key;
     // A local class: the locals of the function body it was defined in (Round 34; only compared, never read).
     const void* local_body = nullptr;
     // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
@@ -399,6 +403,11 @@ struct Node {
     // A name read by the parser: the parser's count of declared locals (Local::seq) at that point, or -1. Of two locals
     // of one name the code generator takes one declared before the name was read ([basic.scope.pdecl], Round 30).
     int vis = -1;
+    // An argument of a call that is a by-value class object the caller made (Round 37): the name of the exception record
+    // that destroys it if an exception leaves the statement before the call. Once every argument is evaluated, just
+    // before the call, the code generator marks the record handed over (kind 5): from then on the callee owns the
+    // object and destroys it ([expr.call] 7; Microsoft's x64 convention).
+    std::string handoff;
     std::vector<Node> kids;
 };
 

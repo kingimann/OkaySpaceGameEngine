@@ -1,6 +1,12 @@
 // okay-ms own standard header: std::filesystem, written from ISO/IEC 14882 [filesystems] for the Windows path rules
 // (both '\' and '/' separate, a drive letter "C:" starts a root name). Own minimal version:
-// - path keeps narrow UTF-8 text (no wide strings: native(), wstring() and u8string() all give the text); the
+// - path keeps its text as UTF-8. On Windows (_WIN32) its value_type is wchar_t and its string_type std::wstring, as
+//   [fs.class.path] 6 has it for an operating system whose native encoding is wide: native(), c_str() and wstring() give
+//   the UTF-16 form, made from the UTF-8 text when asked for (a cache that is remade when the text changed; Round 37:
+//   before, c_str() gave the narrow text there, and `_wfopen(p.c_str(), L"wb")` was given narrow text). A path is made
+//   from narrow or wide text (wide text is turned into UTF-8 by the UTF-16 rules of ISO/IEC 10646 and RFC 3629).
+//   string() and u8string() give the UTF-8 text; the conversion to std::string is kept for <fstream>. Elsewhere
+//   value_type is char and native(), c_str() and wstring() give the narrow text. The
 //   decomposition (filename, stem, extension, parent_path, root parts), operator/, append, concat, compare,
 //   lexically_normal and lexically_relative are written here from [fs.path.decompose], [fs.path.gen] and
 //   [fs.path.append].
@@ -24,7 +30,21 @@ namespace filesystem {
 
 class path__iterator;
 class path {
-    string text_;
+    std::string text_;
+#ifdef _WIN32
+    mutable std::wstring wide_;
+    mutable std::string wide_from_;
+    mutable bool wide_made_ = false;
+    // The UTF-16 form of text_, remade only when text_ changed since the last time.
+    const std::wstring& wide_text() const {
+        if (!wide_made_ || wide_from_ != text_) {
+            wide_ = to_wide__(text_);
+            wide_from_ = text_;
+            wide_made_ = true;
+        }
+        return wide_;
+    }
+#endif
 
     static bool sep(char c) { return c == '/' || c == '\\'; }
     // The length of the root name ("C:" or "//server"), 0 when there is none.
@@ -48,13 +68,97 @@ class path {
     }
 
 public:
+    // UTF-8 to UTF-16 and back (RFC 3629 section 3; ISO/IEC 10646 UTF-16: code points above U+FFFF are a surrogate
+    // pair). A byte that does not start a valid sequence, or a lone surrogate, becomes U+FFFD.
+    static std::wstring to_wide__(const std::string& s) {
+        std::wstring out;
+        size_t i = 0;
+        while (i < s.size()) {
+            const unsigned b = (unsigned char)s[i];
+            unsigned cp = 0xFFFD;
+            size_t n = 1;
+            if (b < 0x80) {
+                cp = b;
+            } else if (b >= 0xC2 && b < 0xE0) {
+                n = 2;
+            } else if (b >= 0xE0 && b < 0xF0) {
+                n = 3;
+            } else if (b >= 0xF0 && b < 0xF5) {
+                n = 4;
+            }
+            if (n > 1) {
+                bool good = i + n <= s.size();
+                unsigned v = n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+                for (size_t k = 1; good && k < n; ++k) {
+                    const unsigned c = (unsigned char)s[i + k];
+                    if ((c & 0xC0) != 0x80) good = false;
+                    v = (v << 6) | (c & 0x3F);
+                }
+                const unsigned least = n == 2 ? 0x80 : n == 3 ? 0x800 : 0x10000;
+                if (good && v >= least && v <= 0x10FFFF && !(v >= 0xD800 && v <= 0xDFFF)) {
+                    cp = v;
+                } else {
+                    n = 1;
+                    cp = 0xFFFD;
+                }
+            }
+            i += n;
+            if (cp >= 0x10000) {
+                cp -= 0x10000;
+                out.push_back((wchar_t)(0xD800 + (cp >> 10)));
+                out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF)));
+            } else {
+                out.push_back((wchar_t)cp);
+            }
+        }
+        return out;
+    }
+    static std::string from_wide__(const wchar_t* w, size_t len) {
+        std::string out;
+        for (size_t i = 0; i < len; ++i) {
+            unsigned cp = (unsigned)w[i];
+            if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < len && (unsigned)w[i + 1] >= 0xDC00 && (unsigned)w[i + 1] < 0xE000) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + ((unsigned)w[i + 1] - 0xDC00);
+                ++i;
+            } else if (cp >= 0xD800 && cp < 0xE000) {
+                cp = 0xFFFD;
+            }
+            if (cp < 0x80) {
+                out.push_back((char)cp);
+            } else if (cp < 0x800) {
+                out.push_back((char)(0xC0 | (cp >> 6)));
+                out.push_back((char)(0x80 | (cp & 0x3F)));
+            } else if (cp < 0x10000) {
+                out.push_back((char)(0xE0 | (cp >> 12)));
+                out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back((char)(0x80 | (cp & 0x3F)));
+            } else {
+                out.push_back((char)(0xF0 | (cp >> 18)));
+                out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+                out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back((char)(0x80 | (cp & 0x3F)));
+            }
+        }
+        return out;
+    }
+#ifdef _WIN32
+    typedef wchar_t value_type;
+    typedef std::wstring string_type;
+#else
     typedef char value_type;
     typedef string string_type;
+#endif
     static const char preferred_separator = '\\';
 
     path() {}
     path(const string& s) : text_(s) {}
     path(const char* s) : text_(s) {}
+    path(const wchar_t* s) {
+        size_t n = 0;
+        while (s[n] != 0) ++n;
+        text_ = from_wide__(s, n);
+    }
+    path(const wstring& s) : text_(from_wide__(s.data(), s.size())) {}
     path(const path& o) : text_(o.text_) {}
     path& operator=(const path& o) {
         text_ = o.text_;
@@ -69,11 +173,16 @@ public:
         return *this;
     }
 
+#ifdef _WIN32
+    const std::wstring& native() const { return wide_text(); }
+    const wchar_t* c_str() const { return wide_text().c_str(); }
+#else
     const string& native() const { return text_; }
     const char* c_str() const { return text_.c_str(); }
+#endif
+    std::wstring wstring() const { return to_wide__(text_); }
     string string() const { return text_; }
     std::string u8string() const { return text_; }
-    std::string wstring() const { return text_; }
     // The generic format uses '/' ([fs.path.generic]).
     std::string generic_string() const {
         std::string out = text_;

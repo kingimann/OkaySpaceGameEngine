@@ -538,6 +538,7 @@ bool Parser::parse_lambda(Node* out) {
     StructDef def;
     def.name = "__lam" + std::to_string(lambda_count++);
     def.cxx = true;
+    if (cur_fn_inline) def.inline_key = cur_fn_symbol + "$lam" + std::to_string(fn_lambda_seq++);
     // The class around: the member function's class, or for a lambda in a lambda the class around that one.
     def.lam_scope = cur_class;
     if (cur_class >= 0 && structs[static_cast<size_t>(cur_class)].name.compare(0, 5, "__lam") == 0 && !cap_this)
@@ -2155,8 +2156,8 @@ bool Parser::parse_unary(Node* out) {
         };
         // (Not for ns::C(args), ns_class: a name written with a namespace is no member, Round 33: AccountService.hpp's
         // member Storage() returning okay::backend::supabase::Storage(...).)
-        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos &&
-            enclosing(cur_class) >= 0 &&
+        if (cur_class >= 0 && !from_global && !ns_class && !qualified_fn && !local_visible(name) &&
+            colons == std::string::npos && enclosing(cur_class) >= 0 &&
             find_field_named(structs[static_cast<size_t>(cur_class)], name) < 0) {
             // In a member function of a nested class: a static member of an enclosing class is found by its plain name
             // ([class.nest] 1, [basic.lookup.unqual] 8), after the nested class's own members.
@@ -2176,7 +2177,10 @@ bool Parser::parse_unary(Node* out) {
                         return parse_postfix(out);
                 }
         }
-        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos) {
+        // `::f(x)` names the global f, never a member ([namespace.qual] 2, [basic.lookup.qual]; Round 37, OwnWin32.cpp's
+        // `::SwapBuffers(m_dc)` in its own member SwapBuffers(): before "no member function SwapBuffers with 1 arguments").
+        if (cur_class >= 0 && !from_global && !ns_class && !qualified_fn && !local_visible(name) &&
+            colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
                 return parse_postfix(out);
@@ -3358,6 +3362,11 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             Type lt, rt;
             if (op == TAssign && static_type(*out, &lt)) {
                 lt.is_ref = false;
+                std::string what;
+                if (arith_ptr_mismatch(right, lt, &what)) {
+                    error = what;
+                    return false;
+                }
                 class_ptr_convert(&right, lt);
             } else if ((op == TEq || op == TNe) && static_type(*out, &lt) && static_type(right, &rt)) {
                 lt.is_ref = false;

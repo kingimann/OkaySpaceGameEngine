@@ -29,7 +29,28 @@ inline std::string& Greeting() {
     return text;
 }
 
+// Round 37: inline variables ([dcl.inline] 6: one object in the program), at namespace scope and as static members
+// written in the class, and a static local of a lambda written in an inline function (the lambda is the same in every
+// file, [expr.prim.lambda.closure] 2 and [basic.def.odr] 13, so its operator()'s static local is one object too).
+inline int g_inlineCount = 5;
 namespace part {
+inline float g_scale = 1.5f;
+inline const char* g_label = "start";
+}  // namespace part
+struct Settings {
+    static inline bool visible = true;
+    static inline int levels[3] = {1, 2, 3};
+};
+inline int LambdaTicks() {
+    auto tick = [] {
+        static int n = 0;
+        return ++n;
+    };
+    return tick();
+}
+
+namespace part {
+int InlineVarsFromPart();  // inline_part.cpp
 int AddFromPart(const char* name);  // inline_part.cpp
 int CounterFromPart();
 std::string GreetingFromPart();

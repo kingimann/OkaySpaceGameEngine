@@ -169,6 +169,19 @@ public:
         }
         return npos;
     }
+    // The last place at or before pos whose unit is one of set's ([string.find.last.of]; Round 37, OwnWin32Hid.cpp's
+    // `d.find_last_of(L"\\/")`).
+    size_t find_last_of(const C* set, size_t pos = npos) const {
+        if (size() == 0) return npos;
+        size_t i = pos < size() ? pos : size() - 1;
+        for (;; --i) {
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (units_[i] == set[k]) return i;
+            if (i == 0) return npos;
+        }
+    }
+    size_t find_last_of(const basic_ustring__& set, size_t pos = npos) const { return find_last_of(set.data(), pos); }
+    size_t find_last_of(C c, size_t pos = npos) const { return rfind(c, pos); }
     int compare(const basic_ustring__& o) const {
         const size_t n = size() < o.size() ? size() : o.size();
         for (size_t i = 0; i < n; ++i)

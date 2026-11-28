@@ -1197,6 +1197,7 @@ struct Parser {
     // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
     // its static locals are COMDAT objects named from it (Round 36).
     bool cur_fn_inline = false;
+    int fn_lambda_seq = 0;  // lambdas written so far in the function being read (StructDef::inline_key; Round 37)
     std::string cur_fn_symbol{};
     int cur_inherit_sid = -1;  // the base whose constructor the implicit constructor being made inherits (Round 34)
     int rv_count = 0;
@@ -4346,6 +4347,52 @@ struct Parser {
         comma.kids.push_back(std::move(tern));
         return comma;
     }
+    // True when `value` is a pointer (or an array) to one arithmetic type and `to` a pointer to another, so no implicit
+    // conversion exists ([conv.ptr]: only a null pointer constant, to void*, and to a base class; [conv.qual] adds
+    // const only). `const char*` for `const wchar_t*` (here unsigned short) or `const int*` is ill-formed (Round 37:
+    // before, okay-cl passed the narrow text's address, and SaveFile.cpp's `_wfopen(p.c_str(), L"wb")` with a narrow
+    // path compiled). Only pointers to arithmetic types are compared; enumerations, classes, functions and member
+    // pointers are left to the other rules. *what names the two types for the message.
+    bool arith_ptr_mismatch(const Node& value, const Type& to, std::string* what) const {
+        if (to.is_ref || to.pointers < 1 || to.is_array() || to.func_id >= 0 || to.memptr >= 0 || to.memfn >= 0)
+            return false;
+        if (value.kind == Node::IntLit) return false;  // 0, NULL, nullptr: a null pointer constant
+        Type from;
+        if (!static_type(value, &from)) return false;
+        from.is_ref = false;
+        if (from.is_array()) {
+            from = peel_array(from);
+            from.pointers += 1;
+        }
+        if (from.pointers != to.pointers || from.func_id >= 0 || from.memptr >= 0 || from.memfn >= 0) return false;
+        auto arith = [](const Type& t) {
+            return (t.base == 1 || t.base == 2 || t.base == 4 || t.base == 5 || t.base == 6) && !t.is_enum() && t.tpat == -1;
+        };
+        if (!arith(from) || !arith(to)) return false;
+        auto size_of = [](const Type& t) {
+            if (t.base == 2) return 1;
+            if (t.base == 4) return 2;
+            if (t.base == 5) return 4;
+            if (t.base == 6) return 8;
+            return t.wide ? 8 : 4;
+        };
+        const bool fl_from = from.base >= 5;
+        const bool fl_to = to.base >= 5;
+        if (size_of(from) == size_of(to) && fl_from == fl_to && from.is_bool == to.is_bool &&
+            (fl_from || from.is_unsigned == to.is_unsigned))
+            return false;
+        auto name = [&](const Type& t) {
+            if (t.is_bool) return std::string("bool");
+            if (t.base == 5) return std::string("float");
+            if (t.base == 6) return std::string("double");
+            std::string s = t.is_unsigned ? "unsigned " : "";
+            if (t.base == 2) return s + "char";
+            if (t.base == 4) return s + "short (wchar_t)";
+            return s + (t.wide ? "long long" : "int");
+        };
+        *what = "a pointer to " + name(from) + " where a pointer to " + name(to) + " is wanted (no implicit conversion)";
+        return true;
+    }
     // A value converted to `to`, a pointer to a class: when the value is a pointer to a class derived from it and the
     // base is not at offset 0, the address moves to the base subobject ([conv.ptr] 3). With `down`, a pointer to a
     // base converted to a pointer to a derived class moves back ([expr.static.cast] 11).
@@ -4952,7 +4999,45 @@ struct Parser {
     struct Temp {
         std::string name;
         int sid = -1;
+        // A by-value argument the caller made (Round 37): its exception record. At the end of the statement the record
+        // is taken off the list, and the object is destroyed only if the call it was made for was never reached
+        // (`c && f(C(1))`); otherwise the callee owns and destroys it.
+        std::string rec{};
     };
+    // The statement-end action for a temporary: its destructor, or for a handed-over argument the runtime's
+    // __okay_eh_end_arg.
+    bool temp_end_call(const Temp& t, Node* out) {
+        if (!t.rec.empty()) {
+            *out = eh_call("__okay_eh_end_arg", {node_name(t.rec)});
+            return true;
+        }
+        return special_call(t.sid, "<dtor>", node_addr(node_name(t.name)), {}, out);
+    }
+    // `arg` names a temporary of this statement made before it (stmt_pre) of the parameter's class: it becomes the
+    // by-value argument itself. Without exceptions in the file it only leaves the statement's list (the callee destroys
+    // it); with them it gets a record, pushed after it is made, that the call hands over (Node::handoff).
+    bool hand_over_temp(const Type& pt, Node* arg) {
+        for (size_t i = stmt_temps.size(); i-- > 0;) {
+            Temp& t = stmt_temps[i];
+            if (t.name != arg->text) continue;
+            if (t.sid != pt.struct_id || !t.rec.empty()) return false;
+            if (!eh_) {
+                stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(i));
+                return true;
+            }
+            const Method* dm = find_method(t.sid, "<dtor>", 0);
+            if (dm == nullptr) return false;
+            const std::string rec = eh_record_local(cur_locals);
+            stmt_pre.push_back(rec_store(rec, 1, int_node(0)));
+            stmt_pre.push_back(rec_store(rec, 2, node_addr(node_name(t.name))));
+            stmt_pre.push_back(rec_store(rec, 3, node_name(dm->qname)));
+            stmt_pre.push_back(eh_call("__okay_eh_push", {node_name(rec)}));
+            t.rec = rec;
+            arg->handoff = rec;
+            return true;
+        }
+        return false;
+    }
     std::vector<Temp> stmt_temps{};
     std::vector<Node> stmt_pre{};
     bool keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::vector<Local>* locals, std::vector<Node>* stmts,
@@ -5036,6 +5121,11 @@ struct Parser {
                     error = "an integer argument for a pointer parameter (no conversion)";
                     return false;
                 }
+                std::string what;
+                if (arith_ptr_mismatch(arg, pt, &what)) {
+                    error = what;
+                    return false;
+                }
             }
             {
                 Type from;
@@ -5072,9 +5162,23 @@ struct Parser {
                     }
                     stmt_pre.push_back(std::move(call));
                     // A by-value parameter is destroyed by the callee (see below); a reference's temporary here.
-                    if (pt.is_ref && class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
-                        stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+                    const bool dtor = class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]);
+                    if (pt.is_ref && dtor) stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
                     arg = pt.is_ref ? node_addr(node_name(hidden.name)) : node_name(hidden.name);
+                    if (!pt.is_ref && dtor && eh_) {
+                        // Until the call it belongs to the caller: unwinding destroys it if an argument evaluated
+                        // after it throws (Round 37; before, it was never destroyed then).
+                        std::vector<Node> rec_nodes;
+                        const size_t before = rec_nodes.size();
+                        if (!eh_push_object(&rec_nodes, node_addr(node_name(hidden.name)), pt.struct_id, 0, cur_locals))
+                            return false;
+                        if (rec_nodes.size() > before) {
+                            const std::string rec = "__eh" + std::to_string(eh_count - 1);
+                            for (Node& n : rec_nodes) stmt_pre.push_back(std::move(n));
+                            arg.handoff = rec;
+                            stmt_temps.push_back(Temp{hidden.name, pt.struct_id, rec});
+                        }
+                    }
                     continue;
                 }
             }
@@ -5129,6 +5233,11 @@ struct Parser {
                 held.is_const = false;
                 held.pconst = false;
                 arg = node_name(materialize_temp(held, std::move(arg), false));
+            } else if (cur_locals != nullptr && !pt.is_ref && pt.base == 3 && pt.pointers == 0 && !pt.is_array() &&
+                       arg.kind == Node::Name && arg.text.compare(0, 4, "__bt") == 0 && hand_over_temp(pt, &arg)) {
+                // f(C(4)): the temporary C(4) is the parameter itself ([dcl.init] 17.6.1, guaranteed copy elision in
+                // C++17): no copy is made, and the callee destroys it (Round 37; before, a copy was passed and the
+                // temporary was destroyed after the statement, and an exception from a later argument left it alive).
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -5149,7 +5258,20 @@ struct Parser {
                 Node deref;
                 deref.kind = Node::Unary;
                 deref.op = TStar;
-                deref.kids.push_back(std::move(call));
+                const Method* dm = eh_ ? find_method(pt.struct_id, "<dtor>", 0) : nullptr;
+                if (dm != nullptr && class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)])) {
+                    // The copy is made while the arguments are evaluated: __okay_eh_push_at records it once it is
+                    // built, so unwinding destroys it if a later argument throws; the call hands it over (Round 37).
+                    const std::string rec = eh_record_local(cur_locals);
+                    stmt_pre.push_back(rec_store(rec, 1, int_node(0)));
+                    stmt_pre.push_back(rec_store(rec, 3, node_name(dm->qname)));
+                    Node pushed = eh_call_value("__okay_eh_push_at", {node_name(rec), std::move(call)}, cm->ret);
+                    deref.kids.push_back(std::move(pushed));
+                    deref.handoff = rec;
+                    stmt_temps.push_back(Temp{hidden.name, pt.struct_id, rec});
+                } else {
+                    deref.kids.push_back(std::move(call));
+                }
                 arg = std::move(deref);
                 // The copy is not destroyed here: the callee owns a by-value parameter and destroys it when it
                 // returns ([expr.call] 7 leaves the place to the implementation; the Microsoft x64 convention has the
@@ -6024,8 +6146,10 @@ struct Parser {
                             sm.cval = v;
                         } else {
                             // static inline float s = 1.0f; static inline int a[4] = {...}; static constexpr T t[] = {...}:
-                            // a variable with that first value ([dcl.inline]). Own simplification: each file that includes
-                            // the class keeps its own copy (an internal symbol), as for inline functions here.
+                            // a variable with that first value ([dcl.inline]). With a constant first value it is one
+                            // object in the program, in a COMDAT section of its decorated name (Round 37; Cursor::visible,
+                            // AudioMixer::masterVolume); a value computed at startup, or a member of a local class or of
+                            // a class in an anonymous namespace, stays one copy per file (an internal symbol).
                             if (obj_needs_ctor(sm.type) || obj_needs_dtor(sm.type)) {
                                 error = "an in-class initialized static member of a class with a constructor is not supported";
                                 return false;
@@ -6039,6 +6163,14 @@ struct Parser {
                             g.is_static = true;
                             std::vector<DynLeaf> leaves;
                             if (!flatten_dyn(sm.type, init, &g, &leaves)) return false;
+                            bool own_file = def.local_fn || def.in_anon || anon_depth > 0;
+                            for (int up = def.parent; up >= 0; up = structs[static_cast<size_t>(up)].parent)
+                                if (structs[static_cast<size_t>(up)].in_anon || structs[static_cast<size_t>(up)].local_fn)
+                                    own_file = true;
+                            if (leaves.empty() && !own_file) {
+                                g.is_static = false;
+                                g.comdat = true;
+                            }
                             globals.push_back(g);
                             add_init_stmts(dyn_leaf_stmts(g.name, g.type, &leaves));
                         }
@@ -6843,7 +6975,7 @@ struct Parser {
                         for (Node& n : stmt_pre) pre.push_back(std::move(n));
                         for (size_t ti = stmt_temps.size(); ok && ti-- > 0;) {
                             Node dt;
-                            if (!special_call(stmt_temps[ti].sid, "<dtor>", node_addr(node_name(stmt_temps[ti].name)), {}, &dt))
+                            if (!temp_end_call(stmt_temps[ti], &dt))
                                 return false;
                             after.push_back(std::move(dt));
                         }
@@ -7168,6 +7300,16 @@ struct Parser {
         const std::string saved_fn_symbol = cur_fn_symbol;
         cur_fn_inline = fn->is_inline;
         cur_fn_symbol = fn->symbol.empty() ? fn->name : fn->symbol;
+        const int saved_lambda_seq = fn_lambda_seq;
+        fn_lambda_seq = 0;
+        if (cls >= 0 && !structs[static_cast<size_t>(cls)].inline_key.empty()) {
+            // A lambda's operator() in an inline function: its static locals are shared too (Round 37), named from the
+            // enclosing function and the lambda's number (StructDef::inline_key), not from the file's lambda counter.
+            const size_t sep = fn->name.find("::");
+            cur_fn_inline = true;
+            cur_fn_symbol = structs[static_cast<size_t>(cls)].inline_key + "$" +
+                            (sep == std::string::npos ? fn->name : fn->name.substr(sep + 2));
+        }
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
         const int saved_class = cur_class;
@@ -7262,6 +7404,7 @@ struct Parser {
         current_fn = saved_fn;
         cur_fn_inline = saved_fn_inline;
         cur_fn_symbol = saved_fn_symbol;
+        fn_lambda_seq = saved_lambda_seq;
         scope_depth = saved_depth;
         scope_parent = saved_parent;
         cur_class = saved_class;
@@ -9439,6 +9582,8 @@ struct Parser {
         add("__okay_throw", v, {p, i, cp, p});
         add("__okay_eh_alloc", p, {i});
         add("__okay_throw_built", v, {p, i, cp, p});
+        add("__okay_eh_push_at", p, {p, p});
+        add("__okay_eh_end_arg", v, {p});
     }
 
     static bool contains_return(const Node& n) {
@@ -10687,8 +10832,9 @@ struct Parser {
                 continue;
             }
             decl.type.is_const = is_const;
-            // An inline variable ([dcl.inline]): own simplification as for inline functions, each file keeps its own
-            // copy (an internal symbol), so two files that include it link.
+            // An inline variable ([dcl.inline]): one object in the program when its first value is a constant (Round 37:
+            // a COMDAT section, see below); one with a constructor, or a value computed at startup, stays one copy per
+            // file (an internal symbol), so two files that include it link.
             bool inline_var = false;
             if (!decl.is_function)
                 for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
@@ -10785,7 +10931,7 @@ struct Parser {
                     stmt_pre.resize(pre_base);
                     for (size_t ti = list_temps.size(); ti-- > 0;) {
                         Node dcall;
-                        if (!special_call(list_temps[ti].sid, "<dtor>", node_addr(node_name(list_temps[ti].name)), {}, &dcall))
+                        if (!temp_end_call(list_temps[ti], &dcall))
                             return false;
                         init_body.kids.push_back(std::move(dcall));
                     }
@@ -10919,7 +11065,19 @@ struct Parser {
                         if (decl_extern) global.is_static = false;
                         for (const Global& earlier : globals)
                             if (earlier.name == global.name) taken = true;
-                        if (taken) {
+                        if (inline_var && anon_depth == 0 && !decl_tls && dyn_leaves_here.empty()) {
+                            // [dcl.inline] 6: an inline variable with external linkage is the same object in every
+                            // file. A COMDAT section ("any") named from its namespaces and name, the same in every
+                            // object, so the linker keeps one (Round 37; before, each file had its own copy and a change
+                            // made by one file was not seen by another).
+                            std::string cname = "__okay_iv_";
+                            for (char c : ns_mangled + "@" + decl.name)
+                                cname += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '$';
+                            global.name = cname;
+                            global.is_static = false;
+                            global.comdat = true;
+                            global_alias[decl.name] = global.name;
+                        } else if (taken) {
                             global.name = decl.name + "@" + std::to_string(globals.size());
                             global_alias[decl.name] = global.name;
                         } else {

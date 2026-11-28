@@ -1,7 +1,8 @@
 /* Exceptions for okay-ms: a stack of records, written from ISO/IEC 14882 [except]. This is not
  * the MSVC C++ exception model (no .pdata handler, no ThrowInfo, no __CxxFrameHandler), so it
  * cannot interoperate with code that throws that way. A record is 16 pointers:
- *   0 next, 1 kind (0 object, 1 array, 2 try frame, 3 handler), 2 object or exception,
+ *   0 next, 1 kind (0 object, 1 array, 2 try frame, 3 handler, 5 a by-value argument handed over to the callee),
+ *   2 object or exception,
  *   3 destructor or the exception's destructor, 4 count or the type names, 5 element size,
  *   6..15 the registers of a try frame (see __okay_setjmp in compile.cpp). */
 __declspec(dllimport) void ExitProcess(unsigned int code);
@@ -29,6 +30,35 @@ void __okay_eh_pop(void) {
     void **r;
     r = (void **)__okay_eh_top;
     __okay_eh_top = r[0];
+}
+
+/* A by-value argument (Round 37): the record's kind and destructor are set; the object's address is the
+ * copy constructor's result, recorded here once the copy is built. Returns the address. */
+void *__okay_eh_push_at(void *rec, void *obj) {
+    void **r;
+    r = (void **)rec;
+    r[2] = obj;
+    __okay_eh_push(rec);
+    return obj;
+}
+
+static void destroy_object(void *obj, void *dtor);
+
+/* The end of the statement of a by-value argument: its record is taken off the list (it is usually the
+ * top one). The object is destroyed only if the call never took it (kind still 0). */
+void __okay_eh_end_arg(void *rec) {
+    void **r;
+    void **at;
+    r = (void **)rec;
+    if (__okay_eh_top == rec) {
+        __okay_eh_top = r[0];
+    } else {
+        at = (void **)__okay_eh_top;
+        while (at != (void **)0 && at[0] != rec) at = (void **)at[0];
+        if (at == (void **)0) return;
+        at[0] = r[0];
+    }
+    if ((int)r[1] == 0) destroy_object(r[2], r[3]);
 }
 
 static void terminate_now(void) {
@@ -73,6 +103,8 @@ static void unwind(void) {
                 destroy_object(r[2], r[3]);
                 free(r[2]);
             }
+        } else if (kind == 5) {
+            /* the callee owns the object now and destroys it */
         } else {
             __okay_longjmp((void *)&r[6]);
         }

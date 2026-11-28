@@ -180,7 +180,7 @@ void Parser::finish_static_guard(Node* then_block, Node init_stmt, const std::st
     if (!(init_stmt.kind == Node::Block && init_stmt.kids.empty())) then_block->kids.push_back(std::move(init_stmt));
     for (size_t i = stmt_temps.size(); i-- > 0;) {
         Node call;
-        if (special_call(stmt_temps[i].sid, "<dtor>", node_addr(node_name(stmt_temps[i].name)), {}, &call))
+        if (temp_end_call(stmt_temps[i], &call))
             then_block->kids.push_back(std::move(call));
     }
     stmt_temps.clear();
@@ -315,7 +315,7 @@ bool Parser::keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::ve
     stmts->push_back(std::move(assign_stmt));
     for (size_t i = temps.size(); i-- > 0;) {
         Node call;
-        if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+        if (!temp_end_call(temps[i], &call)) return false;
         stmts->push_back(std::move(call));
     }
     *cond = node_name(hidden.name);
@@ -383,7 +383,7 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
     wrapped.kids.push_back(std::move(*out));
     for (size_t i = mine.size(); i-- > 0;) {
         Node call;
-        if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
+        if (!temp_end_call(mine[i], &call)) return false;
         wrapped.kids.push_back(std::move(call));
     }
     *out = std::move(wrapped);
@@ -863,7 +863,14 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             }
             if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
                 return false;
-            if (!braced_ret && !cur_ret_ref) class_ptr_convert(&value, cur_ret);  // return derived; as a Base* (Round 29)
+            if (!braced_ret && !cur_ret_ref) {
+                std::string what;
+                if (cur_ret.deduce == 0 && arith_ptr_mismatch(value, cur_ret, &what)) {  // [stmt.return] 2 (Round 37)
+                    error = what;
+                    return false;
+                }
+                class_ptr_convert(&value, cur_ret);  // return derived; as a Base* (Round 29)
+            }
             Type value_type;
             // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
             // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3).
@@ -928,7 +935,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             std::vector<Node> tdt;
             for (size_t i = stmt_temps.size(); i-- > 0;) {
                 Node call;
-                if (!special_call(stmt_temps[i].sid, "<dtor>", node_addr(node_name(stmt_temps[i].name)), {}, &call))
+                if (!temp_end_call(stmt_temps[i], &call))
                     return false;
                 tdt.push_back(std::move(call));
             }
@@ -1260,6 +1267,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                                               decl.type.struct_id));
                 init = std::move(sub);
             } else if (!decl.type.is_ref) {
+                std::string what;
+                if (arith_ptr_mismatch(init, decl.type, &what)) {
+                    error = what;
+                    return false;
+                }
                 class_ptr_convert(&init, decl.type);
             }
         }
@@ -1691,7 +1703,7 @@ bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
         parts.push_back(std::move(assign));
         for (size_t i = temps.size(); i-- > 0;) {
             Node call;
-            if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+            if (!temp_end_call(temps[i], &call)) return false;
             if (!flatten_expr_stmts(call, &parts)) {
                 error = "a temporary with a destructor in a loop condition is not supported here";
                 return false;

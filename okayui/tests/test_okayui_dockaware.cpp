@@ -209,10 +209,28 @@ int main() {
         auto tabsOf = [&](int leaf) { std::vector<std::string> v; for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.node == leaf) v.push_back(t.window); return v; };
         auto has = [](const std::vector<std::string>& v, const char* w) { for (const std::string& x : v) if (x == w) return true; return false; };
         const UI::DockLayout& L = UI::GetDockLayout();
-        f(); f();
+        UI::GetDockLayout().SetActive("Lighting");   // a saved layout whose chosen tab was Lighting, while Lighting is closed now (owner, at launch)
+        f();
+        {   // the very first frame (the editor's first frame at launch can stay on screen a while): no tab of a closed window
+            bool ghost = false;
+            for (const UI::DockTabInfo& t : UI::GetDockTabs()) ghost |= t.window == "Stats" || t.window == "Lighting";
+            if (ghost) std::cerr << "  the first frame shows tabs for the closed Stats and Lighting\n";
+            CHECK(!ghost);
+        }
+        f();
         const int leaf = L.NodeOf("Inspector");
         CHECK(leaf != 0 && L.NodeOf("Stats") == leaf && L.NodeOf("Lighting") == leaf);
         CHECK(tabsOf(leaf) == std::vector<std::string>{"Inspector"});   // Stats and Lighting are closed: no tabs for them
+        {   // the node a ported host reads lists only the open window, also when the host hides the strip (the editor's side tabs, which
+            // listed Inspector, Stats and Lighting at launch, and clicking Stats or Lighting showed nothing)
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            CHECK(node && node->Windows.Size == 1 && std::string(node->Windows[0]->Name) == "Inspector");
+            UI::GetDockLayout().SetNoTabBar(leaf, true); f(); f();
+            node = UI::DockBuilderGetNode(right);
+            if (node && node->Windows.Size != 1) std::cerr << "  with its strip hidden, the node lists " << node->Windows.Size << " windows\n";
+            CHECK(node && node->Windows.Size == 1);
+            UI::GetDockLayout().SetNoTabBar(leaf, false); f();
+        }
         // close the Inspector with its tab's cross
         UI::Rect cross{};
         for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Inspector") cross = t.rect;
@@ -242,6 +260,18 @@ int main() {
             s.Move(r.x + 6.0f, r.y + r.h * 0.5f); f(); s.Down(); f(); s.Up(); f();
             const UI::DockLayout::Node* n = L.Find(L.NodeOf(w));
             CHECK(n && n->tabs[(size_t)n->active] == w);
+        }
+        {   // the side tabs' highlight: with the strip hidden and the LAST tab chosen, the chosen window is the one marked DockTabIsVisible; the
+            // node's first window is the first in tab order (the editor highlighted Windows[0], so another panel stayed lit while one was shown)
+            const int leafNow = L.NodeOf("Stats");
+            const std::string last = L.Find(leafNow)->tabs.back();
+            UI::GetDockLayout().SetActive(last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, true); f(); f();
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            int lit = 0; std::string litName;
+            if (node) for (int k = 0; k < node->Windows.Size; ++k) if (node->Windows[k]->DockTabIsVisible) { ++lit; litName = node->Windows[k]->Name; }
+            CHECK(node && node->Windows.Size == 3 && std::string(node->Windows[0]->Name) != last && lit == 1 && litName == last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, false); f();
         }
         std::string why; CHECK(L.Validate(&why));
         UI::SetDockAwareBegin(false);

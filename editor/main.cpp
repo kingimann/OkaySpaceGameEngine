@@ -2549,6 +2549,8 @@ void AddRecent(const std::string& path) {
 void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
 static bool ApplyPanelOpenSetting(const std::string& key, int value);   // "panel_<name> 0|1": which panels are open (after DockPanels)
 static std::string PanelOpenSettingLines();                           // those lines, for SaveSettings
+static bool ApplySideAnchorSetting(const std::string& key);            // "sideanchor_<name> 1": the group the side tabs show (after DockPanels)
+static std::string SideAnchorSettingLine();                            // that line, for SaveSettings
 void LoadSettings() {
     std::ifstream f(EditorFile("okay_settings.txt"));
     g_firstRun = !f.good();   // no settings file yet → brand-new install (auto-scale UI to the display)
@@ -2610,6 +2612,7 @@ void LoadSettings() {
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
+        else if (ApplySideAnchorSetting(k)) {}
         else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
         else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
         else if (k == "consolecollapse") g_consoleCollapse = (v != 0);
@@ -2671,6 +2674,7 @@ void SaveSettings() {
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n"
       << "sidetabs " << g_sideTabs << "\n"
+      << SideAnchorSettingLine()
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n"
       << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n"
@@ -4558,7 +4562,7 @@ struct HostFgChannel {
 // imgui.ini) and ImGui then always shows the group's FIRST window - so switching
 // panels there means moving the chosen window to the front.
 static ImGuiID g_sideTabsNode = 0;
-static std::string g_sideAnchor;     // window whose group is shown (session only; empty = Hierarchy / Inspector)
+static std::string g_sideAnchor;     // window whose group is shown (kept in okay_settings.txt as "sideanchor_<panel> 1"; empty = Hierarchy / Inspector)
 static void MoveWindowToFront(ImGuiDockNode* node, ImGuiWindow* w) {
     const int i = node->Windows.find_index(w);
     if (i > 0) { node->Windows.erase(node->Windows.Data + i); node->Windows.push_front(w); }
@@ -4653,6 +4657,20 @@ static bool ApplyPanelOpenSetting(const std::string& key, int value) {
     if (!okay::edtabs::ReadPanelOpenLine(key, labels, idx)) return false;
     if (defs[idx].open) *defs[idx].open = value != 0;
     return true;
+}
+// The side tabs' group, kept across a restart by the panel that chose it (okay::edtabs::SideAnchorLine); it was session only.
+static bool ApplySideAnchorSetting(const std::string& key) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    std::vector<std::string> labels;
+    for (int i = 0; i < n; ++i) labels.push_back(defs[i].label);
+    int idx = -1;
+    if (!okay::edtabs::ReadSideAnchorLine(key, labels, idx)) return false;
+    if (idx >= 0) g_sideAnchor = defs[idx].window;
+    return true;
+}
+static std::string SideAnchorSettingLine() {
+    const DockPanelDef* d = g_sideAnchor.empty() ? nullptr : PanelDefForWindow(g_sideAnchor.c_str());
+    return d ? okay::edtabs::SideAnchorLine(d->label) : std::string();
 }
 static std::string PanelOpenSettingLines() {
     int n = 0; const DockPanelDef* defs = DockPanels(n);
@@ -5052,7 +5070,8 @@ static void DrawPanelTabMenu() {
     } else if (ImGui::DockNodeGetRootNode(w->DockNode)->ID == g_dockspaceId) {
         if (ImGui::MenuItem("Show Group as Side Tabs")) {
             g_sideAnchor = w->Name;
-            if (g_sideTabs == 0) { g_sideTabs = 1; SaveSettings(); }
+            if (g_sideTabs == 0) g_sideTabs = 1;
+            SaveSettings();   // the group is kept across a restart too
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("List this group's tabs down the edge of the window\n(saves the height of its tab strip).");
     }
@@ -5259,7 +5278,7 @@ static void DrawSideTabStrip(float height) {
             const ImVec2 p = ImGui::GetCursorScreenPos();
             const bool clicked = ImGui::InvisibleButton("##side", ImVec2(w, itemH));
             const bool hov = ImGui::IsItemHovered();
-            const bool active = node->Windows[0] == win;
+            const bool active = win->DockTabIsVisible;   // the chosen tab (Windows[0] is the first in the list, not the one shown)
             const std::string lbl = WindowLabel(win);
             if (active || hov)
                 dl->AddRectFilled(p, ImVec2(p.x + w, p.y + itemH), ImGui::GetColorU32(active ? ImGuiCol_TabSelected : ImGuiCol_TabHovered));

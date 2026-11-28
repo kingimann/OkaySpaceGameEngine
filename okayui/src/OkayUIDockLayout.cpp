@@ -14,6 +14,10 @@ namespace {
 bool Finite(float v) { return std::isfinite(v) && std::fabs(v) < 1.0e9f; }
 bool GoodName(const std::string& s) { return !s.empty() && (int)s.size() <= DockLayout::kMaxNameLen; }
 std::string CutName(const std::string& s) { return (int)s.size() > DockLayout::kMaxNameLen ? s.substr(0, (size_t)DockLayout::kMaxNameLen) : s; }
+// The "###" id of a window name ("###Console" for "Console  [x 1]###Console"), empty for a name without one (the whole name is its id).
+std::string IdKey(const std::string& s) { const size_t at = s.find("###"); return at == std::string::npos ? std::string() : s.substr(at); }
+// Two names of one window: equal, or the same "###" id.
+bool SameWindow(const std::string& a, const std::string& b) { if (a == b) return true; const std::string k = IdKey(a); return !k.empty() && k == IdKey(b); }
 float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 std::string Escape(const std::string& s) {
@@ -94,6 +98,13 @@ const DockLayout::Floating* DockLayout::FindFloating(const std::string& w) const
 }
 bool DockLayout::IsFloating(const std::string& w) const { return FindFloating(w) != nullptr; }
 bool DockLayout::Contains(const std::string& w) const { return NodeOf(w) != 0 || IsFloating(w); }
+std::string DockLayout::SameWindowName(const std::string& w) const {
+    if (Contains(w)) return w;
+    const std::string key = IdKey(w);
+    if (key.empty()) return std::string();
+    for (const std::string& n : Windows()) if (IdKey(n) == key) return n;
+    return std::string();
+}
 int DockLayout::WindowCount() const {
     int n = (int)floating_.size();
     for (const Node& nd : nodes_) n += (int)nd.tabs.size();
@@ -127,7 +138,17 @@ int DockLayout::LeafAt(float x, float y) const {
 
 // ---- edits -----------------------------------------------------------------------------------------------------------
 
+// An edit that adds `w` while the layout holds the same window under another title ("###" id): that entry takes the new title, so the
+// window stays one entry where it is (the editor's Console saved as "Console  [x 1]###Console" and docked again as "Console###Console"
+// came back as a docked tab plus a floating copy).
+void DockLayout::AdoptSameId(const std::string& w) {
+    if (!GoodName(w) || Contains(w)) return;
+    const std::string have = SameWindowName(w);
+    if (!have.empty()) Rename(have, w);
+}
+
 bool DockLayout::AddFloating(const std::string& w, Rect rect) {
+    AdoptSameId(w);
     if (!GoodName(w) || Contains(w) || WindowCount() >= kMaxWindows) return false;
     Floating f; f.name = w; f.rect = SaneRect(rect, (int)floating_.size()); f.dirty = true;
     floating_.push_back(f);
@@ -166,6 +187,7 @@ bool DockLayout::RemoveWindowFromTree(const std::string& w, int* sourceLeaf) {
 
 bool DockLayout::Dock(const std::string& w, int node, DockSide side) {
     if (!GoodName(w) || (int)side < 0 || (int)side > DockSide_Bottom) return false;
+    AdoptSameId(w);
     const Node* t = Find(node);
     if (!t || t->IsSplit()) return false;
     if (t->tabs.empty()) side = DockSide_Center;   // only the empty root: nothing to split
@@ -202,6 +224,7 @@ bool DockLayout::Dock(const std::string& w, int node, DockSide side) {
 
 bool DockLayout::DockRoot(const std::string& w, DockSide side) {
     if (!GoodName(w) || (int)side < 0 || (int)side > DockSide_Bottom) return false;
+    AdoptSameId(w);
     const Node* r = Find(root_);
     if (!r) return false;
     if (!r->IsSplit()) return Dock(w, root_, side);
@@ -228,6 +251,7 @@ bool DockLayout::DockRoot(const std::string& w, DockSide side) {
 
 bool DockLayout::Float(const std::string& w, Rect rect) {
     if (!GoodName(w)) return false;
+    AdoptSameId(w);
     const bool exists = Contains(w);
     if (!exists && WindowCount() >= kMaxWindows) return false;
     rect = SaneRect(rect, (int)floating_.size());
@@ -455,7 +479,8 @@ bool DockLayout::Rebuild(Raw& raw, int* repairs) {
     std::vector<char> visited(raw.nodes.size(), 0);
     std::vector<int> usedIds;
     int maxId = 0;
-    auto isPlaced = [&](const std::string& s) { return std::find(placed.begin(), placed.end(), s) != placed.end(); };
+    // one entry per window: a second name with the same "###" id is dropped (the docked one comes first, so a floating copy goes)
+    auto isPlaced = [&](const std::string& s) { for (const std::string& p : placed) if (SameWindow(p, s)) return true; return false; };
     auto rawIndex = [&](int id) { if (id <= 0) return -1; for (size_t i = 0; i < raw.nodes.size(); ++i) if (raw.nodes[i].id == id) return (int)i; return -1; };
 
     struct Ctx { std::vector<Node>& out; std::vector<std::string>& placed; std::vector<char>& visited; std::vector<int>& usedIds; int& maxId; int& fixes; Raw& raw; } cx{out, placed, visited, usedIds, maxId, fixes, raw};
@@ -476,7 +501,8 @@ bool DockLayout::Rebuild(Raw& raw, int* repairs) {
                     std::string t = rn.tabs[k];
                     if (t.empty()) { ++c.fixes; continue; }
                     if ((int)t.size() > kMaxNameLen) { t = CutName(t); ++c.fixes; }
-                    if (std::find(c.placed.begin(), c.placed.end(), t) != c.placed.end() || std::find(tabs.begin(), tabs.end(), t) != tabs.end()) { ++c.fixes; continue; }
+                    auto same = [&](const std::string& o) { return SameWindow(o, t); };
+                    if (std::any_of(c.placed.begin(), c.placed.end(), same) || std::any_of(tabs.begin(), tabs.end(), same)) { ++c.fixes; continue; }
                     if ((int)c.placed.size() + (int)tabs.size() >= kMaxWindows) { ++c.fixes; continue; }
                     if ((int)k == rn.active) active = (int)tabs.size();
                     tabs.push_back(t);

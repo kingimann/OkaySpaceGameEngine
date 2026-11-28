@@ -10168,8 +10168,8 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
-    const long exp = account.TokenExpiresAt();
-    if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
+    const long long exp = account.TokenExpiresAt();
+    if (exp <= 0 || exp - (long long)std::time(nullptr) > 600) return;
     g_tokRefreshBusy = true;
     if (okay::thr::Thread* t = okay::thr::CreateThread(TokenRefreshWorker, "okay-token", nullptr)) okay::thr::DetachThread(t);
     else g_tokRefreshBusy = false;

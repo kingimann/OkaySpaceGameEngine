@@ -167,6 +167,22 @@ static void default_table_turns_everything_on() {
     DropEnv(AppliedVar());
 }
 
+static void real_programs_offer_the_browser() {
+    // The launcher and the editor call Apply with Context::Here(). Every program draws with OkayUI now, so the Browser item
+    // must be offered there and its variable set. (Since Dear ImGui left, nothing defined OKAY_HAVE_OKAYUI for the launcher,
+    // Here() said "no OkayUI", and the Browser was quietly off for everyone.)
+    CHECK(Context::Here().okayUi);
+    const Item* b = Find("browser", Items());
+    CHECK(b != nullptr && Available(*b, Context::Here()));
+    const char* e = std::getenv("OKAY_BROWSER"); const std::string was = e ? e : ""; const bool had = e != nullptr;
+    DropEnv("OKAY_BROWSER"); DropEnv(AppliedVar());
+    auto got = Apply(Parse("", Items()), Items(), Context::Here());
+    CHECK(JoinIds(got) == "browser");
+    CHECK(Get("OKAY_BROWSER") && std::string(Get("OKAY_BROWSER")) == "1");
+    if (had) PutEnv("OKAY_BROWSER", was.c_str()); else DropEnv("OKAY_BROWSER");
+    DropEnv(AppliedVar());
+}
+
 static void DefaultPathNamesTheFile() {
     const std::string p = DefaultPath();
     CHECK(p.size() > 16 && p.compare(p.size() - 16, 16, "own_switches.cfg") == 0);
@@ -184,6 +200,7 @@ int main() {
     own_switches_status_text();
     own_switches_file_round_trip();
     default_table_turns_everything_on();
+    real_programs_offer_the_browser();
     DefaultPathNamesTheFile();
     TEST_MAIN_RESULT();
 }

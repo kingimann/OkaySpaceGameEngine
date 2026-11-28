@@ -4,6 +4,7 @@
 // tested headless (tests/test_launcher_page_layout.cpp): text fits its button, nothing overlaps, nothing leaves its card,
 // at the small window size and at UI scale 1.5.
 #pragma once
+#include "okay/Core/StringUtil.hpp"         // okay::str::LowerAscii (the Play page search, std only)
 #include "../editor/EditorLayoutMath.hpp"   // okay::edlayout::Rc, Overlaps, Inside: the one rectangle test, shared with the editor (std only)
 #include <algorithm>
 #include <cmath>
@@ -435,6 +436,161 @@ inline ChatHeaderLayout LayoutChatTop(float width, float lineH, float nameH, flo
     t.detail = Rect{textX, textTop + lineH, textW, lineH};
     t.listTop = t.barRect.B() + gap;
     return t;
+}
+
+// ---- The Play page (the game library: owner 2026-11-28, "revamp and improve the play menu") --------------------------------
+/// The shelves (filter chips) over the library: everything, favourites, played before, installed (from the Marketplace,
+/// Downloads or a drop: the community folder), your own exports (everywhere else) and HTML games that open in the browser.
+enum class PlayShelf { All = 0, Favorites, Recent, Installed, Yours, Web, Count };
+inline const char* PlayShelfName(PlayShelf s) {
+    static const char* const kNames[] = {"All games", "Favourites", "Recently played", "Installed", "Your games", "Web games"};
+    const int i = (int)s;
+    return i >= 0 && i < (int)PlayShelf::Count ? kNames[i] : "";
+}
+inline constexpr std::size_t kPlayNotRecent = (std::size_t)-1;
+/// One game of the library, with what the launcher already keeps about it (favourites, the recent list, launch counts
+/// and play time). `inCollection` is false when a collection filter is on and the game is not in it.
+struct PlayGame {
+    std::string name, path;
+    bool favorite = false, installed = false, web = false, inCollection = true;
+    std::size_t recentRank = kPlayNotRecent;   // 0 = played last
+    int plays = 0;
+    long lastPlayed = 0, seconds = 0;          // unix time; total play time
+    unsigned long long bytes = 0;              // size on disk (0 = not known yet)
+};
+inline bool PlayOnShelf(const PlayGame& g, PlayShelf s) {
+    switch (s) {
+        case PlayShelf::Favorites: return g.favorite;
+        case PlayShelf::Recent:    return g.recentRank != kPlayNotRecent || g.lastPlayed > 0;
+        case PlayShelf::Installed: return g.installed && !g.web;
+        case PlayShelf::Yours:     return !g.installed && !g.web;
+        case PlayShelf::Web:       return g.web;
+        default:                   return true;
+    }
+}
+/// Does the search (`needle`, lower case) match the game's name? An empty search matches everything.
+inline bool PlayMatches(const PlayGame& g, const std::string& needle) {
+    return needle.empty() || okay::str::LowerAscii(g.name).find(needle) != std::string::npos;
+}
+/// The persisted sort (g_playSort): 0 favourites first, 1 name A-Z, 2 recently played, 3 most played. Ties go by name
+/// (case ignored), then by path, so the order never jumps between frames.
+inline bool PlaySortsBefore(const PlayGame& a, const PlayGame& b, int sort) {
+    if (sort == 0 && a.favorite != b.favorite) return a.favorite;
+    if (sort == 2 && a.recentRank != b.recentRank) return a.recentRank < b.recentRank;
+    if (sort == 2 && a.lastPlayed != b.lastPlayed) return a.lastPlayed > b.lastPlayed;
+    if (sort == 3 && a.plays != b.plays) return a.plays > b.plays;
+    const std::string la = okay::str::LowerAscii(a.name), lb = okay::str::LowerAscii(b.name);
+    if (la != lb) return la < lb;
+    return a.path < b.path;
+}
+/// The games to show, in order: on the shelf, in the active collection and matching the search.
+inline std::vector<std::size_t> PlayOrder(const std::vector<PlayGame>& games, int sort, PlayShelf shelf, const std::string& needle) {
+    std::vector<std::size_t> out;
+    for (std::size_t i = 0; i < games.size(); ++i)
+        if (games[i].inCollection && PlayOnShelf(games[i], shelf) && PlayMatches(games[i], needle)) out.push_back(i);
+    std::stable_sort(out.begin(), out.end(), [&](std::size_t a, std::size_t b) { return PlaySortsBefore(games[a], games[b], sort); });
+    return out;
+}
+inline int PlayShelfCount(const std::vector<PlayGame>& games, PlayShelf shelf) {
+    int n = 0;
+    for (const PlayGame& g : games) if (g.inCollection && PlayOnShelf(g, shelf)) ++n;
+    return n;
+}
+/// The "Continue playing" game: the one played last (the recent list first, then the newest launch time); -1 = none.
+inline int PlayContinueIndex(const std::vector<PlayGame>& games) {
+    int best = -1;
+    for (std::size_t i = 0; i < games.size(); ++i) {
+        const PlayGame& g = games[i];
+        if (g.web || (g.recentRank == kPlayNotRecent && g.lastPlayed <= 0)) continue;
+        if (best < 0) { best = (int)i; continue; }
+        const PlayGame& b = games[(std::size_t)best];
+        if (g.recentRank != b.recentRank ? g.recentRank < b.recentRank : g.lastPlayed > b.lastPlayed) best = (int)i;
+    }
+    return best;
+}
+/// Keyboard: the selection after an arrow key (`dx` -1/+1 left/right, `dy` -1/+1 up/down) in `count` items laid out
+/// `cols` a row (1 for the list). Nothing selected yet: any arrow selects the first. Stays inside the list.
+inline int PlayKeyMove(int sel, int count, int cols, int dx, int dy) {
+    if (count <= 0) return -1;
+    if (sel < 0 || sel >= count) return 0;
+    cols = std::max(1, cols);
+    int n = sel + dx + dy * cols;
+    if (dy != 0 && (n < 0 || n >= count)) n = sel;   // no row there: stay
+    return std::clamp(n, 0, count - 1);
+}
+/// "3 h 20 min", "45 min", "Under a minute"; "" when never played.
+inline std::string PlaytimeText(long seconds) {
+    if (seconds <= 0) return std::string();
+    if (seconds < 60) return "Under a minute";
+    const long mins = seconds / 60, h = mins / 60, m = mins % 60;
+    char b[40];
+    if (h == 0) std::snprintf(b, sizeof(b), "%ld min", mins);
+    else if (h >= 100 || m == 0) std::snprintf(b, sizeof(b), "%ld h", h);
+    else std::snprintf(b, sizeof(b), "%ld h %ld min", h, m);
+    return b;
+}
+
+/// The "Continue playing" banner: the text and buttons on the left, the cover art on the right (fading into the card).
+/// Narrower than `fullArtBelow` the art fills the whole banner under a dark wash and the text sits on it. The banner is at
+/// least `h` high and always tall enough for its lines and buttons. Rects from the banner's top-left.
+struct PlayHero { bool artFull = false; Rect hero, art, kicker, title, meta, play, more; };
+inline PlayHero LayoutPlayHero(float w, float h, float pad, float lineH, float titleH, float playW, float moreW, float btnH,
+                               float gap, float fullArtBelow) {
+    PlayHero p;
+    p.artFull = w < fullArtBelow;
+    const float artX = p.artFull ? 0.0f : std::floor(w * 0.42f);
+    const float textW = std::max(0.0f, (p.artFull ? w : artX) - 2 * pad);
+    p.kicker = Rect{pad, pad, textW, lineH};
+    p.title = Rect{pad, p.kicker.B() + gap * 0.5f, textW, titleH};
+    p.meta = Rect{pad, p.title.B() + gap * 0.5f, textW, lineH};
+    const float H = std::max(h, p.meta.B() + gap + btnH + pad);
+    const float pw = std::min(playW, std::max(0.0f, w - 2 * pad));
+    p.play = Rect{pad, H - pad - btnH, pw, btnH};
+    const bool moreFits = p.play.R() + gap + moreW <= w - pad;
+    p.more = moreFits ? Rect{p.play.R() + gap, p.play.y, moreW, btnH} : Rect{};
+    p.art = Rect{artX, 0, w - artX, H};
+    p.hero = Rect{0, 0, w, H};
+    return p;
+}
+
+/// A library tile: the cover (16:10) with the round Play button in its middle (shown on hover or selection) and the
+/// favourite star in its top-right corner, then the name and one line of detail.
+struct PlayTile { Rect tile, cover, play, star, title, meta; };
+inline PlayTile LayoutPlayTile(float tileW, float lineH, float pad, float playD, float starD) {
+    PlayTile t;
+    t.cover = Rect{0, 0, tileW, std::floor(tileW * 0.625f)};
+    const float d = std::min(playD, t.cover.h - 2 * pad);
+    t.play = Rect{std::floor((tileW - d) * 0.5f), std::floor((t.cover.h - d) * 0.5f), d, d};
+    t.star = Rect{tileW - pad * 0.6f - starD, pad * 0.6f, starD, starD};
+    t.title = Rect{pad, t.cover.B() + pad * 0.7f, std::max(0.0f, tileW - 2 * pad), lineH};
+    t.meta = Rect{pad, t.title.B() + pad * 0.25f, std::max(0.0f, tileW - 2 * pad), lineH};
+    t.tile = Rect{0, 0, tileW, t.meta.B() + pad};
+    return t;
+}
+
+/// The list view's columns: the cover thumbnail and name on the left, then Last played, Play time and Size, and the row's
+/// buttons on the right. A narrow list drops Size first, then Play time, then Last played, so the name keeps `nameMinW`.
+/// Rects from the row's top-left; a dropped column has show* false. When even then the name has less than `nameMinW`, the
+/// buttons shrink to `actionsNarrowW` (Play only: `narrowActions`).
+struct PlayColumns { bool showLast = true, showTime = true, showSize = true, narrowActions = false; Rect icon, name, last, time, size, actions; };
+inline PlayColumns LayoutPlayColumns(float w, float rowH, float pad, float iconD, float lastW, float timeW, float sizeW,
+                                     float actionsW, float nameMinW, float gap, float actionsNarrowW = 0.0f) {
+    PlayColumns c;
+    c.icon = Rect{pad, std::floor((rowH - iconD) * 0.5f), iconD, iconD};
+    const float nameX = c.icon.R() + pad;
+    c.narrowActions = actionsNarrowW > 0 && w - pad - actionsW - gap - nameX < nameMinW;
+    if (c.narrowActions) actionsW = actionsNarrowW;
+    c.actions = Rect{w - pad - actionsW, 0, actionsW, rowH};
+    float right = c.actions.x - gap;
+    auto room = [&](float colW) { return right - colW - gap - nameX >= nameMinW; };
+    c.showLast = room(lastW);
+    c.showTime = c.showLast && room(lastW + gap + timeW);
+    c.showSize = c.showTime && room(lastW + gap + timeW + gap + sizeW);
+    if (c.showSize) { c.size = Rect{right - sizeW, 0, sizeW, rowH}; right = c.size.x - gap; }
+    if (c.showTime) { c.time = Rect{right - timeW, 0, timeW, rowH}; right = c.time.x - gap; }
+    if (c.showLast) { c.last = Rect{right - lastW, 0, lastW, rowH}; right = c.last.x - gap; }
+    c.name = Rect{nameX, 0, std::max(0.0f, right - nameX), rowH};
+    return c;
 }
 
 }  // namespace okay::launcherlayout

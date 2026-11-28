@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 83 headers, 524 names.
+Back to the [code index](../code_index.md). 83 headers, 526 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -370,11 +370,13 @@ Back to the [code index](../code_index.md). 83 headers, 524 names.
 
 ## `engine/include/okay/Core/Json.hpp`
 
-- `Type` enum, line 31
-- `Value` struct, line 33
-- `Limits` struct, line 63
-- `Parse` function, line 211: Read 'text' as one JSON value. False (and 'out' left as Null) with a reason in 'error' for anything RFC 8259 does not
-- `Escape` function, line 228: Append 's' (UTF-8) to 'out' as a JSON string, with its quotes: '"' and '\\' escaped, \n, \r and \t, other control characters
+- `Type` enum, line 32
+- `Value` struct, line 34
+- `Limits` struct, line 84
+- `Parse` function, line 232: Read 'text' as one JSON value. False (and 'out' left as Null) with a reason in 'error' for anything RFC 8259 does not
+- `Escape` function, line 249: Append 's' (UTF-8) to 'out' as a JSON string, with its quotes: '"' and '\\' escaped, \n, \r and \t, other control characters
+- `WriteNumber` function, line 270: Append a number as RFC 8259 section 6 writes it: a whole number below 2^53 without a fraction ("3", "-12"), anything
+- `Write` function, line 291: Append 'v' as compact JSON text (no white space; object keys in their stored order). Parse reads it back to an equal
 
 ## `engine/include/okay/Core/LocCheck.hpp`
 

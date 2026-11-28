@@ -67,4 +67,11 @@ std::string CompletionScript(const std::string& shell);
 /// The engine version this program was built with.
 const char* EngineVersion();
 
+/// okay mcp and okay automation (tools/okay-cli/Automation.cpp: AutomationMain). They need the editor's state, which
+/// only the okay program links alongside this library (the editor links its own), so Main reaches them through this
+/// pointer; the okay program sets it in main(), and where it is unset (the editor's Command Line panel) they say so.
+using AutomationFn = int (*)(const std::vector<std::string>& args, const std::string& project, const Io& io);
+AutomationFn& AutomationEntry();
+int AutomationMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
+
 } // namespace okaycli

@@ -1006,6 +1006,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectList.hpp"        // okayproj::Normalized / IsSameOrInside / RootOfScene / SceneIn: the launcher's project rules (includes ProjectDelete.hpp)
 #include "WebRun.hpp"             // Build Settings > Web: the web build's size and the local Run in browser server
+#include "AutomationEditor.hpp"   // View > Automation Link: the automation commands for okay mcp, on this editor's state
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
@@ -5973,6 +5974,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
+        {"view.automation", &oked::automation::LinkFlag()},   // View > Automation Link (AutomationEditor.hpp)
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
     return nullptr;
@@ -45663,6 +45665,7 @@ int main(int argc, char** argv) {
             okay::textures::Pump();
         }
         oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
+        oked::automation::LinkFrame(ed);   // View > Automation Link: answer okay mcp between frames (never waits; off by default)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design

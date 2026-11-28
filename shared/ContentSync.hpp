@@ -9,6 +9,10 @@
 //   trees/<n>/<path>       every file of version n, in the same folder layout the game uses (a scene's relative references keep working)
 //   trees/<n>.tmp/         version n while it is being built (verified files only; resumed by the next run)
 //   staging/<sha256>.part  partial downloads, resumable; never visible to the game
+//   staged.txt             a version that is fully downloaded and verified but not visible yet (SyncConfig::stageOnly; ApplyStaged
+//                          makes it visible at the moment the apply policy allows, ContentPolicy.hpp), with manifests/<n>.manifest.staged
+//   rolled-back.txt        versions that were rolled back here: the same version is never downloaded again, only a newer one
+//   launch.txt, good.txt   the start-up guard (BeginLaunch / MarkLaunchGood): a version whose start-up keeps failing is rolled back
 // The previous good version (trees/<m>) stays until the next update commits, for rollback. Files that did not change are hard-linked
 // (or copied when the disk cannot link) from the previous tree, so an update downloads only what changed.
 //
@@ -119,7 +123,29 @@ struct StorePaths {
     fs::path Tree(std::uint64_t v) const { return Root() / "trees" / std::to_string(v); }
     fs::path TmpTree(std::uint64_t v) const { return Root() / "trees" / (std::to_string(v) + ".tmp"); }
     fs::path Staging() const { return Root() / "staging"; }
+    fs::path StagedFile() const { return Root() / "staged.txt"; }
+    fs::path StagedManifest(std::uint64_t v) const { return Root() / "manifests" / (std::to_string(v) + ".manifest.staged"); }
+    fs::path StagedSig(std::uint64_t v) const { return Root() / "manifests" / (std::to_string(v) + ".manifest.sig.staged"); }
+    fs::path RolledBackFile() const { return Root() / "rolled-back.txt"; }
+    fs::path LaunchFile() const { return Root() / "launch.txt"; }
+    fs::path GoodFile() const { return Root() / "good.txt"; }
 };
+
+/// Versions rolled back in this folder (rolled-back.txt: one number per line). Unreadable lines are ignored.
+inline std::set<std::uint64_t> ReadRolledBack(const StorePaths& sp) {
+    std::set<std::uint64_t> out;
+    std::string text;
+    if (!detail::ReadAll(sp.RolledBackFile(), text, 64 * 1024)) return out;
+    for (const std::string& l : detail::Split(text, '\n')) { std::uint64_t v = 0; if (detail::Digits(l, v, 1ull << 53)) out.insert(v); }
+    return out;
+}
+inline bool AddRolledBack(const StorePaths& sp, std::uint64_t v) {
+    std::set<std::uint64_t> all = ReadRolledBack(sp);
+    all.insert(v);
+    std::string text;
+    for (std::uint64_t x : all) text += std::to_string(x) + "\n";
+    return detail::WriteAtomic(sp.RolledBackFile(), text);
+}
 
 inline std::string SerializeCommit(const Commit& c) {
     return "okay-content-commit 1\ngame " + c.game + "\nversion " + std::to_string(c.version) + "\nmanifest-sha256 " + c.manifestSha256 +
@@ -162,7 +188,9 @@ inline bool ReadCommittedManifest(const StorePaths& sp, const Commit& c, Manifes
     return true;
 }
 
-/// Put the previous version back as the visible one (a bad release). Keeps `floor`. False when there is no usable previous version.
+/// Put the previous version back as the visible one (a bad release, a failed apply, or a start-up that keeps failing). Keeps `floor`,
+/// and records the removed version in rolled-back.txt so a later sync does not download it again (only a newer version is taken).
+/// False when there is no usable previous version.
 inline bool Rollback(const StorePaths& sp, std::string* why = nullptr) {
     Commit c;
     if (!ReadCommit(sp, c) || c.previous == 0) { if (why) *why = "there is no previous content version to go back to"; return false; }
@@ -176,11 +204,71 @@ inline bool Rollback(const StorePaths& sp, std::string* why = nullptr) {
         return false;
     }
     prev.manifestSha256 = Sha256Hex(text);
+    if (!AddRolledBack(sp, c.version)) { if (why) *why = "could not record the rolled-back version"; return false; }
     if (!detail::WriteAtomic(sp.CommitFile(), SerializeCommit(prev))) { if (why) *why = "could not write the commit record"; return false; }
+    fs::remove(sp.LaunchFile(), ec);
     fs::remove_all(sp.Tree(c.version), ec);
     fs::remove(sp.ManifestFile(c.version), ec);
     fs::remove(sp.SigFile(c.version), ec);
     return true;
+}
+
+// ---- Start-up guard: roll back a version the game cannot start with ------------------------------------------------------------------
+// The game calls BeginLaunch before it loads content and MarkLaunchGood once it is running (first frames drawn, first scene loaded).
+// launch.txt ("version <n> starts <k>") counts starts of the visible version that never reached MarkLaunchGood. When that count reaches
+// `maxFailedStarts` the version is rolled back (Rollback: the previous version is visible again and this one is never downloaded again).
+// A version that once reached MarkLaunchGood (good.txt) is trusted: later crashes are not blamed on it.
+struct LaunchCheck {
+    bool rolledBack = false;
+    std::uint64_t version = 0;        ///< the version the game should load now
+    int failedStarts = 0;             ///< starts of that version that did not reach MarkLaunchGood (before this one)
+    std::string message;              ///< plain words for the log ("" when nothing happened)
+};
+
+inline std::uint64_t LastGoodVersion(const StorePaths& sp) {
+    std::string t;
+    std::uint64_t v = 0;
+    if (!detail::ReadAll(sp.GoodFile(), t, 64) || t.empty() || t.back() != '\n' || !detail::Digits(t.substr(0, t.size() - 1), v, 1ull << 53)) return 0;
+    return v;
+}
+
+inline LaunchCheck BeginLaunch(const StorePaths& sp, int maxFailedStarts = 2) {
+    LaunchCheck lc;
+    Commit c;
+    if (!ReadCommit(sp, c)) return lc;
+    lc.version = c.version;
+    if (LastGoodVersion(sp) == c.version) return lc;
+    std::string t;
+    std::uint64_t v = 0, k = 0;
+    if (detail::ReadAll(sp.LaunchFile(), t, 128)) {
+        const std::vector<std::string> w = detail::Split(t, ' ');
+        if (w.size() == 4 && w[0] == "version" && w[2] == "starts" && !w[3].empty() && w[3].back() == '\n' && detail::Digits(w[1], v, 1ull << 53) &&
+            detail::Digits(w[3].substr(0, w[3].size() - 1), k, 1000000) && v == c.version)
+            lc.failedStarts = static_cast<int>(k);
+    }
+    if (lc.failedStarts >= maxFailedStarts) {
+        std::string why;
+        if (Rollback(sp, &why)) {
+            Commit now;
+            lc.rolledBack = true;
+            lc.version = ReadCommit(sp, now) ? now.version : 0;
+            lc.message = "content: version " + std::to_string(c.version) + " did not start " + std::to_string(lc.failedStarts) + " times; rolled back to version " +
+                         std::to_string(lc.version);
+            return lc;
+        }
+        lc.message = "content: version " + std::to_string(c.version) + " did not start " + std::to_string(lc.failedStarts) + " times and cannot be rolled back (" + why + ")";
+    }
+    detail::WriteAtomic(sp.LaunchFile(), "version " + std::to_string(c.version) + " starts " + std::to_string(lc.failedStarts + 1) + "\n");
+    return lc;
+}
+
+/// The game started with the visible version: trust it from now on.
+inline bool MarkLaunchGood(const StorePaths& sp) {
+    Commit c;
+    if (!ReadCommit(sp, c)) return false;
+    std::error_code ec;
+    fs::remove(sp.LaunchFile(), ec);
+    return detail::WriteAtomic(sp.GoodFile(), std::to_string(c.version) + "\n");
 }
 
 // ---- Configuration and result ----------------------------------------------------------------------------------------------------
@@ -197,6 +285,8 @@ struct SyncConfig {
     std::string root;                  ///< content folder (created on first use)
     std::string game;                  ///< the manifest's game id must equal this
     std::string appVersion;            ///< the running app version, for min-app ("" = unknown: min-app requirements are then NOT met)
+    std::string gameVersion;           ///< the exported game's own version, for min-game ("" = unknown: min-game is then NOT met)
+    bool stageOnly = false;            ///< download and verify, but do not make visible: Status::Staged; ApplyStaged makes it visible later
     std::string trustedKeys;           ///< "<hex>[,<hex>]" ed25519 public keys (see CheckSignature)
     bool allowUnsigned = false;        ///< developer switch: skip the signature (never set by a shipped game by default)
     std::vector<std::string> groups;   ///< wanted groups; empty = all. Files with no group are always wanted
@@ -205,7 +295,7 @@ struct SyncConfig {
     RetryPolicy retry;
     bool allowDowngrade = false;       ///< accept a version below the floor (never from a shipped game)
     bool deepVerify = false;           ///< re-hash files reused from the previous version (slow; default trusts the commit)
-    /// Called with every file of kind Script, Dialogue or Data that was just verified (path = the verified file, not yet visible). Return ""
+    /// Called with every file of kind Script, Dialogue, Data or Config that was just verified (path = the verified file, not yet visible). Return ""
     /// to accept or a plain reason to refuse; a refusal fails the whole sync. This is where graphs and scripts get their safety checks.
     std::function<std::string(const Entry&, const std::string& path)> validate;
     std::function<bool(const Progress&)> progress;   ///< return false to cancel (partial files stay for the next run)
@@ -213,8 +303,9 @@ struct SyncConfig {
     std::function<void(const std::string&)> log;     ///< one plain line per event; empty = silent
 };
 
-enum class Status { Updated, UpToDate, Cancelled, Failed };
-enum class Reason { None, Network, ServerMissingFile, ManifestBad, SignatureBad, GameMismatch, AppTooOld, OverBudget, Downgrade, FileCorrupt, Validation, Disk, Cancelled };
+enum class Status { Updated, UpToDate, Cancelled, Failed, Staged };
+enum class Reason { None, Network, ServerMissingFile, ManifestBad, SignatureBad, GameMismatch, AppTooOld, OverBudget, Downgrade, FileCorrupt, Validation, Disk, Cancelled,
+                    GameTooOld, RolledBack, NothingStaged };
 
 struct SyncResult {
     Status status = Status::Failed;
@@ -243,6 +334,9 @@ inline const char* ReasonName(Reason r) {
         case Reason::Validation: return "validation";
         case Reason::Disk: return "disk";
         case Reason::Cancelled: return "cancelled";
+        case Reason::GameTooOld: return "game-too-old";
+        case Reason::RolledBack: return "rolled-back";
+        case Reason::NothingStaged: return "nothing-staged";
     }
     return "none";
 }
@@ -283,18 +377,10 @@ public:
         const SigVerdict sv = CheckSignature(m_cfg.trustedKeys, manText, sigText, m_cfg.allowUnsigned);
         if (!sv.Accepts()) return Fail(r, Reason::SignatureBad, sv.message);
         Manifest man;
-        std::string why;
-        if (!Parse(manText, man, &why, m_cfg.limits)) return Fail(r, Reason::ManifestBad, "The content list is not valid: " + why);
-        if (man.game != m_cfg.game) return Fail(r, Reason::GameMismatch, "This content is for the game '" + man.game + "', not '" + m_cfg.game + "'.");
-        if (!man.minApp.empty() && (m_cfg.appVersion.empty() || okayver::CompareVersions(m_cfg.appVersion, man.minApp) < 0))
-            return Fail(r, Reason::AppTooOld, "This content needs app version " + man.minApp + " or newer. Update the game first.");
-
         Commit cur;
-        const bool haveCur = ReadCommit(m_sp, cur) && cur.game == m_cfg.game;
-        const std::uint64_t floor = haveCur ? cur.floor : 0;
-        if (!m_cfg.allowDowngrade && man.version < floor)
-            return Fail(r, Reason::Downgrade, "The server offered content version " + std::to_string(man.version) + ", older than the " + std::to_string(floor) +
-                                                  " this game already has. Refused (possible replay of an old list).");
+        bool haveCur = false;
+        std::uint64_t floor = 0;
+        if (!Accept(manText, man, cur, haveCur, floor, r)) return r;
         const std::string manSha = Sha256Hex(manText);
         if (haveCur && cur.version == man.version) {
             std::error_code e2;
@@ -378,7 +464,7 @@ public:
         Report(Phase::Verifying, "", 0, static_cast<int>(want.size()), bytesTotal, bytesTotal);
         if (m_cfg.validate) {
             for (auto& f : fresh) {
-                if (f.first->kind != Kind::Script && f.first->kind != Kind::Dialogue && f.first->kind != Kind::Data) continue;
+                if (f.first->kind != Kind::Script && f.first->kind != Kind::Dialogue && f.first->kind != Kind::Data && f.first->kind != Kind::Config) continue;
                 const std::string bad = m_cfg.validate(*f.first, f.second.string());
                 if (!bad.empty()) {
                     std::error_code e4;
@@ -390,6 +476,112 @@ public:
         for (const Entry& e : want)   // belt and braces: every file of the version is really there with its size
             if (!detail::FileHasSizeAndHash(tmpTree / detail::P(e.path), e, false)) return Fail(r, Reason::Disk, "A file of the new version is missing: " + e.path);
 
+        if (m_cfg.stageOnly) return Stage(man, manText, sigText, manSha, r);
+        return CommitVersion(man, manText, sigText, manSha, haveCur, cur, floor, bytesTotal, r);
+    }
+
+    /// Make the version that an earlier stageOnly run left in staged.txt visible, with no network: the staged manifest's signature and
+    /// every file's size and SHA-256 are checked again (the files sat on disk), then the same commit as Run. A problem clears the staged
+    /// version (the next sync starts it again) and leaves the visible version as it was.
+    SyncResult ApplyStaged() {
+        SyncResult r;
+        std::uint64_t v = 0;
+        std::string game, sha;
+        if (!ReadStaged(m_sp, game, v, sha) || game != m_cfg.game) return Fail(r, Reason::NothingStaged, "No downloaded content update is waiting to be applied.");
+        std::string manText, sigText;
+        if (!detail::ReadAll(m_sp.StagedManifest(v), manText, m_cfg.limits.maxManifestBytes) || Sha256Hex(manText) != sha) {
+            ClearStaged(v);
+            return Fail(r, Reason::ManifestBad, "The waiting content update's list is missing or changed on disk. It will be downloaded again.");
+        }
+        detail::ReadAll(m_sp.StagedSig(v), sigText, okayupdate::kMaxSigBytes);
+        const SigVerdict sv = CheckSignature(m_cfg.trustedKeys, manText, sigText, m_cfg.allowUnsigned);
+        if (!sv.Accepts()) { ClearStaged(v); return Fail(r, Reason::SignatureBad, sv.message); }
+        Manifest man;
+        Commit cur;
+        bool haveCur = false;
+        std::uint64_t floor = 0;
+        if (!Accept(manText, man, cur, haveCur, floor, r)) { ClearStaged(v); return r; }
+        int skipped = 0;
+        std::uint64_t total = 0;
+        for (const Entry& e : SelectEntries(man, m_cfg, skipped)) {
+            if (!detail::FileHasSizeAndHash(m_sp.TmpTree(man.version) / detail::P(e.path), e, /*hash=*/true)) {
+                ClearStaged(v);
+                ++r.corruptRejected;
+                return Fail(r, Reason::FileCorrupt, "The waiting file '" + e.path + "' changed on disk. Nothing was applied; it will be downloaded again.");
+            }
+            total += e.size;
+        }
+        r.filesSkipped = skipped;
+        return CommitVersion(man, manText, sigText, sha, haveCur, cur, floor, total, r);
+    }
+
+    /// staged.txt: "okay-content-staged 1", "game <id>", "version <n>", "manifest-sha256 <hex>". False when missing or damaged.
+    static bool ReadStaged(const StorePaths& sp, std::string& game, std::uint64_t& version, std::string& sha) {
+        std::string text;
+        if (!detail::ReadAll(sp.StagedFile(), text, 4096)) return false;
+        const std::vector<std::string> l = detail::Split(text, '\n');
+        if (l.size() != 5 || !l[4].empty() || l[0] != "okay-content-staged 1") return false;
+        if (l[1].compare(0, 5, "game ") != 0 || l[2].compare(0, 8, "version ") != 0 || l[3].compare(0, 16, "manifest-sha256 ") != 0) return false;
+        game = l[1].substr(5);
+        sha = l[3].substr(16);
+        return detail::IdOk(game, 64) && detail::IsLowerHex(sha, 64) && detail::Digits(l[2].substr(8), version, 1ull << 53);
+    }
+
+private:
+    // The checks every manifest passes before anything is planned: parse, game id, app and game versions, rolled-back versions, floor.
+    bool Accept(const std::string& manText, Manifest& man, Commit& cur, bool& haveCur, std::uint64_t& floor, SyncResult& r) {
+        std::string why;
+        if (!Parse(manText, man, &why, m_cfg.limits)) { Fail(r, Reason::ManifestBad, "The content list is not valid: " + why); return false; }
+        if (man.game != m_cfg.game) { Fail(r, Reason::GameMismatch, "This content is for the game '" + man.game + "', not '" + m_cfg.game + "'."); return false; }
+        if (!man.minApp.empty() && (m_cfg.appVersion.empty() || okayver::CompareVersions(m_cfg.appVersion, man.minApp) < 0)) {
+            Fail(r, Reason::AppTooOld, "This content needs app version " + man.minApp + " or newer. Update the game first.");
+            return false;
+        }
+        if (!man.minGame.empty() && (m_cfg.gameVersion.empty() || okayver::CompareVersions(m_cfg.gameVersion, man.minGame) < 0)) {
+            Fail(r, Reason::GameTooOld, "This content needs game version " + man.minGame + " or newer. Update the game first.");
+            return false;
+        }
+        haveCur = ReadCommit(m_sp, cur) && cur.game == m_cfg.game;
+        floor = haveCur ? cur.floor : 0;
+        if (ReadRolledBack(m_sp).count(man.version)) {
+            Fail(r, Reason::RolledBack, "Content version " + std::to_string(man.version) + " was rolled back on this machine. Waiting for a newer version.");
+            return false;
+        }
+        if (!m_cfg.allowDowngrade && man.version < floor) {
+            Fail(r, Reason::Downgrade, "The server offered content version " + std::to_string(man.version) + ", older than the " + std::to_string(floor) +
+                                           " this game already has. Refused (possible replay of an old list).");
+            return false;
+        }
+        return true;
+    }
+
+    void ClearStaged(std::uint64_t v) {
+        std::error_code ec;
+        fs::remove(m_sp.StagedFile(), ec);
+        fs::remove(m_sp.StagedManifest(v), ec);
+        fs::remove(m_sp.StagedSig(v), ec);
+        fs::remove_all(m_sp.TmpTree(v), ec);
+    }
+
+    // Keep a fully verified version invisible: its tree stays in trees/<n>.tmp, its manifest beside the others, staged.txt written last.
+    SyncResult& Stage(const Manifest& man, const std::string& manText, const std::string& sigText, const std::string& manSha, SyncResult& r) {
+        std::error_code ec;
+        fs::remove(m_sp.StagedSig(man.version), ec);
+        if (!detail::WriteAtomic(m_sp.StagedManifest(man.version), manText) || (!sigText.empty() && !detail::WriteAtomic(m_sp.StagedSig(man.version), sigText)) ||
+            !detail::WriteAtomic(m_sp.StagedFile(), "okay-content-staged 1\ngame " + m_cfg.game + "\nversion " + std::to_string(man.version) + "\nmanifest-sha256 " + manSha + "\n"))
+            return Fail(r, Reason::Disk, "Could not save the downloaded content update.");
+        Commit cur;
+        r.version = (ReadCommit(m_sp, cur) && cur.game == m_cfg.game) ? cur.version : 0;
+        r.status = Status::Staged;
+        r.message = "Content version " + std::to_string(man.version) + " is downloaded and checked; it becomes visible when the game applies it.";
+        Log(r.message);
+        Report(Phase::Done, "", 0, 0, 0, 0);
+        return r;
+    }
+
+    SyncResult& CommitVersion(const Manifest& man, const std::string& manText, const std::string& sigText, const std::string& manSha, bool haveCur,
+                              const Commit& cur, std::uint64_t floor, std::uint64_t bytesTotal, SyncResult& r) {
+        const fs::path tmpTree = m_sp.TmpTree(man.version);
         // 5. commit ----------------------------------------------------------------------------------------------------------------
         Report(Phase::Committing, "", 0, 0, bytesTotal, bytesTotal);
         std::error_code e5;
@@ -420,7 +612,8 @@ public:
                 if (std::string(sub) == "trees") r.removed.push_back("old content version " + digits);
             }
         }
-        { std::error_code e8; fs::remove_all(m_sp.Staging(), e8); }
+        { std::error_code e8; fs::remove_all(m_sp.Staging(), e8); fs::remove(m_sp.StagedFile(), e8); fs::remove(m_sp.LaunchFile(), e8);
+          fs::remove(m_sp.StagedManifest(nc.version), e8); fs::remove(m_sp.StagedSig(nc.version), e8); }
 
         r.status = Status::Updated;
         r.version = nc.version;
@@ -430,7 +623,6 @@ public:
         return r;
     }
 
-private:
     SyncConfig m_cfg;
     Transport& m_t;
     StorePaths m_sp;
@@ -457,18 +649,10 @@ private:
         std::string lastErr;
         for (int attempt = 1; attempt <= m_cfg.retry.maxAttempts; ++attempt) {
             if (attempt > 1) { ++r.retries; Wait(attempt - 1); }
-            out.clear();
-            int status = 0;
-            bool tooBig = false;
-            GetHandlers h;
-            h.onHead = [&](const GetHead& hd) { status = hd.status; return hd.status == 200; };
-            h.onData = [&](const std::uint8_t* d, std::size_t n) {
-                if (out.size() + n > maxBytes) { tooBig = true; return false; }
-                out.append(reinterpret_cast<const char*>(d), n);
-                return true;
-            };
-            const GetResult g = m_t.Get(name, 0, maxBytes, h);
-            if (tooBig) { Fail(r, Reason::ManifestBad, std::string("The server's ") + name + " is larger than allowed."); return false; }
+            const WholeGet w = GetWhole(m_t, name, maxBytes, out);
+            const GetResult& g = w.result;
+            const int status = w.status;
+            if (w.tooBig) { Fail(r, Reason::ManifestBad, std::string("The server's ") + name + " is larger than allowed."); return false; }
             if (g.reached && status == 200) return true;
             if (g.aborted || g.reached) {
                 if (status == 404 && optional) { out.clear(); return true; }

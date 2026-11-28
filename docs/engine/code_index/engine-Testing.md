@@ -19,22 +19,22 @@ Back to the [code index](../code_index.md). 5 headers, 43 names.
 
 ## `engine/include/okay/Testing/Regression.hpp`
 
-- `GoldenUpdateRequested` function, line 34: True when OKAY_UPDATE_GOLDEN is set to anything but "" or "0".
-- `GoldenResult` struct, line 36
-- `TextGoldenOptions` struct, line 47
-- `CompareText` function, line 60: Compare two texts line by line under the options (no files involved).
-- `BinaryGoldenOptions` struct, line 68
-- `SceneHashOptions` struct, line 89
-- `SceneDigest` struct, line 103: A fingerprint of a scene: one line per object (path, active, layer, tag, rounded world
-- `DigestScene` function, line 112
-- `HashScene` function, line 113
-- `DiffDigests` function, line 118: The lines that were removed ("- ...") and added ("+ ...") between two digests, at most
-- `ImageCompareOptions` struct, line 125
-- `ImageCompareResult` struct, line 135
-- `CompareImages` function, line 147
-- `LoadImageFile` function, line 151: Read / write an image by file extension: ".ppm" is binary PPM (P6; ASCII P3 can be read),
-- `SaveImageFile` function, line 152
-- `SceneRenderOptions` struct, line 160
+- `GoldenUpdateRequested` function, line 35: True when OKAY_UPDATE_GOLDEN is set to anything but "" or "0".
+- `GoldenResult` struct, line 37
+- `TextGoldenOptions` struct, line 48
+- `CompareText` function, line 61: Compare two texts line by line under the options (no files involved).
+- `BinaryGoldenOptions` struct, line 69
+- `SceneHashOptions` struct, line 90
+- `SceneDigest` struct, line 104: A fingerprint of a scene: one line per object (path, active, layer, tag, rounded world
+- `DigestScene` function, line 113
+- `HashScene` function, line 114
+- `DiffDigests` function, line 119: The lines that were removed ("- ...") and added ("+ ...") between two digests, at most
+- `ImageCompareOptions` struct, line 126
+- `ImageCompareResult` struct, line 136
+- `CompareImages` function, line 148
+- `LoadImageFile` function, line 152: Read / write an image by file extension: ".ppm" is binary PPM (P6; ASCII P3 can be read),
+- `SaveImageFile` function, line 153
+- `SceneRenderOptions` struct, line 161
 
 ## `engine/include/okay/Testing/SceneValidator.hpp`
 

@@ -60,7 +60,7 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
         return std::string(type.pconst && type.pointers == 1 ? "PEB" : "PEA") + cxx_type(inner, structs);
     }
     if (type.base == 0) return "X";
-    if (type.base == 2) return type.is_bool ? "_N" : type.is_unsigned ? "E" : "D";
+    if (type.base == 2) return type.is_bool ? "_N" : type.is_unsigned ? "E" : type.signed_char ? "C" : "D";
     if (type.base == 4) return type.is_unsigned ? "G" : "F";
     if (type.base == 5) return "M";
     if (type.base == 6) return "N";
@@ -73,6 +73,7 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
     if (type.base == 1 && type.enum_id >= 0 && type.enum_id < static_cast<int>(enum_names().size()))
         return "W4" + enum_names()[static_cast<size_t>(type.enum_id)] + "@@";  // an enumeration of int
     if (type.wide) return type.is_unsigned ? "_K" : "_J";
+    if (type.long_word) return type.is_unsigned ? "K" : "J";  // long and unsigned long (Round 35)
     return type.is_unsigned ? "I" : "H";
 }
 

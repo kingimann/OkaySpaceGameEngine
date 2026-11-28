@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 77 headers, 1138 names.
+Back to the [code index](../code_index.md). 76 headers, 1101 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -731,51 +731,11 @@ Back to the [code index](../code_index.md). 77 headers, 1138 names.
 - `FeedHost` struct, line 204: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
 - `Feed` class, line 237: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
 
-## `shared/InspectorFieldsModel.hpp`
-
-- `InspRowKind` enum, line 31
-- `InspPick` enum, line 75: What a click on a row opens (a small button, an asset field): a list with a search field, or a grid of thumbnails. The chosen
-- `InspRow` struct, line 77
-- `InspFieldHooks` struct, line 167: What a version asks the host for, only while it needs it.
-- `InspFieldList` struct, line 187
-- `InspVisibleLen` function, line 346: The label part a row shows ("Mass##rb3" -> "Mass"): the length before "##".
-- `InspMaskPreview` function, line 355: A layer mask's text in its closed combo, as the Camera's Culling Mask shows it: "Everything", "Nothing", or the first two layer
-- `InspAnchorPicture` struct, line 377: The little picture of anchor 'a' in the box (x0, y0)-(x1, y1), as the editor's AnchorCombo draws it: a rectangle, and inside it a
-- `InspAnchorFill` function, line 378
-- `InspGradientAt` function, line 392: ---- gradients and curves (the Particle System's over-life editors) ----------------------------------------------------------------
-- `InspCurveAt` function, line 408: A curve's value at t: the keys before and after t blended, straight or eased (smoothstep), as okay::ParticleCurve::Evaluate.
-- `InspCurveTop` function, line 425: The top of a curve's plot: 1.15 x its largest key, at least 1 (ParticleCurveEditor).
-- `InspNearestStop` function, line 432: The stop or key nearest to x (gradient: within 7 pixels in x) or to (x, y) (curve: within 8 pixels), or -1.
-- `InspNearestKey` function, line 440
-- `InspAddStop` function, line 450: Add a stop (or key) at the end, when there is room: its index, or -1.
-- `InspAddKey` function, line 457
-- `InspRemoveAt` function, line 464: Remove stop / key i, the ones after it moving down.
-- `InspFitText` function, line 473: A combo's closed text cut to fit 'maxW' with "..." at its end (whole characters), as both versions draw it (stage 6: "Bool false" and
-
 ## `shared/InspectorPanelModel.hpp`
 
-- `InspectorHeaderModel` struct, line 34
-- `InspectorHeaderState` struct, line 53: What the header keeps between frames (the add-tag field, the rename of a tag or a layer from its list, and the answers the
-- `InspectorHeaderIntent` struct, line 65
-- `InspGlyph` enum, line 94: The small drawn mark after a component's enable box (editor/EditorWidgets.cpp CategoryGlyph): 0 dot, 1 square (rendering),
-- `CompHeaderModel` struct, line 96
-- `CompHeaderIntent` struct, line 113
-- `CompMenuHead` function, line 134: The part of the menu every component has (Move Up and Down, Expand and Collapse All); the host adds the values and prefab rows and
-- `CompMenuTail` function, line 143: The end of the menu: Remove Component, or the note that it is required.
-- `InspDrawGlyph` function, line 154: The family mark after the enable box, in an 'fh' square whose top-left is (x, y) (written from the editor's CompHeader: a tinted
-- `CompHeaderTitle` function, line 181: The component's name cut to 'room' pixels with an ellipsis (whole UTF-8 characters), as the bar shows it. 'measure(text)' is the
-- `TransformModel` struct, line 196
-- `TransformIntent` struct, line 209
-- `TransformUniformScale` function, line 226: Uniform scale: when one axis was dragged from 'before' to 'after', the other two follow by the same ratio. Writes 'after'.
-- `InspAxisFormat` function, line 239: The format a vector cell shows: in a narrow Inspector fewer decimals rather than a cut number (the value keeps full precision).
-- `InspCellWidths` function, line 256: Dear ImGui's split of one field width into 'n' cells 'spacing' apart (PushMultiItemsWidths): every cell but the last is the
-- `MeshShader` enum, line 270
-- `MeshRendererValues` struct, line 276
-- `MeshRendererModel` struct, line 292
-- `MeshRendererIntent` struct, line 301
-- `MeshStatsText` function, line 309: The stats line: "117 verts  •  192 tris  •  UVs" ("" when there are no vertices).
-- `ColorByte` function, line 322: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
-- `AddComponentWidth` function, line 331: The button's width: 260 pixels, centred, on a panel wider than 300; otherwise the whole width.
+- `CompHeaderTitle` function, line 23: The component's name cut to 'room' pixels with an ellipsis (whole UTF-8 characters), as the bar shows it. 'measure(text)' is the
+- `InspFitText` function, line 39: A combo's closed text cut to fit 'maxW' with "..." at its end (whole characters), as the editor's combos draw it ("Bool false" and
+- `ColorByte` function, line 52: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
 
 ## `shared/JoinPlan.hpp`
 

@@ -338,6 +338,7 @@ private:
         if (preview_) return preview_;
         GameObject* p = s.CreateGameObject("BuildPreview");
         if (!p) return nullptr;
+        p->transient = true;   // the ghost is runtime-only: never saved, so a load does not leave one behind (#888 F54)
         p->tag = "BuildPreview";   // NOT buildTag → never removable or saved with a model
         auto* mr = p->AddComponent<MeshRenderer>();
         mr->mesh = MeshFor(previewBrush_);

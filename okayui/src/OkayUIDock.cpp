@@ -28,7 +28,7 @@ std::string Display(const std::string& name) {
     return p == std::string::npos ? name : name.substr(0, p);
 }
 
-struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; float ideal = 0.0f; };
+struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; float ideal = 0.0f; float shownX = 0.0f; };   // shownX: where it is drawn (DockTabInfo::shown)
 
 struct Ctx {
     DockLayout layout;
@@ -40,7 +40,12 @@ struct Ctx {
     std::vector<Rect> floatPrev, floatCur;
     std::vector<std::string> closed;
 
-    enum Kind { None, Splitter, TabPress, WinDrag } kind = None;
+    // TabPress: a tab is held (a move inside its strip reorders); TabDrag: a docked tab pulled out of its strip, still docked where it was
+    // until the button comes up (a drop docks it, a release away from every target floats it, Escape or the right button cancels);
+    // WinDrag: a floating window dragged by its title; Cancelled: waiting for the left button to come up after a cancel.
+    enum Kind { None, Splitter, TabPress, TabDrag, WinDrag, Cancelled } kind = None;
+    Vec2 dragSize{0, 0};          // the size a dragged tab's window would float at
+    float tabW = 0.0f;            // the dragged tab's width (its ghost under the pointer)
     int splitNode = 0;
     float grabOff = 0.0f;
     std::string dragWin;
@@ -56,6 +61,9 @@ struct Ctx {
     // Dear ImGui's rule: a docked window that is not submitted (its Begin not called) has no tab that frame. The frame each window last
     // called DockBegin; a window seen this frame or the one before is "submitted".
     std::map<std::string, long long> seen;
+    // Where each tab was drawn last frame (its leaf and x): a tab whose slot moved slides there over a few frames instead of jumping.
+    struct Slide { int node = 0; float x = 0.0f; long long frame = 0; };
+    std::map<std::string, Slide> slide;
     bool Submitted(const std::string& name) const {
         const auto it = seen.find(name);
         return it != seen.end() && it->second >= (long long)GetFrameCount() - 1;
@@ -92,6 +100,7 @@ void BuildTabs(Ctx& c) {
             const float cw = std::min(closeW, tw * 0.4f);
             t.close = Rect{x + tw - cw, t.r.y, cw, t.r.h};
             t.ideal = w[i];
+            t.shownX = x;
             c.tabs.push_back(t);
             x += tw;
         }
@@ -99,27 +108,63 @@ void BuildTabs(Ctx& c) {
 }
 void Rebuild(Ctx& c) { c.layout.Compute(c.area, c.tabH); BuildTabs(c); }
 
+// The guide tiles a drag shows: five over the leaf under the pointer (centre = join its tabs, the four sides = split it) and four at the
+// middle of the dock area's edges (dock along the whole edge). The tile under the pointer is the target; elsewhere the leaf's region
+// decides (its outer quarter on each side splits, the rest joins).
+float GuideTile(const Rect& r) { return std::max(14.0f, std::min(30.0f, std::min(r.w, r.h) / 5.0f)); }
+Rect LeafGuide(const Rect& r, DockSide side) {
+    const float s = GuideTile(r), g = s + 5.0f;
+    const float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
+    const float dx = side == DockSide_Left ? -g : side == DockSide_Right ? g : 0.0f, dy = side == DockSide_Top ? -g : side == DockSide_Bottom ? g : 0.0f;
+    return Rect{cx + dx - s * 0.5f, cy + dy - s * 0.5f, s, s};
+}
+Rect RootGuide(const Rect& a, DockSide side) {
+    const float s = std::max(14.0f, std::min(30.0f, std::min(a.w, a.h) / 8.0f)), m = 8.0f;
+    switch (side) {
+        case DockSide_Left:  return Rect{a.x + m, a.y + a.h * 0.5f - s * 0.5f, s, s};
+        case DockSide_Right: return Rect{a.x + a.w - m - s, a.y + a.h * 0.5f - s * 0.5f, s, s};
+        case DockSide_Top:   return Rect{a.x + a.w * 0.5f - s * 0.5f, a.y + m, s, s};
+        default:             return Rect{a.x + a.w * 0.5f - s * 0.5f, a.y + a.h - m - s, s, s};
+    }
+}
+Rect RootPreview(const Rect& a, DockSide s) {
+    const float fw = a.w * 0.25f, fh = a.h * 0.25f;
+    return s == DockSide_Left ? Rect{a.x, a.y, fw, a.h} : s == DockSide_Right ? Rect{a.x + a.w - fw, a.y, fw, a.h}
+         : s == DockSide_Top ? Rect{a.x, a.y, a.w, fh} : Rect{a.x, a.y + a.h - fh, a.w, fh};
+}
+Rect LeafPreview(Ctx& c, const DockLayout::Node* n, DockSide side) {
+    const Rect& r = n->rect;
+    const Rect cr = c.layout.ContentRect(n->id);
+    switch (side) {
+        case DockSide_Left:   return Rect{r.x, cr.y, r.w * 0.5f, cr.h};
+        case DockSide_Right:  return Rect{r.x + r.w * 0.5f, cr.y, r.w * 0.5f, cr.h};
+        case DockSide_Top:    return Rect{r.x, cr.y, r.w, cr.h * 0.5f};
+        case DockSide_Bottom: return Rect{r.x, cr.y + cr.h * 0.5f, r.w, cr.h * 0.5f};
+        default:              return r;
+    }
+}
+bool RootSplit(const Ctx& c) {
+    const DockLayout::Node* r = c.layout.Find(c.layout.Root());
+    return r && !(!r->IsSplit() && r->tabs.empty());
+}
+
 DockDropInfo EvalDrop(Ctx& c, Vec2 m) {
     DockDropInfo d;
     d.window = c.dragWin;
     const Rect& a = c.area;
     if (!In(a, m)) return d;
-    const float band = 10.0f;
     const int root = c.layout.Root();
-    const bool rootEmpty = c.layout.Find(root) && !c.layout.Find(root)->IsSplit() && c.layout.Find(root)->tabs.empty();
-    if (!rootEmpty) {
+    if (RootSplit(c)) {
         DockSide s = DockSide_Center;
-        if (m.x < a.x + band) s = DockSide_Left;
-        else if (m.x >= a.x + a.w - band) s = DockSide_Right;
-        else if (m.y < a.y + band) s = DockSide_Top;
-        else if (m.y >= a.y + a.h - band) s = DockSide_Bottom;
-        if (s != DockSide_Center) {
-            d.active = true; d.node = root; d.side = s; d.rootEdge = true;
-            const float fw = a.w * 0.25f, fh = a.h * 0.25f;
-            d.preview = s == DockSide_Left ? Rect{a.x, a.y, fw, a.h} : s == DockSide_Right ? Rect{a.x + a.w - fw, a.y, fw, a.h}
-                      : s == DockSide_Top ? Rect{a.x, a.y, a.w, fh} : Rect{a.x, a.y + a.h - fh, a.w, fh};
-            return d;
+        const float band = 10.0f;   // the guide tiles at the middle of each edge, and a thin band along the edge
+        for (DockSide e : {DockSide_Left, DockSide_Right, DockSide_Top, DockSide_Bottom}) if (In(RootGuide(a, e), m)) s = e;
+        if (s == DockSide_Center) {
+            if (m.x < a.x + band) s = DockSide_Left;
+            else if (m.x >= a.x + a.w - band) s = DockSide_Right;
+            else if (m.y < a.y + band) s = DockSide_Top;
+            else if (m.y >= a.y + a.h - band) s = DockSide_Bottom;
         }
+        if (s != DockSide_Center) { d.active = true; d.node = root; d.side = s; d.rootEdge = true; d.preview = RootPreview(a, s); return d; }
     }
     const int leaf = c.layout.LeafAt(m.x, m.y);
     if (!leaf) return d;
@@ -127,44 +172,90 @@ DockDropInfo EvalDrop(Ctx& c, Vec2 m) {
     const Rect& r = n->rect;
     d.active = true; d.node = leaf; d.side = DockSide_Center; d.preview = r;
     if (n->tabs.empty()) return d;
+    const Rect cr = c.layout.ContentRect(leaf);
+    for (DockSide e : {DockSide_Center, DockSide_Left, DockSide_Right, DockSide_Top, DockSide_Bottom})
+        if (In(LeafGuide(cr, e), m)) { d.side = e; d.preview = LeafPreview(c, n, e); return d; }
     const float th = n->noTabBar ? 0.0f : c.tabH;
     if (m.y < r.y + th) return d;                   // over the tab strip: join the tabs
     const float u = (m.x - r.x) / std::max(1.0f, r.w), v = (m.y - (r.y + th)) / std::max(1.0f, r.h - th);
     const float dl = u, dr = 1.0f - u, dt = v, db = 1.0f - v;
     const float best = std::min(std::min(dl, dr), std::min(dt, db));
     if (best >= 0.25f) return d;
-    const Rect cr = c.layout.ContentRect(leaf);
-    if (best == dl) { d.side = DockSide_Left;   d.preview = Rect{r.x, cr.y, r.w * 0.5f, cr.h}; }
-    else if (best == dr) { d.side = DockSide_Right;  d.preview = Rect{r.x + r.w * 0.5f, cr.y, r.w * 0.5f, cr.h}; }
-    else if (best == dt) { d.side = DockSide_Top;    d.preview = Rect{r.x, cr.y, r.w, cr.h * 0.5f}; }
-    else { d.side = DockSide_Bottom; d.preview = Rect{r.x, cr.y + cr.h * 0.5f, r.w, cr.h * 0.5f}; }
+    d.side = best == dl ? DockSide_Left : best == dr ? DockSide_Right : best == dt ? DockSide_Top : DockSide_Bottom;
+    d.preview = LeafPreview(c, n, d.side);
     return d;
+}
+
+// One guide tile: a rounded card with a small picture of the result (the pane it would fill, or a tab strip for the centre), lit in the
+// accent when it is the target.
+void GuideTileDraw(const DrawList& fg, const Rect& t, DockSide side, bool on) {
+    const Color32 acc = GetColorU32(Col_Accent), card = GetColorU32(Col_PopupBg), line = GetColorU32(Col_Border), ink = GetColorU32(Col_Text, 0.55f);
+    const float rd = std::min(6.0f, t.w * 0.22f);
+    fg.AddRectFilled(V(t.x + 1.0f, t.y + 2.0f), V(t.x + t.w + 1.0f, t.y + t.h + 2.0f), 0x40000000u, rd);   // a soft shadow
+    fg.AddRectFilled(V(t.x, t.y), V(t.x + t.w, t.y + t.h), on ? acc : card, rd);
+    fg.AddRect(V(t.x, t.y), V(t.x + t.w, t.y + t.h), on ? acc : line, rd, 1.0f);
+    const float p = std::max(3.0f, t.w * 0.18f);
+    const Rect in{t.x + p, t.y + p, t.w - 2.0f * p, t.h - 2.0f * p};
+    const Color32 fillC = on ? GetColorU32(Col_PopupBg) : acc, edge = on ? GetColorU32(Col_PopupBg) : ink;
+    fg.AddRect(V(in.x, in.y), V(in.x + in.w, in.y + in.h), edge, 2.0f, 1.0f);
+    Rect f = in;
+    switch (side) {
+        case DockSide_Left:   f.w *= 0.5f; break;
+        case DockSide_Right:  f.x += f.w * 0.5f; f.w *= 0.5f; break;
+        case DockSide_Top:    f.h *= 0.5f; break;
+        case DockSide_Bottom: f.y += f.h * 0.5f; f.h *= 0.5f; break;
+        default:              f.h = std::max(2.0f, in.h * 0.3f); break;   // the centre: a tab strip on top
+    }
+    fg.AddRectFilled(V(f.x, f.y), V(f.x + f.w, f.y + f.h), fillC, 1.5f);
 }
 
 void DrawGuides(Ctx& c, const DockDropInfo& d) {
     const DrawList& fg = GetForegroundDrawList();
-    const Color32 acc = GetColorU32(Col_Accent), accSoft = GetColorU32(Col_DockingPreview), border = GetColorU32(Col_Border), panel = GetColorU32(Col_Panel);
-    fg.AddRectFilled(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), accSoft);
-    fg.AddRect(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), acc, 0.0f, 2.0f);
-    // the five guide boxes over the leaf under the pointer
-    const DockLayout::Node* n = d.node ? c.layout.Find(d.node) : nullptr;
-    if (d.rootEdge || !n || n->IsSplit() || n->id == 0) return;
-    const Rect r = c.layout.ContentRect(n->id);
-    const float s = std::max(8.0f, std::min(26.0f, std::min(r.w, r.h) / 6.0f)), g = s + 6.0f;
-    const Vec2 ctr = V(r.x + r.w * 0.5f, r.y + r.h * 0.5f);
-    struct G { DockSide side; float dx, dy; } gs[5] = {{DockSide_Center, 0, 0}, {DockSide_Left, -g, 0}, {DockSide_Right, g, 0}, {DockSide_Top, 0, -g}, {DockSide_Bottom, 0, g}};
-    for (const G& q : gs) {
-        const bool on = q.side == d.side && d.node == n->id;
-        const Vec2 a = V(ctr.x + q.dx - s * 0.5f, ctr.y + q.dy - s * 0.5f), b = V(a.x + s, a.y + s);
-        fg.AddRectFilled(a, b, on ? acc : panel);
-        fg.AddRect(a, b, border);
-        if (q.side != DockSide_Center) {   // a half-filled box tells which side
-            const Vec2 h0 = q.side == DockSide_Right ? V(a.x + s * 0.5f, a.y) : a;
-            const Vec2 h1 = q.side == DockSide_Left ? V(a.x + s * 0.5f, b.y) : (q.side == DockSide_Top ? V(b.x, a.y + s * 0.5f) : b);
-            const Vec2 h2 = q.side == DockSide_Bottom ? V(a.x, a.y + s * 0.5f) : h0;
-            fg.AddRectFilled(h2, h1, on ? panel : acc);
-        }
+    const Color32 acc = GetColorU32(Col_Accent);
+    const float rr = std::min(8.0f, std::max(2.0f, Style().radiusSmall));
+    if (d.floats) {   // no target: the window would float here (a lighter, outlined rectangle under the pointer)
+        const Rect& f = d.preview;
+        fg.AddRectFilled(V(f.x, f.y), V(f.x + f.w, f.y + f.h), ColorMulAlpha(acc, 0.10f), rr);
+        fg.AddRect(V(f.x, f.y), V(f.x + f.w, f.y + f.h), ColorMulAlpha(acc, 0.85f), rr, 1.5f);
+    } else {          // the exact area the window will fill, inset a little so the panes around it stay readable
+        const Rect& p = d.preview;
+        fg.AddRectFilled(V(p.x + 3.0f, p.y + 3.0f), V(p.x + p.w - 3.0f, p.y + p.h - 3.0f), GetColorU32(Col_DockingPreview), rr);   // the accent at 30% unless a program set it
+        fg.AddRect(V(p.x + 3.0f, p.y + 3.0f), V(p.x + p.w - 3.0f, p.y + p.h - 3.0f), acc, rr, 2.0f);
     }
+    // the guide tiles: at the dock area's edges, and over the leaf under the pointer
+    const Vec2 m = GetMousePos();
+    if (!In(c.area, m)) return;
+    if (RootSplit(c))
+        for (DockSide e : {DockSide_Left, DockSide_Right, DockSide_Top, DockSide_Bottom})
+            GuideTileDraw(fg, RootGuide(c.area, e), e, d.active && d.rootEdge && d.side == e);
+    const int leaf = c.layout.LeafAt(m.x, m.y);
+    const DockLayout::Node* n = leaf ? c.layout.Find(leaf) : nullptr;
+    if (!n || n->IsSplit() || n->tabs.empty()) return;
+    if (!d.active && !d.floats) return;
+    const Rect cr = c.layout.ContentRect(n->id);
+    const bool ownOnly = c.layout.NodeOf(c.dragWin) == n->id && n->tabs.size() <= 1;   // its own leaf with no other tab: nothing to show
+    if (ownOnly) return;
+    {   // a card behind the cross of five tiles
+        const Rect l = LeafGuide(cr, DockSide_Left), r = LeafGuide(cr, DockSide_Right), t = LeafGuide(cr, DockSide_Top), b = LeafGuide(cr, DockSide_Bottom);
+        const float pad = 5.0f;
+        fg.AddRectFilled(V(l.x - pad, t.y - pad), V(r.x + r.w + pad, b.y + b.h + pad), ColorMulAlpha(GetColorU32(Col_PopupBg), 0.72f), 10.0f);
+    }
+    for (DockSide e : {DockSide_Center, DockSide_Left, DockSide_Right, DockSide_Top, DockSide_Bottom})
+        GuideTileDraw(fg, LeafGuide(cr, e), e, d.active && !d.rootEdge && d.node == n->id && d.side == e);
+}
+
+// The dragged tab, under the pointer: a raised chip with its name, so it is clear what is being moved.
+void DrawTabGhost(Ctx& c, Vec2 m) {
+    const DrawList& fg = GetForegroundDrawList();
+    const std::string label = Display(c.dragWin);
+    const Vec2 ts = CalcTextSize(label.c_str());
+    const float w = std::max(c.tabW, ts.x + 2.0f * TabTextInset()), h = c.tabH;
+    const float x = m.x - std::min(c.grab.x, w - 8.0f), y = m.y - std::min(c.grab.y, h - 4.0f);
+    const float rd = std::min(6.0f, h * 0.3f);
+    fg.AddRectFilled(V(x + 2.0f, y + 3.0f), V(x + w + 2.0f, y + h + 3.0f), 0x50000000u, rd);
+    fg.AddRectFilled(V(x, y), V(x + w, y + h), ColorMulAlpha(GetColorU32(Col_PopupBg), 0.94f), rd);
+    fg.AddRect(V(x, y), V(x + w, y + h), GetColorU32(Col_Accent), rd, 1.5f);
+    fg.AddText(V(x + (w - ts.x) * 0.5f, y + (h - ts.y) * 0.5f), GetColorU32(Col_Text), label.c_str());
 }
 
 } // namespace
@@ -273,13 +364,38 @@ void DockSpace(Rect area) {
                     for (const TabRect& t : c.tabs) if (t.node == n->id && t.name != c.dragWin && t.r.x + t.r.w * 0.5f < m.x) ++idx;
                     c.layout.MoveTab(c.dragWin, idx);
                     Rebuild(c);
-                } else {
+                } else {   // pulled out of the strip: a drag that docks or floats on release; the window stays where it is until then
                     const Rect cr = c.layout.ContentRect(n->id);
-                    const Rect fr{m.x - c.grab.x, m.y - c.grab.y, std::max(220.0f, cr.w), std::max(160.0f, cr.h)};
-                    c.layout.Float(c.dragWin, fr);
-                    c.kind = Ctx::WinDrag; c.moving = true; c.fromTab = true;
+                    c.dragSize = V(std::max(220.0f, cr.w), std::max(160.0f, cr.h));
+                    c.tabW = 0.0f;
+                    for (const TabRect& t : c.tabs) if (t.name == c.dragWin) c.tabW = t.r.w;
+                    c.kind = Ctx::TabDrag; c.moving = true; c.fromTab = true;
+                }
+            }
+        }
+    }
+    const bool cancelKey = in.escape || IsKeyPressed(KeyId_Escape, false) || IsMouseClicked(1);
+    if ((c.kind == Ctx::TabDrag || (c.kind == Ctx::WinDrag && c.moving)) && cancelKey) c.kind = Ctx::Cancelled;   // Escape / right button: nothing changes
+    if (c.kind == Ctx::Cancelled && !down) c.kind = Ctx::None;
+    if (c.kind == Ctx::TabDrag) {
+        const DockLayout::Node* own = c.layout.Find(c.layout.NodeOf(c.dragWin));
+        if (!own || !c.layout.Contains(c.dragWin)) c.kind = Ctx::None;
+        else if (down && In(Rect{own->rect.x, own->rect.y - 4.0f, own->rect.w, c.tabH + 8.0f}, m)) c.kind = Ctx::TabPress;   // back over its strip: reorder again
+        else {
+            DockDropInfo d = underFloat ? DockDropInfo() : EvalDrop(c, m);
+            // its own leaf, when it is that leaf's only tab, is no target (docking there changes nothing)
+            if (d.active && !d.rootEdge && d.node == own->id && own->tabs.size() <= 1) d = DockDropInfo();
+            if (!down) {
+                if (released) {
+                    if (d.active) { if (d.rootEdge) c.layout.DockRoot(c.dragWin, d.side); else c.layout.Dock(c.dragWin, d.node, d.side); }
+                    else if (!(In(own->rect, m) && own->tabs.size() <= 1)) c.layout.Float(c.dragWin, Rect{m.x - c.grab.x, m.y - c.grab.y, c.dragSize.x, c.dragSize.y});
                     Rebuild(c);
                 }
+                c.kind = Ctx::None;
+            } else {
+                c.drop = d;
+                if (!d.active && !(In(own->rect, m) && own->tabs.size() <= 1)) { c.drop.floats = true; c.drop.preview = Rect{m.x - c.grab.x, m.y - c.grab.y, c.dragSize.x, c.dragSize.y}; }
+                c.drop.window = c.dragWin; c.drop.fromTab = true;
             }
         }
     }
@@ -304,7 +420,7 @@ void DockSpace(Rect area) {
     // ---- draw ----
     const DrawList& dl = GetWindowDrawList();
     const Color32 panel = GetColorU32(Col_Panel), track = GetColorU32(Col_Track), emptyBg = GetColorU32(Col_DockingEmptyBg), border = GetColorU32(Col_Border), acc = GetColorU32(Col_Accent);
-    const Color32 dim = GetColorU32(Col_Text, 0.55f), txt = GetColorU32(Col_Text);
+    const Color32 dim = GetColorU32(Col_Text, 0.62f), txt = GetColorU32(Col_Text);
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit()) continue;
         const Rect& r = n.rect;
@@ -317,7 +433,35 @@ void DockSpace(Rect area) {
             dl.AddText(V(r.x + (r.w - ts.x) * 0.5f, r.y + (r.h - ts.y) * 0.5f), dim, hint);
         }
     }
-    for (const TabRect& t : c.tabs) {
+    {   // where each tab is drawn: a tab held and moved along its strip follows the pointer (where it was grabbed, kept inside the strip);
+        // the others ease from where they were drawn last frame to their slots (about 90% of the way in 0.13 s), so a tab that makes room
+        // slides aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
+        const float dt = std::isfinite(ui_core::g_io.deltaTime) ? std::clamp(ui_core::g_io.deltaTime, 0.0f, 0.1f) : 0.0f;
+        const float k = 1.0f - std::exp(-dt * 18.0f);
+        const bool held = c.kind == Ctx::TabPress && c.moving;
+        std::map<std::string, Ctx::Slide> next;
+        for (TabRect& t : c.tabs) {
+            float x = t.r.x;
+            const DockLayout::Node* n = c.layout.Find(t.node);
+            if (held && t.name == c.dragWin && n) {
+                x = std::max(n->rect.x, std::min(m.x - c.grab.x, n->rect.x + n->rect.w - t.r.w));
+            } else {
+                const auto it = c.slide.find(t.name);
+                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1 && std::isfinite(it->second.x)) {
+                    x = it->second.x + (t.r.x - it->second.x) * k;
+                    if (std::fabs(x - t.r.x) < 0.5f) x = t.r.x;
+                }
+            }
+            t.shownX = x;
+            next[t.name] = Ctx::Slide{t.node, x, frame};
+        }
+        c.slide.swap(next);
+    }
+    const std::string heldTab = c.kind == Ctx::TabPress && c.moving ? c.dragWin : std::string();
+    for (int pass = 0; pass < 2; ++pass) for (const TabRect& tl : c.tabs) {
+        if ((tl.name == heldTab) != (pass == 1)) continue;   // the held tab is drawn last, over the ones sliding under it
+        TabRect t = tl;
+        { const float dx = t.shownX - t.r.x; t.r.x += dx; t.close.x += dx; }
         const DockLayout::Node* n = c.layout.Find(t.node);
         int cur = n ? n->active : 0;
         const bool occluded = underFloat && In(t.r, m);
@@ -325,15 +469,18 @@ void DockSpace(Rect area) {
         const std::string label = Display(t.name);
         Tab((int)(HashName(t.name) | 0x20000000u), t.r.x, t.r.y, t.r.w, t.r.h, "", &cur, t.index);   // the tab body; the label is ours, so it clears the close box
         if (occluded) EndDisabled();
-        {   // the label, clipped to the tab minus its close box
+        const bool chosen = n && n->active == t.index, overTab = !underFloat && c.kind == Ctx::None && In(t.r, m);
+        const bool dragged = c.kind == Ctx::TabDrag && c.dragWin == t.name;
+        {   // the label, clipped to the tab minus its close box: the chosen tab and the one under the pointer in the text colour, the others dimmer
             const Vec2 ts = CalcTextSize(label.c_str());
             PushClipRect(t.r.x, t.r.y, std::max(1.0f, t.r.w - t.close.w), t.r.h);
-            dl.AddText(V(t.r.x + TabTextInset(), t.r.y + (t.r.h - ts.y) * 0.5f), txt, label.c_str());
+            dl.AddText(V(t.r.x + TabTextInset(), t.r.y + (t.r.h - ts.y) * 0.5f), (chosen || overTab) && !dragged ? txt : dim, label.c_str());
             PopClipRect();
         }
-        if (n && cur != n->active && c.kind != Ctx::WinDrag) c.layout.SetActive(n->tabs[(size_t)cur]);
+        if (dragged) dl.AddRectFilled(V(t.r.x, t.r.y), V(t.r.x + t.r.w, t.r.y + t.r.h), ColorMulAlpha(track, 0.55f));   // its place while it is dragged away
+        if (n && cur != n->active && c.kind != Ctx::WinDrag && c.kind != Ctx::TabDrag) c.layout.SetActive(n->tabs[(size_t)cur]);
         const bool hotClose = !underFloat && In(t.close, m);
-        {   // the close cross: two strokes, on a soft round chip under the pointer (the design's tab close)
+        if (chosen || overTab || hotClose) {   // the close cross: on the chosen tab and the one under the pointer, a soft round chip under the pointer
             const float cx = t.close.x + t.close.w * 0.5f, cy = t.close.y + t.close.h * 0.5f, k = 3.5f;
             if (hotClose) dl.AddCircleFilled(V(cx, cy), std::min(8.0f, t.close.h * 0.4f), ColorMulAlpha(txt, 0.14f), 20);
             dl.AddLine(V(cx - k, cy - k), V(cx + k, cy + k), hotClose ? txt : dim, 1.6f);
@@ -350,8 +497,10 @@ void DockSpace(Rect area) {
         dl.AddRectFilled(V(s.x, s.y), V(s.x + s.w, s.y + s.h), over ? acc : border);
         if (over) SetMouseCursor(n.horizontal ? MouseCursor_ResizeEW : MouseCursor_ResizeNS);
     }
-    if (c.drop.active) DrawGuides(c, c.drop);
+    if (c.drop.active || c.drop.floats) DrawGuides(c, c.drop);
+    if (c.kind == Ctx::TabDrag) DrawTabGhost(c, m);
 }
+bool DockDragging() { const Ctx& c = C(); return c.kind == Ctx::TabDrag || (c.kind == Ctx::WinDrag && c.moving); }
 
 bool DockBegin(const char* title, bool* p_open, int flags) {
     Ctx& c = C();
@@ -418,7 +567,7 @@ std::vector<DockTabInfo> GetDockTabs() {
     std::vector<DockTabInfo> out;
     for (const TabRect& t : c.tabs) {
         const DockLayout::Node* n = c.layout.Find(t.node);
-        DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal;
+        DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal; i.shown = t.r; i.shown.x = t.shownX;
         i.selected = n && n->active == t.index;
         out.push_back(i);
     }

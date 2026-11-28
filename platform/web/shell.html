@@ -126,8 +126,8 @@
     canvas.focus();
   });
 
-  if (!document.createElement('canvas').getContext('webgl'))
-    showError('This browser or graphics card cannot show the game: WebGL is turned off or not supported. Try another browser, or turn on hardware acceleration in its settings.');
+  if (!document.createElement('canvas').getContext('webgl2'))   // the player draws with WebGL 2 (engine/src/Platform/WebBackend.cpp)
+    showError('This browser or graphics card cannot show the game: WebGL 2 is turned off or not supported. Try another browser, or turn on hardware acceleration in its settings.');
 })();
 </script>
 {{{ SCRIPT }}}

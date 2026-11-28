@@ -797,9 +797,11 @@ int main() {
             const fs::path busyDir = okayver::VersionsDir(launcher) / ".partial-2.9.9-2";
             Put(busyDir / "Tools" / "OkayEngine.exe.part", "being copied");
             CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 0 && fs::exists(busyDir));
-            const auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
-            for (const fs::path& p : {busyDir / "Tools" / "OkayEngine.exe.part", busyDir / "Tools", busyDir}) fs::last_write_time(p, old);
-            CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 1 && !fs::exists(busyDir) && Complete(launcher, "2.850.1"));
+            // An hour later (the clock moves, not the files: Windows cannot set a folder's time, and fs::last_write_time on
+            // one threw there and stopped this test).
+            const auto later = fs::file_time_type::clock::now() + std::chrono::hours(1);
+            CHECK(CleanStale(launcher, std::chrono::minutes(15), later - std::chrono::hours(1)) == 0 && fs::exists(busyDir));
+            CHECK(CleanStale(launcher, std::chrono::minutes(15), later) == 1 && !fs::exists(busyDir) && Complete(launcher, "2.850.1"));
         }
         // Paths with spaces and unicode all the way (the launcher folder has both).
         CHECK(launcher.string().find(' ') != std::string::npos && launcher.string().find("\xC3\xA4") != std::string::npos);

@@ -28,8 +28,8 @@ const char* const kShared[] = {
     "g_verts", "g_idx", "g_ovVerts", "g_ovIdx", "g_nv", "g_ni", "g_onv", "g_oni", "g_spans", "g_nspans", "g_ovSpans", "g_novSpans", "g_cmds",
     "g_dropped", "reorderWindows()::tmp", "reorderWindows()::nsp", "g_windowList", "g_foregroundList", "g_dockHostList",
     "g_hostListDepth",   // the dock host list: nesting of one drawing call, 0 between calls
-    // fonts: the atlas, its SDL texture cache, the fallback fonts, the loaded font list (a font pointer works in any context)
-    "g_atlasTex", "g_atlasR", "g_fbFonts", "g_nfb", "kAtlasTex", "kFontBold", "kFontDefault", "g_atlas", "g_built", "Build()::bytes",
+    // fonts: the atlas, the fallback fonts, the loaded font list (a font pointer works in any context)
+    "g_fbFonts", "g_nfb", "kAtlasTex", "kFontBold", "kFontDefault", "g_atlas", "g_built", "Build()::bytes",
     "g_atlasRef", "g_fontPool", "g_nFontPool", "g_fontReqs", "g_nFontReqs", "g_userFonts", "g_nUserFonts", "g_b85", "g_nB85", "g_ttfs",
     "g_nTtfs", "AddFontTtfFile(char const*, float)::keep", "g_boxes",
     // one clipboard for the program; the platform callbacks are the program's

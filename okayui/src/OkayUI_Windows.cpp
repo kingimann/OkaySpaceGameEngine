@@ -37,7 +37,7 @@ void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resize
 // SetNextWindowBgAlpha: scale the alpha of the body geometry a window just drew (vertices from `from` on); the title bar and the content are drawn after and are not touched.
 static void scaleBodyAlpha(int from, float a) {
     if (!(a >= 0.0f) || a >= 1.0f || g_toOverlay) return;
-    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (Uint8)(g_verts[i].color.a * a + 0.5f);
+    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (unsigned char)(g_verts[i].color.a * a + 0.5f);
 }
 
 namespace {
@@ -195,6 +195,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount)};   // appearing: never drawn, or not on the frame before
     g_curWin.z = slot ? slot->z : 0;
+    g_curWin.noNav = (wf & (Window_NoNav | Window_NoNavInputs)) != 0;   // a canvas that keeps Tab and the arrows for itself (the Scene view)
     if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
     if (slot) { slot->lastFrame = g_frameCount; if (title) std::snprintf(slot->title, sizeof slot->title, "%s", title); }
     if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
@@ -548,6 +549,8 @@ WindowInfo FindWindowByID(unsigned id) {
         std::snprintf(wi.Name, sizeof wi.Name, "%s", ws.title); wi.Pos = wi.pos; wi.Size = wi.size; wi.ID = (unsigned)ws.id;
         break;
     }
+    if (!wi.found)   // a docked tab never drawn yet: the window table knows it from the dock layout (FindWindowByName does the same)
+        if (const WindowRef* r = FindWindowRefByID(id); r && r->Name[0] && IsWindowDocked(r->Name)) { wi = FindWindowByName(r->Name); wi.ID = id; }
     return wi;
 }
 bool AnyWindowFocused() { return g_focusWin != 0; }
@@ -582,8 +585,16 @@ bool BeginChild(const char* id, float w, float h, bool border) {
 // the content one frame behind (a positive size.y is the smallest height), the other flags are accepted. The Dear ImGui-faithful form below
 // is used while StyleVar_FramedWidgets is pushed.
 static bool beginChildFlagsImGui(const char* id, Vec2 size, int flags);
-bool BeginChild(const char* id, Vec2 size, int childFlags, int /*windowFlags*/) {
-    if (g_framedWidgets) return beginChildFlagsImGui(id, size, childFlags);
+static bool beginChildFlags(const char* id, Vec2 size, int childFlags);
+bool BeginChild(const char* id, Vec2 size, int childFlags, int windowFlags) {
+    const int depth = g_childTop;
+    const bool shown = g_framedWidgets ? beginChildFlagsImGui(id, size, childFlags) : beginChildFlags(id, size, childFlags);
+    // Window_NoNav / Window_NoNavInputs on a child: its controls are left out of the Tab order (the Project panel's tree and tiles keep
+    // the arrow keys for themselves)
+    if (g_childTop == depth + 1 && depth < 8) g_nav.childOff[depth] = (windowFlags & (Window_NoNav | Window_NoNavInputs)) != 0;
+    return shown;
+}
+static bool beginChildFlags(const char* id, Vec2 size, int childFlags) {
     if (!id || !g_lay.active) return false;
     float h = std::isfinite(size.y) ? size.y : 0.0f;
     float w = std::isfinite(size.x) ? size.x : 0.0f;

@@ -62,10 +62,12 @@ public:
     int SlotsUsed() const { int n = 0; for (const auto& s : slots) if (!Empty(s)) ++n; return n; }
     bool IsFull() const { return SlotsUsed() >= capacity; }
 
+    /// How many of `item` are held, across stacks (an item may span several once maxStack splits it). Summed in 64
+    /// bits and held at INT_MAX: two full stacks used to overflow the int and read negative (#888 F8).
     int Count(const std::string& item) const {
-        int total = 0;   // sum across stacks (an item may span several once maxStack splits it)
-        for (const auto& s : slots) if (!Empty(s) && s.item == item) total += s.count;
-        return total;
+        long long total = 0;
+        for (const auto& s : slots) if (!Empty(s) && s.item == item && s.count > 0) total += s.count;
+        return total > 2147483647LL ? 2147483647 : (int)total;
     }
     bool Has(const std::string& item, int n = 1) const { return Count(item) >= n; }
 

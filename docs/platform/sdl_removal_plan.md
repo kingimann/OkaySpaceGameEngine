@@ -1,21 +1,99 @@
-# Getting the editor and launcher off SDL2: the plan
+# Getting the programs off SDL2: the plan and where it ended
 
-> **What this is:** Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the owner's written approval.
+> **What this is:** The ordered plan for replacing SDL2 with `okay::platform`, and (top section) the state after the deletion.
 >
-> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+> **Status:** Internal record. The two 2026-11-27 sections are current; everything below them is the plan as it was written and
+> is kept as history (Dear ImGui, which steps 4 and 5 talk about, was deleted the same day, #1375).
 >
-> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-27 (`claude/web-backend-1`).
 
-Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the
-owner's written approval. Never delete SDL2 before our own version is finished and has run on real Windows.
-This page is the ordered list of work, with a plain-words size for each step and what to test on real Windows.
-The numbers come from `docs/sdl_inventory.md` (commit `05feef3b`, regenerate it with `python3 scripts/sdl_inventory.py`).
-Design and audit history of the seam: `docs/platform/platform_layer.md`. Roadmap row: `docs/status/own_code_roadmap.md` (SDL2).
+## 2026-11-27: SDL2 left the web player too (`claude/web-backend-1`): no program uses SDL2
 
-All sizes are **judgement, not measurements**. "Small" = an afternoon of agent work. "Medium" = a day or two. "Large" = several days.
-"Very large" = weeks, or an unknown. Waiting for CI is not counted.
+The last SDL2 was the web player's: `SdlBackend.cpp` and `SdlPainter.cpp` over Emscripten's SDL2 port (`-sUSE_SDL=2`). Our own
+web backend replaced them (`engine/src/Platform/WebBackend.cpp`, decisions in `WebInput.hpp`), and the web player draws with the
+OpenGL painter on WebGL 2 (`GLPainter.cpp` now also runs on OpenGL ES 3.0: GLSL ES 3.00 shaders, no `GL_FRAMEBUFFER_SRGB`).
 
-## Where we are
+**Deleted.** `SdlBackend.cpp`, `SdlPainter.cpp`, `BackendKind::Sdl2`, `PainterKind::Sdl2`, `CreateSdl2Painter`,
+`CreateSdl2Backend`, `Painter::NativeRenderer` (it only ever returned the `SDL_Renderer*`), `OKAY_PLATFORM_HAVE_SDL2`,
+`OKAY_PLATFORM_SDL_OPTIONS`, `-sUSE_SDL=2` (player and platform CMake), the SDL2 item and licence text of
+`dist/THIRD_PARTY_NOTICES.txt` (now empty, like Dear ImGui's), `libsdl2-2.0-0` in Build Game's server Dockerfile, the sdl2 halves of
+`platform`, `platform_events`, `platform_displays` and `test_hooks`. The `sdl_ratchet` test now also fails on any SDL header
+include, CMake search for SDL2 or Emscripten SDL2 port option anywhere outside docs (`scripts/sdl_inventory.py`, `GONE_PATTERN`).
+
+**Changed.** `ParseBackendName("sdl2")` is false and `DefaultKind()` is always `Own` (the `OKAY_PLATFORM_BACKEND` /
+`OKAY_OWN_PLATFORM` variables have nothing left to choose). The web player links with `-sMAX_WEBGL_VERSION=2`; the page's
+WebGL check (`shell.html`) asks for WebGL 2.
+
+**How the web backend works.** Our own code over Emscripten's documented C API (called, not copied) and the browser specifications. One window: the page's
+canvas (`#canvas`, `platform/web/shell.html`). What each part uses:
+
+| Part | How |
+|---|---|
+| Events | `html5.h` callbacks: keys on the window (`code` -> our HID numbers), mouse down / wheel / touch on the canvas, mouse up and move on the window (a drag that leaves the canvas still ends), focus / blur (held keys are let go on blur). Queued for `PollEvent` |
+| Browser manners | a keydown that types text is let through so its keypress (the text) comes, and the keypress is stopped (Space does not scroll); other keys are stopped, except Ctrl / Command + C, V, X (copy, paste, cut events) and F12. Wheel and touch are stopped |
+| Canvas size | every poll: CSS size x `devicePixelRatio` (high-DPI windows) becomes the drawing buffer; a CSS change is `WindowResized`. A canvas the page gives no size gets the window's size as its CSS size |
+| GL | a WebGL 2 context (`emscripten_webgl_create_context`, `-sMAX_WEBGL_VERSION=2`); the OpenGL painter (`GLPainter.cpp`) draws on it with GLSL ES 3.00 shaders. Swap is the browser's (the frame callback returning) |
+| Gamepads | the Gamepad API read once a frame (`emscripten_sample_gamepad_data`); `standard` mapping = the built-in layout, others raw axes and buttons; arrivals and departures are `GamepadAdded` / `GamepadRemoved`; rumble through `vibrationActuator` |
+| Audio | Web Audio: an `AudioContext` and a `ScriptProcessorNode` that pulls interleaved floats from our queue (`AudioPump.hpp`'s `ByteRing`). Playback only; no recording |
+| Clipboard | our own copy of the text, filled by the page's paste events, written with `navigator.clipboard.writeText` and given to the page's copy events |
+| Other | pointer lock for relative mouse, Fullscreen API on the canvas's parent (the shell's stage), CSS cursors, `navigator.languages`, one "display" (the screen), `BasePath` = `/`, `DelayMs` does nothing (the page's one thread must not wait) |
+
+The decisions that need no browser are in `engine/src/Platform/WebInput.hpp` and tested on Linux (ctest `platform_web_pure`).
+**Not run here:** emcc is not installed on the machine this was written on, so the backend was only syntax-checked against a
+stand-in of the API's declarations. Its first build and run are CI's web job (`scripts/build-web.sh`, then
+`tests/scripts/test_web_player.js` in headless Chromium: first frame, Space, right-click, gamepad, saves, no scrolling, high-DPI).
+Not done: a text field on a phone opens no on-screen keyboard; files dropped on the page are not read; no WebGL 1 fallback.
+
+**Left, not SDL.** `.github/workflows/integration.yml` and `README.md` still install `libsdl2-dev` on Linux; nothing links it, but
+it pulls in the X11 and GL headers the Linux backend compiles against, so it should become `libx11-dev libgl-dev` after a check.
+`tools/okaybuild` (our own build tool, outside CMake and CI) still names `OKAY_PLATFORM_HAVE_SDL2` and `/usr/include/SDL2` in the
+engine build file it writes and in its tests.
+
+## 2026-11-27: SDL2 left the desktop programs (`claude/no-sdl2-2`)
+
+Owner, 2026-11-27: "main goal to remove other third parties that includes the compilers". Rule 17: ours is THE path, no switch.
+
+**What each program uses now.**
+
+| Program | Window, events, input, GL, clipboard, audio, pads | 2D drawing | SDL left |
+|---|---|---|---|
+| Launcher (`OkaySpace.exe`) | own backend (X11 / Win32) | OpenGL painter, else the software painter (`shared/OwnPainter.hpp`) | none |
+| Editor (`OkayEngine.exe`) | own backend | OpenGL painter, else software; 3D view as before (GL / D3D11 on its own device / software) | none |
+| Player, desktop (`OkaySpacePlayer.exe`) | own backend | software painter (okayui/soft) | none |
+| Browser, Script Editor, Visual Script programs | own backend | OpenGL painter, else software | none |
+| Player, web (Emscripten) | own web backend (since `claude/web-backend-1`, section above) | OpenGL painter on WebGL 2 | none |
+
+**Deleted.** `UIPainterSDL.hpp`; `WrapSdl2Window`, `WrapSdl2Renderer`, `CreateSdl2SurfacePainter`, `TranslateSdl2Event`,
+`Event::native`, `Backend::ReportUnmappedEvents`; OkayUI's `EndFrame(SDL_Renderer*)` / `DrawFinishedFrame` and its SDL batch
+types (now `BatchVertex`, `PxRect`, `OkayUI::Tex`), OkayUI's `SdlHost` (`OkayUIRender_SDL.cpp`, `OKAY_UI_OWN_RENDER`) and its test;
+`shared/WindowHandles.hpp`; the SDL_Event feed of `shared/OkayUIHost.hpp`; Settings > Experimental "Our own window layer" and
+"OkayUI own renderer" (nothing to switch back to); `find_package(SDL2)` everywhere; the SDL2 download and `SDL2.dll` in CI, release,
+test builds, `build-windows-dist.sh`, `release-local.sh`, the release assets and Build Game's exports; `okay engine`'s SDL2 search
+and `build-local.ps1 -Sdl2Dir`; `test_painter_bridge_vs_sdl`; the sdl2 halves of the platform, painter and render tests.
+
+**Changed.** The apps' renderer handle is the painter (`okay::pb::Renderer` = `okay::platform::Painter`), textures are
+`okay::ui2d::Tex`, the launcher's windows are `okay::platform::Window*`. Caps Lock comes from `Backend::ModState` (own X11:
+XQueryPointer's mask; Win32: GetKeyState). The Win32 clipboard is not touched before `Init` (as on X11). The UI picture tests
+draw on our own software painter (`tests/ui_soft_render.hpp`).
+
+**Checked before the deletion (on main's CI, not re-run here):** `painter_bridge_vs_sdl` (the bridge against raw SDL calls),
+`okayui_painter` (software painter vs SDL's software renderer: 2.7 % of the classic demo picture differs by more than 2 levels, all
+on shape edges; the launcher look under 3 %), `okayui_render` (painter backend vs reference), `platform_window_sdl2` vs `_own`,
+`platform_displays` (own RandR vs SDL), and the launcher run headless on both backends (the same picture but 8 pixels). After the
+change the UI goldens that were made on SDL's software renderer (`ui_renderer_golden`) are compared against our painter: see the
+branch report for the numbers.
+
+**What remains.**
+1. **Real Windows.** The Win32 backend, the OpenGL painter on WGL and every program were compiled with MinGW only; none has run on
+   real Windows (Wine is broken here). The next test build is the first Windows run: launcher, editor, player, chat window, tray,
+   file drop, IME, two monitors, 125 % / 150 % scaling, sound, pads.
+2. **The web.** Done the same day (section above), unverified until CI's web job builds and plays it.
+3. **The editor's zero-copy D3D11 viewports** needed SDL's Direct3D 11 device; the D3D11 3D renderer now always uses its own device
+   with read-back (slower on Windows until the painter can share a device). The code path is still there, unused.
+4. Installing an editor version from before 2026-11-27 through the launcher's Versions page needs `SDL2.dll` from the version list;
+   the launcher no longer has its own copy to lend.
+
+## Where we were (before 2026-11-27)
 
 | | SDL calls left (`calls / words`) | what they are |
 |---|---|---|

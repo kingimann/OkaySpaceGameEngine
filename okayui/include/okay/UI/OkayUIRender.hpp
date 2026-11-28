@@ -1,8 +1,8 @@
 #pragma once
 // OkayUI render interface: OkayUI's draw data on screen WITHOUT any Dear ImGui backend code.
 //
-// OWN CODE, OFF BY DEFAULT. The only host that uses it: the launcher's and editor's OkayUI screens with OKAY_UI_OWN_RENDER=1, through
-// OkayUIRenderSDL.hpp (the OpenGL backend inside SDL's OpenGL renderers, the Direct3D 11 backend inside SDL's direct3d11 renderer).
+// The apps draw OkayUI through okay::platform::Painter (OkayUI::soft::FrameDrawer); these backends are the toolkit's own renderers,
+// checked against the software reference (the SDL renderer host that used them inside SDL_Renderer went with SDL2, 2026-11-27).
 // See docs/ui/own_ui_toolkit.md, section 7.
 //
 // Three layers:
@@ -42,7 +42,7 @@
 //                 DrawData::atlasTexture = the launcher look's glyph atlas (white texels, coverage in alpha),
 //                 OkayUI::FallbackFontOf(key) != null = a fallback font's atlas, anything else = a host image the
 //                 host registered with Renderer::SetImage under the same key (the pointer passed to
-//                 OkayUI::Image / DrawTexture; any unique pointer will do for a host that is not on SDL). A span
+//                 OkayUI::Image / DrawTexture; any unique pointer will do). A span
 //                 whose key is none of these is skipped and counted in Stats::unresolvedSpans. The atlas and
 //                 fallback fonts are filtered linearly, a host image as it asked.
 //   Frames        Renderer::Render = Backend::BeginFrame, Backend::Draw, Backend::EndFrame, once per OkayUI frame

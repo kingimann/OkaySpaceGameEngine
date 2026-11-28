@@ -1,11 +1,9 @@
 // Headless 1280x720 picture of a menu drawn by the same UI pass as the game.
 // Usage: crisp_ui_shot <out.png>
-#define SDL_MAIN_HANDLED
 #include <Okay.hpp>
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
-#include <SDL.h>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -18,18 +16,6 @@ int main(int argc, char** argv) {
         return 2;
     }
     const int W = 1280, H = 720;
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    if (!ren) {
-        std::cerr << "no software renderer\n";
-        if (surf) SDL_FreeSurface(surf);
-        return 1;
-    }
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 14, 16, 22, 255);
-    SDL_RenderClear(ren);
-
     Scene scene("Menu");
     scene.physicsEnabled = false;
     // Empty uiFont is the shipped default (the built-in TrueType face). "pixel" is opt-in.
@@ -128,20 +114,14 @@ int main(int argc, char** argv) {
     search->borderWidth = 2.0f;
     search->borderColor = Color::FromBytes(90, 104, 136, 255);
 
-    ui2d::SDLPainter painter(ren, &cache, "");
-    ui2d::RenderSceneUI(scene, painter, W, H);
-    ui2d::DrawUICross(painter, 828, 486, 18, ui2d::RGBA{186, 196, 214, 255});
-
-    SDL_RenderPresent(ren);
-    Image img(W, H);
-    for (int y = 0; y < H; ++y) {
-        const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
-        for (int x = 0; x < W; ++x)
-            img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
+    Image img;
+    if (!okaytest::SoftPaint(W, H, 14, 16, 22, [&](okay::platform::Painter& painter) {
+            ui2d::RenderSceneUI(scene, painter, W, H);
+            ui2d::DrawUICross(painter, 828, 486, 18, ui2d::RGBA{186, 196, 214, 255});
+        }, img)) {
+        std::cerr << "no software painter\n";
+        return 1;
     }
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     if (!img.SavePNG(argv[1])) {
         std::cerr << "failed to write " << argv[1] << "\n";
         return 1;

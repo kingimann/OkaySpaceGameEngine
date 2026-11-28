@@ -35,7 +35,6 @@ jobs:
     # before any test ran (runs 44910237711 and 44937036735).
     timeout-minutes: 180
     env:
-      SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
@@ -63,7 +62,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ccache; then
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build libx11-dev libxrandr-dev libgl-dev libasound2-dev libgl1-mesa-dri g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -71,13 +70,8 @@ jobs:
           done
           exit 1
 
-      - name: Fetch SDL2 and libsodium (MinGW)
+      - name: Fetch libsodium (MinGW)
         run: |
-          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
-            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
-            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
-          mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
-          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
           echo "OKAY_SODIUM_MINGW_PREFIX=$(bash scripts/fetch-libsodium-mingw.sh "$PWD")" >> "$GITHUB_ENV"   # pinned SHA-256
 
       # Restores the ci.yml MinGW cache too (same compiler and flags), so the first run is not fully cold.
@@ -101,8 +95,7 @@ jobs:
             -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
             -DOKAY_BUILD_PLAYER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLATFORM_SELFTEST=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
-            -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
+            -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           set +e
           cmake --build build-wt -j "$(nproc)" -- -k 0 2>&1 | tee build.log
@@ -115,7 +108,6 @@ jobs:
           ctest --test-dir build-wt --show-only=json-v1 > tests.json
           mkdir -p wt/bin
           (cd build-wt && find . -path ./_deps -prune -o \( -name '*.exe' -o -name '*.dll' \) -print0 | tar --null -T - -cf - | tar -xf - -C ../wt/bin)
-          cp "$SDL2_MINGW_PREFIX/bin/SDL2.dll" wt/bin/
           find "$OKAY_SODIUM_MINGW_PREFIX" -name '*.dll' -exec cp {} wt/bin/ \; || true
           for f in /usr/lib/gcc/x86_64-w64-mingw32/*-win32/{libstdc++-6,libgcc_s_seh-1}.dll; do [ -f "$f" ] && cp "$f" wt/bin/; done
           cp tests.json build-failures.txt wt/
@@ -150,9 +142,6 @@ jobs:
     needs: build
     runs-on: windows-latest
     timeout-minutes: 120
-    env:
-      SDL_VIDEODRIVER: dummy
-      SDL_AUDIODRIVER: dummy
     steps:
       # The runner's git turns LF into CRLF on checkout; the tests compare files byte for byte with what the code
       # writes (docs/engine_api.md, scenes, fixtures), so check out exactly the bytes the Linux build saw.
@@ -189,7 +178,7 @@ jobs:
         run: |
           $exe = Get-ChildItem -Path wt/bin -Recurse -Filter okay-platform-selftest.exe | Select-Object -First 1
           if (-not $exe) { Write-Output "okay-platform-selftest.exe is not in the bundle (did it compile? see build-failures.txt)"; exit 1 }
-          $env:PATH = "$PWD\wt\bin;$env:PATH"   # SDL2.dll, libsodium and the MinGW runtime DLLs sit there
+          $env:PATH = "$PWD\wt\bin;$env:PATH"   # libsodium and the MinGW runtime DLLs sit there
           & $exe.FullName --ci 2>&1 | Tee-Object -FilePath platform-selftest.txt
           $rc = $LASTEXITCODE
           "## Own Win32 platform backend self-test (exit $rc)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY

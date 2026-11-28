@@ -1,6 +1,6 @@
 # The platform layer (`okay::platform`) and our own backend
 
-> **What this is:** Stage 1 of replacing SDL2 with our own code (see the roadmap: seam first, own backend side by side and non-default, SDL2 stays).
+> **What this is:** The platform layer. SDL2 left the desktop programs and then the web player on 2026-11-27; our own backend is the only one (see "Choosing a backend").
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
@@ -17,16 +17,14 @@ launcher off SDL2: `docs/platform/sdl_removal_plan.md`.
 
 ## Choosing a backend
 
-| | |
-|---|---|
-| `-DOKAY_PLATFORM_BACKEND=own` | **default on Linux since 2026-11-25** (round 15). `okay::platform::Default()` is our own backend. SDL2 is still linked (the sdl2 backend stays as the way back). |
-| `-DOKAY_PLATFORM_BACKEND=sdl2` | default on Windows (the Win32 backend has never run on real Windows) and the web (no own backend). `Default()` is the SDL2 backend. |
+Since 2026-11-27 there is nothing to choose: our own backend is the only one, on Windows, Linux and the web.
+`BackendKind` has one value (`Own`) and `PainterKind` has `Software` and `OpenGL`; `sdl2` is no longer a backend name
+(`ParseBackendName("sdl2")` is false). `OKAY_PLATFORM_BACKEND` (CMake and environment) is kept as a name only: always `own`.
+The desktop left SDL2 on `claude/no-sdl2-2`, the web player on `claude/web-backend-1` (`SdlBackend.cpp`, `SdlPainter.cpp` and
+`-sUSE_SDL=2` deleted). `scripts/sdl_inventory.py --ratchet` (ctest `sdl_ratchet`) fails if an SDL header include, a CMake
+search for SDL2 or Emscripten's SDL2 port option comes back anywhere. The rounds below are history.
 
-The environment variable `OKAY_PLATFORM_BACKEND=sdl2|own` set when a program starts overrides the build's choice for that
-process (a value that is neither is ignored), so one binary can be tried on either backend. It changes nothing unless set.
-
-Both backends are built whenever they can be, and `okay::platform::Get(BackendKind::Sdl2 | Own)` returns either one, so
-a test can run the same checks on each. `Default()` falls back to the other backend if the chosen one is not compiled in.
+The web backend (`engine/src/Platform/WebBackend.cpp`) and what was and was not run: `docs/platform/sdl_removal_plan.md`, top section.
 
 ## What the audit found (origin/main before this change)
 

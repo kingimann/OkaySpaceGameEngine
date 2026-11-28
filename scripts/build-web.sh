@@ -41,9 +41,9 @@ fi
 
 # libsodium (packet encryption) has no WebAssembly
 # build, and the relay / OkayUI's Direct3D backend aren't part of the web player
-# (the engine's CMake already skips the last two under Emscripten). SDL2 comes from
-# Emscripten's own port (-sUSE_SDL=2), which Emscripten fetches once on the first
-# build (needs network access to github); after that it's cached locally.
+# (the engine's CMake already skips the last two under Emscripten). No Emscripten port is
+# used (SDL2 left the web player on 2026-11-27: engine/src/Platform/WebBackend.cpp), so the
+# build downloads nothing.
 # With OKAY_WEB_CCACHE=1 and ccache installed, compiles go through ccache (CI uses this so an
 # unchanged engine is not recompiled from scratch on every run).
 LAUNCHER=()

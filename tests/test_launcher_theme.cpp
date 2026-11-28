@@ -135,5 +135,40 @@ int main() {
         CHECK(all.find("WithAlpha(okaytheme::Current().info, 0.6f)") == std::string::npos);
         CHECK(all.find("OnFillSoft(") != std::string::npos);
     }
+    // ---- Hover is visible (owner, 2026-11-27: "hovering over them doesn't anything") ----
+    // In every design and scheme, the colours the editor and the launcher draw with (ApplyDesign) change clearly under the pointer: a
+    // button, a list or tree row, a tab, a field, a scroll bar thumb. Measured as the luminance contrast between the hovered and the
+    // resting colour as drawn on the page (alpha blended over the window colour): at least 1.18:1 (a field 1.10:1), which reads on an
+    // ordinary monitor; the old tints were about 1.05 to 1.10.
+    {
+        namespace D = OkayUI::design;
+        int checked = 0, weak = 0;
+        auto over = [](const ImVec4& fg, const ImVec4& bg) { return T::Mix(ImVec4(bg.x, bg.y, bg.z, 1), ImVec4(fg.x, fg.y, fg.z, 1), fg.w); };
+        for (int i = 0; i < D::DesignCount(); ++i)
+            for (int sc = 0; sc < 2; ++sc) {
+                D::Options o; std::snprintf(o.design, sizeof o.design, "%s", D::DesignAt(i).name); o.scheme = sc == 0 ? D::Scheme::Dark : D::Scheme::Light;
+                const D::Tokens t = D::Resolve(o);
+                ImGuiStyle st;
+                T::ApplyDesign(st, t);
+                const ImVec4* c = st.Colors;
+                const ImVec4 page = c[ImGuiCol_WindowBg];
+                struct Pair { const char* what; ImVec4 rest, hov, under; float need; };
+                const Pair pairs[] = {
+                    {"button", c[ImGuiCol_Button], c[ImGuiCol_ButtonHovered], page, 1.18f},
+                    {"row", ImVec4(0, 0, 0, 0), c[ImGuiCol_HeaderHovered], page, 1.18f},
+                    {"tab", c[ImGuiCol_Tab], c[ImGuiCol_TabHovered], c[ImGuiCol_MenuBarBg], 1.18f},
+                    {"field", c[ImGuiCol_FrameBg], c[ImGuiCol_FrameBgHovered], page, 1.10f},
+                    {"thumb", c[ImGuiCol_ScrollbarGrab], c[ImGuiCol_ScrollbarGrabHovered], page, 1.18f},
+                };
+                for (const Pair& p : pairs) {
+                    const ImVec4 under = T::WithAlpha(p.under, 1.0f);
+                    const float k = T::Contrast(over(p.hov, under), over(p.rest, under));
+                    ++checked;
+                    if (k < p.need) { ++weak; std::printf("  weak hover: %s %s %s %.3f:1\n", D::DesignAt(i).name, sc ? "light" : "dark", p.what, k); }
+                }
+            }
+        CHECK(checked >= 50);
+        CHECK(weak == 0);
+    }
     TEST_MAIN_RESULT();
 }

@@ -5,6 +5,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -138,6 +139,23 @@ int main() {
         CHECK(dup == 1 && ghost == 1);
         CHECK(!QuestFile::Parse("okayquest 1\nobjective kind=talk\n", back, &err));
         CHECK(!QuestFile::Parse("okayquest 1\nquest id=\"a\"\nobjective kind=fly\n", back, &err));
+    }
+    // ---- Prerequisite ids keep their spaces, commas and backslashes through a save and load (#888 F53) ----
+    {
+        std::vector<QuestDef> qs(2);
+        qs[0].id = "Find the sword";
+        qs[1].id = "Slay dragon";
+        qs[1].prerequisites = {"Find the sword", "a,b", " lead", "trail ", "back\\slash", "x"};
+        std::vector<QuestDef> back;
+        std::string err;
+        CHECK(QuestFile::Parse(QuestFile::Write(qs), back, &err) && back.size() == 2);
+        CHECK(back.size() == 2 && back[1].prerequisites == qs[1].prerequisites);
+        if (back.size() == 2 && back[1].prerequisites != qs[1].prerequisites)
+            for (const auto& p : back[1].prerequisites) std::printf("  read back: [%s]\n", p.c_str());
+        CHECK(back.size() == 2 && QuestFile::Write(back) == QuestFile::Write(qs));
+        // Files written before: "a, b" lists (spaces after the commas) still read as two ids, and a lone backslash stays.
+        CHECK(QuestFile::Parse("okayquest 1\nquest id=\"q\" pre=\"gather, Find the sword ,c:\\\\d\"\n", back, &err) && back.size() == 1 &&
+              back[0].prerequisites == (std::vector<std::string>{"gather", "Find the sword", "c:\\d"}));
     }
 
     // ---- Objectives from every source, prerequisites, rewards once ----

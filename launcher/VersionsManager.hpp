@@ -44,17 +44,15 @@ constexpr int kDefaultKeepPrevious = 1;
 
 // ---- the files of a release ----------------------------------------------------------------------------------------------
 
-/// The three files that make a complete copy of a release's Tools folder.
+/// The files that make a complete copy of a release's Tools folder. Asset::Sdl (SDL2.dll) belongs to releases made before
+/// 2026-11-27 only: they still need it beside their exes, and it is installed when the version list has it (or the launcher has
+/// a copy); the current programs use no SDL2.dll.
 enum class Asset { Editor, Player, Sdl };
 const char* IndexName(Asset a);          ///< the name in versions.json and on the server ("OkayEngine.exe")
 std::string DiskName(Asset a);           ///< the name inside Versions/<v>/Tools (the editor uses okayver::EditorExeName())
-/// Windows needs SDL2.dll beside every exe; other platforms use the system library.
-constexpr bool kRequireSdl =
-#if defined(_WIN32)
-    true;
-#else
-    false;
-#endif
+/// Whether a version without SDL2.dll is refused. No longer: the current programs have none, and an older version's copy comes
+/// from the version list when it has one.
+constexpr bool kRequireSdl = false;
 
 // ---- versions.json -------------------------------------------------------------------------------------------------------
 
@@ -302,7 +300,9 @@ std::uint64_t DirectorySize(const fs::path& dir);
 /// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed. A .partial- folder in
 /// which something was written less than `busyFor` ago is left alone: it may be an install, or the update's copy of the current editor
 /// (KeepCurrent, on the update thread), still at work (the page's start-up clean-up used to delete those, and the kept copy never appeared).
-int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0));
+/// `now` is the time "ago" counts from (tests pass a later time instead of back-dating folders: Windows cannot set a folder's time).
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0),
+               fs::file_time_type now = fs::file_time_type::clock::now());
 
 struct RemoveGuards {
     std::string running;                 ///< the version of the editor/launcher in use (the one in Tools/): never removed

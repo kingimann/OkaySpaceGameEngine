@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 31 headers, 273 names.
+Back to the [code index](../code_index.md). 31 headers, 268 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -238,16 +238,13 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Painter.hpp`
 
-- `PainterKind` enum, line 30
-- `BlendMode` enum, line 31
-- `ScaleMode` enum, line 32
-- `TextureDesc` struct, line 34
-- `Painter` class, line 44
+- `PainterKind` enum, line 29
+- `BlendMode` enum, line 30
+- `ScaleMode` enum, line 31
+- `TextureDesc` struct, line 33
+- `Painter` class, line 43
 - `PainterDesc` struct, line 131
-- `CreateSdl2Painter` function, line 139: sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.
-- `WrapSdl2Renderer` function, line 142: sdl2 over a renderer somebody else owns (the editor's and the launcher's). 'sdlRenderer' is an
-- `CreateSdl2SurfacePainter` function, line 145: Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
-- `CreateGLPainter` function, line 152: opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
+- `CreateGLPainter` function, line 143: opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
 
 ## `engine/include/okay/Platform/Parties.hpp`
 
@@ -257,47 +254,45 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Platform.hpp`
 
-- `BackendKind` enum, line 27
-- `BackendName` function, line 29
-- `ParseBackendName` function, line 30
-- `IsCompiledIn` function, line 35: True when 'k' is compiled in on this build (not that a display exists).
-- `Default` function, line 38: The backend the build selected (OKAY_PLATFORM_BACKEND), falling back to
-- `Get` function, line 41: A backend by kind, or null when it is not compiled in. The instance lives for
-- `DefaultKind` function, line 42
-- `BackendsShutDown` function, line 46: True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
-- `Key` enum, line 52: ---- Keys ------------------------------------------------------------------
-- `Mod` enum, line 72
-- `MouseButton` enum, line 74
-- `MouseMask` function, line 76: Bit for a MouseButton in the mask returned by Backend::MouseState.
-- `EventType` enum, line 79: ---- Events ----------------------------------------------------------------
-- `Event` struct, line 103
-- `ValidWindowExtent` function, line 137: A window width or height read from a config file: anything below 1 (zero, negative) or past
-- `FlashMode` enum, line 143: How a window asks for attention (task bar button flash). Stop ends a flash that is running.
-- `CursorShape` enum, line 146: The pointer shapes a UI toolkit asks for (the names follow the common set of system cursors).
-- `WindowDesc` struct, line 148
-- `GLAttributes` struct, line 161
-- `GLCurrent` struct, line 168: What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
-- `Window` class, line 177
-- `SampleFormat` enum, line 248: ---- Audio -------------------------------------------------------------------
-- `AudioSpec` struct, line 253
-- `BytesPerSample` function, line 265
-- `AudioDevice` class, line 267
-- `DisplayInfo` struct, line 279: ---- Displays -----------------------------------------------------------------
-- `GamepadAxis` enum, line 290: ---- Game controllers ----------------------------------------------------------
-- `GamepadButton` enum, line 291
-- `Gamepad` class, line 296
-- `InitFlags` struct, line 341: ---- The backend ---------------------------------------------------------------
-- `Backend` class, line 345
-- `WrapSdl2Window` function, line 488: A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
-- `TranslateSdl2Event` function, line 494: Turn one SDL_Event (passed as 'const SDL_Event*') into a platform Event, for code that still polls SDL itself but
-- `CpuCount` function, line 497: Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
-- `SystemRamMB` function, line 498
-- `TicksMs` function, line 503: ---- Free functions on the default backend ------------------------------------
-- `TicksMs32` function, line 505: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
-- `PerfCounter` function, line 506
-- `PerfFrequency` function, line 507
-- `DelayMs` function, line 508
-- `Log` function, line 510: Log one line through the default backend (stderr when there is none).
+- `BackendKind` enum, line 26
+- `BackendName` function, line 28
+- `ParseBackendName` function, line 29
+- `IsCompiledIn` function, line 34: True when 'k' is compiled in on this build (not that a display exists).
+- `Default` function, line 36: The backend of this build. Null only on a platform with no backend written (e.g. macOS).
+- `Get` function, line 39: A backend by kind, or null when it is not compiled in. The instance lives for
+- `DefaultKind` function, line 40
+- `BackendsShutDown` function, line 44: True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
+- `Key` enum, line 50: ---- Keys ------------------------------------------------------------------
+- `Mod` enum, line 70
+- `MouseButton` enum, line 72
+- `MouseMask` function, line 74: Bit for a MouseButton in the mask returned by Backend::MouseState.
+- `EventType` enum, line 77: ---- Events ----------------------------------------------------------------
+- `Event` struct, line 101
+- `ValidWindowExtent` function, line 130: A window width or height read from a config file: anything below 1 (zero, negative) or past
+- `FlashMode` enum, line 136: How a window asks for attention (task bar button flash). Stop ends a flash that is running.
+- `CursorShape` enum, line 139: The pointer shapes a UI toolkit asks for (the names follow the common set of system cursors).
+- `WindowDesc` struct, line 141
+- `GLAttributes` struct, line 154
+- `GLCurrent` struct, line 161: What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
+- `Window` class, line 170
+- `SampleFormat` enum, line 241: ---- Audio -------------------------------------------------------------------
+- `AudioSpec` struct, line 246
+- `BytesPerSample` function, line 258
+- `AudioDevice` class, line 260
+- `DisplayInfo` struct, line 272: ---- Displays -----------------------------------------------------------------
+- `GamepadAxis` enum, line 283: ---- Game controllers ----------------------------------------------------------
+- `GamepadButton` enum, line 284
+- `Gamepad` class, line 289
+- `InitFlags` struct, line 334: ---- The backend ---------------------------------------------------------------
+- `Backend` class, line 338
+- `CpuCount` function, line 473: Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
+- `SystemRamMB` function, line 474
+- `TicksMs` function, line 479: ---- Free functions on the default backend ------------------------------------
+- `TicksMs32` function, line 481: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
+- `PerfCounter` function, line 482
+- `PerfFrequency` function, line 483
+- `DelayMs` function, line 484
+- `Log` function, line 486: Log one line through the default backend (stderr when there is none).
 
 ## `engine/include/okay/Platform/PlayFab/PlayFab.hpp`
 
@@ -366,6 +361,6 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Workshop.hpp`
 
-- `WorkshopItem` struct, line 26
-- `WorkshopReview` struct, line 43
-- `Workshop` class, line 51
+- `WorkshopItem` struct, line 29
+- `WorkshopReview` struct, line 46
+- `Workshop` class, line 54

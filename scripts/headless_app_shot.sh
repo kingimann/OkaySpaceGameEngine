@@ -6,7 +6,7 @@
 # OKAY_TEST_NO_SIGNIN=1 is set (the editor's sign-in gate is off for tests, editor/SignInGate.hpp). OKAY_UPDATE_ON_LAUNCH=0 is set: otherwise a launcher with network access downloads the newest release into the program's own folder and tries to swap it in.
 # APP_ARGS="--dev" in the environment passes arguments to the program (the editor needs --dev when it is not started by the launcher).
 # Needs Xvfb and ImageMagick's `import`. Settings go to a throw-away HOME, so nothing of yours is touched. The program is stopped with
-# SIGKILL (SDL turns SIGTERM into a close request, which makes the launcher ask "Exit or minimise?"). The program's log is next to the picture.
+# SIGKILL (the window system turns SIGTERM into a close request, which makes the launcher ask "Exit or minimise?"). The program's log is next to the picture.
 prog=$1; secs=$2; out=$3; shift 3
 [ -x "$prog" ] || { echo "no such program: $prog" >&2; exit 2; }
 command -v Xvfb >/dev/null && command -v import >/dev/null || { echo "needs Xvfb and ImageMagick (import)" >&2; exit 77; }
@@ -15,7 +15,7 @@ trap 'kill $xp 2>/dev/null; rm -rf "$tmp"' EXIT
 Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$tmp/disp" >/dev/null 2>&1 &
 xp=$!
 i=0; while [ ! -s "$tmp/disp" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
-export DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1
+export DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" OKAY_ALSA_DEVICE=null LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1
 mkdir -p "$tmp/home"
 for kv in "$@"; do export "$kv"; done
 "$prog" $APP_ARGS >"${out%.png}.log" 2>&1 &

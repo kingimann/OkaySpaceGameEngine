@@ -6,7 +6,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
-#include <SDL.h>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"
@@ -26,7 +25,7 @@ struct CaptureMark {
     long long frame = -1;                 // the frame it began in (a capture left open does not reach into the next frame)
     int nv = 0, ni = 0, nspans = 0;       // the main batch
     bool haveLast = false; DrawSpan last{};   // the span before, which pushSpan may overwrite in place
-    bool clipOn = false; SDL_Rect clip{0, 0, 0, 0}; SDL_Texture* tex = nullptr;
+    bool clipOn = false; PxRect clip{0, 0, 0, 0}; Tex tex = nullptr;
     int nwrec = 0, wrecOpen = -1;
     int onv = 0, oni = 0, novSpans = 0;   // the overlay batch
     bool haveOvLast = false; OverlaySpan ovLast{};
@@ -62,7 +61,7 @@ void EndCapture(CapturedGeometry& out) {
         DrawVertex d; std::memcpy(&d, &g_verts[i], sizeof d);
         out.vertices.push_back(d);
     }
-    auto addCmd = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* t) {
+    auto addCmd = [&](int from, int to, bool on, const PxRect& r, Tex t) {
         if (to <= from) return;
         DrawCmd c;
         c.idxOffset = from; c.idxCount = to - from;
@@ -72,7 +71,7 @@ void EndCapture(CapturedGeometry& out) {
     };
     {
         // the state at i0: the last span starting at or before it (before every span: no clip, the flat texture)
-        bool on = false; SDL_Rect r{0, 0, 0, 0}; SDL_Texture* t = g_defTex;
+        bool on = false; PxRect r{0, 0, 0, 0}; Tex t = g_defTex;
         int k = 0;
         for (; k < g_nspans && g_spans[k].startIdx <= i0; ++k) { on = g_spans[k].on; r = g_spans[k].rect; t = g_spans[k].tex; }
         int from = i0;
@@ -102,10 +101,10 @@ void EndCapture(CapturedGeometry& out) {
             DrawVertex d; std::memcpy(&d, &g_ovVerts[i], sizeof d);
             out.vertices.push_back(d);
         }
-        SDL_Texture* t = g_defTex;
+        Tex t = g_defTex;
         int k = 0;
         for (; k < g_novSpans && g_ovSpans[k].startIdx <= oi0; ++k) t = g_ovSpans[k].tex;
-        const SDL_Rect none{0, 0, 0, 0};
+        const PxRect none{0, 0, 0, 0};
         int from = oi0;
         auto flushTo = [&](int to) {
             const int a = (int)out.indices.size();

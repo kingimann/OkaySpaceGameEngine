@@ -2,15 +2,18 @@
 // Workshop / Marketplace over Supabase (workshop_items table; see
 // docs/sql/social.sql). Players browse and publish shared games, scenes and
 // templates. Each item carries metadata (title, author, description, kind,
-// download count) plus a public download URL — an author points it at a hosted
-// build (a GitHub release, itch.io page, or a file in the public 'workshop'
-// Storage bucket), and players "Get" it from the launcher.
+// download count) plus a public download URL: a file the author uploaded to the
+// public 'workshop' Storage bucket (the server refuses outside links, and the
+// client keeps only those links too: IsOwnStorageUrl), which players "Get" from
+// the launcher. Replies are read with okay::json (Core/Json.hpp).
 //
 // Like Friends, this drives an okay::account::AccountService instance (reusing
 // the signed-in session + anon key + bearer token) and gracefully no-ops when
 // signed out, offline, or when the table is missing, so it never breaks a build
 // that hasn't run social.sql.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Backend/SupabaseRoutes.hpp"
+#include "okay/Core/Json.hpp"
 #include <string>
 #include <filesystem>
 #include <vector>
@@ -95,7 +98,15 @@ private:
         auto r = acct_.Api(std::string(kBase) + ",status,review_note,reviews_locked,featured" + orderA, "GET");
         if (!r.ok && !orderB.empty()) { review = false; r = acct_.Api(std::string(kBase) + orderB, "GET"); }
         if (!r.ok) { if (reached) *reached = false; return out; }
-        for (const auto& obj : SplitObjects(r.body)) {
+        return ParseItems(r.body, acct_.ServerUrl(), review);
+    }
+public:
+    /// The listings in a PostgREST reply (a JSON array of rows), read with okay::json: every field by its exact key, so a
+    /// title or description cannot stand in for another column (#888 F9). `url` is kept only when it is a file in our own
+    /// 'workshop' bucket on `serverUrl` (IsOwnStorageUrl); anything else is left empty ("no file to download").
+    static std::vector<WorkshopItem> ParseItems(const std::string& body, const std::string& serverUrl, bool review) {
+        std::vector<WorkshopItem> out;
+        for (const auto& obj : SplitObjects(body)) {
             WorkshopItem w;
             w.authorId    = Field(obj, "author");
             w.created     = ParseIso(Field(obj, "created_at"));
@@ -112,12 +123,24 @@ private:
             w.description = Field(obj, "description");
             w.kind        = Field(obj, "kind");
             w.url         = Field(obj, "storage_path");
+            if (!IsOwnStorageUrl(serverUrl, w.url)) w.url.clear();
             w.downloads   = std::atol(Field(obj, "downloads").c_str());
             if (!w.title.empty()) out.push_back(w);
         }
         return out;
     }
-public:
+    /// A public file in the 'workshop' bucket of our own server: "<serverUrl>/storage/v1/object/public/workshop/<path>",
+    /// the only links the server's workshop_items_guard lets an author save (docs/sql/admin.sql). No "..", no
+    /// backslash, no spaces, quotes or control characters, and nothing when the server is unknown.
+    static bool IsOwnStorageUrl(std::string serverUrl, const std::string& url) {
+        while (!serverUrl.empty() && serverUrl.back() == '/') serverUrl.pop_back();
+        if (serverUrl.empty() || (serverUrl.rfind("https://", 0) != 0 && serverUrl.rfind("http://", 0) != 0)) return false;
+        const std::string prefix = serverUrl + okay::backend::supabase::routes::StoragePublic("workshop", "");
+        if (url.size() <= prefix.size() || url.compare(0, prefix.size(), prefix) != 0) return false;
+        if (url.find("..") != std::string::npos || url.find('\\') != std::string::npos) return false;
+        for (unsigned char c : url) if (c <= ' ' || c == '"' || c == '\'' || c == '<' || c == '>' || c == 0x7F) return false;
+        return true;
+    }
 
     // Publish a new item. The author uuid defaults to auth.uid() server-side,
     // so we only send the display fields. Returns true on a 2xx.
@@ -307,26 +330,27 @@ public:
         }
         return out;
     }
+    /// One top-level field of a JSON object, read with okay::json by its exact key (#888 F9: the hand-written reader took the
+    /// first "key" text anywhere, so a title "storage_path" made the description the download link). Strings come back
+    /// decoded, numbers as their whole-number text when they have no fraction, true/false as words, null and anything
+    /// missing or not JSON as "".
     static std::string Field(const std::string& obj, const std::string& key) {
-        std::string k = "\"" + key + "\"";
-        std::size_t p = obj.find(k); if (p == std::string::npos) return "";
-        p = obj.find(':', p + k.size()); if (p == std::string::npos) return "";
-        ++p; while (p < obj.size() && obj[p] == ' ') ++p;
-        if (p >= obj.size()) return "";
-        if (obj[p] == '"') {
-            std::string v; ++p;
-            while (p < obj.size() && obj[p] != '"') {
-                if (obj[p] == '\\' && p + 1 < obj.size()) { ++p; char e = obj[p];
-                    v += (e=='n'?'\n':e=='t'?'\t':e); }
-                else v += obj[p];
-                ++p;
+        okay::json::Value v;
+        if (!okay::json::Parse(obj, v) || !v.IsObject()) return "";
+        const okay::json::Value* f = v.Get(key);
+        if (!f) return "";
+        switch (f->type) {
+            case okay::json::Type::String: return f->string;
+            case okay::json::Type::Bool:   return f->boolean ? "true" : "false";
+            case okay::json::Type::Number: {
+                if (f->number > -9.2e18 && f->number < 9.2e18 && f->number == (double)(long long)f->number)
+                    return std::to_string((long long)f->number);
+                char buf[40];
+                std::snprintf(buf, sizeof(buf), "%.17g", f->number);
+                return buf;
             }
-            return v;
+            default: return "";
         }
-        std::size_t e = p; while (e < obj.size() && obj[e] != ',' && obj[e] != '}') ++e;
-        std::string v = obj.substr(p, e - p);
-        while (!v.empty() && v.back() == ' ') v.pop_back();
-        return v == "null" ? "" : v;
     }
     static std::string JStr(const std::string& s) {
         std::string o = "\""; for (char c : s) {

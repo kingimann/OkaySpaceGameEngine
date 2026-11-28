@@ -32,6 +32,8 @@ public:
     virtual void* NativeHandleFromId(uint32_t id) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
     virtual bool GlobalMouseState(int* x, int* y, uint32_t* buttons) = 0;
+    /// The modifier keys and locks held now (Mod bits), from the key-and-button mask XQueryPointer reports.
+    virtual uint32_t ModState() = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual bool IsRelativeMouse() const = 0;
     virtual void ShowCursor(bool show) = 0;

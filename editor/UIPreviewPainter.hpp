@@ -5,12 +5,12 @@
 //
 // Coordinates are the renderer's logical pixels, mapped to the draw list by an origin
 // (the canvas's top-left on screen) and the renderer's scale. Textures are the
-// editor's SDL_Textures (the ImGui SDL_Renderer backend's ImTextureID). Texture
+// editor's painter textures (okay::ui2d::Tex, the UI's ImTextureID). Texture
 // colour/alpha mods are kept per texture in the painter and baked into vertex
-// colours: the draw list renders later, so the shared SDL textures are never touched.
+// colours: the draw list renders later, so the shared textures are never touched.
 #include "okay/UI/UIPainter.hpp"
 #include "imgui.h"
-#include <SDL.h>
+#include "PainterBridge.hpp"
 #include <string>
 #include <unordered_map>
 
@@ -18,9 +18,9 @@ namespace oked {
 
 class UIPreviewPainter final : public okay::ui2d::Painter {
 public:
-    using TextureLoader = SDL_Texture* (*)(const std::string& path);
+    using TextureLoader = okay::ui2d::Tex (*)(const std::string& path);
 
-    UIPreviewPainter(ImDrawList* dl, ImVec2 origin, SDL_Renderer* renderer, TextureLoader loader);
+    UIPreviewPainter(ImDrawList* dl, ImVec2 origin, okay::pb::Renderer* renderer, TextureLoader loader);
     ~UIPreviewPainter() override;   // pops any clip rect it pushed
 
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override;
@@ -59,7 +59,7 @@ private:
 
     ImDrawList* m_dl;
     ImVec2 m_origin;
-    SDL_Renderer* m_renderer;
+    okay::pb::Renderer* m_renderer;
     TextureLoader m_loader;
     float m_scale = 1.0f;
     ImU32 m_color = IM_COL32_WHITE;
@@ -68,9 +68,9 @@ private:
     std::unordered_map<okay::ui2d::Tex, okay::ui2d::RGBA> m_mods;
 };
 
-/// A TTF font's glyph atlas as an SDL texture for ImGui draw lists, uploaded again
+/// A TTF font's glyph atlas as a painter texture for ImGui draw lists, uploaded again
 /// when the font bakes new characters. Draw lists render at the end of the frame, so
 /// a texture replaced because the atlas grew stays alive until two frames later.
-SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f);
+okay::ui2d::Tex PreviewFontAtlas(okay::pb::Renderer* r, okay::TtfFont* f);
 
 } // namespace oked

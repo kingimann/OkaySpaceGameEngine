@@ -144,7 +144,7 @@ struct InspRow {
     int* sel = nullptr;                  ///< InspRowGradient / InspRowCurve: the selected stop or key (the host keeps it)
     int count = 0;
     std::uint32_t color = 0;             ///< text colour (0: the usual one)
-    void* texture = nullptr;             ///< InspRowImage: the host's texture (an SDL_Texture), drawn texW x texH
+    void* texture = nullptr;             ///< InspRowImage: the host's texture (a painter texture), drawn texW x texH
     float texW = 0.0f, texH = 0.0f;
     int tag = 0;                         ///< the host's own number for the row
     bool overridden = false;             ///< set by the host: differs from the prefab (a blue bar; right-click: Revert / Apply Property)

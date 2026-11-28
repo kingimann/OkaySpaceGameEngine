@@ -1,6 +1,6 @@
 name: Release Windows build
 
-# Cross-compiles the Windows distribution (launcher, editor, player + SDL2.dll)
+# Cross-compiles the Windows distribution (launcher, editor, player)
 # from Linux with MinGW-w64 and publishes it as a GitHub Release. Triggers on a
 # version tag, or on demand via "Run workflow" — the manual run tags + releases
 # the version in dist/VERSION.txt.
@@ -50,7 +50,6 @@ jobs:
     outputs:
       ver: ${{ steps.pkg.outputs.ver }}
     env:
-      SDL2_VERSION: 2.30.9
       # Compiler cache kept between release builds (actions/cache below): only
       # changed files recompile, so a typical release builds in a few minutes.
       # No CCACHE_SLOPPINESS here: a file that uses __TIME__ (editor/BuildStamp.cpp) is always recompiled, so the stamp is exact.
@@ -181,15 +180,6 @@ jobs:
           path: ~/apt-cache
           key: apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Fetch SDL2 (MinGW dev)
-        run: |
-          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
-            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
-            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
-          mkdir -p sdl2-mingw
-          tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
-          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
-
       - name: Fetch libsodium (MinGW prebuilt)
         # Statically linked into the exes for authenticated packet encryption. A release MUST have it: the download is pinned
         # to a SHA-256 (scripts/libsodium-mingw.pin), the layout is checked, and the build passes -DOKAY_REQUIRE_SODIUM=ON
@@ -225,7 +215,7 @@ jobs:
           scripts/build-windows-dist.sh
           ccache -s || true
 
-      # Sign our own programs (not the third-party SDL2.dll) BEFORE anything records their checksum: the zip, the installer,
+      # Sign our own programs BEFORE anything records their checksum: the zip, the installer,
       # the GitHub assets and versions.json must all carry the same signed bytes. Without the two secrets this is skipped
       # with a warning (the release stays unsigned, as before); with them, any failure fails the release instead of
       # shipping unsigned. See docs/release/packaging.md "Code signing".
@@ -308,7 +298,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           # Upload the individual files the in-app updater fetches by name from
-          # releases/latest/download/<name>. The launcher + its SDL2.dll sit at the
+          # releases/latest/download/<name>. The launcher sits at the
           # dist root; the editor/player live in Tools/. softprops uses each file's
           # basename as the asset name, so these resolve to the URLs the updater uses.
           files: |
@@ -317,7 +307,6 @@ jobs:
             build-win-dist/OkaySpace.exe
             build-win-dist/Tools/OkayEngine.exe
             build-win-dist/Tools/OkaySpacePlayer.exe
-            build-win-dist/SDL2.dll
             build-win-dist/VERSION.txt
             build-win-symbols/OkayEngine.debug
             dist/CHANGELOG.txt
@@ -463,7 +452,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
             if timeout 120 sudo apt-get $APT update && \
-               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev ccache; then
+               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build libx11-dev libxrandr-dev libgl-dev libasound2-dev libgl1-mesa-dri g++ libsodium-dev ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"

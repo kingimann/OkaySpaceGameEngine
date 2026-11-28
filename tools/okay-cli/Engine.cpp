@@ -42,7 +42,6 @@ constexpr bool kWindows = true;
 constexpr bool kWindows = false;
 #endif
 
-const char* kSdl2Version = "2.30.9";   // the SDL2 the release builds use (.github/workflows SDL2_VERSION)
 
 int Processors() {
 #if defined(_WIN32)
@@ -121,13 +120,6 @@ bool Within(const fs::path& inner, const fs::path& outer) { return PathWithin(in
 
 std::string ExeName(const std::string& base, bool windows) { return windows ? base + ".exe" : base; }
 
-std::string Sdl2Help(bool mingw) {
-    return std::string("SDL2 is missing (the editor, launcher and player still need it). Download SDL2 ") + kSdl2Version +
-           " (SDL2, not SDL3) from\n  https://github.com/libsdl-org/SDL/releases/tag/release-" + kSdl2Version + "\n" +
-           "and take " + (mingw ? std::string("SDL2-devel-") + kSdl2Version + "-mingw.zip (you build with MinGW)"
-                                : std::string("SDL2-devel-") + kSdl2Version + "-VC.zip (you build with Visual Studio)") +
-           ". Unpack it into C:\\SDL2 (okay looks there), or pass --sdl2 <the unpacked folder>.";
-}
 const char* kCmakeHelp = "CMake is missing. Get CMake 3.20 or newer from https://cmake.org/download/ and tick \"Add CMake to the PATH\".";
 const char* kCompilerHelp =
     "No C++ compiler was found. Install Visual Studio 2022 Build Tools with \"Desktop development with C++\" from\n"
@@ -144,7 +136,7 @@ bool ParseBuildArgs(const std::vector<std::string>& args, BuildOptions& o, std::
     cl.Flag("help").Short('h');
     cl.Flag("debug").Flag("clean").Flag("run");
     cl.Value("jobs", "N").Short('j');
-    cl.Value("dir", "BUILD").Value("source", "DIR").Value("sdl2", "DIR");
+    cl.Value("dir", "BUILD").Value("source", "DIR");
     if (!cl.Parse(args)) { error = cl.Error(); return false; }
     if (cl.Positionals().size() > 1) { error = "Build one thing: editor, launcher, player or all."; return false; }
     const std::string what = okay::str::LowerAscii(cl.Positional(0, "all"));
@@ -162,11 +154,10 @@ bool ParseBuildArgs(const std::vector<std::string>& args, BuildOptions& o, std::
         if (Trim(o.dir).empty()) { error = "--dir needs a folder."; return false; }
     }
     if (cl.Has("source")) o.source = cl.Get("source");
-    if (cl.Has("sdl2")) o.sdl2 = cl.Get("sdl2");
     return true;
 }
 
-// ---- finding the checkout, the tools and SDL2 ---------------------------------------------------------------------
+// ---- finding the checkout and the tools ---------------------------------------------------------------------
 
 bool IsEngineSource(const std::string& dir) {
     const fs::path f = fs::path(dir) / "CMakeLists.txt";
@@ -232,65 +223,9 @@ Tools FindTools(const std::string& vswhere) {
     return t;
 }
 
-std::string Sdl2PrefixIn(const std::string& dirIn, bool mingw) {
-    if (dirIn.empty()) return "";
-    const fs::path dir = Abs(dirIn);
-    auto hasConfig = [](const fs::path& d) {
-        return IsFile(d / "SDL2Config.cmake") || IsFile(d / "sdl2-config.cmake");
-    };
-    auto isPrefix = [&](const fs::path& d) { return hasConfig(d / "lib" / "cmake" / "SDL2") || hasConfig(d / "cmake"); };
-    // SDL2_DIR may name the config folder itself: .../lib/cmake/SDL2 or .../cmake.
-    if (hasConfig(dir)) {
-        if (dir.filename() == "SDL2" && dir.parent_path().filename() == "cmake" && dir.parent_path().parent_path().filename() == "lib")
-            return dir.parent_path().parent_path().parent_path().string();
-        if (dir.filename() == "cmake") return dir.parent_path().string();
-    }
-    // The MinGW download holds one prefix per CPU; the 64-bit one is what the engine builds for.
-    if (mingw && isPrefix(dir / "x86_64-w64-mingw32")) return (dir / "x86_64-w64-mingw32").string();
-    if (isPrefix(dir)) return dir.string();
-    if (!mingw && isPrefix(dir / "x86_64-w64-mingw32")) return (dir / "x86_64-w64-mingw32").string();
-    return "";
-}
-
-std::string FindSdl2(const std::string& given, const std::string& source, bool mingw, const std::vector<std::string>& moreRoots) {
-    if (!given.empty()) return Sdl2PrefixIn(given, mingw);
-    std::vector<fs::path> roots;
-    for (const char* env : {"SDL2_DIR", "SDL2_ROOT", "SDL2DIR"})
-        if (const char* v = std::getenv(env)) if (*v) roots.push_back(v);
-    for (const std::string& r : moreRoots) roots.push_back(r);
-    if (!source.empty()) {
-        const fs::path s = source;
-        for (const char* sub : {"third_party", "external", "deps", "libs"}) { roots.push_back(s / sub / "SDL2"); roots.push_back(s / sub); }
-        roots.push_back(s.parent_path() / "SDL2");
-        roots.push_back(s.parent_path());
-    }
-    if (kWindows) {
-        for (const char* r : {"C:\\SDL2", "C:\\libs\\SDL2", "C:\\dev\\SDL2", "C:\\libs", "C:\\dev", "C:\\"}) roots.push_back(r);
-        if (mingw) roots.push_back("C:\\msys64\\mingw64");
-    }
-    for (const fs::path& r : roots) {
-        const std::string direct = Sdl2PrefixIn(r.string(), mingw);
-        if (!direct.empty()) return direct;
-        // An unpacked download: <root>/SDL2-2.30.9. The newest version name first.
-        std::vector<fs::path> versions;
-        std::error_code ec;
-        if (!IsDir(r)) continue;
-        for (fs::directory_iterator it(r, ec), end; !ec && it != end; it.increment(ec)) {
-            const std::string n = it->path().filename().string();
-            if (n.rfind("SDL2-", 0) == 0 && it->is_directory(ec)) versions.push_back(it->path());
-        }
-        std::sort(versions.begin(), versions.end(), [](const fs::path& a, const fs::path& b) { return a.filename().string() > b.filename().string(); });
-        for (const fs::path& v : versions) {
-            const std::string p = Sdl2PrefixIn(v.string(), mingw);
-            if (!p.empty()) return p;
-        }
-    }
-    return "";
-}
-
 // ---- the plan and cmake's command lines ---------------------------------------------------------------------------
 
-bool MakePlan(const BuildOptions& o, const Tools& t, const std::string& source, const std::string& sdl2, Plan& p, std::string& error) {
+bool MakePlan(const BuildOptions& o, const Tools& t, const std::string& source, Plan& p, std::string& error) {
     if (source.empty()) {
         error = "This is not inside an engine checkout (a folder whose CMakeLists.txt says project(OkaySpace).\n"
                 "Run okay engine build from the checkout, or pass --source <folder>.";
@@ -337,8 +272,6 @@ bool MakePlan(const BuildOptions& o, const Tools& t, const std::string& source, 
         error = kCompilerHelp;
         return false;
     }
-    p.sdl2 = sdl2;
-    if (p.sdl2.empty() && t.windows) { error = Sdl2Help(p.mingw); return false; }
     return true;
 }
 
@@ -351,7 +284,6 @@ std::vector<std::string> ConfigureArgs(const Plan& p) {
                                   "-DOKAY_BUILD_TESTS=OFF"};
     if (!p.generator.empty()) { a.push_back("-G"); a.push_back(p.generator); }
     if (!p.multiConfig) a.push_back("-DCMAKE_BUILD_TYPE=" + p.config);
-    if (!p.sdl2.empty()) a.push_back("-DCMAKE_PREFIX_PATH=" + p.sdl2);
     // What okay adds: the tools by full path, so CMake never picks one up from the current folder.
     if (!p.makeProgram.empty()) a.push_back("-DCMAKE_MAKE_PROGRAM=" + p.makeProgram);
     if (!p.cCompiler.empty()) a.push_back("-DCMAKE_C_COMPILER=" + p.cCompiler);
@@ -378,7 +310,7 @@ std::string BinDir(const Plan& p) {
 
 // ---- okay engine doctor -------------------------------------------------------------------------------------------
 
-std::string DoctorText(const Tools& t, const std::string& source, const std::string& sdl2, int* problems) {
+std::string DoctorText(const Tools& t, const std::string& source, int* problems) {
     int bad = 0;
     std::string s;
     auto good = [&](const std::string& m) { s += "  ok    " + m + "\n"; };
@@ -397,9 +329,6 @@ std::string DoctorText(const Tools& t, const std::string& source, const std::str
     if (!t.ninja.empty()) good("Ninja: " + t.ninja);
     else if (t.windows && mingw && t.mingwMake.empty()) miss(kNinjaHelp);
     else s += "  note  Ninja is not on PATH (optional" + std::string(t.windows ? " with Visual Studio" : "") + "; builds are faster with it).\n";
-    if (!sdl2.empty()) good("SDL2: " + sdl2);
-    else if (t.windows) miss(Sdl2Help(mingw));
-    else s += "  note  No SDL2 download was found; CMake will look for the system's SDL2 (for example the libsdl2-dev package).\n";
     if (problems) *problems = bad;
     s += bad == 0 ? "Everything needed to build the engine is here. Build with: okay engine build\n"
                   : std::to_string(bad) + (bad == 1 ? " thing is" : " things are") + " missing.\n";
@@ -410,33 +339,30 @@ std::string DoctorText(const Tools& t, const std::string& source, const std::str
 
 namespace {
 
-const char* kDoctorUsage = "Usage: okay engine doctor [--source DIR] [--sdl2 DIR]\n\nSay what building the engine needs on this computer, what is missing and where to get it.\n";
+const char* kDoctorUsage = "Usage: okay engine doctor [--source DIR]\n\nSay what building the engine needs on this computer, what is missing and where to get it.\n";
 const char* kBuildUsage =
     "Usage: okay engine build [editor|launcher|player|all] [--debug] [--jobs N] [--clean] [--run] [--dir BUILD]\n"
-    "                         [--source DIR] [--sdl2 DIR]\n\n"
+    "                         [--source DIR]\n\n"
     "Build the engine's own programs from an engine checkout: the editor (OkayEngine.exe), the launcher\n"
-    "(OkaySpace.exe) and the player (OkaySpacePlayer.exe). It needs CMake, a C++ compiler (Visual Studio or MinGW)\n"
-    "and the SDL2 development files; okay engine doctor says what is missing and where to get it.\n"
+    "(OkaySpace.exe) and the player (OkaySpacePlayer.exe). It needs CMake and a C++ compiler (Visual Studio or MinGW);\n"
+    "okay engine doctor says what is missing and where to get it. No third-party library is needed.\n"
     "  --debug   a Debug build (default Release)       --jobs N   compile N files at once\n"
     "  --clean   delete the build folder first         --run      start the editor or launcher afterwards\n"
     "  --dir     the build folder (default build-local in the checkout)\n"
-    "  --source  the engine checkout (default: this folder or a parent of it)\n"
-    "  --sdl2    the unpacked SDL2 download (default: C:\\SDL2, SDL2_DIR, the checkout's third_party ...)\n";
+    "  --source  the engine checkout (default: this folder or a parent of it)\n";
 
 Tools ToolsHere() { return FindTools(); }
 
 int Doctor(const std::vector<std::string>& args, const Io& io) {
     okay::CommandLine cl;
     cl.Flag("help").Short('h');
-    cl.Value("source", "DIR").Value("sdl2", "DIR");
+    cl.Value("source", "DIR");
     if (!cl.Parse(args)) { io.Warn(cl.Error() + "\n" + kDoctorUsage); return 2; }
     if (cl.Has("help")) { io.Say(kDoctorUsage); return 0; }
     const Tools t = ToolsHere();
     const std::string source = FindEngineSource(cl.Get("source", ""), ".");
-    const bool mingw = t.windows && !t.gxx.empty() && (t.visualStudio.empty() || !t.ninja.empty());
-    const std::string sdl2 = FindSdl2(cl.Get("sdl2", ""), source, mingw);
     int problems = 0;
-    io.Say(DoctorText(t, source, sdl2, &problems));
+    io.Say(DoctorText(t, source, &problems));
     return problems == 0 ? 0 : 1;
 }
 
@@ -448,15 +374,8 @@ int Build(const std::vector<std::string>& args, const Io& io) {
     const std::string source = FindEngineSource(o.source, ".");
     if (source.empty() && !o.source.empty()) { io.Warn(o.source + " is not an engine checkout (its CMakeLists.txt has no project(OkaySpace)."); return 1; }
     const Tools t = ToolsHere();
-    const bool mingw = t.windows && !t.gxx.empty() && (t.visualStudio.empty() || !t.ninja.empty());
-    const std::string sdl2 = FindSdl2(o.sdl2, source, mingw);
-    if (!o.sdl2.empty() && sdl2.empty()) {
-        io.Warn(o.sdl2 + " does not hold the SDL2 development files (no lib/cmake/SDL2 or cmake folder with SDL2's CMake file).\n" + Sdl2Help(mingw));
-        return 1;
-    }
     Plan p;
-    if (!MakePlan(o, t, source, sdl2, p, error)) { io.Warn(error); return 1; }
-    if (p.sdl2.empty()) io.Say("Note: no SDL2 download was found; CMake will look for the system's SDL2.");
+    if (!MakePlan(o, t, source, p, error)) { io.Warn(error); return 1; }
     std::error_code ec;
     if (o.clean && fs::exists(p.buildDir, ec)) {
         // Only a CMake build folder of THIS checkout is ever deleted, never a project or other files given by mistake.
@@ -474,7 +393,7 @@ int Build(const std::vector<std::string>& args, const Io& io) {
     if (!r.started) { io.Warn("Couldn't start CMake (" + t.cmake + ")."); return 1; }
     if (r.exitCode != 0) {
         io.Warn("CMake could not set up the build. The first error above is the one to read.\n"
-                "If it says SDL2 is missing, pass --sdl2 <folder>. If it says the generator does not match, add --clean.");
+                "If it says the generator does not match, add --clean.");
         return 1;
     }
     std::vector<std::string> build = {t.cmake};

@@ -1,10 +1,10 @@
 #pragma once
 // Scene Manager window: project scenes, file actions, and the build order.
 
+#include "okay/UI/UIPainter.hpp"   // okay::ui2d::Tex
 #include <string>
 #include <vector>
 
-struct SDL_Texture;
 
 namespace okay { namespace editor { class EditorState; } }
 
@@ -27,6 +27,6 @@ void SceneBuildSync(okay::editor::EditorState& ed);
 std::vector<SceneBuildEntry> SceneBuildSnapshot();
 void SceneBuildApply(okay::editor::EditorState& ed, const std::vector<SceneBuildEntry>& entries);
 
-SDL_Texture* GetSceneThumb(const std::string& path);
+okay::ui2d::Tex GetSceneThumb(const std::string& path);
 
 } // namespace oked

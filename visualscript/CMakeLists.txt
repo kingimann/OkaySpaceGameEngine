@@ -39,10 +39,9 @@ if(OKAY_BUILD_TESTS AND OKAY_BUILD_OKAYUI_TESTS AND TARGET okay_ui_render AND NO
     target_include_directories(test_okayui_visual_script_app PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests)
     target_compile_definitions(test_okayui_visual_script_app PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/okayui/tests/golden")
     add_test(NAME okayui_visual_script_app COMMAND test_okayui_visual_script_app)
-    set_tests_properties(okayui_visual_script_app PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    # The program starts on a graph, draws a few frames and ends by itself, with no display (SDL's dummy video driver).
+    # The program starts on a graph, draws a few frames and ends by itself, on a private Xvfb display (skipped without Xvfb).
     add_test(NAME visual_script_program_starts
-             COMMAND okay-visual-script --frames 5 ${CMAKE_SOURCE_DIR}/examples/visual_script/playground/coverage.okayvs)
-    set_tests_properties(visual_script_program_starts PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;OKAY_PLATFORM_BACKEND=sdl2"
+             COMMAND sh ${CMAKE_SOURCE_DIR}/tests/run_under_xvfb.sh $<TARGET_FILE:okay-visual-script> --frames 5 ${CMAKE_SOURCE_DIR}/examples/visual_script/playground/coverage.okayvs)
+    set_tests_properties(visual_script_program_starts PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "OKAY_OWN_PAINTER=software"
                          PASS_REGULAR_EXPRESSION "\\[visual-script\\] settings .*folder .*playground, 1 tab")
 endif()

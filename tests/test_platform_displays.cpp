@@ -1,7 +1,7 @@
 // Displays through okay::platform (shared/PlatformDisplays.cpp, Backend::DisplayAt / DisplayModes, the own X11 RandR list):
 //   test_platform_displays            pure checks: refresh from a mode line, current-first lists, Apply's calls on a fake window
 //   test_platform_displays xvfb       on an X server (tests/run_under_xvfb.sh, screen 1024x768): the own backend lists the
-//                                     screen and its modes, and agrees with the sdl2 backend when that is compiled in
+//                                     screen and its modes
 // The refresh figures are worked out by hand from the published mode timings (CEA-861 1080p60 and 1080i60, VESA DMT 1024x768@60).
 #include "test_framework.hpp"
 #include "okay/Platform/Platform.hpp"
@@ -108,7 +108,6 @@ void PureChecks() {
 
 void XvfbChecks() {
     if (!std::getenv("DISPLAY")) { std::cout << "SKIP: no $DISPLAY (run through tests/run_under_xvfb.sh)\n"; std::exit(77); }
-    setenv("SDL_VIDEODRIVER", "x11", 1);
     Backend* own = Get(BackendKind::Own);
     if (!own || !own->Init(InitFlags{true, false, false})) { std::cout << "SKIP: own backend cannot open the display\n"; std::exit(77); }
     const int n = own->DisplayCount();
@@ -129,29 +128,6 @@ void XvfbChecks() {
     const std::vector<okay::DisplayMonitor> ownMons = okay::platformdisplay::ListMonitors(own);
     CHECK(ownMons.size() == (size_t)n);
     CHECK(!ownMons.empty() && !ownMons[0].modes.empty());
-
-    // The same server through the sdl2 backend: the same displays, sizes and current mode.
-    Backend* sdl = IsCompiledIn(BackendKind::Sdl2) ? Get(BackendKind::Sdl2) : nullptr;
-    if (sdl && sdl->Init(InitFlags{true, false, false})) {
-        CHECK(sdl->DisplayCount() == n);
-        for (int i = 0; i < n && i < sdl->DisplayCount(); ++i) {
-            DisplayInfo a, b;
-            CHECK(own->DisplayAt(i, a) && sdl->DisplayAt(i, b));
-            std::cout << "  display " << i << ": own " << a.w << "x" << a.h << "@" << a.refreshHz << ", sdl2 " << b.w << "x" << b.h << "@"
-                      << b.refreshHz << "\n";
-            CHECK(a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
-            CHECK(a.refreshHz == b.refreshHz || a.refreshHz == 0 || b.refreshHz == 0);
-            const std::vector<DisplayMode> ma = own->DisplayModes(i), mb = sdl->DisplayModes(i);
-            CHECK(!ma.empty() && !mb.empty() && ma[0].width == mb[0].width && ma[0].height == mb[0].height);
-        }
-        const std::vector<okay::DisplayMonitor> sdlMons = okay::platformdisplay::ListMonitors(sdl);
-        CHECK(sdlMons.size() == ownMons.size());
-        for (size_t i = 0; i < sdlMons.size() && i < ownMons.size(); ++i)
-            CHECK(sdlMons[i].width == ownMons[i].width && sdlMons[i].height == ownMons[i].height);
-        sdl->Shutdown();
-    } else {
-        std::cout << "  (sdl2 backend not compiled in or no display for it: own-only checks)\n";
-    }
 
     // A real own window: windowed with a frame, borderless, back (the calls must not fail or crash the connection).
     WindowDesc wd; wd.title = "displays"; wd.width = 200; wd.height = 150;

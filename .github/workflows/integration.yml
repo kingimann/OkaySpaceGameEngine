@@ -55,7 +55,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libx11-dev libxrandr-dev libgl-dev libasound2-dev libgl1-mesa-dri ccache
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
         with:

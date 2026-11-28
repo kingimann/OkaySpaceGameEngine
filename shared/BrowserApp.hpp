@@ -24,7 +24,7 @@ namespace okay::browser {
 class BrowserApp {
 public:
     struct Config {
-        TabHost::TextureFns textures;   ///< how the host makes image textures (an SDL renderer or a Painter)
+        TabHost::TextureFns textures;   ///< how the host makes image textures (a Painter)
         TabHost::GameRunner runner;     ///< dataRoot: the browser's settings folder (sites/, the Downloads fallback); no player = no games
         std::string profilePath;        ///< the shared profile.json ("" = nothing is kept: tests)
         /// The User-Agent sent with every request. The "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" start is the common

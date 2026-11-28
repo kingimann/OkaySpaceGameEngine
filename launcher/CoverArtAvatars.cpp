@@ -13,11 +13,11 @@ namespace okl {
 // <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
 std::map<std::string, okay::ui2d::Tex> g_coverCaches[2];
-// Covers are drawn 300 x 169 at most (the official game's card); 768 keeps them sharp up to 2.5x display scaling, and a
-// 1920 x 1080 cover takes 1.3 MB instead of 8.3 MB (plus the driver's copy on Windows).
-constexpr int kCoverMaxSide = 768;
-// Avatar URLs also carry chat photos, which the lightbox shows up to the window's size (never larger than the picture): 2048
-// keeps that for any launcher window up to 2048 pixels wide, and a 4000 x 3000 photo takes 12 MB instead of 48 MB.
+// Pictures are kept at most 2048 pixels on their long side: the biggest place one is drawn (the Play page's hero art across
+// the page, the chat lightbox up to the window) is never wider than the window, so up to a 2048-pixel window nothing looks
+// different, and a 3840 x 2160 cover takes 9 MB instead of 33 MB, a 4000 x 3000 photo 12 MB instead of 48 MB (plus the
+// graphics driver's own copy on Windows).
+constexpr int kCoverMaxSide = 2048;
 constexpr int kChatImageMaxSide = 2048;
 
 okay::ui2d::Tex GameCover(const std::string& gamePath) {

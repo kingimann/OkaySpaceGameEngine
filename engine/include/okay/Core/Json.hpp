@@ -1,5 +1,5 @@
 #pragma once
-// okay::json: the engine's JSON reader (the planned shared one, docs/engine/shared_code.md "JSON read"). Header only,
+// okay::json: the engine's JSON reader and writer (docs/engine/shared_code.md "JSON read", "JSON escape and write"). Header only,
 // standard library only. Written from RFC 8259 (the JSON grammar, section 2 to 7) and nothing else; no code from any JSON
 // library. First user: the Browser's game pack reader (okay/Browser/GamePack.hpp), which reads the web export's manifest.
 // The engine's older private readers (Core/LocTable.cpp, Core/BuildPipeline.cpp, the OkayScript VM) can move onto it one by
@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <charconv>
 #include <clocale>
+#include <cstdio>
 #include <cstdlib>
 #include <cstddef>
 #include <cstdint>
@@ -57,6 +58,26 @@ struct Value {
         if ((double)u != number) return false;
         out = u;
         return true;
+    }
+
+    // ---- Building values (for writers: the automation API's answers, okay/Automation/Automation.hpp) ----
+    static Value Str(std::string s) { Value v; v.type = Type::String; v.string = std::move(s); return v; }
+    static Value Num(double n) { Value v; v.type = Type::Number; v.number = n; return v; }
+    static Value Boolean(bool b) { Value v; v.type = Type::Bool; v.boolean = b; return v; }
+    static Value Arr() { Value v; v.type = Type::Array; return v; }
+    static Value Obj() { Value v; v.type = Type::Object; return v; }
+    /// Object: replace the first value under `key`, or add it at the end. A Null value becomes an object first.
+    Value& Set(std::string_view key, Value val) {
+        if (type == Type::Null) type = Type::Object;
+        for (auto& kv : object) if (kv.first == key) { kv.second = std::move(val); return *this; }
+        object.emplace_back(std::string(key), std::move(val));
+        return *this;
+    }
+    /// Array: add `val` at the end. A Null value becomes an array first.
+    Value& Push(Value val) {
+        if (type == Type::Null) type = Type::Array;
+        array.push_back(std::move(val));
+        return *this;
     }
 };
 
@@ -243,5 +264,53 @@ inline void Escape(std::string_view s, std::string& out) {
     }
     out += '"';
 }
+
+/// Append a number as RFC 8259 section 6 writes it: a whole number below 2^53 without a fraction ("3", "-12"), anything
+/// else in the shortest form that reads back to the same double. NaN and the infinities have no JSON form: "null".
+inline void WriteNumber(double n, std::string& out) {
+    if (!(n == n) || n > 1.7976931348623157e308 || n < -1.7976931348623157e308) { out += "null"; return; }
+    if (n == (double)(long long)n && n < 9007199254740992.0 && n > -9007199254740992.0) {
+        out += std::to_string((long long)n);
+        return;
+    }
+    char buf[40];
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    const auto r = std::to_chars(buf, buf + sizeof buf, n);
+    out.append(buf, r.ptr);
+#else
+    // No to_chars for double here (Emscripten's library): 17 significant digits always read back the same, and the C
+    // library's decimal point is turned back into '.'.
+    const int len = std::snprintf(buf, sizeof buf, "%.17g", n);
+    const char* dp = std::localeconv()->decimal_point;
+    for (int k = 0; k < len && k < (int)sizeof buf; ++k) out += (dp && buf[k] == dp[0]) ? '.' : buf[k];
+#endif
+}
+
+/// Append `v` as compact JSON text (no white space; object keys in their stored order). Parse reads it back to an equal
+/// value. Nesting deeper than Limits::maxDepth is written as null, so a value Parse could not read is never produced.
+inline void Write(const Value& v, std::string& out, int depth = 0) {
+    switch (v.type) {
+    case Type::Null: out += "null"; return;
+    case Type::Bool: out += v.boolean ? "true" : "false"; return;
+    case Type::Number: WriteNumber(v.number, out); return;
+    case Type::String: Escape(v.string, out); return;
+    case Type::Array:
+    case Type::Object: {
+        if (depth >= Limits().maxDepth) { out += "null"; return; }
+        const bool obj = v.type == Type::Object;
+        out += obj ? '{' : '[';
+        const std::size_t n = obj ? v.object.size() : v.array.size();
+        for (std::size_t k = 0; k < n; ++k) {
+            if (k) out += ',';
+            if (obj) { Escape(v.object[k].first, out); out += ':'; Write(v.object[k].second, out, depth + 1); }
+            else Write(v.array[k], out, depth + 1);
+        }
+        out += obj ? '}' : ']';
+        return;
+    }
+    }
+}
+
+inline std::string Write(const Value& v) { std::string s; Write(v, s); return s; }
 
 } // namespace okay::json

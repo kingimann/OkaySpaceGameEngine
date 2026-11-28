@@ -31,6 +31,7 @@ int main(int argc, char** argv) {
 #else
     for (int i = 1; i < argc; ++i) args.push_back(argv[i]);
 #endif
+    okaycli::AutomationEntry() = &okaycli::AutomationMain;   // okay mcp / okay automation (Automation.cpp, built into this program)
     okaycli::Io io;
     return okaycli::Main(args, io);
 }

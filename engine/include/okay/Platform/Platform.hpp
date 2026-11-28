@@ -366,6 +366,13 @@ public:
     /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
     /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event.
     virtual bool PushEvent(const Event& e) { (void)e; return false; }
+    /// Sleep until an event is waiting, WakeWait is called, or `timeoutMs` passes, whichever comes first (the idle throttle's
+    /// sleep: a mouse move, a key, a window event or a finished background job ends it at once instead of after the frame
+    /// budget). True when it ended before the timeout. Events stay queued for PollEvent. X11 and Win32 wait on the system's
+    /// own event wait (poll on the display connection, MsgWaitForMultipleObjects); other backends sleep in short slices.
+    virtual bool WaitEvents(uint32_t timeoutMs);
+    /// End the current WaitEvents now, or make the next one return at once. Safe to call from any thread.
+    virtual void WakeWait();
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
     /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
@@ -482,6 +489,9 @@ inline uint32_t TicksMs32() { return (uint32_t)TicksMs(); }
 uint64_t PerfCounter();
 uint64_t PerfFrequency();
 void DelayMs(uint32_t ms);
+/// WakeWait on the default backend (nothing when there is none). Safe from any thread: a background job calls it when its
+/// result is ready, so a main loop sleeping in WaitEvents picks the result up at once.
+void WakeMainLoop();
 /// Log one line through the default backend (stderr when there is none).
 void Log(const std::string& line);
 

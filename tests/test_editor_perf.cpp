@@ -134,6 +134,14 @@ int main() {
         // A minimized window still holds 10 FPS; Play still overrides it.
         CHECK_NEAR(perf::TargetFps(p, none, 0.0, true), perf::kMinimizedFps, 1e-9);
         w = none; w.playing = true; CHECK(perf::TargetFps(p, w, 0.0, true) == 0.0);
+        // The idle sleep is an idle wait (Backend::WaitEvents: any event or finished job ends it, tests/test_platform_wait.cpp);
+        // the person's frame cap is a plain sleep, so the cap still holds while the mouse moves.
+        CHECK(perf::SleepEndsOnInput(p, 30.0));                       // idle rate, no cap
+        perf::PacingSettings capped = p; capped.fpsCap = 60;
+        CHECK(perf::SleepEndsOnInput(capped, 30.0));                  // the idle rate is below the cap: an idle wait
+        CHECK(!perf::SleepEndsOnInput(capped, 60.0));                 // the cap is what limits: a plain sleep
+        CHECK(!perf::SleepEndsOnInput(p, 0.0));                       // no sleep at all
+        CHECK(perf::SleepEndsOnInput(p, perf::kMinimizedFps));        // minimized: an idle wait (restoring the window wakes it)
     }
 
     // ---- viewport scale and size -----------------------------------------------------------------------------------------------------

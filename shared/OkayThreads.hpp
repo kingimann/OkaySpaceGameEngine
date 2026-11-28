@@ -106,9 +106,14 @@ struct Thread {
     pthread_t id;
 #endif
 };
+/// Called on a thread made by CreateThread right after its function returns (null = nothing). The editor and the launcher set
+/// it to okay::platform::WakeMainLoop, so a main loop asleep in its idle wait (Backend::WaitEvents) picks a background result
+/// up at once instead of at the next throttled frame.
+inline std::atomic<void (*)()>& ThreadFinishedHook() { static std::atomic<void (*)()> hook{nullptr}; return hook; }
 namespace detail {
 inline void Run(Thread* t) {
     t->status = t->fn(t->data);
+    if (void (*hook)() = ThreadFinishedHook().load()) hook();
     // Finished first; if the owner already detached, nobody will ever wait for us: free the record here.
     if (t->state.exchange(Thread::Finished) == Thread::Detached) delete t;
 }

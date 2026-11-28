@@ -7,6 +7,11 @@
 namespace okay::platform {
 std::unique_ptr<Backend> CreateOwnBackend();    // OwnLinux.cpp / OwnWin32.cpp / WebBackend.cpp (OKAY_PLATFORM_HAVE_OWN)
 
+/// The WakeWait flag every backend shares (Platform.cpp): NoteWake sets it, TakeWake reads and clears it. A backend whose
+/// WaitEvents blocks in the system also gets a system wake (a pipe write, an event handle) from its own WakeWait.
+void NoteWake();
+bool TakeWake();
+
 #ifdef _WIN32
 namespace own {   // OwnWin32Audio.cpp (WASAPI)
 std::unique_ptr<AudioDevice> OpenWasapi(const AudioSpec& want, bool capture, const char* device, AudioSpec* got, std::string& err);

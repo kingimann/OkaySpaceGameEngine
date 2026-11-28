@@ -320,8 +320,13 @@ private:
 
 class WinBackend final : public Backend {
 public:
-    WinBackend() { g_backend = this; QueryPerformanceFrequency(&m_freq); QueryPerformanceCounter(&m_t0); }
-    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_rawWnd) DestroyWindow(m_rawWnd); if (m_xinput) FreeLibrary(m_xinput); }
+    WinBackend() { g_backend = this; QueryPerformanceFrequency(&m_freq); QueryPerformanceCounter(&m_t0); m_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
+    ~WinBackend() override {
+        if (g_backend == this) g_backend = nullptr;
+        if (m_rawWnd) DestroyWindow(m_rawWnd);
+        if (m_xinput) FreeLibrary(m_xinput);
+        if (m_wakeEvent) CloseHandle(m_wakeEvent);
+    }
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags&) override {
@@ -389,6 +394,25 @@ public:
     void Unregister(HWND h) { m_wins.erase(h); }
 
     void PumpEvents() override { PumpMessages(); }
+    // The idle wait: MsgWaitForMultipleObjectsEx returns when a message arrives for this thread (input, paint, size, focus,
+    // a timer) or when WakeWait sets the auto-reset event. MWMO_INPUTAVAILABLE also counts input that an earlier peek saw but
+    // left queued. XInput pads are polled, not signalled, so a pad does not wake the wait (the throttle's frame rate polls it).
+    bool WaitEvents(uint32_t timeoutMs) override {
+        PumpMessages();
+        if (TakeWake() || !m_pending.empty()) return true;
+        if (!m_wakeEvent) return Backend::WaitEvents(timeoutMs);
+        const uint64_t t0 = TicksMs();
+        for (;;) {
+            const uint64_t spent = TicksMs() - t0;
+            if (spent >= timeoutMs) return false;
+            const DWORD r = MsgWaitForMultipleObjectsEx(1, &m_wakeEvent, (DWORD)(timeoutMs - spent), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            PumpMessages();
+            if (TakeWake() || !m_pending.empty()) return true;
+            if (r == WAIT_TIMEOUT || r == WAIT_FAILED) return false;
+            // A message that made no event (a timer, a non-client message): wait out the rest.
+        }
+    }
+    void WakeWait() override { NoteWake(); if (m_wakeEvent) SetEvent(m_wakeEvent); }
     bool HasPendingEvents() override { return !m_pending.empty(); }   // the window procedures put what PumpMessages read there
     bool PushEvent(const Event& e) override {
         if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
@@ -913,6 +937,7 @@ private:
     typedef DWORD (WINAPI *GetStateFn)(DWORD, XINPUT_STATE*);
     typedef DWORD (WINAPI *SetStateFn)(DWORD, XINPUT_VIBRATION*);
     LARGE_INTEGER m_freq, m_t0;
+    HANDLE m_wakeEvent = nullptr;   // WakeWait sets it; WaitEvents waits on it with the message queue
     HMODULE m_xinput = nullptr;
     GetStateFn m_getState = nullptr;
     SetStateFn m_setState = nullptr;

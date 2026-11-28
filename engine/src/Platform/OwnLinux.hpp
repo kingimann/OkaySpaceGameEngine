@@ -20,6 +20,8 @@ public:
 
     virtual std::unique_ptr<Window> MakeWindow(const WindowDesc& d, std::string& err) = 0;
     virtual bool PollEvent(Event& out) = 0;
+    /// The display connection's socket (XConnectionNumber), for poll(); -1 when there is none.
+    virtual int ConnectionFd() const { return -1; }
     virtual void* GLProcAddress(const char* name) = 0;
     virtual void ReleaseCurrent() = 0;
     virtual GLCurrent CurrentGL() = 0;                  // glXGetCurrentContext / glXGetCurrentDrawable

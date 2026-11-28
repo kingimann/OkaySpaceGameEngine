@@ -196,6 +196,14 @@ inline double QuietSeconds(double sinceInput, double sinceActivity) {
     return std::max(0.0, std::min(sinceInput, sinceActivity));
 }
 
+/// True when this frame's sleep comes from the idle or minimized rate rather than the person's frame cap: that sleep is an idle
+/// wait which any event or background result ends at once (Backend::WaitEvents). A cap's sleep is a plain sleep, so the cap holds
+/// while the mouse moves.
+inline bool SleepEndsOnInput(const PacingSettings& p, double targetFps) {
+    if (!(targetFps > 0.0) || !std::isfinite(targetFps)) return false;
+    return !(p.fpsCap > 0) || targetFps < (double)p.fpsCap;
+}
+
 /// Seconds to sleep so a frame that took `elapsedSeconds` lasts 1 / target. 0 when there is no target or the frame ran long.
 inline double SleepSeconds(double targetFps, double elapsedSeconds) {
     if (!(targetFps > 0.0) || !std::isfinite(targetFps)) return 0.0;

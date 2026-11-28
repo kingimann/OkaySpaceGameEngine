@@ -3764,6 +3764,17 @@ Owner, 2026-11-27: "Okay ui needs a ton of more work". The coordinator's round 6
 | Audit: fixed-width buttons cut their label at 150% | a pixel width wins over the label | a button given a width its label does not fit grows to hold it (8 px each side) as far as the row allows | picture at 150% |
 | Audit: the New Project form at 150% | its label column was 84 px, "Location" ran into its field | the widest label and a gap, at least 84 px | picture at 150% |
 
+**Owner's Inspector notes (2026-11-28, a Windows test build's Event System and the bottom of the Inspector).** (1) Body text flush at
+the panel's edge: with the label column every body's labels and plain lines start at the same x, the Event System's lines included
+(seen in the running editor). (2) A "Remove" button inside 187 component bodies (in `editor/main.cpp`, `NavigationWindow.cpp`,
+`WindTools.cpp`, `VolumeTools.cpp`, `BehaviorTreeWindow.cpp`) duplicated the header's "..." menu: deleted, Remove Component is in the
+header menu only (the inline buttons that remove an item of a list, not the component, stay). (3) "Delete GameObject" was a full-width
+bright red bar under a 260-pixel Add Component (owner: "the delete gameobject is bigger then the add compinent"): Add Component is now
+the main button, the full width of the panel's content and 32 pixels tall; Delete GameObject is quiet red text on a clear button, 18
+pixels below it, and asks first ("Delete ... and its children? Ctrl+Z brings it back." with Delete and Cancel; it had no question
+before, only undo). (4) A gap, a divider and a gap end the component list before the buttons. Pictures before and after are outside
+the repository.
+
 **Golden pictures.** 91 were made again, each compared with its old picture (old, new and the difference side by side, outside the
 repository): the text is the same words in the same places, drawn sharp (and the draw-list rasteriser the goldens use now samples font
 atlases: text drawn sharp at a size the launcher look does not bake had been left out of those pictures), the launcher's What's New
@@ -3776,8 +3787,8 @@ the arrows in the "Open a project" dialog (the ring on a template row inside the
 `uiScale` 1.5); the launcher's Software Update dialog (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`); and every Inspector body: the dev hook
 `OKAY_UI_INSPECTALL=<folder>` makes one object per component type the property registry knows and saves a picture of the editor with
 each selected (95 of the 120 types got their picture in the run's time; an earlier run reached all 120 and showed the open-combo bug
-above). Pictures are outside the repository. Tests: every `okayui_*`, `launcher_*` and `editor_*` test (83) and `own_switches`,
-`own_stack`, `imgui_platform_feed` pass.
+above). Pictures are outside the repository. Tests: every `okayui_*`, `launcher_*` and `editor_*` test and `own_switches`, `own_stack`,
+`imgui_platform_feed` (87) pass, run again after the branch was moved onto `origin/main` (with SDL2 removed).
 
 **Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU (the software painter samples like one), a real
 display at 125% or 150% (the scale was set through the appearance file), and an input method. **Not done:** fields placed after

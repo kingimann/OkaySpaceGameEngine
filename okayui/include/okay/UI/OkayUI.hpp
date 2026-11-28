@@ -1415,11 +1415,17 @@ bool IsKeyReleased(KeyId key);
 /// FramedWidgets is OkayUI's own (0 off, the default; anything else on): Checkbox draws Dear ImGui's box (a rounded frame in Col_FrameBg, or
 /// the accent at 45% once ticked, and a tick in Col_CheckMark), and Combo and BeginCombo draw a field in Col_FrameBg with a square arrow
 /// button at its right end (Col_Button, a filled triangle in the text colour) and the text FramePadding.x in.
+/// LabelColumn is OkayUI's own too (0 off, the default): a labelled field that starts a line (a drag, slider, check box, combo, text
+/// or colour field) shows its label in a column at the left, `value` pixels wide (below 1: that share of the row), and the field in
+/// the rest of the row, so every field of a panel starts at the same x (an Inspector's label column). A label longer than the column
+/// is cut with "..."; the item's rectangle covers the label too (a tooltip on the label shows). A field after SameLine, one placed
+/// with SetCursorScreenPos and one with no visible label keep the plain layout. The column is at least 40 pixels and at most 60% of
+/// the row, and is left out when the row is too narrow for it.
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
     StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_GrabMinSize, StyleVar_TextRowHeight, StyleVar_CellPadding, StyleVar_PopupPadding,
-    StyleVar_PopupWidth, StyleVar_FramedWidgets, StyleVar_COUNT,
+    StyleVar_PopupWidth, StyleVar_FramedWidgets, StyleVar_LabelColumn, StyleVar_COUNT,
     // Names ported code uses for the border sizes (BorderSize sets all three, as before).
     StyleVar_WindowBorderSize = StyleVar_BorderSize, StyleVar_FrameBorderSize = StyleVar_BorderSize, StyleVar_ChildBorderSize = StyleVar_BorderSize
 };

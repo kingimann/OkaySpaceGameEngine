@@ -988,6 +988,35 @@ void TestModalFitsContent() {
             CHECK(btn.x - pops[0].pos.x >= 6.0f);
         }
     }
+    // Round 6: a line longer than the whole display: the dialog stops at the display less 16 pixels and the line wraps inside it (it
+    // used to run past the dialog's right edge).
+    for (int imgui = 0; imgui < 2; ++imgui) {
+        Reset();
+        Sim sim3(420, 400);
+        UI::Rect line{}, after{}; float top = 0.0f;
+        auto wide = [&] {
+            if (imgui) { UI::UseImGuiCoordinates(true); UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f); }
+            if (!UI::IsPopupOpen("##wide")) UI::OpenPopup("##wide");
+            if (UI::BeginPopupModal("##wide", nullptr, UI::Window_NoTitleBar | UI::Window_AlwaysAutoResize)) {
+                top = UI::GetCursorScreenPos().y;
+                UI::TextUnformatted("This file is used by eleven scenes, four prefabs and two materials, so deleting it breaks every one of them until you put it back.");
+                line = UI::GetItemRect();
+                UI::Button("OK", V(80, 0)); after = UI::GetItemRect();
+                UI::EndPopup();
+            }
+            if (imgui) { UI::PopStyleVar(2); UI::UseImGuiCoordinates(false); }
+        };
+        sim3.Frames(5, wide);
+        UI::PopupSlotInfo p3[4];
+        const int n3 = UI::ListOpenPopups(p3, 4);
+        CHECK(n3 == 1);
+        if (n3 == 1) {
+            CHECK(p3[0].size.x <= 420.0f - 16.0f + 0.5f);                   // as wide as the display allows
+            CHECK(line.x + line.w <= p3[0].pos.x + p3[0].size.x + 0.5f);    // the long line stays inside it ...
+            CHECK(after.y - top > UI::GetTextLineHeight() * 2.5f);           // ... on more than one line (three here), the button after them
+            CHECK(after.y >= line.y + line.h - 0.5f);
+        }
+    }
 }
 
 // Drags between windows, the editor's way (round 3 of the editor on OkayUI): a file dragged from the Project panel (a tile with a
@@ -1211,6 +1240,206 @@ void TestTabFocus() {
     CHECK(tool == 0);
 }
 
+// Round 6: sliders, drags, list rows, tree rows and menu rows are in the keyboard focus too. Tab reaches a slider and a drag (Left / Right
+// step them), and a list as one stop (Up / Down walk its rows, Enter picks one); a tree row opens with Right and closes with Left; in an
+// open popup Down goes to its first row and Enter picks it. Run in both looks (OkayUI's own and Dear ImGui's framed widgets).
+void TestNavRows() {
+    for (int framed = 0; framed < 2; ++framed) {
+        RUN_SUITE((framed ? "windows: arrow keys and Tab on sliders, drags, rows, trees and menus (framed widgets)"
+                          : "windows: arrow keys and Tab on sliders, drags, rows, trees and menus"));
+        Reset();
+        Sim sim(640, 480);
+        float vol = 0.5f, speed = 1.0f; int pick = 0, menuPick = 0; bool folderOpen = false, leafShown = false, openMenu = false, popupOpen = false;
+        auto ui = [&] {
+            if (framed) UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+            UI::SetNextWindowPos(V(20, 20), UI::Cond_FirstUseEver); UI::SetNextWindowSize(V(420, 400), UI::Cond_FirstUseEver);
+            if (UI::Begin("Rows", nullptr, 0)) {
+                UI::SliderFloat("Volume", &vol, 0.0f, 1.0f, "%.2f");   // (the format forms: framed in Dear ImGui's look, plain otherwise)
+                UI::DragFloat("Speed", &speed, 0.1f, 0.0f, 10.0f, "%.2f");
+                const char* names[3] = {"Alpha", "Beta", "Gamma"};
+                for (int i = 0; i < 3; ++i) if (UI::Selectable(names[i], pick == i)) pick = i;
+                folderOpen = UI::TreeNode("Folder");
+                leafShown = false;
+                if (folderOpen) { leafShown = true; UI::Selectable("Leaf", false); UI::TreePop(); }
+                if (UI::Button("Menu")) openMenu = true;
+                if (openMenu) { UI::OpenPopup("menu"); openMenu = false; }
+                popupOpen = UI::BeginPopup("menu");
+                if (popupOpen) {
+                    if (UI::MenuItem("Cut")) menuPick = 1;
+                    if (UI::MenuItem("Copy")) menuPick = 2;
+                    UI::EndPopup();
+                }
+            }
+            UI::End();
+            if (framed) UI::PopStyleVar();
+        };
+        auto key = [&](UI::KeyId k, bool shift = false) { sim.shift = shift; sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.shift = false; sim.Frame(ui); };
+        sim.Move(300, 300);
+        sim.Frames(3, ui);
+        key(UI::KeyId_Tab);                       // the slider
+        key(UI::KeyId_Right);
+        CHECK(std::fabs(vol - 0.51f) < 0.001f);   // a hundredth of the range
+        key(UI::KeyId_Left); key(UI::KeyId_Left);
+        CHECK(std::fabs(vol - 0.49f) < 0.001f);
+        key(UI::KeyId_Tab);                       // the drag
+        key(UI::KeyId_Right);
+        CHECK(std::fabs(speed - 1.1f) < 0.001f);  // its speed per press
+        key(UI::KeyId_Tab);                       // the list: one stop, its first row
+        key(UI::KeyId_Down);                      // Beta
+        key(UI::KeyId_Enter);
+        CHECK(pick == 1);
+        key(UI::KeyId_Down); key(UI::KeyId_Down); // Gamma, then the tree row
+        CHECK(!folderOpen);
+        key(UI::KeyId_Right);                     // opens it
+        CHECK(folderOpen && leafShown);
+        key(UI::KeyId_Up); key(UI::KeyId_Enter);  // up to Gamma, picked
+        CHECK(pick == 2);
+        key(UI::KeyId_Down); key(UI::KeyId_Left); // the tree row again: closed
+        CHECK(!folderOpen);
+        key(UI::KeyId_Tab);                       // past the rows (one stop): the Menu button
+        key(UI::KeyId_Space);
+        CHECK(popupOpen);
+        key(UI::KeyId_Down);                      // the popup's first row
+        key(UI::KeyId_Down);                      // Copy
+        key(UI::KeyId_Enter);
+        CHECK(menuPick == 2 && !popupOpen);
+        key(UI::KeyId_Space);                     // the focus went back to the Menu button: Space opens the menu again
+        CHECK(popupOpen);
+        key(UI::KeyId_Escape);
+        CHECK(!popupOpen);
+        key(UI::KeyId_Tab, true);                 // Shift+Tab: back to the list (its first row)
+        key(UI::KeyId_Down); key(UI::KeyId_Down); key(UI::KeyId_Down);
+        key(UI::KeyId_Right);                     // the tree row: open
+        CHECK(folderOpen);
+        key(UI::KeyId_Enter);                     // Enter closes it again
+        CHECK(!folderOpen);
+    }
+}
+
+// Round 6: a reorderable tab bar outside the dock (BeginTabBar with TabBar_Reorderable) slides like a docked strip: the dragged tab is drawn
+// under the pointer where it was grabbed, and a tab that makes room eases to its new place over a few frames instead of jumping (a tab
+// drawn after the dragged one is clipped to beside it, so it does not cover it).
+void TestTabBarSlides() {
+    RUN_SUITE("windows: a reorderable tab bar's tabs slide aside while one is dragged");
+    Reset();
+    Sim sim(640, 300);
+    UI::Rect ra{}, rb{}, rc{};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(10, 10), UI::Cond_Always); UI::SetNextWindowSize(V(600, 200), UI::Cond_Always);
+        if (UI::Begin("Bar", nullptr, 0) && UI::BeginTabBar("tabs", UI::TabBar_Reorderable)) {
+            const bool a = UI::BeginTabItem("Alpha"); ra = UI::GetItemRect(); if (a) UI::EndTabItem();
+            const bool b = UI::BeginTabItem("Beta");  rb = UI::GetItemRect(); if (b) UI::EndTabItem();
+            const bool c = UI::BeginTabItem("Gamma"); rc = UI::GetItemRect(); if (c) UI::EndTabItem();
+            UI::EndTabBar();
+        }
+        UI::End();
+    };
+    sim.Frames(3, ui);
+    const UI::Rect a0 = ra, b0 = rb;
+    const float grabX = a0.x + 10.0f, y = CenterY(a0);
+    sim.Move(grabX, y); sim.Frame(ui); sim.Down(); sim.Frame(ui);
+    const float px = CenterX(b0) + 6.0f;   // just past Beta's centre: they swap places
+    sim.Move(grabX + 8.0f, y); sim.Frame(ui);
+    sim.Move(px, y); sim.Frame(ui);
+    CHECK(std::fabs(ra.x - (px - 10.0f)) < 1.0f);            // Alpha is drawn under the pointer, where it was grabbed
+    CHECK(rb.x < b0.x - 0.5f && rb.x > a0.x + 0.5f);         // Beta is on its way to the first place, not there yet
+    float last = rb.x; bool left = true;
+    for (int i = 0; i < 30; ++i) { sim.Frame(ui); left = left && rb.x <= last + 0.01f; last = rb.x; }
+    CHECK(left && std::fabs(rb.x - a0.x) < 0.5f);            // it slid there and stopped
+    sim.Up(); sim.Frames(30, ui);
+    CHECK(rb.x < ra.x && ra.x < rc.x && std::fabs(rb.x - a0.x) < 0.5f);   // after the drop: Beta first, Alpha second, at rest
+}
+
+// Round 6: the label column (StyleVar_LabelColumn, the Inspector's labels on the left): every labelled field that starts a line has its
+// label in a column at the left and the field after it, so the fields line up; the item's rectangle covers the label; a press on the
+// label does not act on the field; a long label is cut before the field; a field after SameLine keeps the plain layout.
+void TestLabelColumn() {
+    RUN_SUITE("windows: the label column puts labels on the left and lines the fields up");
+    Reset();
+    Sim sim(640, 480);
+    float pos[3] = {1, 2, 3}, amount = 0.5f, tint[3] = {1, 0.5f, 0.25f}; bool enabled = false, other = false; int kind = 0; char name[32] = "Box";
+    static const char* kinds[] = {"Box", "Sphere"};
+    UI::Rect rp{}, ra{}, re{}, rk{}, rn{}, rt{}, rlong{}, rsame{};
+    float left = 0.0f, right = 0.0f;
+    auto ui = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+        UI::PushStyleVar(UI::StyleVar_LabelColumn, 120.0f);
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_Always); UI::SetNextWindowSize(V(420, 400), UI::Cond_Always);
+        if (UI::Begin("Fields", nullptr, 0)) {
+            left = UI::GetCursorScreenPos().x; right = left + UI::GetContentRegionAvail().x;
+            UI::DragFloat3("Position", pos, 0.1f, 0.0f, 0.0f, "%.2f"); rp = UI::GetItemRect();
+            UI::SliderFloat("Amount", &amount, 0.0f, 1.0f, "%.2f");    ra = UI::GetItemRect();
+            UI::Checkbox("Enabled", &enabled);                         re = UI::GetItemRect();
+            UI::Combo("Kind", &kind, kinds, 2);                        rk = UI::GetItemRect();
+            UI::InputText("Name", name, (int)sizeof name);             rn = UI::GetItemRect();
+            UI::ColorEdit3("Tint", tint);                              rt = UI::GetItemRect();
+            UI::Checkbox("A label far too long for the column", &other); rlong = UI::GetItemRect();
+            UI::TextUnformatted("Then"); UI::SameLine(); UI::Checkbox("Beside", &other); rsame = UI::GetItemRect();
+        }
+        UI::End();
+        UI::PopStyleVar(2);
+    };
+    sim.Frames(3, ui);
+    const UI::Rect rows[6] = {rp, ra, re, rk, rn, rt};
+    bool lined = true;
+    for (const UI::Rect& r : rows) lined = lined && std::fabs(r.x - left) < 0.5f && r.w > 120.0f;
+    CHECK(lined);                                                     // every field's rectangle starts at the left, its label included
+    CHECK(std::fabs((rp.x + rp.w) - right) < 1.5f && std::fabs((rn.x + rn.w) - right) < 1.5f);   // and reaches the right edge
+    CHECK(rsame.x > left + 20.0f);                                    // after SameLine: the plain layout
+    // a press on the label does nothing; a press on the box (after the column) ticks it
+    sim.Move(left + 10.0f, CenterY(re)); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+    CHECK(!enabled);
+    sim.Move(left + 120.0f + 6.0f, CenterY(re)); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+    CHECK(enabled);
+    // a drag on the Position label moves nothing; on the first cell it changes x
+    sim.Move(left + 30.0f, CenterY(rp)); sim.Frame(ui); sim.Down(); sim.Frame(ui);
+    for (int i = 1; i <= 4; ++i) { sim.Move(left + 30.0f + 10.0f * (float)i, CenterY(rp)); sim.Frame(ui); }
+    sim.Up(); sim.Frame(ui);
+    CHECK(pos[0] == 1.0f);
+    sim.Move(left + 140.0f, CenterY(rp)); sim.Frame(ui); sim.Down(); sim.Frame(ui);
+    for (int i = 1; i <= 4; ++i) { sim.Move(left + 140.0f + 10.0f * (float)i, CenterY(rp)); sim.Frame(ui); }
+    sim.Up(); sim.Frame(ui);
+    CHECK(pos[0] > 1.5f);
+    // the long label is cut before the column ends: nothing of it is drawn in the last 6 pixels of the column
+    const Bitmap& b = sim.Draw(0, 0, 0);
+    const unsigned bg = PixelAt(b, (int)(left + 116.0f), (int)rlong.y + 1);
+    bool clear = true;
+    for (int x = (int)(left + 114.0f); x < (int)(left + 119.0f); ++x)
+        for (int y = (int)rlong.y + 2; y < (int)(rlong.y + rlong.h) - 2; ++y) clear = clear && PixelAt(b, x, y) == bg;
+    CHECK(clear);
+}
+
+// Round 6 audit: with Dear ImGui's text rows, AlignTextToFramePadding puts a label on the text line of the framed field after it (it did
+// nothing: the New Project form's "Name" sat above its field's text), and a bullet is centred on the first line of the text after it
+// (the launcher's What's New list had square dots below their lines).
+void TestTextAlignment() {
+    RUN_SUITE("windows: AlignTextToFramePadding and bullets sit on their text line");
+    Reset();
+    Sim sim(640, 480);
+    UI::Rect label{}, field{}, plain{}, dot{}, note{};
+    char buf[32] = "MyGame";
+    auto ui = [&] {
+        UI::UseImGuiCoordinates(true);
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        UI::SetNextWindowPos(V(20, 20), UI::Cond_Always); UI::SetNextWindowSize(V(420, 300), UI::Cond_Always);
+        if (UI::Begin("Form", nullptr, 0)) {
+            UI::AlignTextToFramePadding();
+            UI::TextDisabled("Name"); label = UI::GetItemRect(); UI::SameLine(84.0f);
+            UI::InputText("##name", buf, (int)sizeof buf); field = UI::GetItemRect();
+            UI::TextUnformatted("A plain line"); plain = UI::GetItemRect();   // the next line is not affected
+            UI::Bullet(); dot = UI::GetItemRect(); UI::SameLine();
+            UI::BeginGroup(); UI::TextWrapped("A note after a bullet"); note = UI::GetItemRect(); UI::EndGroup();
+        }
+        UI::End();
+        UI::PopStyleVar(2);
+        UI::UseImGuiCoordinates(false);
+    };
+    sim.Frames(3, ui);
+    CHECK(std::fabs(CenterY(label) - CenterY(field)) < 1.0f);          // the label's line is the field's
+    CHECK(plain.h < field.h - 2.0f);                                     // a text later on is one text line tall again
+    CHECK(std::fabs(CenterY(dot) - CenterY(note)) < 1.0f);             // the dot is on the note's first line
+}
+
 int main() {
     TestOcclusion();
     TestDrawOrder();
@@ -1235,6 +1464,10 @@ int main() {
     TestModalFixedHeight();
     TestModalFitsContent();
     TestTabFocus();
+    TestNavRows();
+    TestTabBarSlides();
+    TestLabelColumn();
+    TestTextAlignment();
     TestDragAcrossWindows();
     TestDragSourceThatMoves();
     TEST_MAIN_RESULT();

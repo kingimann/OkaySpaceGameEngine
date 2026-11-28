@@ -15173,8 +15173,13 @@ int main(int argc, char** argv) {
             {
                 ImGui::Dummy(ImVec2(0, 8));
                 const okaylcli::Host& ch = CommandLineHost();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("Tools");
+                {   // the label, centred on the buttons' height
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    const float bh = okl::UiPx(32.0f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x, at.y + (bh - ImGui::GetTextLineHeight()) * 0.5f),
+                                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), "Tools");
+                    ImGui::Dummy(ImVec2(ImGui::CalcTextSize("Tools").x, bh));
+                }
                 for (const okaylcli::ToolProgram& tp : okaylcli::ToolPrograms()) {
                     const bool have = std::any_of(ch.programs.begin(), ch.programs.end(), [&](const okaylcli::FoundProgram& f) { return f.label == tp.label; });
                     ImGui::SameLine(0, 10);

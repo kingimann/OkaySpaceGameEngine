@@ -3189,6 +3189,14 @@ add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 add_executable(test_voice_races test_voice_races.cpp)
 target_link_libraries(test_voice_races PRIVATE okay::engine)
 add_test(NAME voice_races COMMAND test_voice_races)
+# The null audio device (OKAY_AUDIO_DEVICE=null, engine/src/Platform/NullAudio.cpp) through the public okay::platform API:
+# real-rate queue drain, silent capture, callbacks one period at a time, Pause and close. Built for Windows too, so the
+# Windows test job checks it on a machine with no sound card.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_null_audio test_platform_null_audio.cpp)
+    target_link_libraries(test_platform_null_audio PRIVATE okay::platform)
+    add_test(NAME platform_null_audio COMMAND test_platform_null_audio)
+endif()
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)

@@ -591,27 +591,27 @@ Back to the [code index](../code_index.md). 12 headers, 685 names.
 
 - `DockSide` enum, line 25
 - `DockLayout` class, line 27
-- `GetDockLayout` function, line 140: ---- the dock space in the OkayUI context ---------------------------------------------------------------------------
-- `DockAdoptTitle` function, line 144: Dear ImGui's "###" rule for dock windows: a title "Text###id" names the same window whatever its text, so a layout entry with the same
-- `DockReset` function, line 146: Forget the layout and any drag in progress (OkayUI::ResetState calls this).
-- `DockSpace` function, line 150: Lay the dock out in 'area' (clipped to the display when the host gave Input::displayW/H), draw the node backgrounds, tab strips
-- `DockBegin` function, line 154: Like Begin(title, p_open, flags). A docked window has no title bar of its own and fills its node's content area; only the
-- `DockEnd` function, line 155
-- `SetDockAwareBegin` function, line 160: Dock-aware Begin / End for code written for Dear ImGui (SetDockAwareBegin(true), off by default): a 'Begin(title, &open, flags)' whose title is a window of the
-- `DockAwareBegin` function, line 161
-- `DockClosedPending` function, line 162
-- `DockInsideBegin` function, line 163
-- `DockSaveLayout` function, line 165: Layout text for saving and loading (see DockLayout::Save / Load).
-- `DockLoadLayout` function, line 166
-- `DockTabInfo` struct, line 172: One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
-- `GetDockTabs` function, line 173
-- `GetDockArea` function, line 175: The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
-- `GetDockTabHeight` function, line 176
-- `SetDockTrailingReserve` function, line 179: Leave 'width' pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
-- `GetDockStripRect` function, line 181: The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
-- `DockDropInfo` struct, line 186: What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
-- `DockDragging` function, line 189: Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
-- `GetDockDrop` function, line 190
+- `GetDockLayout` function, line 145: ---- the dock space in the OkayUI context ---------------------------------------------------------------------------
+- `DockAdoptTitle` function, line 149: Dear ImGui's "###" rule for dock windows: a title "Text###id" names the same window whatever its text, so a layout entry with the same
+- `DockReset` function, line 151: Forget the layout and any drag in progress (OkayUI::ResetState calls this).
+- `DockSpace` function, line 155: Lay the dock out in 'area' (clipped to the display when the host gave Input::displayW/H), draw the node backgrounds, tab strips
+- `DockBegin` function, line 159: Like Begin(title, p_open, flags). A docked window has no title bar of its own and fills its node's content area; only the
+- `DockEnd` function, line 160
+- `SetDockAwareBegin` function, line 165: Dock-aware Begin / End for code written for Dear ImGui (SetDockAwareBegin(true), off by default): a 'Begin(title, &open, flags)' whose title is a window of the
+- `DockAwareBegin` function, line 166
+- `DockClosedPending` function, line 167
+- `DockInsideBegin` function, line 168
+- `DockSaveLayout` function, line 170: Layout text for saving and loading (see DockLayout::Save / Load).
+- `DockLoadLayout` function, line 171
+- `DockTabInfo` struct, line 177: One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
+- `GetDockTabs` function, line 178
+- `GetDockArea` function, line 180: The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
+- `GetDockTabHeight` function, line 181
+- `SetDockTrailingReserve` function, line 184: Leave 'width' pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
+- `GetDockStripRect` function, line 186: The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
+- `DockDropInfo` struct, line 191: What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
+- `DockDragging` function, line 194: Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
+- `GetDockDrop` function, line 195
 
 ## `okayui/include/okay/UI/OkayUIDockBuilder.hpp`
 

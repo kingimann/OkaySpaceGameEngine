@@ -4,11 +4,13 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-26 (Round 32 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-27 (Round 33 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Round 32 (newest, 2026-11-26):** 312 of 508 engine files compile on the Windows survey (main's file list grew from 475 to 508; the Round 31 compiler and headers compile 256 of the same files), no file lost; `final`/`override` as names, std::void_t as a real deduction failure, bodiless function templates (declval), references through function pointers and lambdas, several class objects in one declaration, and two silent wrong-code bugs fixed (two-dimensional array parameters, void_t always true). The Windows headers were checked for text or layouts not in Microsoft's public documentation (CRITICAL_SECTION's members removed). Details: Round 32 at the end.
+**Round 33 (newest, 2026-11-27):** 363 of 514 engine files compile on the Windows survey (315 with the Round 32 compiler, same files), none lost, no time-outs left (13 before); every JavaScript engine file compiles; type names declared in several namespaces are kept per namespace, raw string literals, init-captures, temporaries bound to `const T&`; the compiler is 8 to 17 times faster on heavy files (objects byte-identical); eight silent wrong-code bugs fixed (initializer_list from braces, a lambda returned as std::function, array members in implicit copies, double `<cmath>` at float precision, and more). Details: Round 33 at the end.
+
+**Round 32 (2026-11-26):** 312 of 508 engine files compile on the Windows survey (main's file list grew from 475 to 508; the Round 31 compiler and headers compile 256 of the same files), no file lost; `final`/`override` as names, std::void_t as a real deduction failure, bodiless function templates (declval), references through function pointers and lambdas, several class objects in one declaration, and two silent wrong-code bugs fixed (two-dimensional array parameters, void_t always true). The Windows headers were checked for text or layouts not in Microsoft's public documentation (CRITICAL_SECTION's members removed). Details: Round 32 at the end.
 
 **Round 31 (2026-11-26):** 295 of 475 engine files compile on the Windows survey (273 before the round), 299 on the plain one (278 before), none lost; parenthesized names, class ternaries and declaration points by the real rules, Microsoft's member pointer representation, pointers to member functions, and silent wrong-code bugs fixed (bytes compared or copied where an operator or a constructor was due, temporaries of constructor arguments made too late). The intermittent `test_engine_link` failure was two test runs sharing one folder. Details: Round 31 at the end.
 
@@ -1109,3 +1111,100 @@ Not done / unverified / differences (Round 32):
 - Tokens the compiler makes itself (the `}` of some rewritten initializers) have no line, so an error at one names the first line of the first included header (`cstddef:3`, `cstdint:4`, `intrin.h:7` in the survey); the error text is right, the place is not.
 - The plain survey was not run this round. The numeric values of the Windows constants were not compared with Microsoft's pages in this round (no network access to them here).
 
+### Round 33: the JavaScript engine compiles, namespace-scoped type names, raw strings, init-captures, compile speed (8 to 17 times faster), and eight silent wrong-code bugs
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-28`, 2026-11-27. Not run on Windows. Started from main at c0c0be244 (Round 32 merged).
+
+**Compile speed.** A heavy engine file (`Components/ActionList.cpp`) took 159 seconds; it takes 9 now. A profile (gprof of a `-pg` build) showed the time in scans of every function by name at each name the parser read (6.3 billion string compares for one file), the same scan in the code generator at each call, a scan of the COFF string table at each symbol, and a look-ahead for `C<...>::` that ran to the end of the file at every `a < b`. Each is now an index (built again when the list it follows shrinks or changes) or a bounded scan. The objects are byte-identical to the previous commit's on four engine files (`LocTable.cpp`, `JsLexer.cpp`, `ActionList.cpp`, `JsRuntime.cpp`). `Scripting/OkayScriptVM_Math.cpp`, a 300-second time-out in Round 32, compiles to its first error in 20 seconds.
+
+**Language rules (each from ISO/IEC 14882):**
+
+- A type name declared at namespace scope in several namespaces ([basic.lookup.unqual] 1 and 4, [namespace.qual], [namespace.udecl]): `typedefs` was one flat table, so okay::script's `using Value = std::variant<...>` replaced okay::js's class `Value` everywhere after it. Each typedef at namespace scope and each class of the same name is kept with its namespace; when the namespace being read changes, the table holds the declaration that namespace sees (innermost enclosing, then a namespace named by a using-directive or using-declaration, else the last typedef as before). A typedef of the name in a class, a template parameter or a local is never replaced (the table is changed only while it still holds what this code put there). `ns::Name` takes the declaration of the namespace written, in types and in `ns::C(args)`, `ns::C{...}`, `ns::C::f()`, also inside a member function named like the class (AccountService.hpp's `Storage()` returning `okay::backend::supabase::Storage(...)`).
+- `struct X;` declares a class of the current class or namespace even when another class of that name exists, and `class X* p` in a member declaration declares X in the namespace around the class ([dcl.type.elab] 2, [basic.scope.pdecl] 7; Runtime's `struct Impl;` was taken for JavaScriptVM's, so `unique_ptr<Impl>` was the other class's instance), and a declared class keeps its decorated name when it is defined (variant<..., shared_ptr<ArrayObj>> named ArrayObj two ways after js::ArrayObj appeared).
+- Raw string literals ([lex.string] 1, [lex.pptoken] 3.1): `R"delim(...)delim"`, also after u8, u, U and L, written as ordinary literals before preprocessing, with the line numbers after them kept (SceneSerializerInternal.hpp, Browser/Script.cpp, InputAsset.cpp, NetBuildSync.cpp).
+- Lambdas: init-captures `[d = expr]` and `[p = std::move(up)]` ([expr.prim.lambda.capture] 6; Supabase.hpp:340, 15 files in the Round 32 list); a static local of the function around a lambda without captures ([expr.prim.lambda.capture] 7); a class nested in the class around a lambda ([expr.prim.lambda.closure] 13).
+- `const T& k = f();` keeps the temporary until the end of the block ([class.temporary] 6; before, "not an address").
+- A function template-id without a call is a pointer to the instance (`TACtor<0>`, `ErrorCtor<ErrorType::Error>`; [temp.arg.explicit] 4, [over.over]); a call through a function pointer held by a namespace-scope variable ([expr.call] 1); a member function template whose result is `std::function<R(A, B)>`.
+- A plain struct is the scope of its nested class (`MapObj::Entry{k, v, true}`, `sizeof(MapObj::Entry)`, `new VM::Impl()`); a nested braced list given to a constructor (`pair{name, {line, col}}`, [over.ics.list]) and to the members of an aggregate (arrays of scalars, references, classes); the initializer-list constructor only when every item can become an element ([over.match.list] 1: `return {names.begin(), names.end()};` of a set into a vector<string>); an aggregate with a reference member and default member initializers ([class.default.ctor] 2.3).
+- A range `for` over a string literal; `u"'..."` (the lexer took `u"'` for a character literal); an unnamed parameter in a function returning a class (`std::string Text(js::Runtime&, js::HostObj* h)` was read as an object, [dcl.ambig.res] 1); `c ? p : nullptr` with a class p ([expr.cond] 4); a default argument that names a member type of its class, at a call from outside ([dcl.fct.default] 5); each function body binds its own parameter packs ([temp.variadic] 5); a scalar deleting destructor made inside a nested block sees its parameters.
+
+**Silent wrong code fixed (each has a check in `tests/test_round33.cpp`; the old compiler's wrong result in brackets):**
+
+- `std::initializer_list<T> x = {4, 5, 6};` read the braces as the list's two members (x.size() was 5).
+- `return [a](int k) { ... };` in a function returning std::function copied the closure's bytes into the function object (5 for 6; with a captured std::function 10 for 11, or a crash).
+- The implicit copy constructor of a class with an array member and a member with its own copy constructor stored nothing for the array (205 for 111).
+- An aggregate initialized with a nested list for an array member, given as constructor arguments, stored nothing for it (garbage values).
+- A reference member of an aggregate with default member initializers was stored through the unset reference (crash).
+- A reference member in the nested-list aggregate path was stored as a value (0 for 2).
+- `std::isinf(1e300)` and the other classification functions of a double went through the float versions (1e300 became infinity), and every `<cmath>` function of a double had float precision (std::sqrt(2.0) was the float's root).
+- `runtime/mem.c` declared HeapAlloc's size as 32 bits (a size of 4 GiB or more was cut) and calloc's count * size wrapped; calloc now returns null when the product does not fit (ISO/IEC 9899 7.22.3.2).
+
+**Our own headers:** `u16string_view` (and u32/w), u16string `capacity`, `insert`, `erase`, `append(s, pos, n)`, `compare(pos, n, s[, pos2, n2])`, `> <= >=`; `string::insert(it, c)`; `<string>` includes `<cctype>`, `<new>` includes `<typeinfo>` (MSVC's headers make both visible; engine files rely on it); `hash<T*>`; `std::multimap`, `std::unordered_multimap` (the sorted vector; equal keys in insertion order), the key-equality argument of `unordered_map` and `unordered_set` (it was ignored), `unordered_set(first, last)`, `map::extract` with a node handle, vector `< > <= >=`; `std::mismatch`, `std::stable_partition`; `std::calloc`/`std::malloc`/`std::free`; `istream_iterator` (in the stream headers); `deque::emplace_back`/`emplace_front`; `directory_entry(path, ec)` and `last_write_time(ec)`; the double overloads of the `<cmath>` functions (sqrt, sin, cos, tan, atan, atan2, asin, acos, fabs, fmin, fmax, floor, ceil, trunc, round, pow, fmod, exp, log, log2, log10, hypot, ldexp, frexp, exp2, cbrt, expm1, log1p, sinh, cosh, tanh, asinh, acosh, atanh, isnan, isinf, isfinite, signbit, copysign), from the same series as the float ones; fmod is exact (subtractions of y times powers of two) and round has no x + 0.5 rounding error.
+
+Measurement: `tools/okayms/survey.sh` (Windows survey, 300-second limit per file, two files at a time), on main's 514 `engine/src/**/*.cpp` files (engine sources of main at c0c0be244). "Before" is the Round 32 compiler and headers (main at c0c0be244) run on the same files in this round; it was cut by the two-hour job limit after 471 files, and the other 43 were surveyed with the same compiler right after (one file at a time). "After" is the compiler and headers of commit 0f1f8df3f, one full run.
+
+| Survey | Before (Round 32 compiler, 514 files) | After |
+|---|---|---|
+| Windows (default) | 315 of 514 (13 time-outs) | **363 of 514** (no time-outs) |
+
+No file that compiled before stops compiling (checked file by file). The plain survey was not run. Next blockers (Windows survey, by files): `okayscript/detail/Support.hpp:60` (16, "no matching constructor in RuntimeError", most of them the `Scripting/OkayScriptVM_*.cpp` files that were time-outs before), `OfficialGame.hpp:331` (8, a range `for` over something okay-ms cannot size), `<GL/gl.h>` (5), "too many symbols" (2: `Script/EngineApi.cpp`, `Testing/SceneValidator.cpp`; the COFF symbol count limit), `winsock2.h`, `<list>`, `d3d11.h` (2 each), then single files (VehicleBuilder.hpp's lambda called with a default argument left out, ComponentCache.hpp, NavGrid3D.hpp's local struct as a lambda's result type, `Vec3 buf[2][9]`, enumerators through an alias in BehaviorTree.cpp and HumanoidActions.cpp).
+
+Tests: new `tests/test_round33.cpp`, 16 tests (15 programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine, and built by MinGW g++ and run; two of them with okay-ms's own heap and exception runtime): `tests 16, checks passed 230, failed 0`. With the Round 32 compiler and headers: `tests 16, checks passed 41, failed 48` (every program fails to compile, for example "no member function Obj", "an init-capture is not supported", "unterminated character", "unknown function std::calloc", "the reference member rt needs a member initializer", "unknown name this", or runs wrong: return_convert exits with an access violation). The whole suite (`tools/okayms/build.sh`, 75 test programs, with `env -u TMPDIR -u TEMP -u TMP`) passes on commit 0f1f8df3f: 75 of 75, `SUITE rc=0`. One check (`round(0.49999999999999994)`) was left out of the comparison because MinGW's own round gives 1 there; okay-ms gives 0, the value ISO/IEC 9899 7.12.9.6 asks for.
+
+Written from ISO/IEC 14882 ([basic.lookup.unqual], [namespace.qual], [namespace.udecl], [dcl.type.elab], [basic.scope.pdecl], [lex.string], [lex.pptoken], [expr.prim.lambda.capture], [expr.prim.lambda.closure], [class.temporary], [temp.arg.explicit], [over.over], [conv.func], [expr.call], [class.nest], [expr.sizeof], [expr.new], [over.ics.list], [over.match.list], [dcl.init.aggr], [dcl.init.list], [support.initlist], [class.default.ctor], [class.copy.ctor], [stmt.ranged], [dcl.ambig.res], [expr.cond], [dcl.fct.default], [temp.variadic], [stmt.return], [dcl.init], [string.view.template], [basic.string], [unord.hash], [multimap], [unord.multimap], [unord.req], [container.node], [vector.syn], [mismatch], [alg.partitions], [istream.iterator], [sequence.reqmts], [fs.dir.entry.cons], [cstdlib.syn], [c.math]), ISO/IEC 9899 (7.12, 7.22.3.2), IEEE 754 binary32 and binary64, and Microsoft's public HeapAlloc documentation (the size is a SIZE_T). No code from MSVC, its STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography was written. IP check: none found.
+
+Not done / unverified / differences (Round 33):
+
+- Not run on Windows. The survey objects were not linked or run. No decorated name was compared with MSVC output.
+- Namespace-scoped type names: only typedefs and classes at namespace scope; enumerations keep Round 31's rule. A using-declaration is still read as a using-directive for the whole file. A member typedef equal to a namespace binding by coincidence could be replaced.
+- `static const std::initializer_list<T> x = {...}` is made again at each pass (an automatic object): its elements' addresses differ between passes. A namespace-scope `std::initializer_list<T> g = {...}` is not changed.
+- `map::extract` copies the entry (okay-ms's map is a sorted vector). `unordered_multimap` needs `<` on the key. The double `<cmath>` functions are a few units in the last place, not correctly rounded.
+- The initializer-list viability check reads each item once to learn its type and drops what that reading made; a lambda in such an item is made twice (two closure classes).
+- okay-cc (Linux/ELF) was not worked on this round.
+
+### Round 34: inherited constructors, qualified names, our own `<GL/gl.h>` `<list>` `<winsock2.h>`, and six silent wrong-code bugs (three in register allocation)
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-34`, 2026-11-27. Not run on Windows. Started from Round 33 (d3ee2155e).
+
+**Language rules (each from ISO/IEC 14882):**
+
+- `using Base::Base;` inherits the base's constructors ([namespace.udecl] 3, [class.inhctor.init]): okayscript's `RuntimeError` (16 files). Own simplification: they are made as constructors of the derived class (the C++11 model), keeping the base's default arguments.
+- `decltype(C::m)` of a data member outside a member function ([expr.prim.id] 3); `m{a, b}` and `m{x}` for an aggregate member in a constructor's initializer list ([class.base.init] 7); a `constexpr` local read in a lambda without a capture ([basic.def.odr] 5); `std::vector<E> v{1};` as a default member initializer takes vector(1) when 1 cannot become an E ([over.match.list] 1).
+- Arrays of aggregates whose members have constructors (`struct Blob {...}` with Color and Vec2 members), and a small class returned in a register stored into an aggregate item.
+- A qualified name is looked up from the namespace being read outward ([namespace.qual]): okayofficial's `json::Value` was another namespace's (8 files). `ns::Name(...)` in a template argument keeps its namespace (an enumeration `Result` of another namespace was taken). A using-declaration through a namespace alias (`using og::json::Escape;`).
+- `int ns::f() {...}` at namespace scope defines the namespace's function ([namespace.memdef] 2); `ns::f(...)` from a member function of the same name calls the namespace's ([namespace.qual]).
+- Local classes are their own class in each function ([class.local]): decorated `Name@__l<n>` (no linkage, our own form), found first in their function and its lambdas.
+- The injected-class-name in a member template of a class template ([temp.local] 1); a static member template called with explicit arguments from a lambda; members (also member templates, and the members of the class around a lambda) hide namespace functions of the same name.
+- A braced list is a non-deduced context ([temp.deduct.call] 1). A specialization's own type matches only that type ([temp.class.spec.match] 2). Enumerators through a class's alias (`Builder::K::Float`, 4 files). `Clock::time_point{}`. `new Agg{...}` for an aggregate with class members. An if with an init statement whose condition makes a temporary. `__declspec(dllimport) const T* f()`.
+- `explicit` conversion functions are left out of implicit conversions ([class.conv.fct] 2); a class with `operator int` given for an int parameter converts; `is_convertible` counts conversion functions.
+- The COFF symbol bound is 4 Mi records (it was 100000; `Script/EngineApi.cpp` and the OkayScriptVM files needed more).
+
+**Silent wrong code fixed (each has a check in `tests/test_round34.cpp`; the Round 33 compiler's result in brackets):**
+
+- Register allocation: a variable used in a loop was live only to its last name in the tree, so a variable made in the body took its register and the next pass compared with the wrong value (`Twice({1, 2, 3}, 3)` returned 2, not 12, at /O1 and /O2). A variable named in a loop is now live for the whole loop; a label makes every variable live for the whole function.
+- A `char` or `short` local in a register was spilled with a 32-bit store over the next local (a range `for` over `*s` lost its end pointer: access violation, exit 5).
+- A `char`/`short` local in a register was not cut to its width on assignment (`unsigned char c = 0xFF` read as -1; sum 254 for 256).
+- `numeric_limits<unsigned>::max()` was `numeric_limits<int>`'s 2147483647 (a specialization matched any type of the same base).
+- A class with `operator int` passed for an int parameter passed the object's bytes.
+- A decimal floating literal with more than 19 digits wrapped (0.91893853320467274178 read as about 0.73).
+
+**Our own headers:** `<GL/gl.h>` (OpenGL 1.1 types, enumerants and opengl32.dll functions, from the OpenGL 1.1 specification), `<list>` ([list]; iterator and const_iterator are one type), `<winsock2.h>` and `<ws2tcpip.h>` (from Microsoft's public Winsock documentation), `std::function::target` and `target_type`, `std::quoted`, `rint`/`nearbyint`/`lrint`/`llrint`, `lgamma` (Stirling's series with Bernoulli numbers, recurrence and reflection), range insert of `set`/`unordered_set`, `string::shrink_to_fit` (no-op), `numeric_limits` for char, unsigned char, short, unsigned short and bool, a primary `std::hash` for integers and enumerations, variant's bool alternative from a class with `operator bool`.
+
+Measurement: `tools/okayms/survey.sh` (300-second limit per file) on the 514 `engine/src/**/*.cpp` files. "Before" is the Round 33 compiler and headers (d3ee2155e) run in this round; "after" is commit 7f67ff741 (the two commits after it only move code into a helper).
+
+| Survey | Before (Round 33) | After |
+|---|---|---|
+| Windows (default) | 363 of 514 | **424 of 514** (no time-outs) |
+| Plain (`SURVEY_PLAIN=1`, first run) | not run | 408 of 514 |
+
+No file that compiled before stops compiling (checked file by file). Next blockers (Windows): `thread_local` objects with constructors at namespace scope (6 files), VehicleBuilder.hpp:69 (3), Jobs.hpp:259 (2), NotNode::Eval "not an address" (2), `<d3d11.h>` (2), then single files. Plain survey: `<time.h>` (33 files), then the same single files.
+
+Tests: new `tests/test_round34.cpp`, 18 tests (programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine and compared with MinGW g++; one compile-only check of `<GL/gl.h>`; the Winsock test sends a UDP datagram to itself through ws2_32.dll under Wine): `tests 18, checks passed 241, failed 0`. With the Round 33 compiler and headers: `tests 18, checks passed 63, failed 50`. The whole suite (`tools/okayms/build.sh`, 76 test programs, `env -u TMPDIR -u TEMP -u TMP`) passes: 76 of 76, `SUITE rc=0`.
+
+Written from ISO/IEC 14882 (the sections named above), ISO/IEC 9899 (7.12.8.3, 7.12.9, 5.2.4.2.1), the OpenGL 1.1 specification, Microsoft's public Winsock documentation and the Intel SDM vol. 2 (MOV, MOVSX, MOVZX). No code from MSVC, its STL, the Windows SDK, MinGW, Mesa, Khronos headers, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography.
+
+Not done / unverified / differences (Round 34):
+
+- Not run on Windows. No decorated name compared with MSVC; local classes use our own decoration.
+- `signed char` and `char` are one type, and `long` is `int`, to okay-ms (specializations of both collide).
+- Namespace-scope `thread_local` objects with constructors (5 files), a local pointer to an array `T (*p)[N]` (2 files), `<d3d11.h>`, an out-of-class definition of a conversion function, and `std::quoted` reading needs a modifiable string (one form for both directions).

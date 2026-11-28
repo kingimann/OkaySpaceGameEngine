@@ -165,7 +165,8 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             str_prefix = 8;
             i += 2;
         }
-        const bool wide_char = (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
+        // Not after a string prefix: in u"'..." i is at the '"' and the next character is the string's own (Round 33).
+        const bool wide_char = str_prefix == 0 && (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
         if (str_prefix == 0 && !wide_char && (std::isalpha(c) || c == '_')) {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
@@ -280,10 +281,32 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             tok.kind = TNumber;
             if (real) {
-                unsigned __int128 sig = value;
-                for (int n = 0; n < frac_digits; ++n) sig *= 10u;
-                sig += frac;
-                tok.number = ieee_real(sig, exp10 - frac_digits, false, as_float);
+                // The significand from the literal's digits again, up to 38 significant ones (what an unsigned 128-bit
+                // number holds; a double needs 17): the integer part's later digits raise the exponent, the fraction's
+                // are dropped. Round 34: value and frac were 64-bit and wrapped after 19 digits, so
+                // 0.91893853320467274178 was read as about 0.73 (silent wrong constants; [lex.fcon]).
+                unsigned __int128 sig = 0;
+                int sig_digits = 0;
+                int scale = 0;
+                bool in_frac = false;
+                for (size_t k = i; k < text.size(); ++k) {
+                    const char c = text[k];
+                    if (c == '\'') continue;
+                    if (c == '.' && !in_frac) {
+                        in_frac = true;
+                        continue;
+                    }
+                    if (!std::isdigit(static_cast<unsigned char>(c))) break;
+                    if (sig_digits < 38) {
+                        sig = sig * 10u + static_cast<unsigned>(c - '0');
+                        if (sig != 0) ++sig_digits;
+                        if (in_frac) --scale;
+                    } else if (!in_frac) {
+                        ++scale;
+                    }
+                }
+                (void)frac;
+                tok.number = ieee_real(sig, exp10 + scale, false, as_float);
                 tok.real = as_float ? 5 : 6;
             } else {
                 tok.number = value;
@@ -301,7 +324,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'') {
+        if (wide_char) {
             // L'x', u'x', U'x' ([lex.ccon]): one code point, given as UTF-8 in the source, as an escape, or as \u / \U /
             // \x with any number of hex digits. Own simplification: its value is an int here (wchar_t, char16_t and
             // char32_t are not types of their own in okay-ms either).

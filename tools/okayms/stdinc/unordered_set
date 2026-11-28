@@ -4,6 +4,7 @@
 // (unordered_set<Guid, GuidHash>) it is an open-addressing hash table over a dense array, elements compared with ==,
 // and an erase moves the last element into the hole (linear time; erase(it) returns the place of the next one).
 #pragma once
+#include <type_traits>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +14,11 @@ class unordered_set {
     vector<T> items_;
     vector<long long> slots_;  // index into items_, or -1 for an empty slot; the size is a power of two
 
+    // The key-equality argument when one is given, else == (Round 33).
+    static bool key_eq(const T& a, const T& b) {
+        if constexpr (is_same<E, void>::value) return a == b;
+        else return E()(a, b);
+    }
     long long slot_of(const T& value) const {
         if (slots_.empty()) return -1;
         const size_t mask = slots_.size() - 1;
@@ -20,7 +26,7 @@ class unordered_set {
         for (size_t probe = 0; probe < slots_.size(); ++probe) {
             const long long idx = slots_[at];
             if (idx < 0) return -1;
-            if (items_[(size_t)idx] == value) return idx;
+            if (key_eq(items_[(size_t)idx], value)) return idx;
             at = (at + 1) & mask;
         }
         return -1;
@@ -48,6 +54,11 @@ public:
     unordered_set(initializer_list<T> list) {
         for (const T* p = list.begin(); p != list.end(); ++p) insert(*p);
     }
+    // The elements of [first, last) ([unord.set.cnstr] 3; Round 33).
+    template <typename It>
+    unordered_set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.data(); }
@@ -68,6 +79,10 @@ public:
     const T* find(const T& value) const {
         const long long idx = slot_of(value);
         return idx >= 0 ? items_.data() + idx : end();
+    }
+    // The elements of [first, last) ([associative.reqmts], [unord.req]; Round 34, LocCheck.cpp and Physics2DEngine.inl).
+    template <typename It> void insert(It first, It last) {
+        for (; first != last; ++first) insert(*first);
     }
     pair<const T*, bool> insert(const T& value) {
         const long long idx = slot_of(value);
@@ -114,6 +129,8 @@ public:
     typedef const T* const_iterator;
     unordered_set() {}
     unordered_set(initializer_list<T> list) : items_(list) {}
+    template <typename It>
+    unordered_set(It first, It last) : items_(first, last) {}  // [unord.set.cnstr] 3 (JsLibObject.cpp; Round 33)
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.begin(); }
@@ -123,6 +140,10 @@ public:
     void reserve(size_t) {}
     size_t count(const T& value) const { return items_.count(value); }
     const T* find(const T& value) const { return items_.find(value); }
+    // The elements of [first, last) ([associative.reqmts], [unord.req]; Round 34, LocCheck.cpp and Physics2DEngine.inl).
+    template <typename It> void insert(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     pair<const T*, bool> insert(const T& value) { return items_.insert(value); }
     size_t erase(const T& value) { return items_.erase(value); }
     const T* erase(const T* pos) { return items_.erase(pos); }

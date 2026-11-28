@@ -76,4 +76,34 @@ template <> struct numeric_limits<unsigned long long> {
     static unsigned long long min() { return 0ULL; }
     static unsigned long long lowest() { return 0ULL; }
 };
+// The other integer types (Round 34, PropertyBuilder.hpp's AddInt for std::uint8_t and std::uint16_t fields): the
+// ranges ISO/IEC 14882 [numeric.limits] and ISO/IEC 9899 5.2.4.2.1 give for 8-, 16- and 32-bit types (char is
+// signed and long is 32 bits on x64 Windows, as MSVC has them). okay-ms does not keep signed char apart from char yet
+// (one type), so numeric_limits<char> serves both; long is int to okay-ms (both 32 bits), so numeric_limits<int> and
+// <unsigned> serve long and unsigned long.
+template <> struct numeric_limits<char> {
+    static char max() { return 127; }
+    static char min() { return -128; }
+    static char lowest() { return -128; }
+};
+template <> struct numeric_limits<unsigned char> {
+    static unsigned char max() { return 255; }
+    static unsigned char min() { return 0; }
+    static unsigned char lowest() { return 0; }
+};
+template <> struct numeric_limits<short> {
+    static short max() { return 32767; }
+    static short min() { return -32768; }
+    static short lowest() { return -32768; }
+};
+template <> struct numeric_limits<unsigned short> {
+    static unsigned short max() { return 65535; }
+    static unsigned short min() { return 0; }
+    static unsigned short lowest() { return 0; }
+};
+template <> struct numeric_limits<bool> {
+    static bool max() { return true; }
+    static bool min() { return false; }
+    static bool lowest() { return false; }
+};
 }

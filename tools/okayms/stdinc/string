@@ -10,6 +10,9 @@
 #include <utility>
 #include <iterator>
 #include <cwchar>
+// <cctype> too: engine files call std::toupper with only <string> included (JsLibNumber.cpp; Round 33), as MSVC's
+// <string> makes it visible.
+#include <cctype>
 namespace std {
 // The character operations the string classes are described with ([char.traits]): length, compare, copy, move,
 // assign, find, eq, lt, and the int conversions with eof() = -1. Characters compare as unsigned values
@@ -337,6 +340,7 @@ public:
     std::reverse_iterator<const char*> rend() const { return std::reverse_iterator<const char*>(data_); }
 
     void reserve(size_t n) { reserve_exact(n); }
+    void shrink_to_fit() {}  // a non-binding request ([string.capacity]); kept as it is (Round 34)
     void clear() {
         size_ = 0;
         data_[0] = 0;
@@ -542,6 +546,13 @@ public:
     }
     string& insert(size_t pos, const char* s) { return insert(pos, s, length_of(s)); }
     string& insert(size_t pos, const string& s) { return insert(pos, s.data_, s.size_); }
+    // insert(p, c) ([string.insert] 11; Round 33, JsLibNumber.cpp's d.insert(d.begin(), '1')): c before the character p
+    // points at; the result points at the inserted character.
+    char* insert(const char* p, char c) {
+        const size_t pos = (size_t)(p - data_);
+        insert(pos, &c, 1);
+        return data_ + pos;
+    }
     // insert(pos, n, c) ([string.insert] 5): n copies of c at pos.
     string& insert(size_t pos, size_t n, char c) {
         string run;

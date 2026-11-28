@@ -61,6 +61,10 @@ public:
         return items_.end();
     }
     // The position of the value and whether it was new.
+    // The elements of [first, last) ([associative.reqmts], [unord.req]; Round 34, LocCheck.cpp and Physics2DEngine.inl).
+    template <typename It> void insert(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     pair<const T*, bool> insert(const T& value) {
         const size_t at = lower(value);
         if (at < items_.size() && !cmp_(value, items_[at])) return pair<const T*, bool>(items_.begin() + at, false);

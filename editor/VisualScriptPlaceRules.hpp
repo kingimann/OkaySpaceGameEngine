@@ -513,7 +513,7 @@ inline const VsRule kBuiltinRules[] = {
     // ---- Debug
     {"print", "Debug", ""}, {"debug", "Debug", ""}, {"debug_log", "Debug", ""}, {"log", "Debug", ""},
     {"log_*", "Debug", ""}, {"trace", "Debug", ""}, {"assert", "Debug", ""}, {"watch", "Debug", ""},
-    {"Debug.*", "Debug", ""},
+    {"Debug.*", "Debug", ""}, {"automation_call_json", "Debug", ""},   // only works inside the automation command script.run
     // ---- Events and messages
     {"on_key", "Input Events", ""}, {"raise", "Messages & Signals", ""}, {"send_event", "Messages & Signals", ""},
     {"send_message", "Messages & Signals", ""}, {"broadcast_event", "Messages & Signals", ""},
@@ -1056,7 +1056,7 @@ inline const VsRule kApiRules[] = {
     {"Time.RampTimeScale*", "Time & Game Speed", "Game Speed"}, {"Time.paused", "Time & Game Speed", "Pausing"},
     {"Time.PushPause*", "Time & Game Speed", "Pausing"}, {"Time.PopPause*", "Time & Game Speed", "Pausing"},
     {"Time.IsPausedBy*", "Time & Game Speed", "Pausing"}, {"Time.*", "Time & Game Speed", "Clock"},
-    {"Debug.*", "Debug", ""}, {"Audio.*", "Music & Volume", ""}, {"SaveGame.*", "Saving & Loading", "Save Slots"},
+    {"Debug.*", "Debug", ""}, {"Automation.*", "Debug", ""}, {"Audio.*", "Music & Volume", ""}, {"SaveGame.*", "Saving & Loading", "Save Slots"},
     {"Localization.*", "Language & Translation", ""}, {"Sequence.*", "Cutscenes", ""},
     {"PostProcess.*", "Post Effects", ""}, {"Fog.*", "Weather & Fog", ""}, {"Weather.*", "Weather & Fog", ""}, {"Wind.*", "Weather & Fog", ""},
     {"NavMeshAgent.*", "Navigation", ""}, {"GridPathAgent2D.*", "Navigation", "Grid Paths"},

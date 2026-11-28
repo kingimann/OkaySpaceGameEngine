@@ -35,16 +35,18 @@ using json::Value;
 
 namespace {
 
+/// A scratch folder for the files the commands write; main() removes it.
 struct TempDir {
-    fs::path path;
-    TempDir() {
-        path = fs::temp_directory_path() / ("okay_automation_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::error_code ec;
-        fs::create_directories(path, ec);
-    }
-    ~TempDir() { std::error_code ec; fs::remove_all(path, ec); }
-    std::string Sub(const std::string& s) const { return (path / s).string(); }
+    std::string root;
+    std::string Sub(const std::string& name) const { return root + "/" + name; }
 };
+TempDir MakeScratch() {
+    std::error_code ec;
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    TempDir t{(fs::temp_directory_path(ec) / ("okay_automation_" + std::to_string((long long)stamp))).string()};
+    fs::create_directories(t.root, ec);
+    return t;
+}
 
 Value J(const std::string& text) {
     Value v;
@@ -563,7 +565,7 @@ int main() {
     Game::Reset();
     Time::ResetForTesting();
     automation::InstallLogRing();
-    TempDir tmp;
+    const TempDir tmp = MakeScratch();
     TestJsonWriter();
     TestRegistry();
     {
@@ -577,5 +579,7 @@ int main() {
         TestMcp(d);
         TestLink(d, tmp);
     }
+    std::error_code ec;
+    fs::remove_all(tmp.root, ec);
     TEST_MAIN_RESULT();
 }

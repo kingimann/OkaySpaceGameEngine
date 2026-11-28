@@ -582,6 +582,7 @@ public:
     std::string GetClipboardText() override { return TakeString(okay_web_str_len_clipboard()); }
 
     std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char*, AudioSpec* got) override {
+        if (NullAudioRequested()) return OpenNullAudio(want, capture, got, g_err);
         if (capture) { g_err = "recording sound is not supported in the browser build"; return nullptr; }
         if (want.freq <= 0 || want.channels <= 0) { g_err = "bad audio format"; return nullptr; }
         AudioSpec s = want;
@@ -599,8 +600,11 @@ public:
         if (got) *got = s;
         return d;
     }
-    int AudioDeviceCount(bool capture) override { return capture ? 0 : 1; }
-    std::string AudioDeviceName(int i, bool capture) override { return !capture && i == 0 ? "Browser audio" : ""; }
+    int AudioDeviceCount(bool capture) override { return NullAudioRequested() ? 1 : (capture ? 0 : 1); }
+    std::string AudioDeviceName(int i, bool capture) override {
+        if (NullAudioRequested()) return i == 0 ? "null" : "";
+        return !capture && i == 0 ? "Browser audio" : "";
+    }
 
     int GamepadDeviceCount() override {
         SamplePads();

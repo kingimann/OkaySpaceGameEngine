@@ -181,7 +181,10 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if (std::isdigit(c)) {
+        // .5 and .00074f: a floating literal may start with its point ([lex.fcon] 1, `fractional-constant`; Round 36,
+        // VorbisDecoder.cpp's `.00074f * x`).
+        const bool point_first = c == '.' && i + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[i + 1]));
+        if (std::isdigit(c) || point_first) {
             int base = 10;
             size_t j = i;
             if (text[i] == '0' && i + 1 < text.size() && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
@@ -245,7 +248,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                     return n == 'f' || n == 'F' || n == 'e' || n == 'E';
                 return true;
             };
-            if (base == 10 && any && suf_l == 0 && !suf_u && j < text.size() && text[j] == '.' &&
+            if (base == 10 && (any || point_first) && suf_l == 0 && !suf_u && j < text.size() && text[j] == '.' &&
                 ((j + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[j + 1]))) || bare_point())) {
                 real = true;
                 ++j;

@@ -1057,52 +1057,52 @@ Back to the [code index](../code_index.md). 76 headers, 1131 names.
 - `TempDir` function, line 64
 - `BuildsDir` function, line 65
 - `ScenesDir` function, line 66
-- `SettingsFile` function, line 72: A settings file 'name' of the project in 'root'. 'legacyRel' is where an older project keeps it ("project.okayproj",
-- `FirstScenePath` function, line 83: Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
-- `SaveTarget` enum, line 87
-- `CheckSaveTarget` function, line 94: Where saving 'path' would put the file, for the project in 'root' ("" = none open).
-- `InsideCopyPath` function, line 103: The place inside the project offered instead of 'path': <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
-- `DefaultBuildDir` function, line 113: The build folder a new project starts with (relative: inside the project, see ResolveInProject).
-- `ResolveInProject` function, line 116: A folder the person typed: a relative one is inside the project in 'root' (not the working folder, which is the
-- `LogFile` function, line 125: A log or report called 'name': in the project's Logs folder, or in 'userLogDir' (the person's log folder,
-- `NameCheck` struct, line 141
-- `Utf8Length` function, line 147
-- `IsReservedDeviceName` function, line 153
-- `CheckName` function, line 164: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
-- `SanitizeName` function, line 192: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
-- `TemplateInfo` struct, line 212: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
-- `Templates` function, line 214
-- `TemplateGroups` function, line 237: Group names; index 0 is "All".
-- `FindTemplate` function, line 242: The template called 'title', or null.
-- `Absolute` function, line 249
-- `NearestExisting` function, line 256: The nearest folder at or above 'p' that exists ("" when none does).
-- `CanWriteIn` function, line 269: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
-- `CheckLocation` function, line 284: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
-- `LooksUsed` function, line 309: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
-- `Plan` struct, line 321
-- `Made` struct, line 364: What a creation step made, so a failure can take back exactly that and nothing else.
-- `MakeDirs` function, line 370: Make 'dir' and any missing parents, recording each one that did not exist before.
-- `Undo` function, line 390: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
-- `MakeSkeleton` function, line 401: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
-- `IsEmptyShell` function, line 414: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
-- `RemoveEmptyShell` function, line 425: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
-- `WriteTextAtomic` function, line 438: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
-- `ReadText` function, line 477: Read a whole file; false if it can't be opened.
-- `SettingsPath` function, line 486: Where the settings of the project in 'root' live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
-- `HasSettingsFile` function, line 490: True when the project in 'root' has a project.okayproj (in either place).
-- `IsStarterTemplate` function, line 500: True for the few templates the Create page shows before "All templates" is opened.
-- `TemplateFeatureLines` function, line 503: Three short, true points about a template, shown on its card when it is selected.
-- `CheckProjectVersion` function, line 530: A project version the editor can store in project.okayproj (its field holds 31 characters).
-- `WizardMove` enum, line 551: The New Project popup. It is a three-step wizard (template, details, review). Creating is
-- `NewProjectWizard` struct, line 553
-- `WizardCanAdvance` function, line 563
-- `WizardOpen` function, line 570
-- `WizardOpenOnTemplate` function, line 582: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
-- `WizardClose` function, line 590
-- `WizardNext` function, line 597
-- `WizardBack` function, line 604
-- `WizardBeginCreate` function, line 610
-- `ApplyWizardInput` function, line 619: Enter moves forward when the step is valid (and starts creation on the review step).
+- `SettingsFile` function, line 74: A settings file 'name' of the project in 'root'. 'legacyRel' is where an older project keeps it ("project.okayproj",
+- `FirstScenePath` function, line 85: Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
+- `SaveTarget` enum, line 89
+- `CheckSaveTarget` function, line 96: Where saving 'path' would put the file, for the project in 'root' ("" = none open).
+- `InsideCopyPath` function, line 105: The place inside the project offered instead of 'path': <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
+- `DefaultBuildDir` function, line 115: The build folder a new project starts with (relative: inside the project, see ResolveInProject).
+- `ResolveInProject` function, line 118: A folder the person typed: a relative one is inside the project in 'root' (not the working folder, which is the
+- `LogFile` function, line 127: A log or report called 'name': in the project's Logs folder, or in 'userLogDir' (the person's log folder,
+- `NameCheck` struct, line 143
+- `Utf8Length` function, line 149
+- `IsReservedDeviceName` function, line 155
+- `CheckName` function, line 166: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
+- `SanitizeName` function, line 194: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
+- `TemplateInfo` struct, line 214: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
+- `Templates` function, line 216
+- `TemplateGroups` function, line 239: Group names; index 0 is "All".
+- `FindTemplate` function, line 244: The template called 'title', or null.
+- `Absolute` function, line 251
+- `NearestExisting` function, line 258: The nearest folder at or above 'p' that exists ("" when none does).
+- `CanWriteIn` function, line 271: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
+- `CheckLocation` function, line 286: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
+- `LooksUsed` function, line 311: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
+- `Plan` struct, line 323
+- `Made` struct, line 366: What a creation step made, so a failure can take back exactly that and nothing else.
+- `MakeDirs` function, line 372: Make 'dir' and any missing parents, recording each one that did not exist before.
+- `Undo` function, line 392: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
+- `MakeSkeleton` function, line 403: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
+- `IsEmptyShell` function, line 416: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
+- `RemoveEmptyShell` function, line 427: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
+- `WriteTextAtomic` function, line 440: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
+- `ReadText` function, line 479: Read a whole file; false if it can't be opened.
+- `SettingsPath` function, line 488: Where the settings of the project in 'root' live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
+- `HasSettingsFile` function, line 492: True when the project in 'root' has a project.okayproj (in either place).
+- `IsStarterTemplate` function, line 502: True for the few templates the Create page shows before "All templates" is opened.
+- `TemplateFeatureLines` function, line 505: Three short, true points about a template, shown on its card when it is selected.
+- `CheckProjectVersion` function, line 532: A project version the editor can store in project.okayproj (its field holds 31 characters).
+- `WizardMove` enum, line 553: The New Project popup. It is a three-step wizard (template, details, review). Creating is
+- `NewProjectWizard` struct, line 555
+- `WizardCanAdvance` function, line 565
+- `WizardOpen` function, line 572
+- `WizardOpenOnTemplate` function, line 584: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+- `WizardClose` function, line 592
+- `WizardNext` function, line 599
+- `WizardBack` function, line 606
+- `WizardBeginCreate` function, line 612
+- `ApplyWizardInput` function, line 621: Enter moves forward when the step is valid (and starts creation on the review step).
 
 ## `shared/ProjectDelete.hpp`
 

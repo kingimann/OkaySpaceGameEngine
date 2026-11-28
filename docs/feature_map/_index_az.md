@@ -3400,6 +3400,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - NPCs and perception (9.5)
 - NSIS (18.1, 56.1)
 - NSIS installer (18.1.4)
+- Null audio device (17.17.7)
 - numpad view (15.3)
 
 **O**

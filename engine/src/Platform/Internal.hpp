@@ -7,6 +7,12 @@
 namespace okay::platform {
 std::unique_ptr<Backend> CreateOwnBackend();    // OwnLinux.cpp / OwnWin32.cpp / WebBackend.cpp (OKAY_PLATFORM_HAVE_OWN)
 
+// NullAudio.cpp: the null audio device, for machines with no sound card (CI runners, servers).
+/// True when OKAY_AUDIO_DEVICE=null: every backend's OpenAudio then opens OpenNullAudio, and lists one device, "null".
+bool NullAudioRequested();
+/// A device that plays into nowhere and records silence at the spec's real rate (callback or queue mode).
+std::unique_ptr<AudioDevice> OpenNullAudio(const AudioSpec& want, bool capture, AudioSpec* got, std::string& err);
+
 #ifdef _WIN32
 namespace own {   // OwnWin32Audio.cpp (WASAPI)
 std::unique_ptr<AudioDevice> OpenWasapi(const AudioSpec& want, bool capture, const char* device, AudioSpec* got, std::string& err);

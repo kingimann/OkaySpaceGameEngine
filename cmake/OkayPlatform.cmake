@@ -7,7 +7,7 @@
 set(OKAY_PLATFORM_BACKEND "own" CACHE STRING "okay::platform backend: our own on every platform" FORCE)
 
 function(okay_add_platform_library)
-    set(_srcs src/Platform/Platform.cpp)
+    set(_srcs src/Platform/Platform.cpp src/Platform/NullAudio.cpp)   # NullAudio: OKAY_AUDIO_DEVICE=null on every backend
     set(_defs "")
     set(_libs "")
     set(_incs "")

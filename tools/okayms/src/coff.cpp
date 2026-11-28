@@ -6,7 +6,10 @@
 namespace okayms {
 namespace {
 
-constexpr uint32_t kMaxSections = 96;
+// An object file's sections: the section number in a symbol record is a signed 16-bit one-based index (PE/COFF
+// specification, "Section Number Values"), so at most 32767 here. Round 36: before, 96 (the Windows loader's limit for an
+// image, not an object's), and an object with a COMDAT section per shared static local passed it.
+constexpr uint32_t kMaxSections = 32767;
 // The COFF header's NumberOfSymbols is 32 bits (PE Format, COFF File Header); this is our own bound on what one object
 // may hold, 18 bytes a record (72 MiB). It was 100000 until Round 34: Script/EngineApi.cpp and the OkayScriptVM files,
 // whose builtins are hundreds of lambdas, need more ("too many symbols"). A file read must hold every record it

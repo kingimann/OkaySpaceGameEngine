@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <new>
 #include <utility>
+#include <iterator>
 namespace std {
 template <typename T>
 class deque {
@@ -99,6 +100,11 @@ public:
     T* end() { return block_ + head_ + size_; }
     const T* begin() const { return block_ + head_; }
     const T* end() const { return block_ + head_ + size_; }
+    // Reverse iteration ([sequence.reqmts], [reverse.iterators]; Round 36, Undo.cpp's `m_undo.rbegin()`).
+    std::reverse_iterator<T*> rbegin() { return std::reverse_iterator<T*>(end()); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(end()); }
+    std::reverse_iterator<T*> rend() { return std::reverse_iterator<T*>(begin()); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(begin()); }
 
     void push_back(const T& value) {
         if (block_ != 0 && head_ + size_ == cap_) {

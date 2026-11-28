@@ -45,4 +45,5 @@ typedef unsigned long size_t;
 inline int abs(int x) { return x < 0 ? -x : x; }
 inline long abs(long x) { return x < 0 ? -x : x; }
 inline long labs(long x) { return x < 0 ? -x : x; }
+inline long long llabs(long long x) { return x < 0 ? -x : x; }  // (C 7.22.6.1)
 }  // namespace std

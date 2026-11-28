@@ -1,5 +1,5 @@
 // Per-frame work of the OkayUI editor panels stays flat (the 2026-11-23 report: "with experimental on, the editor freezes a lot").
-// The Inspector stack (header card, Transform, a header bar per component, the Mesh Renderer, Add Component) and the Console with a full
+// An Inspector-like window of framed widgets (twelve components) and the Console with a full
 // log are drawn for hundreds of frames, with the pointer moving, clicks, typing and the wheel in between, and the test counts what one
 // steady frame costs: heap allocations, vertices, indices and draw spans. Nothing may grow from the early frames to the late ones (a list
 // rebuilt and never cleared, a cache that never hits), and the counts must stay under fixed budgets. No clock is read: counts, not
@@ -8,8 +8,8 @@
 // Written from what the editor's host does each frame (editor/OkayPanels.cpp HostSection, editor/ConsolePanel.cpp).
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
-#include "InspectorStackOkayUI.hpp"
 #include "OkayUIScreens.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // the Dear ImGui-named widgets the editor's bodies use
 #include "OkayUIHost.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
 
@@ -39,19 +39,6 @@ Cost Measure(Sim& sim, const std::function<void()>& ui) {
     return c;
 }
 
-/// An object with `n` components (the first a Mesh Renderer, open), like a First Person player with its controller, camera, scripts.
-inspfix::Scene Busy(int n) {
-    inspfix::Scene s = inspfix::Sample();
-    inspfix::Obj& o = s.objs[0];
-    while ((int)o.comps.size() < n) {
-        inspfix::Comp c;
-        c.label = "Script (extra_" + std::to_string(o.comps.size()) + ".okay)";
-        c.open = (o.comps.size() % 2) == 0;
-        o.comps.push_back(c);
-    }
-    return s;
-}
-
 } // namespace
 
 int main() {
@@ -60,37 +47,49 @@ int main() {
     UI::UseLauncherLook(true);
     UI::Style().caretBlink = false;
 
-    // ---- the Inspector stack: steady frames cost the same after 600 frames of use as after 20 --------------------------------------------
+    // ---- an Inspector-like window: steady frames cost the same after 600 frames of use as after 20 ---------------------------------------
+    // (Round 6: the library's own Inspector views this measured were deleted; the editor's Inspector is its bodies written in Dear ImGui's
+    // names, drawn with the framed widgets: twelve components, each a collapsing header over drag cells, a slider, a check box, a combo
+    // and a text field.)
     {
-        inspfix::Scene scene = Busy(12);
+        struct Comp { float pos[3] = {0, 1, 2}; float amount = 0.5f; bool on = true; int kind = 0; char name[32] = "Thing"; };
+        std::vector<Comp> comps(12);
+        static const char* kinds[] = {"Box", "Sphere", "Capsule", "Mesh"};
         Sim sim(460, 1400);
-        inspfix::StackResult res;
         auto ui = [&] {
-            UI::PushTextScale(S::kEditorTextScale);
-            res = inspfix::DrawStack(scene, 16.0f, 12.0f, sim.W - 32.0f, sim.H - 24.0f);
-            UI::PopTextScale();
-        };
-        auto frame = [&] { sim.Frame(ui); inspfix::ApplyStack(scene, res); };
-        for (int i = 0; i < 20; ++i) frame();
-        sim.Move(5, 5);   // a spot with nothing under it
-        frame(); frame();
-        const Cost early = Measure(sim, ui);
-        inspfix::ApplyStack(scene, res);
-        // use it: hover every part, click the name field and type, press Escape, scroll, click each component bar twice (fold, unfold)
-        for (int round = 0; round < 6; ++round) {
-            for (float y = 20; y < 1300; y += 37) { sim.Move(200, y); frame(); }
-            sim.Move(CenterX(res.header.nameField), CenterY(res.header.nameField)); frame(); sim.Down(); frame(); sim.Up(); frame();
-            sim.Type("x"); frame(); sim.Press(Key_Backspace); frame(); sim.Press(Key_Escape); frame();
-            sim.wheel = -3; frame(); sim.wheel = 3; frame();
-            for (std::size_t c = 0; c < res.comps.size(); ++c)
-                for (int t = 0; t < 2; ++t) {
-                    const UI::Rect r = res.comps[c].bar;
-                    sim.Move(r.x + 60.0f, CenterY(r)); frame(); sim.Down(); frame(); sim.Up(); frame();
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+            UI::SetNextWindowPos(UI::Vec2{16, 12}, UI::Cond_Always); UI::SetNextWindowSize(UI::Vec2{428, 1376}, UI::Cond_Always);
+            if (UI::Begin("Inspector", nullptr, 0)) {
+                for (std::size_t i = 0; i < comps.size(); ++i) {
+                    Comp& c = comps[i];
+                    UI::PushID((int)i);
+                    if (UI::CollapsingHeader("Component", i % 2 == 0)) {
+                        UI::DragFloat3("Position", c.pos, 0.1f, 0.0f, 0.0f, "%.2f");
+                        UI::SliderFloat("Amount", &c.amount, 0.0f, 1.0f, "%.2f");
+                        UI::Checkbox("Enabled", &c.on);
+                        UI::Combo("Kind", &c.kind, kinds, 4);
+                        UI::InputText("Name", c.name, (int)sizeof c.name);
+                    }
+                    UI::PopID();
                 }
-            for (int i = 0; i < 40; ++i) frame();
+            }
+            UI::End();
+            UI::PopStyleVar();
+        };
+        for (int i = 0; i < 20; ++i) sim.Frame(ui);
+        sim.Move(5, 5);   // a spot with nothing under it
+        sim.Frames(2, ui);
+        const Cost early = Measure(sim, ui);
+        // use it: hover every row, click and type in a field, press Escape, scroll
+        for (int round = 0; round < 6; ++round) {
+            for (float y = 20; y < 1300; y += 37) { sim.Move(200, y); sim.Frame(ui); }
+            sim.Move(200, 60); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+            sim.Type("x"); sim.Frame(ui); sim.Press(Key_Backspace); sim.Frame(ui); sim.Press(Key_Escape); sim.Frame(ui);
+            sim.wheel = -3; sim.Frame(ui); sim.wheel = 3; sim.Frame(ui);
+            for (int i = 0; i < 60; ++i) sim.Frame(ui);
         }
         sim.Move(5, 5);
-        frame(); frame();
+        sim.Frames(2, ui);
         const Cost late = Measure(sim, ui);
         std::printf("  inspector steady frame: early %lld allocs %d vertices %d spans, late %lld allocs %d vertices %d spans (after %d frames)\n",
                     early.allocs, early.vertices, early.spans, late.allocs, late.vertices, late.spans, sim.frames);

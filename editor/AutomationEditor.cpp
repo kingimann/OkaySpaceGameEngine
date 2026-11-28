@@ -10,6 +10,7 @@
 // Our own code, written on those APIs.
 #include "AutomationEditor.hpp"
 
+#include "AutomationOps.hpp"        // the menus' items as op.<id> commands
 #include "EditorTabs.hpp"          // okay::edtabs::UserFile: the editor's per-user folder
 #include "ModelingEasy.hpp"
 #include "ModelingEasyOps.hpp"
@@ -55,6 +56,9 @@ void EditorHost::BeginEdit(const std::string& name) {
     if (m_depth++ > 0) return;   // a command run from inside another one is part of its step
     m_ed.PushUndo(name);
     m_revision = m_ed.undoStack().Revision();
+    // A command that runs others (script.run, an op that forwards) or whose editor code opens its own steps (CreateEmpty
+    // calls PushUndo) still makes ONE entry: the undo stack's group gathers every step recorded until EndEdit.
+    m_group = m_ed.undoStack().BeginGroup(name);
 }
 
 void EditorHost::EndEdit(bool ok) {
@@ -63,6 +67,8 @@ void EditorHost::EndEdit(bool ok) {
     // What the command changed becomes one step even when it failed half way (so Undo can take it back); a command
     // that changed nothing records nothing (SyncHistory compares the scene text).
     m_ed.CommitUndo();
+    if (m_group && m_ed.undoStack().GroupDepth() > 0) m_ed.undoStack().EndGroup();   // (a new scene inside it cleared the history and the group)
+    m_group = false;
     if (m_ed.undoStack().Revision() != m_revision) m_ed.dirty = true;   // a step was recorded: the title bar and autosave see it
 }
 
@@ -83,6 +89,13 @@ bool EditorHost::EditorView(float eye[3], float target[3], bool& orthographic, f
     orthographic = true;
     size = m_ed.cameraZoom * 0.5f;
     return true;
+}
+
+bool EditorHost::ScriptsAllowed() const { return m_kind != "editor" || ScriptsFlag(); }
+
+void EditorHost::NoteScriptRun(const std::string& language, int lines) {
+    // The editor's log sink puts this in its Console, so the person sees that an agent ran code here.
+    okay::Log::Info("Automation ran a script (", lines, lines == 1 ? " line, " : " lines, ", language, ").");
 }
 
 using okay::automation::Arg;
@@ -590,6 +603,7 @@ void AddEditorCommands(Registry& r) {
     AddModelCommands(r);
     AddUiCommands(r);
     AddVsCommands(r);
+    AddOpCommands(r);   // last: some ops are aliases of the commands above
 }
 
 } // namespace
@@ -613,7 +627,11 @@ struct Link {
     bool loaded = false;
     bool flag = false;
     bool savedFlag = false;
+    bool scripts = true;        // Allow scripts from Automation
+    bool savedScripts = true;
     std::string error;
+    std::string lastCommand;
+    std::string project;
 };
 Link& TheLink() { static Link l; return l; }
 
@@ -625,21 +643,38 @@ bool& LinkFlag() {
     if (!l.loaded) {
         l.loaded = true;
         if (!okay::edtabs::UserFilesDir().empty()) {   // only the editor has a per-user folder; tools and tests keep nothing
+            // "on" / "off", then the options: "scripts=off" (an old file has only the first word: scripts stay on).
             std::ifstream f(FlagFile());
             std::string word;
             l.flag = (f >> word) && word == "on";
+            while (f >> word) if (word == "scripts=off") l.scripts = false; else if (word == "scripts=on") l.scripts = true;
         }
         l.savedFlag = l.flag;
+        l.savedScripts = l.scripts;
     }
     return l.flag;
 }
 
+bool& ScriptsFlag() {
+    LinkFlag();   // read the file once
+    return TheLink().scripts;
+}
+
+bool& PanelFlag() { static bool open = false; return open; }   // drawn by AutomationPanel.cpp
+
+int LinkClients() { return TheLink().server.Running() ? TheLink().server.Clients() : 0; }
+std::string LinkLastCommand() { return TheLink().lastCommand; }
+std::string LinkProject() { return TheLink().server.Running() ? TheLink().project : std::string(); }
+
 void LinkFrame(EditorState& ed) {
     Link& l = TheLink();
     const bool want = LinkFlag();
-    if (want != l.savedFlag) {   // remember the choice for the next start
-        if (!okay::edtabs::UserFilesDir().empty()) std::ofstream(FlagFile(), std::ios::trunc) << (want ? "on\n" : "off\n");
+    if (want && !l.savedFlag) PanelFlag() = true;   // turned on: show what it is for and how to connect
+    if (want != l.savedFlag || l.scripts != l.savedScripts) {   // remember the choices for the next start
+        if (!okay::edtabs::UserFilesDir().empty())
+            std::ofstream(FlagFile(), std::ios::trunc) << (want ? "on" : "off") << (l.scripts ? " scripts=on\n" : " scripts=off\n");
         l.savedFlag = want;
+        l.savedScripts = l.scripts;
     }
     if (!LinkPoll(ed, want) && want && !l.error.empty()) l.flag = false;   // the menu shows it off again; the log says why
 }
@@ -668,9 +703,19 @@ bool LinkPoll(EditorState& ed, bool on, const std::string& kind) {
             return false;
         }
         l.error.clear();
+        l.project = ed.projectDir();
         okay::Log::Info("Automation link on: 127.0.0.1 port ", l.server.Port(), ", details in ", l.server.InfoPath(), " (this user only).");
     }
     l.server.Poll([&l](int id, const std::string& line) {
+        {   // the last command an agent ran, for the Connect to Claude panel's status line
+            okay::json::Value msg;
+            if (okay::json::Parse(line, msg) && msg.IsObject()) {
+                const okay::json::Value* m = msg.Get("method");
+                const okay::json::Value* p = msg.Get("params");
+                if (m && m->IsString() && m->string == "tools/call" && p && p->Get("name") && p->Get("name")->IsString())
+                    l.lastCommand = p->Get("name")->string;
+            }
+        }
         auto& s = l.sessions[id];
         if (!s) {
             okay::automation::McpOptions o;

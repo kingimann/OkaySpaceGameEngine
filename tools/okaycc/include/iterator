@@ -1,6 +1,6 @@
 // <iterator> for okay-cc (ISO/IEC 14882 [iterator.synopsis]). Our own header: the iterator tags,
 // next, prev, advance, distance (<__okay_iter_steps>), back_inserter and
-// istreambuf_iterator (<__stream>), reverse_iterator (<__reverse_iterator>). Not done: iterator_traits,
+// istreambuf_iterator and istream_iterator (<__stream>), reverse_iterator (<__reverse_iterator>). Not done: iterator_traits,
 // the
 // non-member begin/end/size/data.
 #pragma once

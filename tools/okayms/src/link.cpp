@@ -861,7 +861,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         if (symbol_index >= objects[oi].symbols.size()) return false;
         const Symbol* symbol = &objects[oi].symbols[symbol_index];
         size_t home = oi;
-        if (symbol->section <= 0) {
+        // A symbol of a COMDAT section that was dropped (another object's copy was kept) stands for the kept copy
+        // (PE/COFF "COMDAT Sections"; Round 36).
+        const bool dropped = symbol->section > 0 && static_cast<size_t>(symbol->section) <= objects[oi].sections.size() &&
+                             !contribs[oi][static_cast<size_t>(symbol->section) - 1].present &&
+                             symbol->storage == kClassExternal;
+        if (symbol->section <= 0 || dropped) {
             const auto found = defined_at.find(symbol->name);
             if (found == defined_at.end()) return false;
             home = found->second.first;
@@ -946,6 +951,14 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         }
         if (symbol.section > 0 || symbol.section == kSectionAbsolute) {
             *out = placed[oi][symbol_index];
+            if (!out->defined && symbol.storage == kClassExternal) {
+                // Defined in a COMDAT section of this object that was dropped: the kept copy (Round 36).
+                const auto kept = globals.find(symbol.name);
+                if (kept != globals.end() && kept->second.defined) {
+                    *out = kept->second;
+                    return true;
+                }
+            }
             if (!out->defined) {
                 *err = "undefined symbol " + symbol.name;
                 return false;

@@ -10215,8 +10215,8 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
-    const long exp = account.TokenExpiresAt();
-    if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
+    const long long exp = account.TokenExpiresAt();
+    if (exp <= 0 || exp - (long long)std::time(nullptr) > 600) return;
     g_tokRefreshBusy = true;
     if (okay::thr::Thread* t = okay::thr::CreateThread(TokenRefreshWorker, "okay-token", nullptr)) okay::thr::DetachThread(t);
     else g_tokRefreshBusy = false;
@@ -12347,7 +12347,7 @@ static const okaylcli::Host& CommandLineHost() {
         builtAt = now;
         h.okayExe = FindExe({"okay.exe", "okay"});
         h.toolsDir = h.okayExe.empty() ? std::string() : fs::path(h.okayExe).parent_path().string();
-        h.programs = okaylcli::FindPrograms({g_exeDir, (fs::path(g_exeDir) / "Tools").string()});   // browser, Script Editor, Visual Script
+        h.programs = okaylcli::FindPrograms(okaylcli::ProgramDirs(g_exeDir));   // browser, Script Editor, Visual Script
         h.projects.clear();
         const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);
         for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects))
@@ -14994,6 +14994,11 @@ int main(int argc, char** argv) {
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
             struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
+            auto projectFolder = [](const CrProj& pr) {   // the folder that holds Assets (the command line and the tools start there)
+                fs::path root = fs::path(pr.scene).parent_path();
+                if (root.filename() == "Assets") root = root.parent_path();
+                return root;
+            };
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string { return okayproj::SceneIn(root); };
             if (s_projScanned != std::string(npLoc) || g_projectsNeedRescan) {
@@ -15164,6 +15169,48 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("New Project asks for a template and a name before anything is created.");
             ImGui::PopTextWrapPos();
 
+            // ---- Tools: the Script Editor, Visual Script and the browser, each a program of its own (owner, 2026-11-28) ----
+            {
+                ImGui::Dummy(ImVec2(0, 8));
+                const okaylcli::Host& ch = CommandLineHost();
+                {   // the label, centred on the buttons' height
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    const float bh = okl::UiPx(32.0f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x, at.y + (bh - ImGui::GetTextLineHeight()) * 0.5f),
+                                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), "Tools");
+                    ImGui::Dummy(ImVec2(ImGui::CalcTextSize("Tools").x, bh));
+                }
+                for (const okaylcli::ToolProgram& tp : okaylcli::ToolPrograms()) {
+                    const bool have = std::any_of(ch.programs.begin(), ch.programs.end(), [&](const okaylcli::FoundProgram& f) { return f.label == tp.label; });
+                    ImGui::SameLine(0, 10);
+                    ImGui::PushID(tp.label.c_str());
+                    if (ImGui::Button(tp.label.c_str(), ImVec2(okl::FitButtonW(tp.label.c_str(), okl::UiPx(96.0f)), okl::UiPx(32.0f)))) {
+                        if (!have || tp.target == okaylcli::ToolTarget::Address) okaylcli::OpenTool(ch, tp.label, "");   // missing: the plain message
+                        else ImGui::OpenPopup("##toolpick");
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", have ? (tp.tip + (tp.target == okaylcli::ToolTarget::Folder ? " Pick a project, or none." : "")).c_str()
+                                                     : okaylcli::MissingProgramMessage(tp.label).c_str());
+                    if (ImGui::BeginPopup("##toolpick")) {
+                        if (ImGui::MenuItem("Without a project")) okaylcli::OpenTool(ch, tp.label, "");
+                        if (ImGui::MenuItem("Pick a project folder\xE2\x80\xA6")) {
+                            const std::string label = tp.label;   // the dialog answers on a later frame: values only
+                            okay::filedialog::FolderOne("Open a project folder in " + label, npLoc, [label](const std::string& picked) {
+                                if (!picked.empty()) okaylcli::OpenTool(CommandLineHost(), label, picked);
+                            });
+                        }
+                        int shown = 0;
+                        for (const CrProj& pr : s_projects) {
+                            if (pr.missing || shown >= 8) continue;
+                            if (shown++ == 0) { ImGui::Separator(); ImGui::TextDisabled("Recent projects"); }
+                            if (ImGui::MenuItem(pr.name.c_str())) okaylcli::OpenTool(ch, tp.label, projectFolder(pr).string());
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
+                }
+            }
+
             // ---- Your projects ----
             ImGui::Dummy(ImVec2(0, 22));
             static char projQ[64] = "";
@@ -15295,7 +15342,8 @@ int main(int argc, char** argv) {
                 int maxCols = availW >= 980.0f ? 3 : availW >= 620.0f ? 2 : 1;
                 int cols = (int)projList.size() < maxCols ? std::max(1, (int)projList.size()) : maxCols;
                 const float cardW = (availW - gap * (cols - 1)) / cols;
-                const bool stackBtns = cardW < 520.0f;
+                const float btnsW = 368.0f;   // Open, Remove, More and three round buttons (command line, Script Editor, Visual Script)
+                const bool stackBtns = cardW < btnsW + 232.0f;
                 const float cardH = stackBtns ? 148.0f : 112.0f;
                 int idx = 0;
                 for (const CrProj* prp : projList) {
@@ -15311,8 +15359,7 @@ int main(int argc, char** argv) {
                     const ImVec2 wp = ImGui::GetWindowPos();
                     ImGui::SetCursorPos(ImVec2(16, 18));
                     DrawGameIcon(pr.scene, pr.name, 64.0f);
-                    fs::path root = fs::path(pr.scene).parent_path();
-                    if (root.filename() == "Assets") root = root.parent_path();
+                    const fs::path root = projectFolder(pr);
                     std::string when;
                     if (s_openedAt.count(pr.scene)) when = "Opened just now";
                     else if (pr.missing) when = "Folder not found";
@@ -15326,7 +15373,7 @@ int main(int argc, char** argv) {
                     if (pr.ready) when += "  \xC2\xB7  " + (pr.ver.empty() ? std::string("version unknown") : badge.version);
                     if (pr.extra) when += "  \xC2\xB7  elsewhere";
                     const float tx = wp.x + 16 + 64 + 14;
-                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 292.0f);
+                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : btnsW + 4.0f);
                     {
                         const float nameFs = ImGui::GetFontSize() * 1.08f;
                         float pillW = 0.0f;
@@ -15345,7 +15392,7 @@ int main(int argc, char** argv) {
                     dl->AddText(ImVec2(tx, wp.y + 40), crDim, FitText(root.string(), textRight - tx).c_str());
                     dl->AddText(ImVec2(tx, wp.y + 62), crDim, FitText(when, textRight - tx).c_str());
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
-                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - 288, (cardH - 34) * 0.5f));
+                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - btnsW, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
                     if (PrimaryButton("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(78.0f)), okl::UiPx(34.0f)))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
@@ -15358,6 +15405,12 @@ int main(int argc, char** argv) {
                     if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText,
                                         "Open command line: a terminal in this project's folder where okay works"))
                         okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
+                    ImGui::SameLine(0, 6);   // the Script Editor and Visual Script on this project (programs of their own; a plain message when missing)
+                    if (RoundIconButton("##projscript", kIcoCode, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText, "Script Editor: this project's scripts, in a window of its own"))
+                        okaylcli::OpenTool(CommandLineHost(), "Script Editor", root.string());
+                    ImGui::SameLine(0, 6);
+                    if (RoundIconButton("##projvs", kIcoNodes, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText, "Visual Script: this project's graphs, in a window of its own"))
+                        okaylcli::OpenTool(CommandLineHost(), "Visual Script", root.string());
                     ImGui::EndDisabled();
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
                         if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
@@ -15382,6 +15435,8 @@ int main(int argc, char** argv) {
                         ImGui::Separator();
                         if (ImGui::MenuItem("Open command line", nullptr, false, !pr.missing)) okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
                         if (ImGui::MenuItem("Command line in the launcher", nullptr, false, !pr.missing)) { okaylcli::SetProject(root.string(), pr.name); tab = 17; g_lastTab = 17; }
+                        if (ImGui::MenuItem("Open in Script Editor", nullptr, false, !pr.missing)) okaylcli::OpenTool(CommandLineHost(), "Script Editor", root.string());
+                        if (ImGui::MenuItem("Open in Visual Script", nullptr, false, !pr.missing)) okaylcli::OpenTool(CommandLineHost(), "Visual Script", root.string());
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
                             OpenExternal(fs::path(pr.scene).parent_path().parent_path().string());
                         if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(pr.scene.c_str());

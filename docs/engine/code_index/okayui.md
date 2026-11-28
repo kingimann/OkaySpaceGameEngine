@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 12 headers, 684 names.
+Back to the [code index](../code_index.md). 12 headers, 685 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -303,44 +303,45 @@ Back to the [code index](../code_index.md). 12 headers, 684 names.
 - `IsKeyDown` function, line 1391: Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with 'repeat', again every 0.05 s
 - `IsKeyPressed` function, line 1392
 - `IsKeyReleased` function, line 1393
-- `StyleVar` enum, line 1418: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
-- `PushStyleVar` function, line 1426
-- `PopStyleVar` function, line 1428
-- `IsMouseHoveringRect` function, line 1429
-- `GetWindowPos` function, line 1433: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
-- `GetWindowSize` function, line 1434
-- `GetWindowWidth` function, line 1435
-- `GetWindowHeight` function, line 1436
-- `IsWindowHovered` function, line 1437
-- `IsWindowFocused` function, line 1438
-- `IsWindowAppearing` function, line 1439
-- `SetWindowFocus` function, line 1440
-- `SetWindowFontScale` function, line 1442: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
-- `MouseCursor` enum, line 1445: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
-- `SetMouseCursor` function, line 1447
-- `GetMouseCursor` function, line 1448
-- `IO` struct, line 1452: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
-- `Composition` struct, line 1497: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
-- `GetComposition` function, line 1498
-- `ImeRect` struct, line 1502: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
-- `GetImeRect` function, line 1503
-- `SetImeRect` function, line 1504
-- `SetNextWindowPos` function, line 1506: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
-- `SetNextWindowSize` function, line 1507
-- `BeginDisabled` function, line 1516: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
-- `EndDisabled` function, line 1517
-- `IsDisabled` function, line 1518
-- `Style` function, line 1521: The active theme (mutable — tweak colors/sizes in place).
-- `PushStyleColor` function, line 1552: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
-- `PopStyleColor` function, line 1556
-- `SetStyleColor` function, line 1558: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
-- `ResetStyleColor` function, line 1559
-- `GetStyleColorVec4` function, line 1562: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
-- `GetStyleColorName` function, line 1563
-- `ColorConvertU32ToFloat4` function, line 1565: Dear ImGui style colour conversions (all components 0..1; hue wraps).
-- `ColorConvertFloat4ToU32` function, line 1566
-- `ColorConvertRGBtoHSV` function, line 1567
-- `ColorConvertHSVtoRGB` function, line 1568
+- `StyleVar` enum, line 1424: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
+- `PushStyleVar` function, line 1432
+- `LabelColumnWidth` function, line 1437: With StyleVar_LabelColumn: the label column's width for a field that would start a line here (0 when there is none: off, after
+- `PopStyleVar` function, line 1438
+- `IsMouseHoveringRect` function, line 1439
+- `GetWindowPos` function, line 1443: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
+- `GetWindowSize` function, line 1444
+- `GetWindowWidth` function, line 1445
+- `GetWindowHeight` function, line 1446
+- `IsWindowHovered` function, line 1447
+- `IsWindowFocused` function, line 1448
+- `IsWindowAppearing` function, line 1449
+- `SetWindowFocus` function, line 1450
+- `SetWindowFontScale` function, line 1452: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
+- `MouseCursor` enum, line 1455: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
+- `SetMouseCursor` function, line 1457
+- `GetMouseCursor` function, line 1458
+- `IO` struct, line 1462: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
+- `Composition` struct, line 1507: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
+- `GetComposition` function, line 1508
+- `ImeRect` struct, line 1512: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
+- `GetImeRect` function, line 1513
+- `SetImeRect` function, line 1514
+- `SetNextWindowPos` function, line 1516: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
+- `SetNextWindowSize` function, line 1517
+- `BeginDisabled` function, line 1526: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
+- `EndDisabled` function, line 1527
+- `IsDisabled` function, line 1528
+- `Style` function, line 1531: The active theme (mutable — tweak colors/sizes in place).
+- `PushStyleColor` function, line 1562: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
+- `PopStyleColor` function, line 1566
+- `SetStyleColor` function, line 1568: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
+- `ResetStyleColor` function, line 1569
+- `GetStyleColorVec4` function, line 1572: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
+- `GetStyleColorName` function, line 1573
+- `ColorConvertU32ToFloat4` function, line 1575: Dear ImGui style colour conversions (all components 0..1; hue wraps).
+- `ColorConvertFloat4ToU32` function, line 1576
+- `ColorConvertRGBtoHSV` function, line 1577
+- `ColorConvertHSVtoRGB` function, line 1578
 
 ## `okayui/include/okay/UI/OkayUICapture.hpp`
 
@@ -602,15 +603,15 @@ Back to the [code index](../code_index.md). 12 headers, 684 names.
 - `DockInsideBegin` function, line 163
 - `DockSaveLayout` function, line 165: Layout text for saving and loading (see DockLayout::Save / Load).
 - `DockLoadLayout` function, line 166
-- `DockTabInfo` struct, line 171: One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
-- `GetDockTabs` function, line 172
-- `GetDockArea` function, line 174: The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
-- `GetDockTabHeight` function, line 175
-- `SetDockTrailingReserve` function, line 178: Leave 'width' pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
-- `GetDockStripRect` function, line 180: The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
-- `DockDropInfo` struct, line 185: What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
-- `DockDragging` function, line 188: Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
-- `GetDockDrop` function, line 189
+- `DockTabInfo` struct, line 172: One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
+- `GetDockTabs` function, line 173
+- `GetDockArea` function, line 175: The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
+- `GetDockTabHeight` function, line 176
+- `SetDockTrailingReserve` function, line 179: Leave 'width' pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
+- `GetDockStripRect` function, line 181: The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
+- `DockDropInfo` struct, line 186: What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
+- `DockDragging` function, line 189: Is a tab or a floating window being dragged with the dock (a drop target or a float is shown)?
+- `GetDockDrop` function, line 190
 
 ## `okayui/include/okay/UI/OkayUIDockBuilder.hpp`
 

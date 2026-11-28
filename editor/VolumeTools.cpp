@@ -505,7 +505,6 @@ void DrawVolumeInspector(EditorState& ed, GameObject* go, Component* comp, Compo
                 ImGui::TextDisabled("Play: listener weight %.2f", c->ViewerWeight());
             else ImGui::TextDisabled("Play: %d inside", c->Occupants());
         }
-        if (ImGui::SmallButton("Remove##vol")) toRemove = c;
     }
     ImGui::PopID();
 }

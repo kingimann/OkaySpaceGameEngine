@@ -315,6 +315,8 @@ struct StructDef {
     int local_in = -1;
     // A class defined in a function body (Round 30): its member functions name the function's static locals.
     bool local_fn = false;
+    // Declared in an anonymous namespace ([namespace.unnamed]): its members are this file's own (Round 36).
+    bool in_anon = false;
     // A local class: the locals of the function body it was defined in (Round 34; only compared, never read).
     const void* local_body = nullptr;
     // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
@@ -358,6 +360,12 @@ struct Global {
     // (".CRT$XCU": a pointer to the file's start-up function, found by the program's main through the .CRT$XCA and
     // .CRT$XCZ markers; PE/COFF specification, "Grouped Sections"). Empty for the usual .data, .bss or .tls$.
     std::string section;
+    // One object for the whole program (Round 36): a static local of an inline function and its guard. It goes into a
+    // COMDAT section of its own ("pick any", selection 2; PE/COFF specification, "COMDAT Sections"), named the same in
+    // every object, so the linker keeps one copy and every file's code uses it ([dcl.inline] 6: "a static local
+    // variable in an inline function with external linkage always refers to the same object"). Before, each object had
+    // its own (Tags::Custom() changed in one file was not seen from another).
+    bool comdat = false;
 };
 
 inline Type peel_array(const Type& type) {
@@ -429,6 +437,10 @@ struct FuncDecl {
     bool exported = false;
     bool defined = false;
     bool is_static = false;
+    // An inline function ([dcl.inline] 6: one function in every file that defines it; a member written in its class, a
+    // function written `inline`, a template instance), not one with internal linkage (`static`, an anonymous namespace):
+    // its static locals are one object in the program (Round 36; see Global::comdat).
+    bool is_inline = false;
     bool vararg = false;
     bool sret = false;
     // Default arguments, as for Method::defaults.

@@ -26,13 +26,13 @@ namespace golden {
 
 inline const char* const kUrl = "https://backend.example.test/";   // trailing slash on purpose: every flow must drop it
 inline const char* const kKey = "test-publishable-key-0000";
-inline const long kFuture = 4102444800L;   // 2100-01-01
+inline const long long kFuture = 4102444800LL;   // 2100-01-01 (long long: `long` is 32 bits on Windows and cut this to 1909)
 
 inline std::string B64Url(const std::string& in) {
     return okay::base64::Encode(reinterpret_cast<const std::uint8_t*>(in.data()), in.size(), okay::base64::Alphabet::Url, false);
 }
 /// JWT-shaped, unsigned: the client only reads "sub" and "exp".
-inline std::string Jwt(const std::string& sub, long exp) {
+inline std::string Jwt(const std::string& sub, long long exp) {
     return B64Url("{\"alg\":\"none\"}") + "." + B64Url("{\"sub\":\"" + sub + "\",\"exp\":" + std::to_string(exp) + "}") + ".sig";
 }
 inline std::string Tok(int n) { return Jwt("u" + std::to_string(n), kFuture); }

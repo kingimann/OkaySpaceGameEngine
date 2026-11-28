@@ -207,5 +207,26 @@ int main() {
         CHECK(!ReadPanelOpenLine("showgrid", labels, idx) && idx == 7);   // other settings are not panel lines
     }
 
+    {   // Which group the side tabs show (Show Group as Side Tabs on the Inspector's group) is kept across a restart: one
+        // "sideanchor_<key> 1" line for the panel that chose the group, read back to that panel; none when no panel chose it.
+        const std::vector<std::string> labels = {"Hierarchy", "Inspector", "Scene Manager"};
+        CHECK(SideAnchorLine("Inspector") == "sideanchor_inspector 1\n");
+        CHECK(SideAnchorLine("Scene Manager") == "sideanchor_scene_manager 1\n");
+        CHECK(SideAnchorLine("").empty());
+        const std::string text = "sidetabs 2\n" + SideAnchorLine("Inspector") + "panel_inspector 1\n";
+        std::istringstream in(text);
+        std::string k; int v = 0, anchor = -1, panels = 0;
+        while (in >> k >> v) {
+            int idx = -1;
+            if (ReadSideAnchorLine(k, labels, idx)) anchor = idx;
+            else if (ReadPanelOpenLine(k, labels, idx)) ++panels;   // the panel lines are not anchor lines, and the other way round
+        }
+        CHECK(anchor == 1 && panels == 1);
+        int idx = 5;
+        CHECK(ReadSideAnchorLine("sideanchor_gone_panel", labels, idx) && idx == -1);   // a panel this editor no longer has: read, no anchor
+        idx = 5;
+        CHECK(!ReadSideAnchorLine("sidetabs", labels, idx) && idx == 5);
+    }
+
     TEST_MAIN_RESULT();
 }

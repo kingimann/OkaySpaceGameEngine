@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 76 headers, 1131 names.
+Back to the [code index](../code_index.md). 76 headers, 1101 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -194,6 +194,16 @@ Back to the [code index](../code_index.md). 76 headers, 1131 names.
 ## `shared/BrowserPluginCommands.hpp`
 
 - `OwnerOf` function, line 15
+
+## `shared/ClaudeConnect.hpp`
+
+- `DesktopConfigPath` function, line 40: Claude Desktop's config file for this user ("" when the folder that holds it cannot be found).
+- `FindOkayProgram` function, line 56: The okay program for a program in 'exeDir': beside it, in its Tools folder, or in the Tools folder beside its folder
+- `QuoteArg` function, line 72: A path as one command-line word: in double quotes when it has a space or a shell character in it (a Windows path
+- `ClaudeCodeCommand` function, line 80: The Claude Code line that adds this engine as an MCP server.
+- `MergeDesktopConfig` function, line 86: Merge the okayspace entry into the config text 'text' ("" = a new file). False with 'error' when 'text' is not a JSON
+- `SetupResult` struct, line 115
+- `AddToDesktopConfig` function, line 123: Add or update the okayspace entry in the config file at 'configPath' (DesktopConfigPath()). Writes the backup first.
 
 ## `shared/CommandLinePanel.hpp`
 
@@ -721,51 +731,11 @@ Back to the [code index](../code_index.md). 76 headers, 1131 names.
 - `FeedHost` struct, line 204: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
 - `Feed` class, line 237: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
 
-## `shared/InspectorFieldsModel.hpp`
-
-- `InspRowKind` enum, line 31
-- `InspPick` enum, line 75: What a click on a row opens (a small button, an asset field): a list with a search field, or a grid of thumbnails. The chosen
-- `InspRow` struct, line 77
-- `InspFieldHooks` struct, line 167: What a version asks the host for, only while it needs it.
-- `InspFieldList` struct, line 187
-- `InspVisibleLen` function, line 346: The label part a row shows ("Mass##rb3" -> "Mass"): the length before "##".
-- `InspMaskPreview` function, line 355: A layer mask's text in its closed combo, as the Camera's Culling Mask shows it: "Everything", "Nothing", or the first two layer
-- `InspAnchorPicture` struct, line 377: The little picture of anchor 'a' in the box (x0, y0)-(x1, y1), as the editor's AnchorCombo draws it: a rectangle, and inside it a
-- `InspAnchorFill` function, line 378
-- `InspGradientAt` function, line 392: ---- gradients and curves (the Particle System's over-life editors) ----------------------------------------------------------------
-- `InspCurveAt` function, line 408: A curve's value at t: the keys before and after t blended, straight or eased (smoothstep), as okay::ParticleCurve::Evaluate.
-- `InspCurveTop` function, line 425: The top of a curve's plot: 1.15 x its largest key, at least 1 (ParticleCurveEditor).
-- `InspNearestStop` function, line 432: The stop or key nearest to x (gradient: within 7 pixels in x) or to (x, y) (curve: within 8 pixels), or -1.
-- `InspNearestKey` function, line 440
-- `InspAddStop` function, line 450: Add a stop (or key) at the end, when there is room: its index, or -1.
-- `InspAddKey` function, line 457
-- `InspRemoveAt` function, line 464: Remove stop / key i, the ones after it moving down.
-- `InspFitText` function, line 473: A combo's closed text cut to fit 'maxW' with "..." at its end (whole characters), as both versions draw it (stage 6: "Bool false" and
-
 ## `shared/InspectorPanelModel.hpp`
 
-- `InspectorHeaderModel` struct, line 34
-- `InspectorHeaderState` struct, line 53: What the header keeps between frames (the add-tag field, the rename of a tag or a layer from its list, and the answers the
-- `InspectorHeaderIntent` struct, line 65
-- `InspGlyph` enum, line 94: The small drawn mark after a component's enable box (editor/EditorWidgets.cpp CategoryGlyph): 0 dot, 1 square (rendering),
-- `CompHeaderModel` struct, line 96
-- `CompHeaderIntent` struct, line 113
-- `CompMenuHead` function, line 134: The part of the menu every component has (Move Up and Down, Expand and Collapse All); the host adds the values and prefab rows and
-- `CompMenuTail` function, line 143: The end of the menu: Remove Component, or the note that it is required.
-- `InspDrawGlyph` function, line 154: The family mark after the enable box, in an 'fh' square whose top-left is (x, y) (written from the editor's CompHeader: a tinted
-- `CompHeaderTitle` function, line 181: The component's name cut to 'room' pixels with an ellipsis (whole UTF-8 characters), as the bar shows it. 'measure(text)' is the
-- `TransformModel` struct, line 196
-- `TransformIntent` struct, line 209
-- `TransformUniformScale` function, line 226: Uniform scale: when one axis was dragged from 'before' to 'after', the other two follow by the same ratio. Writes 'after'.
-- `InspAxisFormat` function, line 239: The format a vector cell shows: in a narrow Inspector fewer decimals rather than a cut number (the value keeps full precision).
-- `InspCellWidths` function, line 256: Dear ImGui's split of one field width into 'n' cells 'spacing' apart (PushMultiItemsWidths): every cell but the last is the
-- `MeshShader` enum, line 270
-- `MeshRendererValues` struct, line 276
-- `MeshRendererModel` struct, line 292
-- `MeshRendererIntent` struct, line 301
-- `MeshStatsText` function, line 309: The stats line: "117 verts  •  192 tris  •  UVs" ("" when there are no vertices).
-- `ColorByte` function, line 322: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
-- `AddComponentWidth` function, line 331: The button's width: 260 pixels, centred, on a panel wider than 300; otherwise the whole width.
+- `CompHeaderTitle` function, line 23: The component's name cut to 'room' pixels with an ellipsis (whole UTF-8 characters), as the bar shows it. 'measure(text)' is the
+- `InspFitText` function, line 39: A combo's closed text cut to fit 'maxW' with "..." at its end (whole characters), as the editor's combos draw it ("Bool false" and
+- `ColorByte` function, line 52: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
 
 ## `shared/JoinPlan.hpp`
 
@@ -1057,52 +1027,52 @@ Back to the [code index](../code_index.md). 76 headers, 1131 names.
 - `TempDir` function, line 64
 - `BuildsDir` function, line 65
 - `ScenesDir` function, line 66
-- `SettingsFile` function, line 72: A settings file 'name' of the project in 'root'. 'legacyRel' is where an older project keeps it ("project.okayproj",
-- `FirstScenePath` function, line 83: Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
-- `SaveTarget` enum, line 87
-- `CheckSaveTarget` function, line 94: Where saving 'path' would put the file, for the project in 'root' ("" = none open).
-- `InsideCopyPath` function, line 103: The place inside the project offered instead of 'path': <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
-- `DefaultBuildDir` function, line 113: The build folder a new project starts with (relative: inside the project, see ResolveInProject).
-- `ResolveInProject` function, line 116: A folder the person typed: a relative one is inside the project in 'root' (not the working folder, which is the
-- `LogFile` function, line 125: A log or report called 'name': in the project's Logs folder, or in 'userLogDir' (the person's log folder,
-- `NameCheck` struct, line 141
-- `Utf8Length` function, line 147
-- `IsReservedDeviceName` function, line 153
-- `CheckName` function, line 164: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
-- `SanitizeName` function, line 192: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
-- `TemplateInfo` struct, line 212: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
-- `Templates` function, line 214
-- `TemplateGroups` function, line 237: Group names; index 0 is "All".
-- `FindTemplate` function, line 242: The template called 'title', or null.
-- `Absolute` function, line 249
-- `NearestExisting` function, line 256: The nearest folder at or above 'p' that exists ("" when none does).
-- `CanWriteIn` function, line 269: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
-- `CheckLocation` function, line 284: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
-- `LooksUsed` function, line 309: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
-- `Plan` struct, line 321
-- `Made` struct, line 364: What a creation step made, so a failure can take back exactly that and nothing else.
-- `MakeDirs` function, line 370: Make 'dir' and any missing parents, recording each one that did not exist before.
-- `Undo` function, line 390: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
-- `MakeSkeleton` function, line 401: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
-- `IsEmptyShell` function, line 414: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
-- `RemoveEmptyShell` function, line 425: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
-- `WriteTextAtomic` function, line 438: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
-- `ReadText` function, line 477: Read a whole file; false if it can't be opened.
-- `SettingsPath` function, line 486: Where the settings of the project in 'root' live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
-- `HasSettingsFile` function, line 490: True when the project in 'root' has a project.okayproj (in either place).
-- `IsStarterTemplate` function, line 500: True for the few templates the Create page shows before "All templates" is opened.
-- `TemplateFeatureLines` function, line 503: Three short, true points about a template, shown on its card when it is selected.
-- `CheckProjectVersion` function, line 530: A project version the editor can store in project.okayproj (its field holds 31 characters).
-- `WizardMove` enum, line 551: The New Project popup. It is a three-step wizard (template, details, review). Creating is
-- `NewProjectWizard` struct, line 553
-- `WizardCanAdvance` function, line 563
-- `WizardOpen` function, line 570
-- `WizardOpenOnTemplate` function, line 582: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
-- `WizardClose` function, line 590
-- `WizardNext` function, line 597
-- `WizardBack` function, line 604
-- `WizardBeginCreate` function, line 610
-- `ApplyWizardInput` function, line 619: Enter moves forward when the step is valid (and starts creation on the review step).
+- `SettingsFile` function, line 74: A settings file 'name' of the project in 'root'. 'legacyRel' is where an older project keeps it ("project.okayproj",
+- `FirstScenePath` function, line 85: Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
+- `SaveTarget` enum, line 89
+- `CheckSaveTarget` function, line 96: Where saving 'path' would put the file, for the project in 'root' ("" = none open).
+- `InsideCopyPath` function, line 105: The place inside the project offered instead of 'path': <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
+- `DefaultBuildDir` function, line 115: The build folder a new project starts with (relative: inside the project, see ResolveInProject).
+- `ResolveInProject` function, line 118: A folder the person typed: a relative one is inside the project in 'root' (not the working folder, which is the
+- `LogFile` function, line 127: A log or report called 'name': in the project's Logs folder, or in 'userLogDir' (the person's log folder,
+- `NameCheck` struct, line 143
+- `Utf8Length` function, line 149
+- `IsReservedDeviceName` function, line 155
+- `CheckName` function, line 166: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
+- `SanitizeName` function, line 194: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
+- `TemplateInfo` struct, line 214: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
+- `Templates` function, line 216
+- `TemplateGroups` function, line 239: Group names; index 0 is "All".
+- `FindTemplate` function, line 244: The template called 'title', or null.
+- `Absolute` function, line 251
+- `NearestExisting` function, line 258: The nearest folder at or above 'p' that exists ("" when none does).
+- `CanWriteIn` function, line 271: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
+- `CheckLocation` function, line 286: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
+- `LooksUsed` function, line 311: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
+- `Plan` struct, line 323
+- `Made` struct, line 366: What a creation step made, so a failure can take back exactly that and nothing else.
+- `MakeDirs` function, line 372: Make 'dir' and any missing parents, recording each one that did not exist before.
+- `Undo` function, line 392: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
+- `MakeSkeleton` function, line 403: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
+- `IsEmptyShell` function, line 416: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
+- `RemoveEmptyShell` function, line 427: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
+- `WriteTextAtomic` function, line 440: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
+- `ReadText` function, line 479: Read a whole file; false if it can't be opened.
+- `SettingsPath` function, line 488: Where the settings of the project in 'root' live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
+- `HasSettingsFile` function, line 492: True when the project in 'root' has a project.okayproj (in either place).
+- `IsStarterTemplate` function, line 502: True for the few templates the Create page shows before "All templates" is opened.
+- `TemplateFeatureLines` function, line 505: Three short, true points about a template, shown on its card when it is selected.
+- `CheckProjectVersion` function, line 532: A project version the editor can store in project.okayproj (its field holds 31 characters).
+- `WizardMove` enum, line 553: The New Project popup. It is a three-step wizard (template, details, review). Creating is
+- `NewProjectWizard` struct, line 555
+- `WizardCanAdvance` function, line 565
+- `WizardOpen` function, line 572
+- `WizardOpenOnTemplate` function, line 584: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+- `WizardClose` function, line 592
+- `WizardNext` function, line 599
+- `WizardBack` function, line 606
+- `WizardBeginCreate` function, line 612
+- `ApplyWizardInput` function, line 621: Enter moves forward when the step is valid (and starts creation on the review step).
 
 ## `shared/ProjectDelete.hpp`
 

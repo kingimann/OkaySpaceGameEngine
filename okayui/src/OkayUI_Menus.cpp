@@ -141,7 +141,8 @@ void menuListBegin(int id, float y, bool nested) {
     g_curMenu.widthSlot = wide; g_curMenu.wantW = 0.0f;
     if (*wide > g_curMenu.w) {
         g_curMenu.w = *wide;
-        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW)
+        if (nested && g_curMenu.leftward) g_curMenu.x = std::max(0.0f, g_curMenu.anchorR - g_curMenu.w);   // a list on the left keeps its right edge
+        else if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW)
             g_curMenu.x = nested ? std::max(0.0f, g_curMenu.bx - g_curMenu.w) : std::max(0.0f, g_dispW - g_curMenu.w);
     }
     float* full = floatState(id ^ 0x6d1a0b, 0.0f);
@@ -284,6 +285,22 @@ void menuKeysBegin(int menuId, bool nestedMenu) {
 }
 
 namespace { bool popupRow(const char* label, const char* shortcut, bool selected, bool enabled, bool lit, bool arrow, float& x, float& y, float& w, float& h); }
+namespace {
+// Where a sub-menu's list goes (its width in g_curMenu.w; the chain so far in chainX0/chainX1, which include the row's own list): beside
+// the whole chain, first on the side the chain is going, then on the other; with no room on either side, against its row as before.
+void placeSubList(float rowX, float rowW) {
+    CurMenu& m = g_curMenu;
+    const float W = m.w;
+    const float rx = std::max(rowX + rowW, m.chainX1), lx = std::min(rowX, m.chainX0) - W;
+    const bool rightFits = !(g_dispW > 0.0f && rx + W > g_dispW), leftFits = lx >= 0.0f;
+    if (m.leftward ? leftFits : !rightFits && leftFits) { m.leftward = true; m.x = lx; }
+    else if (rightFits) { m.leftward = false; m.x = rx; }
+    else { m.leftward = true; m.x = std::max(0.0f, rowX - W); }   // no room beside the chain: on its row's left, as before
+    m.anchorR = m.x + W;
+}
+// The list is placed (and widened by menuListBegin): the chain now takes its width too.
+void chainAdd() { g_curMenu.chainX0 = std::min(g_curMenu.chainX0, g_curMenu.x); g_curMenu.chainX1 = std::max(g_curMenu.chainX1, g_curMenu.x + g_curMenu.w); }
+}
 bool BeginMenu(const char* label) {
     if (g_lay.active && !g_curMenu.active && !g_inMenuBar && label && g_popupTop > 0 && !g_framedWidgets) {   // a submenu of a plain popup: expands in place, indented
         if (!TreeNode(label)) return false;
@@ -306,13 +323,15 @@ bool BeginMenu(const char* label) {
         g_menuStack[g_menuDepth++] = from;
         g_curMenu = CurMenu();
         g_curMenu.active = true; g_curMenu.menuId = id;
-        g_curMenu.x = x + w; g_curMenu.w = g_popupW > 0.0f ? g_popupW : 180.0f;
+        g_curMenu.w = g_popupW > 0.0f ? g_popupW : 180.0f;
+        g_curMenu.chainX0 = x; g_curMenu.chainX1 = x + w;   // the popup (its row is as wide as the popup)
+        placeSubList(x, w);
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
         g_curMenu.fromPopup = true;
         g_curMenu.rowH = h;   // the popup's own row height (a text line and the item spacing)
         g_curMenu.textInset = (g_popupPadX >= 0.0f ? g_popupPadX : g_lay.spacingX * 0.5f + 4.0f);
-        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);   // no room on the right: the left
         menuListBegin(id, y, true);
+        chainAdd();
         menuKeysBegin(id, true);
         return true;
     }
@@ -352,12 +371,13 @@ bool BeginMenu(const char* label) {
         if (pk) pk->childOpenNext = true;
         g_menuStack[g_menuDepth++] = g_curMenu;
         g_curMenu.menuId = id;
-        g_curMenu.x = x + w; g_curMenu.w = (g_curMenu.fromPopup && g_popupW > 0.0f) ? g_popupW : 180.0f;
-        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);
+        g_curMenu.w = (g_curMenu.fromPopup && g_popupW > 0.0f) ? g_popupW : 180.0f;
+        placeSubList(x, w);   // beside every list of the chain
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
         g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
         g_curMenu.body = false; g_curMenu.widthSlot = nullptr; g_curMenu.wantW = 0.0f;
         menuListBegin(id, y, true);
+        chainAdd();
         menuKeysBegin(id, true);
         return true;
     }
@@ -401,6 +421,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
         if (g_barKbOpen == id) { g_barKbOpen = 0; kbSlot(id)->idx = 0; }   // opened from the keyboard: its first row is highlighted
         menuListBegin(id, y + h, false);
+        g_curMenu.chainX0 = g_curMenu.x; g_curMenu.chainX1 = g_curMenu.x + g_curMenu.w;   // the bar's list starts the chain
         menuKeysBegin(id, false);
     } else kbSlot(id)->idx = -1;
     return *open;
@@ -449,6 +470,8 @@ bool popupMenuItem(const char* label, const char* shortcut, bool selected, bool 
     bool clicked = false;
     if (g_active == iid) { if (g_released) { if (ih) clicked = true; g_active = 0; } }
     else if (ih && g_pressed) g_active = iid;
+    if (enabled && navRow(iid, x, y, w, h, g_theme.radiusSmall, NavKind::Row)) clicked = true;   // the arrows walk the menu; Enter or Space picks
+    if (enabled) navRowRing(iid, x, y, w, h, std::min(g_theme.radiusSmall, h * 0.3f));
     if (clicked) CloseCurrentPopup();
     return clicked;
 }
@@ -632,6 +655,10 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
         else if (over > 0.0f) rrect(x, y, w, h, rd, pick(Col_HeaderHovered, withAlpha(g_theme.ink, 0.07f * over, tmp)));
         drawText(textX + (g_look ? 10.0f : 6.0f), ty, VisLabel(label).b, s, tcol);
     }
+    if (!disabled) {   // Tab reaches the list, the arrows walk its rows; Space or Enter picks the row
+        if (navRow(id, x, y, w, hh, g_theme.radiusSmall, NavKind::Row)) clicked = true;
+        navRowRing(id, x, y, w, hh, std::min(g_theme.radiusSmall, hh * 0.3f));
+    }
     if (clicked) {
         if (p_sel) *p_sel = !*p_sel;
         if (flags & Selectable_ClosePopup) CloseCurrentPopup();
@@ -683,7 +710,8 @@ bool ui_core::beginPopupBody(int id) {
     // 24 px over): a control sized from the space left (a field filling the row, a suffix after it) would otherwise widen it a little every frame.
     const bool mayGrow = !p->leastW || g_frameCount <= p->opened + 3 || *wSlot > w + 24.0f;
     if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w && mayGrow) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
-    if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
+    bool capped = false;   // as wide as the display allows: a longer line of text wraps (it used to run past the dialog's edge)
+    if (g_dispW > 32.0f && w >= g_dispW - 16.5f) { w = std::min(w, g_dispW - 16.0f); capped = true; }   // (grown there, or kept there from before)
     if (p->modal && g_dispW > 0.0f) { p->x = (g_dispW - w) * 0.5f; if (!p->fixedW) p->w = w; }
     p->shownW = w;   // a modal stays centred when it grew (and reports the width it has)
     float px = p->x, py = p->y;
@@ -709,7 +737,7 @@ bool ui_core::beginPopupBody(int id) {
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
     // A popup is a top-level window: the clips of what it was opened over do not cut it; a child region inside it clips in the overlay.
     c.clipBase = g_clipBase; g_clipBase = g_clipTop; overlayClipOff();
-    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f; c.childTop = g_childTop;
+    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f; c.childTop = g_childTop; c.capped = capped && p->modal;
     c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
     g_lay.ox = px + padX; g_lay.oy = py + padY;
@@ -862,12 +890,14 @@ bool BeginCombo(const char* label, const char* preview) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
     const VisLabel vis(label);   // the "##id" part is not shown
+    LabelColumn lc(label);       // StyleVar_LabelColumn: the label in the column, the box after it
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     float w = availW();
     // an explicit width is the box's; the label is extra (with StyleVar_FramedWidgets the views pass the whole row's width, label included)
     if (lw > 0.0f && widthOverridden() && !g_framedWidgets) { const float room = realAvailW(); w = w + lw < room ? w + lw : room; }
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
     PopupSlot* ps = popupSlot(id ^ 0x77ca, true);
     // A press counts only when nothing lies over the box (hit()): a popup over it (an Inspector field's prefab menu over the Axis list
@@ -897,6 +927,7 @@ bool BeginCombo(const char* label, const char* preview) {
     else comboBox(id, x, y, boxW, h, insideBox, open, preview);
     (void)b;
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
+    lc.finish();   // (before the list's body begins: it has its own layout)
     if (!ps) return false;
     const bool shown = beginPopupBody(ps->id);
     if (shown) { g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = boxW; g_lay.prevH = h; }   // GetItemRect right after BeginCombo is the box

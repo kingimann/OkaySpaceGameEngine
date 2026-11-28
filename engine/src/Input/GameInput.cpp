@@ -44,7 +44,10 @@ bool PointerOnUI(const Scene* scene) {
     if (!scene) return false;
     const bool click = Input::GetMouseButton(0) || Input::GetMouseButton(1) || Input::GetMouseButton(2);
     if (!click) return false;
-    return UIRaycast(const_cast<Scene&>(*scene), Input::MousePosition()) != nullptr;
+    Scene& sc = const_cast<Scene&>(*scene);
+    // The scene's Event System can let world clicks through its UI ("Block world clicks" off).
+    if (EventSystem* es = SceneEventSystem(sc); es && es->enabled && !es->blockWorldClicks) return false;
+    return UIRaycast(sc, Input::MousePosition()) != nullptr;
 }
 
 // One reading of the Interact action's bindings: 0 held, 1 pressed this frame, 2 released this frame.

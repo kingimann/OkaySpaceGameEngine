@@ -454,16 +454,17 @@ public:
     /// The signed-in account's id (the JWT "sub"), "" when unknown. Profiles
     /// use the same id, so this finds MY profile even if the shown name differs.
     std::string UserId() const { return JwtClaim(session_.token, "sub"); }
-    /// When the access token expires (unix seconds), 0 when unknown.
-    long TokenExpiresAt() const { return std::atol(JwtClaim(session_.token, "exp").c_str()); }
+    /// When the access token expires (unix seconds), 0 when unknown. 64-bit: `long` is 32 bits on Windows, where a
+    /// time after 2038 (a test token's 2100) came back cut to a negative number.
+    long long TokenExpiresAt() const { return std::atoll(JwtClaim(session_.token, "exp").c_str()); }
     /// Renew the access token when it expires within `marginSec` (Supabase).
     /// Call from ONE place (the launcher's main session). True if refreshed.
     bool RefreshIfExpiring(long marginSec = 600) {
         if (provider_ != Provider::Supabase || !session_.loggedIn) return false;
-        const long exp = TokenExpiresAt();
-        if (exp > 0 && exp - (long)std::time(nullptr) > marginSec) return false;
+        const long long exp = TokenExpiresAt();
+        if (exp > 0 && exp - (long long)std::time(nullptr) > marginSec) return false;
         ReloadSessionToken();   // someone else may already have renewed it
-        if (TokenExpiresAt() - (long)std::time(nullptr) > marginSec) return true;
+        if (TokenExpiresAt() - (long long)std::time(nullptr) > marginSec) return true;
         return RefreshSupabaseToken();
     }
 
@@ -817,8 +818,8 @@ private:
     bool AdoptFreshTokenFromDisk() {
         Session disk;
         if (!ReadSessionFile(disk) || disk.token == session_.token) return false;
-        const long exp = std::atol(JwtClaim(disk.token, "exp").c_str());
-        if (exp <= 0 || exp - (long)std::time(nullptr) <= 30) return false;
+        const long long exp = std::atoll(JwtClaim(disk.token, "exp").c_str());
+        if (exp <= 0 || exp - (long long)std::time(nullptr) <= 30) return false;
         session_ = disk;
         return true;
     }

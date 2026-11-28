@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIDock.hpp"
+#include "okay/UI/OkayUIDockBuilder.hpp"
 
 #include <cmath>
 #include <map>
@@ -637,6 +638,50 @@ void TestSaveLoadThroughUi() {
     CHECK(UI::GetDockLayout().WindowCount() == 0);
 }
 
+// One window, one entry: a title whose text changes keeps its "###" id (the editor's "Console  [x 1]###Console"). The editor's saved layout
+// held it docked under the count title AND floating under another count, so after a restart the Console floated over the Hierarchy and its
+// docked tab was gone. Loading such a file keeps the docked one; adding the window under another title of the same id renames the entry.
+void TestSameIdOneWindow() {
+    RUN_SUITE("dock model: a window is one entry whatever its title text ('###' id)");
+    {   // an old file: docked under one count, floating under another
+        DockLayout l;
+        int repairs = -1;
+        CHECK(l.Load("okaydock 1\nroot 1\nnode 1 leaf 0 Console%20%20[x%201]###Console Project\nfloat 60 60 320 240 Console%20%20[x%202]###Console\n", &repairs));
+        CHECK(Valid(l));
+        if (l.WindowCount() != 2) std::cerr << "  loaded " << l.WindowCount() << " windows (a floating copy of the Console)\n";
+        CHECK(l.WindowCount() == 2 && l.FloatingWindows().empty() && l.NodeOf("Console  [x 1]###Console") != 0);
+        CHECK(l.SameWindowName("Console###Console") == "Console  [x 1]###Console" && l.SameWindowName("Other###Other").empty());
+        CHECK(l.SameWindowName("Project") == "Project" && l.SameWindowName("Proj").empty());
+    }
+    {   // docking or floating the window under another title of its id moves the one entry
+        DockLayout l;
+        CHECK(l.Dock("Console  [x 1]###Console", l.Root(), DockSide_Center));
+        CHECK(l.Dock("Project", l.Root(), DockSide_Right));
+        const int proj = l.NodeOf("Project");
+        CHECK(l.Dock("Console###Console", proj, DockSide_Center));          // the editor's layout preset names it without the count
+        CHECK(l.WindowCount() == 2 && l.NodeOf("Console###Console") == proj && !l.Contains("Console  [x 1]###Console"));
+        CHECK(!l.AddFloating("Console  [x 3]###Console", R(10, 10, 100, 100)));   // already there: no floating copy
+        CHECK(l.WindowCount() == 2 && l.FloatingWindows().empty() && l.NodeOf("Console  [x 3]###Console") == proj);
+        CHECK(l.Float("Console###Console", R(10, 10, 200, 100)) && l.WindowCount() == 2 && l.IsFloating("Console###Console"));
+        CHECK(Valid(l));
+    }
+    {   // through DockBuilder (the editor's Reset Layout) while the window is in the layout under its count title
+        UI::ResetState();
+        UI::GetDockLayout().Dock("Console  [x 1]###Console", UI::GetDockLayout().Root(), DockSide_Center);
+        UI::GetDockLayout().Dock("Hierarchy", UI::GetDockLayout().Root(), DockSide_Left);
+        const UI::DockId sp = 0x77u;
+        UI::DockBuilderRemoveNode(sp); UI::DockBuilderAddNode(sp, UI::DockNode_DockSpace); UI::DockBuilderSetNodeSize(sp, UI::Vec2{800, 500});
+        UI::DockId a = sp, b = 0;
+        UI::DockBuilderSplitNode(a, UI::DockSide_Bottom, 0.3f, &b, &a);
+        UI::DockBuilderDockWindow("Hierarchy", a); UI::DockBuilderDockWindow("Console###Console", b);
+        UI::DockBuilderFinish(sp);
+        const DockLayout& L = UI::GetDockLayout();
+        int consoles = 0; for (const std::string& w : L.Windows()) if (w.find("###Console") != std::string::npos) ++consoles;
+        CHECK(consoles == 1 && L.FloatingWindows().empty());
+        UI::ResetState();
+    }
+}
+
 void TestGolden() {
     RUN_SUITE("dock space: pictures");
     Rig r({"Scene", "Inspector", "Console", "Assets", "Tool"}, 640, 400);
@@ -677,6 +722,7 @@ int main() {
     TestTabDragDock();
     TestSplitters();
     TestSaveLoadThroughUi();
+    TestSameIdOneWindow();
     TestGolden();
     TEST_MAIN_RESULT();
 }

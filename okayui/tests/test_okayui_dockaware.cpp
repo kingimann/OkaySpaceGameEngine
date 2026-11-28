@@ -187,5 +187,124 @@ int main() {
         CHECK(UI::GetDockLayout().Validate(nullptr));
         UI::ResetState();
     }
+    {   // the editor's right column (owner's report 2026-11-28): Inspector, Stats and Lighting share one leaf, Stats and Lighting start closed.
+        // A tab is shown for every open window of the leaf on every frame, whichever is chosen; closing the Inspector does not bring up tabs
+        // for the closed Stats and Lighting (they had no content); the Inspector opened again goes back into its group as a tab.
+        Reset(); Sim s(1000, 600);
+        UI::DockBuilderRemoveNode(kSpace); UI::DockBuilderAddNode(kSpace, UI::DockNode_DockSpace); UI::DockBuilderSetNodeSize(kSpace, UI::Vec2{1000, 600});
+        UI::DockId centre = kSpace, right = 0;
+        UI::DockBuilderSplitNode(centre, UI::DockSide_Right, 0.4f, &right, &centre);
+        UI::DockBuilderDockWindow("Scene", centre);
+        UI::DockBuilderDockWindow("Inspector", right); UI::DockBuilderDockWindow("Stats", right); UI::DockBuilderDockWindow("Lighting", right);
+        UI::DockBuilderFinish(kSpace);
+        UI::SetDockAwareBegin(true);
+        bool openI = true, openS = false, openL = false;
+        auto f = [&] { s.Frame([&] {
+            UI::DockSpace(UI::Rect{0, 0, 1000, 600});
+            if (UI::Begin("Scene", nullptr, 0)) UI::Text("scene"); UI::End();
+            if (openI) { if (UI::Begin("Inspector", &openI, 0)) UI::Text("inspector"); UI::End(); }   // the editor draws the Inspector early ...
+            if (openS) { if (UI::Begin("Stats", &openS, 0)) UI::Text("stats"); UI::End(); }           // ... and Stats and Lighting near the end
+            if (openL) { if (UI::Begin("Lighting", &openL, 0)) UI::Text("lighting"); UI::End(); }
+        }); };
+        auto tabsOf = [&](int leaf) { std::vector<std::string> v; for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.node == leaf) v.push_back(t.window); return v; };
+        auto has = [](const std::vector<std::string>& v, const char* w) { for (const std::string& x : v) if (x == w) return true; return false; };
+        const UI::DockLayout& L = UI::GetDockLayout();
+        UI::GetDockLayout().SetActive("Lighting");   // a saved layout whose chosen tab was Lighting, while Lighting is closed now (owner, at launch)
+        f();
+        {   // the very first frame (the editor's first frame at launch can stay on screen a while): no tab of a closed window
+            bool ghost = false;
+            for (const UI::DockTabInfo& t : UI::GetDockTabs()) ghost |= t.window == "Stats" || t.window == "Lighting";
+            if (ghost) std::cerr << "  the first frame shows tabs for the closed Stats and Lighting\n";
+            CHECK(!ghost);
+        }
+        f();
+        const int leaf = L.NodeOf("Inspector");
+        CHECK(leaf != 0 && L.NodeOf("Stats") == leaf && L.NodeOf("Lighting") == leaf);
+        CHECK(tabsOf(leaf) == std::vector<std::string>{"Inspector"});   // Stats and Lighting are closed: no tabs for them
+        {   // the node a ported host reads lists only the open window, also when the host hides the strip (the editor's side tabs, which
+            // listed Inspector, Stats and Lighting at launch, and clicking Stats or Lighting showed nothing)
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            CHECK(node && node->Windows.Size == 1 && std::string(node->Windows[0]->Name) == "Inspector");
+            UI::GetDockLayout().SetNoTabBar(leaf, true); f(); f();
+            node = UI::DockBuilderGetNode(right);
+            if (node && node->Windows.Size != 1) std::cerr << "  with its strip hidden, the node lists " << node->Windows.Size << " windows\n";
+            CHECK(node && node->Windows.Size == 1);
+            UI::GetDockLayout().SetNoTabBar(leaf, false); f();
+        }
+        // close the Inspector with its tab's cross
+        UI::Rect cross{};
+        for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Inspector") cross = t.rect;
+        s.Move(cross.x + cross.w - 5.0f, cross.y + cross.h * 0.5f); f(); s.Down(); f(); s.Up(); f(); f();
+        CHECK(!openI);
+        const std::vector<std::string> afterClose = tabsOf(L.NodeOf("Stats"));
+        if (!afterClose.empty()) std::cerr << "  after closing the Inspector, " << afterClose.size() << " tab(s) of closed windows show, first: " << afterClose[0] << "\n";
+        CHECK(afterClose.empty());                                          // no empty tabs for the closed Stats and Lighting
+        // open the Inspector again (View > Panels > Inspector): it is a tab of its group again, not a floating window
+        openI = true; f(); f();
+        if (L.IsFloating("Inspector")) std::cerr << "  the Inspector opened again floats instead of going back to its group\n";
+        CHECK(!L.IsFloating("Inspector") && L.NodeOf("Inspector") == L.NodeOf("Lighting") && L.NodeOf("Inspector") != 0);
+        CHECK(UI::IsWindowDocked("Inspector"));
+        // open Stats and Lighting: every frame from the first one, all three tabs show, whichever is chosen
+        openS = openL = true;
+        for (int frame = 0; frame < 12; ++frame) {
+            if (frame % 3 == 0) UI::GetDockLayout().SetActive(frame % 9 == 0 ? "Inspector" : frame % 9 == 3 ? "Stats" : "Lighting");
+            f();
+            if (frame == 0) continue;   // (the frame they are first drawn: their Begin runs after the dock space)
+            const std::vector<std::string> v = tabsOf(L.NodeOf("Inspector"));
+            CHECK(v.size() == 3 && has(v, "Inspector") && has(v, "Stats") && has(v, "Lighting"));
+        }
+        // each tab is clickable and chooses its window
+        for (const char* w : {"Stats", "Lighting", "Inspector"}) {
+            UI::Rect r{};
+            for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == w) r = t.rect;
+            s.Move(r.x + 6.0f, r.y + r.h * 0.5f); f(); s.Down(); f(); s.Up(); f();
+            const UI::DockLayout::Node* n = L.Find(L.NodeOf(w));
+            CHECK(n && n->tabs[(size_t)n->active] == w);
+        }
+        {   // the side tabs' highlight: with the strip hidden and the LAST tab chosen, the chosen window is the one marked DockTabIsVisible; the
+            // node's first window is the first in tab order (the editor highlighted Windows[0], so another panel stayed lit while one was shown)
+            const int leafNow = L.NodeOf("Stats");
+            const std::string last = L.Find(leafNow)->tabs.back();
+            UI::GetDockLayout().SetActive(last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, true); f(); f();
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            int lit = 0; std::string litName;
+            if (node) for (int k = 0; k < node->Windows.Size; ++k) if (node->Windows[k]->DockTabIsVisible) { ++lit; litName = node->Windows[k]->Name; }
+            CHECK(node && node->Windows.Size == 3 && std::string(node->Windows[0]->Name) != last && lit == 1 && litName == last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, false); f();
+        }
+        std::string why; CHECK(L.Validate(&why));
+        UI::SetDockAwareBegin(false);
+    }
+    {   // a narrow strip with many tabs: every tab is still on the strip, wide enough to click, and a click on it chooses it
+        Reset(); Sim s(800, 500);
+        UI::DockBuilderRemoveNode(kSpace); UI::DockBuilderAddNode(kSpace, UI::DockNode_DockSpace); UI::DockBuilderSetNodeSize(kSpace, UI::Vec2{800, 500});
+        UI::DockId centre = kSpace, right = 0;
+        UI::DockBuilderSplitNode(centre, UI::DockSide_Right, 0.25f, &right, &centre);
+        UI::DockBuilderDockWindow("Scene", centre);
+        std::vector<std::string> names;
+        for (int i = 0; i < 12; ++i) { names.push_back("Panel number " + std::to_string(i)); UI::DockBuilderDockWindow(names.back().c_str(), right); }
+        UI::DockBuilderFinish(kSpace);
+        UI::SetDockAwareBegin(true);
+        auto f = [&] { s.Frame([&] {
+            UI::DockSpace(UI::Rect{0, 0, 800, 500});
+            if (UI::Begin("Scene", nullptr, 0)) {} UI::End();
+            for (const std::string& n : names) { if (UI::Begin(n.c_str(), nullptr, 0)) UI::Text("x"); UI::End(); }
+        }); };
+        f(); f();
+        const UI::DockLayout& L = UI::GetDockLayout();
+        const int leaf = L.NodeOf(names[0]);
+        const UI::Rect strip = UI::GetDockStripRect(leaf);
+        CHECK(strip.w > 100.0f && strip.w < 260.0f);
+        for (const std::string& n : names) {
+            UI::Rect r{}; bool found = false;
+            for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == n) { r = t.rect; found = true; }
+            CHECK(found && r.w >= 8.0f && r.x >= strip.x - 0.5f && r.x + r.w <= strip.x + strip.w + 0.5f);
+            s.Move(r.x + std::min(4.0f, r.w * 0.3f), r.y + r.h * 0.5f); f(); s.Down(); f(); s.Up(); f();
+            const UI::DockLayout::Node* node = L.Find(leaf);
+            CHECK(node && node->tabs[(size_t)node->active] == n);
+        }
+        UI::SetDockAwareBegin(false);
+    }
     TEST_MAIN_RESULT();
 }

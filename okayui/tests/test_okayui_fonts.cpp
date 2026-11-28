@@ -5,6 +5,8 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/Platform/Painter.hpp"
+#include "OkayUI_SoftPainter.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -30,6 +32,53 @@ bool TextBox(float* h, float* w, float* top) {
     }
     if (any) { *h = y1 - y0; *w = x1 - x0; *top = y0; }
     return any;
+}
+
+// Sharp text, measured on the draw data: every glyph quad of a font texture covers exactly as many screen pixels as atlas pixels (no
+// scaling) and starts on a whole pixel. Returns the number of quads checked; `bad` counts the ones that break the rule.
+int OneToOneQuads(int* bad) {
+    const UI::DrawData d = UI::GetDrawData();
+    const UI::DrawVertex* v = static_cast<const UI::DrawVertex*>(d.vertices);
+    int n = 0; *bad = 0;
+    for (int c = 0; c < d.cmdCount; ++c) {
+        const okay::TtfFont* f = d.cmds[c].texture ? UI::FallbackFontOf(d.cmds[c].texture) : nullptr;
+        if (!f) continue;
+        const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
+        for (int i = d.cmds[c].idxOffset; i + 5 < d.cmds[c].idxOffset + d.cmds[c].idxCount; i += 6) {   // a quad: b0 b0+1 b0+2, b0 b0+2 b0+3
+            const UI::DrawVertex& a = v[d.indices[i]]; const UI::DrawVertex& b = v[d.indices[i + 2]];
+            const float sw = b.x - a.x, sh = b.y - a.y, tw = (b.u - a.u) * aw, th = (b.v - a.v) * ah;
+            const bool whole = std::fabs(a.x - std::round(a.x)) < 0.01f && std::fabs(a.y - std::round(a.y)) < 0.01f;
+            if (!whole || std::fabs(sw - tw) > 0.01f || std::fabs(sh - th) > 0.01f) ++*bad;
+            ++n;
+        }
+    }
+    return n;
+}
+// Sharp text, measured on pixels: "H" drawn white on black through the software painter (linear sampling, as a GPU samples) compared
+// with the font's own rasterisation at that pixel size (the reference: what a perfect renderer shows). The mean difference per pixel
+// over the glyph's box, 0..255.
+double GlyphError(const std::vector<unsigned char>& bytes, float px, float x, float y) {
+    okay::TtfFont ref;
+    if (!ref.LoadFromMemory(bytes.data(), bytes.size(), px)) return 255.0;
+    auto painter = UI::soft::CreateBitmapPainter(200, 120);
+    if (!painter) return 255.0;
+    painter->SetClipRect(nullptr); painter->SetBlendMode(okay::platform::BlendMode::None); painter->SetDrawColor(0, 0, 0, 255); painter->Clear();
+    UI::soft::FrameDrawer fd(*painter);
+    fd.Draw(UI::GetDrawData());
+    std::vector<std::uint8_t> rgba; int w = 0, h = 0;
+    painter->ReadPixels(rgba, w, h);
+    const okay::TtfFont::Glyph* g = ref.GlyphFor('H');
+    if (!g || w != 200 || h != 120) return 255.0;
+    const int ox = (int)std::floor(x) + (int)g->xoff, oy = (int)std::floor(y + ref.Ascent(px) + 0.5f) + (int)g->yoff;
+    double sum = 0.0; int n = 0;
+    for (int j = -1; j <= g->y1 - g->y0; ++j) for (int i = -1; i <= g->x1 - g->x0; ++i) {   // a pixel of margin: a blurred edge spreads into it
+        const int sx = ox + i, sy = oy + j;
+        if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue;
+        const bool in = i >= 0 && j >= 0 && i < g->x1 - g->x0 && j < g->y1 - g->y0;
+        const int want = in ? ref.Atlas().Data()[((std::size_t)(g->y0 + j) * (std::size_t)ref.Atlas().Width() + (std::size_t)(g->x0 + i)) * 4 + 3] : 0;
+        sum += std::abs((int)rgba[((std::size_t)sy * (std::size_t)w + (std::size_t)sx) * 4] - want); ++n;
+    }
+    return n ? sum / n : 255.0;
 }
 }
 
@@ -96,10 +145,38 @@ int main() {
         float h = 0, w = 0, t = 0;
         CHECK(TextBox(&h, &w, &t) && h > 10.0f && h < 30.0f && t > 90.0f);
         const UI::DrawData d = UI::GetDrawData();
-        bool tex = false; for (int c = 0; c < d.cmdCount; ++c) if (d.cmds[c].texture && UI::FallbackFontOf(d.cmds[c].texture) == static_cast<const okay::TtfFont*>(f->ttf) ? true : false) tex = true;
+        // (drawn sharp: the face of that font baked at the 24 pixels drawn)
+        const okay::TtfFont* sized = static_cast<const okay::TtfFont*>(f->ttf)->ForDeviceSize(24.0f, false);
+        bool tex = false; for (int c = 0; c < d.cmdCount; ++c) if (d.cmds[c].texture && UI::FallbackFontOf(d.cmds[c].texture) == sized) tex = true;
         CHECK(tex);
         // after the call the active font and scale are what they were
         CHECK(UI::GetFont() == UI::FontDefault());
+    }
+
+    {   // ---- sharp text at 100%, 125% and 150%: the glyphs are baked at the size drawn and placed on whole pixels ----
+        // The editor's UI font is a user font (16 px Roboto); its UI scale makes the text 20 px at 125% and 24 px at 150%. Before round 6
+        // every size was the font's 48-pixel bake scaled down (and not snapped), and the launcher look's 24 px text was its 26 px glyphs.
+        const float sizes[3] = {16.0f, 20.0f, 24.0f};
+        for (int look = 0; look < 2; ++look) for (float px : sizes) {
+            Reset(); Sim s(200, 120);
+            if (look) UI::UseLauncherLook(true);
+            UI::Font* f = look ? nullptr : UI::AddFontTtf(roboto.data(), roboto.size(), 16.0f);
+            s.Frame([&] {
+                UI::SetNextWindowPos(UI::Vec2{0, 0}, UI::Cond_Always); UI::SetNextWindowSize(UI::Vec2{200, 120}, UI::Cond_Always);
+                UI::Begin("sharp", nullptr, UI::Window_NoTitleBar | UI::Window_NoBackground);
+                if (look) { const float saved = UI::Style().textScale; UI::Style().textScale = px / 8.0f;
+                            UI::GetWindowDrawList().AddText(UI::Vec2{20.0f, 40.6f}, 0xffffffffu, "H", 0.0f); UI::Style().textScale = saved; }
+                else UI::GetWindowDrawList().AddText(f, px, UI::Vec2{20.0f, 40.6f}, 0xffffffffu, "H");
+                UI::End();
+            });
+            int bad = -1;
+            const int quads = OneToOneQuads(&bad);
+            const double err = GlyphError(roboto, px, 20.0f, 40.6f);
+            std::cout << "  sharp text: " << (look ? "launcher look" : "user font") << " at " << px << " px: " << quads << " glyph quads, "
+                      << bad << " scaled or off the pixel grid; mean error against the font's own rasterisation " << err << " of 255\n";
+            if (!look || px == 24.0f) CHECK(quads == 1 && bad == 0);   // (the launcher look's 16 and 20 px are sizes its own atlas bakes, drawn 1:1 already)
+            CHECK(err < 6.0);
+        }
     }
 
     {   // ---- widgets with a real font, switching between fonts in one frame ----

@@ -903,4 +903,35 @@ public:
 private:
     streambuf *__sb;
 };
+
+// istream_iterator ([istream.iterator]): the values operator>> reads from a stream, one by one. It
+// reads the first value when made and the next at each ++; once a read fails it equals the end
+// iterator (a default one). Two iterators are equal when both are at the end or both read the same
+// stream ([istream.iterator.ops]).
+template <typename T>
+class istream_iterator {
+public:
+    istream_iterator() : __in(nullptr), __val() {}
+    istream_iterator(istream &is) : __in(&is), __val() { __read(); }
+    const T &operator*() const { return __val; }
+    const T *operator->() const { return &__val; }
+    istream_iterator<T> &operator++() {
+        __read();
+        return *this;
+    }
+    istream_iterator<T> operator++(int) {
+        istream_iterator<T> old = *this;
+        __read();
+        return old;
+    }
+    bool operator==(const istream_iterator<T> &o) const { return __in == o.__in; }
+    bool operator!=(const istream_iterator<T> &o) const { return __in != o.__in; }
+
+private:
+    void __read() {
+        if (__in && !(*__in >> __val)) __in = nullptr;
+    }
+    istream *__in;
+    T __val;
+};
 }  // namespace std

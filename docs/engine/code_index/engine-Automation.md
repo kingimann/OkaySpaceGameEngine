@@ -9,30 +9,30 @@ Back to the [code index](../code_index.md). 3 headers, 35 names.
 - `ParamType` enum, line 39: What a parameter holds. Vec3 is {"x":..,"y":..,"z":..} or [x, y, z]; Object is a JSON object; Any is anything.
 - `ParamTypeName` function, line 40
 - `Param` struct, line 42
-- `Error` struct, line 75
-- `Attachment` struct, line 82: A picture a command made, for MCP image content (base64 of the file bytes).
-- `Result` struct, line 87
-- `Host` class, line 100: Where commands act. EditorHost (editor/AutomationEditor.hpp) is the real one; tests make small ones.
-- `Call` class, line 124: What a handler gets: the host and the checked parameters, with readers that fill in the schema's defaults.
-- `Command` struct, line 146
-- `Registry` class, line 157
-- `AddProvider` function, line 184: A system hands over the function that adds its commands. Called once, the first time Commands() is used after it;
-- `Commands` function, line 186: The process's command table: the engine's providers (Automation.cpp) and every AddProvider so far.
-- `Arg` function, line 190: ---- Helpers the command files share (EngineCommands.cpp, editor/Automation*.cpp, tools/okay-cli/AutomationCli.cpp) ---
-- `ArgChoice` function, line 191
-- `ArgDefault` function, line 192
-- `Fail` function, line 196: The failure an Error describes (from FindObject and the like).
-- `FindObject` function, line 200: The object a parameter names: its GUID, else a hierarchy path ("Level/Door"), else a unique name. Null with 'error'
-- `ObjectSummary` function, line 202: {id (GUID), name, path, active, components: [type names]}; with 'deep' also transform and children ids.
-- `Vec3Json` function, line 203
-- `ScriptValueToJson` function, line 207: Script values <-> JSON (EngineCommands.cpp): numbers, true/false, text, {x,y,z} (Vec3), {r,g,b,a} (Color),
-- `JsonToScriptValue` function, line 208
-- `PropertyToJson` function, line 211: A property value as JSON (vectors as {x,y,z(,w)}, colours as {r,g,b,a}, an enum as its option name), and a JSON value
-- `JsonToPropertyText` function, line 212
-- `LogLine` struct, line 216: The engine log's last lines, kept for log.read: InstallLogRing chains onto Log::sink (the sink that was there still
-- `InstallLogRing` function, line 217
-- `LogRingInstalled` function, line 218
-- `LogSince` function, line 219
+- `Error` struct, line 76
+- `Attachment` struct, line 83: A picture a command made, for MCP image content (base64 of the file bytes).
+- `Result` struct, line 88
+- `Host` class, line 101: Where commands act. EditorHost (editor/AutomationEditor.hpp) is the real one; tests make small ones.
+- `Call` class, line 130: What a handler gets: the host and the checked parameters, with readers that fill in the schema's defaults.
+- `Command` struct, line 152
+- `Registry` class, line 164
+- `AddProvider` function, line 195: A system hands over the function that adds its commands. Called once, the first time Commands() is used after it;
+- `Commands` function, line 197: The process's command table: the engine's providers (Automation.cpp) and every AddProvider so far.
+- `Arg` function, line 201: ---- Helpers the command files share (EngineCommands.cpp, editor/Automation*.cpp, tools/okay-cli/AutomationCli.cpp) ---
+- `ArgChoice` function, line 202
+- `ArgDefault` function, line 203
+- `Fail` function, line 207: The failure an Error describes (from FindObject and the like).
+- `FindObject` function, line 211: The object a parameter names: its GUID, else a hierarchy path ("Level/Door"), else a unique name. Null with 'error'
+- `ObjectSummary` function, line 213: {id (GUID), name, path, active, components: [type names]}; with 'deep' also transform and children ids.
+- `Vec3Json` function, line 214
+- `ScriptValueToJson` function, line 218: Script values <-> JSON (EngineCommands.cpp): numbers, true/false, text, {x,y,z} (Vec3), {r,g,b,a} (Color),
+- `JsonToScriptValue` function, line 219
+- `PropertyToJson` function, line 222: A property value as JSON (vectors as {x,y,z(,w)}, colours as {r,g,b,a}, an enum as its option name), and a JSON value
+- `JsonToPropertyText` function, line 223
+- `LogLine` struct, line 227: The engine log's last lines, kept for log.read: InstallLogRing chains onto Log::sink (the sink that was there still
+- `InstallLogRing` function, line 228
+- `LogRingInstalled` function, line 229
+- `LogSince` function, line 230
 
 ## `engine/include/okay/Automation/Link.hpp`
 

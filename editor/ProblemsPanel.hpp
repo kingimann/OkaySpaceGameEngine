@@ -50,5 +50,7 @@ BuildDiagGate DiagnoseSceneForBuild(const okay::Scene& scene, const std::string&
 void DiagnosticsDemoPrepare(okay::editor::EditorState& ed);
 // A path the frame loop should write the current framebuffer to, or empty.
 std::string TakePendingEditorShot();
+// Dev hooks: ask the frame loop to write the framebuffer to `path` `frames` frames from now (its folder is made).
+void RequestEditorShot(const std::string& path, int frames);
 
 } // namespace oked

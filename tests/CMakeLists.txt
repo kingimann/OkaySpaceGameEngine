@@ -3189,6 +3189,14 @@ add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 add_executable(test_voice_races test_voice_races.cpp)
 target_link_libraries(test_voice_races PRIVATE okay::engine)
 add_test(NAME voice_races COMMAND test_voice_races)
+# The null audio device (OKAY_AUDIO_DEVICE=null, engine/src/Platform/NullAudio.cpp) through the public okay::platform API:
+# real-rate queue drain, silent capture, callbacks one period at a time, Pause and close. Built for Windows too, so the
+# Windows test job checks it on a machine with no sound card.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_null_audio test_platform_null_audio.cpp)
+    target_link_libraries(test_platform_null_audio PRIVATE okay::platform)
+    add_test(NAME platform_null_audio COMMAND test_platform_null_audio)
+endif()
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)
@@ -3463,6 +3471,7 @@ endif()
 # in process, the editor link, and each command group against the real system (scene text, undo, properties, bindings, physics, Play,
 # animation, modeling, UI layout, visual script files, screenshots, the log). tests/scripts/test_automation_mcp.py runs a real okay mcp.
 add_executable(test_automation test_automation.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationEditor.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationVs.cpp
+               ${PROJECT_SOURCE_DIR}/editor/AutomationOps.cpp ${PROJECT_SOURCE_DIR}/editor/MenuActions.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp
                ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_automation PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
 target_link_libraries(test_automation PRIVATE okay::engine)

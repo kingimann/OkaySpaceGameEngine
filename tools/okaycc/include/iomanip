@@ -26,6 +26,48 @@ inline ostream &operator<<(ostream &os, __setiosflags m) {
     else os.unsetf(m.f);
     return os;
 }
+// quoted ([quoted.manip]): written, the string between delim, each delim or escape in it after an
+// escape; read, a string so written (the escapes taken out), or a plain word if it does not start
+// with delim. One tag for both directions (s is the string to read into; reading into a const
+// string, or a char array, is ill-formed in the standard and does nothing here).
+struct __quoted {
+    const char *p;
+    unsigned long n;
+    char delim, esc;
+    string *s;
+};
+inline __quoted quoted(const string &s, char delim = '"', char esc = '\\') {
+    return __quoted{s.c_str(), s.size(), delim, esc, const_cast<string *>(&s)};
+}
+inline __quoted quoted(const char *s, char delim = '"', char esc = '\\') { return __quoted{s, strlen(s), delim, esc, nullptr}; }
+inline ostream &operator<<(ostream &os, __quoted q) {
+    string out(1, q.delim);
+    for (unsigned long i = 0; i < q.n; ++i) {
+        if (q.p[i] == q.delim || q.p[i] == q.esc) out += q.esc;
+        out += q.p[i];
+    }
+    out += q.delim;
+    return os << out;
+}
+inline istream &operator>>(istream &is, __quoted q) {
+    if (!q.s) return is;
+    char c = 0;
+    if (!(is >> c)) return is;
+    if (c != q.delim) {
+        is.putback(c);
+        return is >> *q.s;
+    }
+    q.s->clear();
+    while (is.get(c)) {
+        if (c == q.esc) {
+            if (!is.get(c)) break;
+        } else if (c == q.delim) {
+            break;
+        }
+        *q.s += c;
+    }
+    return is;
+}
 inline istream &operator>>(istream &is, __setw m) { is.width(m.n); return is; }
 inline istream &operator>>(istream &is, __setbase m) {
     is.setf(m.n == 16 ? ios_base::hex : m.n == 8 ? ios_base::oct : m.n == 10 ? ios_base::dec : 0, ios_base::basefield);

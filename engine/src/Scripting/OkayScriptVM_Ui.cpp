@@ -691,17 +691,21 @@ void OkayScriptVM::Impl::RegisterUiControlBuiltins(BuiltinCtx& c) {
                 if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
             return Value{};
         };
-        // Pointer / hover over UI. uiHit returns the topmost widget under the mouse.
+        // Pointer / hover over UI. uiHit returns the topmost widget under the mouse, in draw order
+        // (the Event System's raycast, UIRaycast).
         auto uiHit = [sceneOf]() -> GameObject* {
             Scene* s = sceneOf(); if (!s) return nullptr;
-            Vec2 m = Input::MousePosition();
-            GameObject* hit = nullptr;
-            for (const auto& up : s->Objects())
-                if (up->active && UIScreenContains(up.get(), m, UICanvas::Width(), UICanvas::Height()))
-                    hit = up.get();
-            return hit;
+            return UIRaycast(*s, Input::MousePosition());
         };
         b["ui_pointer_over"] = [uiHit](std::vector<Value>&) -> Value { return Value{uiHit() != nullptr}; };
+        // ui_selected(): the name of the widget the scene's Event System has selected (the pointer's last
+        // press, or the keyboard / gamepad focus); "" when nothing is, or the scene has no Event System.
+        // ui_set_focus(name) selects one.
+        b["ui_selected"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf();
+            EventSystem* es = s ? SceneEventSystem(*s) : nullptr;
+            return Value{es ? es->SelectedName() : std::string{}};
+        };
         b["ui_hovered"] = [uiHit](std::vector<Value>&) -> Value {
             GameObject* h = uiHit(); return Value{h ? h->name : std::string{}};
         };

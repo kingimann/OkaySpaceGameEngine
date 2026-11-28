@@ -4,6 +4,7 @@
 // (okay::editor::vsed::Session(), editor/VisualScriptModel.hpp). Written for this project.
 #include "VisualScriptApp.hpp"
 #include "VisualScriptModel.hpp"
+#include "VisualScriptCustomNodes.hpp"   // Edit node, Make a custom version (feature map 24.3)
 #include "OkayUIAppKit.hpp"         // the colours, the dialog box, the tab strip
 #include "HierarchyPanelModel.hpp"   // okaypanels::HierEllipsize: text cut to a width with an ellipsis
 #include "okay/UI/OkayUI.hpp"
@@ -207,6 +208,13 @@ struct VisualScriptApp::Impl {
     void drawCanvas(float X, float Y, float W, float H, bool modal);
     void drawPalette(float X, float Y, float W, float H);
     void drawNodeMenu();
+    std::vector<std::pair<std::string, std::string>> nodeMenuItems(int id);   // the block menu's (title, command) rows
+    void runNodeMenu(int id, const std::string& command);
+    bool editCustomNode(int id);
+    bool makeCustomVersion(int id, const std::string& language);
+    void followCustomNodes(bool rescan);   // the project's custom-node scripts: found, and reloaded when saved
+    std::string lastScriptOpened;          // "path:line" of the last Edit node / Make a custom version
+    double customScanAt = -1.0;
     void openPalette(float sx, float sy, float wx, float wy);
     void buildPalette();
     bool pickPalette(std::size_t index);

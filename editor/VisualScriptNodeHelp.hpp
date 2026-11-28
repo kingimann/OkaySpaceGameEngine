@@ -5,7 +5,9 @@
 // its pins without a description.
 #include "VisualScriptPlain.hpp"
 #include "okay/VisualScript/QuickBlocks.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"
 #include <cstring>
+#include <map>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -51,6 +53,22 @@ inline const char* VsStepCatBlurb(bool cond) {
 }
 
 inline const char* VsNodeHelpRaw(const char* type) {
+    // A custom node (feature map 24.3): its own @help text, then where it is written.
+    if (type && okay::vs::IsCustomNodeType(type)) {
+        okay::vs::VsNodeInfo info;
+        if (!okay::vs::CustomVsNodeInfo(type, info)) return "A custom node whose script is missing. It keeps its wires but does not run until the script is back.";
+        static std::map<std::string, std::string> kept;   // type -> text (replaced when the script changes)
+        const std::string lang = info.language == "lua" ? "Lua" : info.language == "cs" ? "C#" : "OkayScript";
+        std::string file = info.source;
+        if (const std::size_t sl = file.find_last_of("/\\"); sl != std::string::npos) file = file.substr(sl + 1);
+        std::string text = info.help.empty() ? std::string("A node you made.") : info.help;
+        text += " Written in " + lang + (file.empty() ? std::string() : " in " + file + ", line " + std::to_string(info.line)) +
+                ". Right-click it to open its script and change it.";
+        if (!info.base.empty()) text += " It is based on the built-in node " + info.base + ", which runs first.";
+        std::string& slot = kept[type];
+        slot = text;
+        return slot.c_str();
+    }
     if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type ? type : "")) return qb->description;
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (std::strcmp(type, "Fn.get_clipboard_text") == 0)

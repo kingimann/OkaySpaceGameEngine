@@ -85,6 +85,9 @@ public:
         /// Object, the component a block is missing and Add Component, the parts a recipe adds to the selected object, the running
         /// object's name and saved values). Empty or null (the program, which has no scene): those parts are not shown.
         std::function<okay::editor::EditorState*()> editor;
+        /// Open a script at a 1-based line (the editor: its Script Editor). Used by a custom node's Edit node and by Make a custom
+        /// version. Empty: the status line names the file and line.
+        std::function<void(const std::string& path, int line)> openScript;
     };
 
     explicit VisualScriptApp(Config config);
@@ -124,6 +127,8 @@ public:
     bool PaletteOpen() const;
     /// The list's search text, its rows as shown (titles) and taking one (Enter or a click does the same).
     void SetPaletteQuery(const std::string& query);
+    /// Browse one topic of the list (as clicking it in the sidebar does): "Custom" lists the project's own nodes. False for no such topic.
+    bool ShowPaletteTopic(const std::string& topic);
     std::vector<std::string> PaletteRows() const;
     std::vector<std::string> PaletteTypes() const;
     bool PickPaletteRow(std::size_t index);
@@ -144,6 +149,17 @@ public:
     /// The view: fit every block / the selected ones (in the next frame drawn).
     void FrameAll();
     void FrameSelection();
+    /// A block's right-click menu as it would show (titles; "" is a separator), and choosing one of its rows by title.
+    std::vector<std::string> NodeMenuRows(int node);
+    bool PickNodeMenuRow(int node, const std::string& title);
+    /// Open the block's right-click menu at (x, y) on screen, as a right-click does.
+    void OpenNodeMenu(int node, float x, float y);
+    /// Custom nodes (feature map 24.3): open a custom node's script at its definition (Edit node), and make a custom version of a
+    /// built-in or Engine API block in "okayscript", "lua" or "cs" (a new script in the project; the block becomes the new node,
+    /// wires kept, one undo step). The last script either opened, as "path:line".
+    bool EditCustomNode(int node);
+    bool MakeCustomVersion(int node, const std::string& language);
+    const std::string& LastScriptOpened() const;
     /// Where a block's plug is on screen (as last drawn): `exec` flow plug, `output` its right side. False when not drawn.
     bool PlugOnScreen(int node, bool exec, bool output, int pin, float& x, float& y) const;
     /// A block's rectangle on screen as last drawn. False when it was not drawn.

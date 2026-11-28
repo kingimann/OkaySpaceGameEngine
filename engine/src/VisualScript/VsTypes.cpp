@@ -3,6 +3,7 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsBuiltins.hpp"
+#include "okay/VisualScript/VsNodeRegistry.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -695,7 +696,7 @@ const NodeSignature* SignatureFor(const std::string& type) {
     if (type == "SendMessage") { static const NodeSignature s{true, "TO", ""}; return &s; }
     if (type == "Broadcast")   { static const NodeSignature s{true, "T", ""}; return &s; }
     if (type == "RunSnippet")  { static const NodeSignature s{true, "T", "A"}; return &s; }
-    return nullptr;
+    return CustomVsNodeSignature(type);   // a custom node's pins (VsNodeRegistry.hpp), or null
 }
 
 PinType ConstType(const std::string& argIn) {
@@ -842,6 +843,8 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
 }
 } // namespace
 
+bool PinTypeFromName(const std::string& name, PinType& out) { return TypeFromName(name, out); }
+
 std::string FunctionNameOf(const std::string& text) {
     const auto open = text.find('(');
     return Trim(open == std::string::npos ? text : text.substr(0, open));
@@ -885,7 +888,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     std::unique_ptr<NodeGraph> parsedGraph;
     {   // Anything the runtime itself refuses comes first.
         std::string err;
-        parsedGraph = NodeGraph::Parse(text, &err);
+        // A graph's custom-node scripts (nodelib lines) are looked for beside it.
+        parsedGraph = NodeGraph::Parse(text, &err, baseDir.empty() ? std::string() : baseDir + "/graph.okayvs");
         if (!parsedGraph) { issues.push_back({0, -1, "the graph can't be loaded: " + err}); return issues; }
     }
     const std::vector<VarDecl>& decls = parsedGraph->Decls();

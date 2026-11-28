@@ -757,14 +757,25 @@ void VisualScriptApp::Impl::drawCanvas(float X, float Y, float W, float H, bool 
 
 // ---- a block's right-click menu ---------------------------------------------------------------------------------------------------
 
-void VisualScriptApp::Impl::drawNodeMenu() {
+// The block's right-click menu: (title, command) pairs, "" a separator. Shared by the drawn menu and NodeMenuRows (tests).
+std::vector<std::pair<std::string, std::string>> VisualScriptApp::Impl::nodeMenuItems(int id) {
     vsed::VsEditState& s = st();
-    const vsed::VsEditNode* n = s.g.find(nodeMenu);
-    if (!n) { nodeMenu = -1; return; }
     std::vector<std::pair<std::string, std::string>> items;   // title, command ("" = a separator)
+    const vsed::VsEditNode* n = s.g.find(id);
+    if (!n) return items;
     const std::vector<vsed::VsQuickFix> fixes = vsed::VsQuickFixesFor(s.g, s.issues, n->id);
     for (std::size_t i = 0; i < fixes.size(); ++i) items.push_back({"Fix: " + fixes[i].title, "fix:" + std::to_string(i)});
     if (!fixes.empty()) items.push_back({"", ""});
+    // Custom nodes (feature map 24.3): a custom node opens its script; any other block can be copied into one.
+    std::string src;
+    int line = 0;
+    if (vsed::VsCustomNodeSource(*n, src, line)) items.push_back({"Edit node", "custom.edit"});
+    else if (vsed::VsCustomVersionRefusal(s.g, *n).empty()) {
+        items.push_back({"Make a custom version (OkayScript)", "custom.make:okayscript"});
+        items.push_back({"Make a custom version (Lua)", "custom.make:lua"});
+        items.push_back({"Make a custom version (C#)", "custom.make:cs"});
+    }
+    if (items.size() > fixes.size() + (fixes.empty() ? 0 : 1)) items.push_back({"", ""});
     items.push_back({"Connect to...", "connect"});
     items.push_back({"Duplicate", "dup"});
     items.push_back({"Copy", "copy"});
@@ -780,6 +791,14 @@ void VisualScriptApp::Impl::drawNodeMenu() {
     items.push_back({"Straighten Wire", "vs.straighten"});
     if (vsed::VsCanCollapse(s.g, s.sel.empty() ? std::set<int>{n->id} : s.sel, nullptr)) items.push_back({"Collapse to Function", "vs.collapseToFunction"});
     items.push_back({"Comment Around Selection", "comment"});
+    return items;
+}
+
+void VisualScriptApp::Impl::drawNodeMenu() {
+    vsed::VsEditState& s = st();
+    const vsed::VsEditNode* n = s.g.find(nodeMenu);
+    if (!n) { nodeMenu = -1; return; }
+    const std::vector<std::pair<std::string, std::string>> items = nodeMenuItems(nodeMenu);
     std::vector<std::string> rows;
     for (const auto& it : items) rows.push_back(it.first);
     bool close = false;
@@ -787,8 +806,40 @@ void VisualScriptApp::Impl::drawNodeMenu() {
     const int id = nodeMenu;
     if (close) nodeMenu = -1;
     if (picked < 0) return;
-    const std::string pick = items[(std::size_t)picked].second;
+    runNodeMenu(id, items[(std::size_t)picked].second);
+}
+
+bool VisualScriptApp::Impl::editCustomNode(int id) {
+    vsed::VsEditState& s = st();
+    const vsed::VsEditNode* n = s.g.find(id);
+    std::string path;
+    int line = 0;
+    if (!n || !vsed::VsCustomNodeSource(*n, path, line)) { note("This block is not a custom node", 1); return false; }
+    lastScriptOpened = path + ":" + std::to_string(line);
+    if (cfg.openScript) cfg.openScript(path, line);
+    note("Edit node: " + FileName(path) + ", line " + std::to_string(line) + (cfg.openScript ? "" : " (open it in the Script Editor)"));
+    return true;
+}
+
+bool VisualScriptApp::Impl::makeCustomVersion(int id, const std::string& language) {
+    vsed::VsEditState& s = st();
+    const std::string folder = vsed::VsCustomNodeFolder(project(), s.g.path);
+    const vsed::VsCustomVersionResult r = vsed::VsMakeCustomVersion(s.g, id, language, folder);
+    if (!r.ok) { note("Can't make a custom version: " + r.why, 1); return false; }
+    lastScriptOpened = r.path + ":" + std::to_string(r.line);
+    if (cfg.openScript) cfg.openScript(r.path, r.line);
+    note("Made " + FileName(r.path) + ": the block is now your own copy. Change the script to change what it does.");
+    return true;
+}
+
+void VisualScriptApp::Impl::runNodeMenu(int id, const std::string& pick) {
+    vsed::VsEditState& s = st();
+    const vsed::VsEditNode* n = s.g.find(id);
+    if (!n) return;
+    const std::vector<vsed::VsQuickFix> fixes = vsed::VsQuickFixesFor(s.g, s.issues, n->id);
     if (pick.rfind("fix:", 0) == 0) { const std::size_t i = (std::size_t)std::atoi(pick.c_str() + 4); if (i < fixes.size()) vsed::VsApplyQuickFix(s.g, fixes[i]); }
+    else if (pick == "custom.edit") editCustomNode(id);
+    else if (pick.rfind("custom.make:", 0) == 0) makeCustomVersion(id, pick.substr(12));
     else if (pick == "connect") { connectNode = id; popX = menuX; popY = menuY; }
     else if (pick == "dup") { const std::string t = vsed::VsSelectionText(s.g, s.sel); s.sel = vsed::VsPasteText(s.g, t, n->x + 40.0f, n->y + 40.0f); }
     else if (pick == "copy") UI::SetClipboardText(vsed::VsSelectionText(s.g, s.sel).c_str());
@@ -802,7 +853,7 @@ void VisualScriptApp::Impl::drawNodeMenu() {
         }
     } else if (pick == "bp") toggleBreakpointOn(id);
     else if (pick == "comment") { vsed::VsCommentAround(s, 0, 0); renameBox = true; }
-    else {
+    else if (!pick.empty()) {
         if (!vsed::VsRunCommand(s, pick, root())) note("Nothing to do here", 1);
         if (pick == "vs.findReferences" || pick == "vs.watchValues") settings.panel = 2;
     }
@@ -828,7 +879,8 @@ void VisualScriptApp::Impl::buildPaletteAll() {
     const auto* cnd = vsed::StepCatalog ? vsed::StepCatalog(true) : nullptr;
     int modOn = 0;
     for (const auto& inf : okay::ModuleRegistry::Get().All()) if (inf.enabled) ++modOn;
-    const std::size_t key = vsed::Registry().size() * 1000003u + (act ? act->size() : 0) * 1009u + (cnd ? cnd->size() : 0) * 17u + (std::size_t)modOn;
+    const std::size_t key = vsed::Registry().size() * 1000003u + (act ? act->size() : 0) * 1009u + (cnd ? cnd->size() : 0) * 17u + (std::size_t)modOn +
+                            (std::size_t)vsed::VsRegistryRevision() * 7919u;   // a custom node added, changed or gone
     if (key == palAllFor) return;
     palAllFor = key;
     palAll.clear();

@@ -419,8 +419,10 @@ int main(int argc, char** argv) {
         int worstDirect = 0, worstSub = 0;
         for (int i = 0; i < topicCount; ++i) {
             const std::string name = kPaletteCategories[i].name;
-            CHECK(total[name] > 0);                          // no empty topic
-            if (!total[name]) std::printf("  topic '%s' is empty\n", name.c_str());
+            // No empty topic. Custom is the exception: it holds the nodes a project's own scripts declare (VsCustomNodes.hpp),
+            // so it is empty until a project has some.
+            CHECK(total[name] > 0 || name == "Custom");
+            if (!total[name] && name != "Custom") std::printf("  topic '%s' is empty\n", name.c_str());
             CHECK(direct[name] <= kMaxDirectPerTopic);       // the first level stays short; the rest sit in subcategories
             if (direct[name] > kMaxDirectPerTopic) std::printf("  topic '%s' has %d nodes directly in it (cap %d)\n", name.c_str(), direct[name], kMaxDirectPerTopic);
             worstDirect = std::max(worstDirect, direct[name]);

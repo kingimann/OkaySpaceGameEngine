@@ -65,6 +65,8 @@ vsapp::VisualScriptApp& App() {
         };
         cfg.stopPlay = [] { if (g_ed) { g_ed->Stop(); ConsoleLog("Stop"); } };
         cfg.editor = []() { return g_ed; };   // the scene: object lists, Attach to Selected Object, Add Component, ...
+        // a custom node's Edit node and Make a custom version: the script opens in the Script Editor at the node's definition
+        cfg.openScript = [](const std::string& path, int line) { ScriptEditorOpenFile(path, line); };
         app.reset(new vsapp::VisualScriptApp(cfg));
     }
     return *app;

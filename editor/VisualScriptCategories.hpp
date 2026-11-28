@@ -15,6 +15,7 @@
 #include <string>
 
 #include "okay/VisualScript/QuickBlocks.hpp"
+#include "okay/VisualScript/VsCustomNodes.hpp"
 
 namespace okay::editor::vsed {
 
@@ -114,6 +115,8 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
     {"Server Security", "Anti-cheat: validate what clients send, rate limits, kicks and budgets.", "Online"},
     {"Accounts & Online Saves", "Log in, cloud saves, leaderboards and PlayFab.", "Online"},
+    // ---- Your own nodes (feature map 24.3): written in OkayScript, Lua or C#, or made from a block with Make a custom version.
+    {"Custom",          "Nodes you made yourself in a script, and your custom versions of built-in blocks.", "Your Nodes"},
     // ---- Debugging
     {"Debug",           "Messages for you while building, not for the player.", "Debugging"},
 };
@@ -324,6 +327,7 @@ inline VsPlace VsPlaceForNode(const char* type) {
                                     : g == "World" ? "Objects In The Game" : g == "Feedback" ? "Show And Sound" : "Do In Order");
     }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
+    if (okay::vs::IsCustomNodeType(type)) return VsAt("Custom");   // a node a script declares (VsCustomNodes.hpp)
     if (const VsRule* r = VsFindRule(kNodeRules, VsRuleCount(kNodeRules), type)) return VsAt(r->category, r->sub);
     return VsTranslateLegacy(VsLegacyPlaceForNode(type));
 }

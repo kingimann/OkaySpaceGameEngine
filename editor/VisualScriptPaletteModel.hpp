@@ -122,9 +122,9 @@ inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
         std::unordered_map<std::string, bool> handTitleNoDot;            // title of each hand-written row
     };
     static Index ix;
-    if (ix.n != Registry().size()) {
+    if (ix.n != (std::size_t)VsRegistryRevision() * 1000003u + Registry().size()) {
         ix = Index();
-        ix.n = Registry().size();
+        ix.n = (std::size_t)VsRegistryRevision() * 1000003u + Registry().size();
         for (const auto& h : Registry()) {
             const bool fn = std::strncmp(h.type, "Fn.", 3) == 0, dotted = std::strchr(h.type, '.') != nullptr;
             if (h.title) {
@@ -167,9 +167,11 @@ inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
 /// Hidden from the palette (a duplicate of another row, or waiting to be tested). Worked out once per row: the
 /// duplicate check walks the whole registry, which is slow to repeat.
 inline bool VsPaletteHidden(const VsDef& d) {
+    if (d.gone) return true;   // a custom node whose script no longer declares it
     static std::unordered_map<const VsDef*, bool> memo;
     static std::size_t memoN = (std::size_t)-1;
-    if (Registry().size() != memoN) { memo.clear(); memoN = Registry().size(); }
+    const std::size_t now = (std::size_t)VsRegistryRevision() * 1000003u + Registry().size();
+    if (now != memoN) { memo.clear(); memoN = now; }
     const auto it = memo.find(&d);
     if (it != memo.end()) return it->second;
     const bool hidden = VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type);
@@ -183,7 +185,8 @@ inline bool VsPaletteHidden(const VsDef& d) {
 inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOutput, okay::vs::PinType pin) {
     static std::map<std::tuple<bool, bool, int>, std::vector<const VsDef*>> cache;
     static std::size_t cacheN = (std::size_t)-1;
-    if (Registry().size() != cacheN) { cache.clear(); cacheN = Registry().size(); }
+    const std::size_t now = (std::size_t)VsRegistryRevision() * 1000003u + Registry().size();
+    if (now != cacheN) { cache.clear(); cacheN = now; }
     const auto key = std::make_tuple(exec, fromOutput, exec ? 0 : (int)pin);
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
@@ -224,6 +227,11 @@ inline std::string VsPaletteKeywords(const VsDef& d) {
     k += std::string(" ") + kVsIntents[VsIntentFor(d)];
     if (const std::string syn = VsSynonymWords(std::string(d.title ? d.title : "") + " " + k); !syn.empty()) k += " " + syn;
     if (api) k += " engine api";
+    if (d.custom) {   // a node a script declares: found by "custom", its own category words and its language
+        okay::vs::VsNodeInfo info;
+        if (okay::vs::CustomVsNodeInfo(d.type, info))
+            k += " custom my own node " + info.category + " " + (info.language == "cs" ? "c# csharp" : info.language);
+    }
     if (const std::string moved = VsMovedFromWords(was, place); !moved.empty()) k += " " + moved;
     if (d.cat >= 0 && d.cat < CAT_COUNT) {
         static const char* oldCat[] = {"Events", "Flow", "Variables", "Math", "Logic", "Input", "Transform", "Actions", "Data",

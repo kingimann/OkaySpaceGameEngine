@@ -222,6 +222,7 @@ add_library(okay_engine
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
     src/VisualScript/VsNodeRegistry.cpp
+    src/VisualScript/VsCustomNodes.cpp
     src/VisualScript/VsTypes.cpp
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp

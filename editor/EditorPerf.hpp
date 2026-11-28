@@ -153,6 +153,10 @@ struct PacingSettings {
 /// loop ran flat out on a full core.
 constexpr double kMinimizedFps = 10.0;
 
+/// The editor starts with the idle throttle ON (owner rule 17: nothing off by default). Settings files from before saved
+/// "idlethrottle 0" for everyone, chosen or not, so that old key is not read; the person's own choice is saved as "idle_throttle".
+constexpr bool kIdleThrottleDefault = true;
+
 /// The frame rate to hold this frame, 0 = do not sleep. Idle throttle applies only when nothing is playing and the
 /// last input was `secondsSinceInput` ago; the lower of the cap and the idle rate wins. A minimized window (not playing) holds
 /// kMinimizedFps at most.
@@ -166,6 +170,38 @@ inline double TargetFps(const PacingSettings& p, bool playing, bool busy, double
         target = target > 0.0 ? std::min(target, idleFps) : idleFps;
     }
     return target;
+}
+
+/// What keeps the editor at full speed with no new input, so the idle throttle never slows something that moves on its own or
+/// that a person is holding. Input itself is the other wake: every event resets the quiet time (QuietSeconds). The throttle only
+/// lowers the frame rate: every timer, file check, download and job result is still looked at each frame, just less often.
+struct IdleWake {
+    bool playing = false;       // Play mode, also while frozen at a breakpoint
+    bool pointerHeld = false;   // a mouse button is down (a drag, a held slider, a right-drag fly camera)
+    bool keyHeld = false;       // a key is held (fly-camera keys, a held arrow key) even when the system sends no repeats
+    bool preview = false;       // an animation, timeline or model preview plays in a view
+    bool debugger = false;      // the visual-script debugger is on (breakpoints, stepping)
+    bool splash = false;        // the start-up loading screen or its fade
+};
+inline bool Awake(const IdleWake& w) { return w.pointerHeld || w.keyHeld || w.preview || w.debugger || w.splash; }   // (playing has its own rule)
+/// TargetFps with the wake reasons above.
+inline double TargetFps(const PacingSettings& p, const IdleWake& w, double quietSeconds, bool minimized = false) {
+    return TargetFps(p, w.playing, Awake(w), quietSeconds, minimized);
+}
+/// The quiet time the throttle reads: since the last input or since the last sign of activity (a new Console line: build output,
+/// a download, an import, a file reload or a background job reporting), whichever is newer. A non-number or a negative counts as
+/// "just now".
+inline double QuietSeconds(double sinceInput, double sinceActivity) {
+    if (!std::isfinite(sinceInput) || !std::isfinite(sinceActivity)) return 0.0;
+    return std::max(0.0, std::min(sinceInput, sinceActivity));
+}
+
+/// True when this frame's sleep comes from the idle or minimized rate rather than the person's frame cap: that sleep is an idle
+/// wait which any event or background result ends at once (Backend::WaitEvents). A cap's sleep is a plain sleep, so the cap holds
+/// while the mouse moves.
+inline bool SleepEndsOnInput(const PacingSettings& p, double targetFps) {
+    if (!(targetFps > 0.0) || !std::isfinite(targetFps)) return false;
+    return !(p.fpsCap > 0) || targetFps < (double)p.fpsCap;
 }
 
 /// Seconds to sleep so a frame that took `elapsedSeconds` lasts 1 / target. 0 when there is no target or the frame ran long.

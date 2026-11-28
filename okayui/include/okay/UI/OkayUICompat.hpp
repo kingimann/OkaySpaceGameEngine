@@ -438,7 +438,8 @@ PlatformIO& GetPlatformIO();
 /// io.Fonts: Dear ImGui hosts ask the atlas for fonts at start-up. OkayUI loads none here: each Add* call is RECORDED (what, how big, where from) in a
 /// list the host reads with FontRequests(), and returns a stable ImFont* that works with PushFont / PopFont (it is a copy of the default font; the
 /// size asked for is kept in `FontRequest::px`). A host that wants those faces builds them itself (the launcher look's atlas, UseLauncherLook) and
-/// maps the returned pointers. Compressed base-85 TTF data is not decoded.
+/// maps the returned pointers. Compressed base-85 TTF data is not decoded. A MergeMode request (ImFontConfig::MergeMode) is recorded and
+/// loads nothing: OkayUI does not merge fonts (a character the font lacks is drawn by the fallback font), so a merged face would be an unused copy.
 struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, FromFile } kind = Default; float px = 0.0f; const void* data = nullptr; int dataSize = 0; char file[260] = {0}; bool merge = false; ImFont* font = nullptr; };
 /// ---- Real fonts (a multi-font store) ----
 /// Register a TrueType font from bytes (copied) at a pixel size: the returned Font works with SetFont, PushFont / PopFont and DrawList::AddText(font, size, ...),
@@ -447,6 +448,12 @@ struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, F
 /// Draw data: the glyph atlas is a fallback-font texture (FallbackFontOf(texture)), uploaded by the backend like the launcher look's fallback fonts.
 Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name = nullptr);
 Font* AddFontTtfFile(const char* path, float px);
+/// The memory the fonts above hold (their file bytes and glyph atlases, okay::TtfFont::MemoryBytes, and the file bytes
+/// AddFontTtfFile keeps), for the memory report.
+std::size_t UserFontMemoryBytes();
+/// Registers the memory report's counters every OkayUI program has (okay/Core/Memory.hpp): every painter's textures, the engine
+/// font cache and the fonts above. The editor and the launcher call it when OKAY_MEMORY_REPORT is set.
+void AddMemoryReportCounters();
 /// Dear ImGui hosts load the editor's two faces from base-85 compressed arrays. OkayUI has no decoder for that format (the engine dropped it on purpose;
 /// the same fonts ship as our own OKF1 data, decoded by okay::EmbeddedUIFontData). A host maps each array to the decoded TTF bytes once, and
 /// AddFontFromMemoryCompressedBase85TTF(array, px) then registers that font. An array that was not mapped gives the default font (and is recorded).

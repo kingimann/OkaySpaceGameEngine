@@ -26,14 +26,27 @@ Everything here is **off by default** except the numbers you turn on yourself. S
 The window times only while it is open (the profiler is off otherwise), so it costs nothing when closed.
 **View > Rendering > Profiler window** opens the bigger profiler (pause, scrub, per-section min / average / max).
 The numbers come from `OKAY_PROFILE` scopes, so a new panel shows up under "Panels" as `UI.<name>`.
-`OKAY_PERF_DUMP=1` still prints the same sections to the console every two seconds.
+`OKAY_PERF_DUMP=1` still prints the same sections to the console every two seconds; in the launcher it prints the ms per
+frame before the UI, building the UI, drawing it and presenting it, every 120 frames.
+`OKAY_STARTUP_REPORT=1` prints the start-up milestones of the editor (main entered, window and painter made, each loading
+screen step, main loop, first frame, interactive) and of the launcher (main entered, window and painter made, loading screen,
+fonts, games found, main loop, first page built, painted and shown), each with the time since the process started and the
+heap in use, and appends them to `logs/startup_report.txt`. `OKAY_MEMORY_REPORT` is described in `docs/engine/core_runtime.md`.
+
+Measured on Linux under Xvfb with Mesa's software OpenGL (llvmpipe) on a loaded 4-core machine (2026-11-28, claude/memory-1):
+the editor's own UI work is about 1 ms a frame (panels under 1 ms, OkayUI draw 3 to 4 ms), the rest is llvmpipe (3D view
+80 to 100 ms, Present 120 to 180 ms); the launcher's own work is under 1 ms a frame (UI 0.2 to 0.4 ms) and llvmpipe's
+present about 100 ms. The first editor frame takes about 1.3 s, almost all in the first 3D render (llvmpipe compiling
+shaders) and the heap grows by about 80 MB there; the OpenGL driver also holds about 40 MB of the launcher's 58 MB heap
+(with `OKAY_OWN_PAINTER=software` the launcher's private memory is 22 MB instead of 53 MB and its first frame comes 250 ms
+sooner). Windows numbers are unverified.
 
 ## Switches (View > Rendering)
 
 | Switch | What it does | Default |
 |---|---|---|
 | Frame rate limit | Sleeps out the rest of each frame (60, 90, 120, 144, 240). Frees the GPU and CPU; with VSync on it is not needed. | Off |
-| Slow down when idle | When nothing is clicked or typed for 0.75 s and the game is not playing, drops to the idle rate (15 / 20 / 30 / 60 FPS). Any input brings full speed back on the same frame. | Off, 30 FPS |
+| Slow down when idle | When nothing is clicked or typed for 0.75 s, drops to the idle rate (15 / 20 / 30 / 60 FPS). Any input brings full speed back on the same frame. It stays at full speed while the game plays, a mouse button or key is held, an animation, timeline or model preview plays, the visual-script debugger is on, the loading screen shows, or for 0.75 s after a new Console line (a build, download, import, file reload or background job reporting) (`perf::IdleWake`). Saved as `idle_throttle`; the old `idlethrottle` line is not read, because it was written for everyone. The idle sleep is an idle wait (`Backend::WaitEvents`: poll on the X connection, `MsgWaitForMultipleObjectsEx` on Windows) that a mouse move, key, window event or finished background thread (`okay::thr::ThreadFinishedHook` calls `WakeMainLoop`) ends at once; the frame rate limit's sleep is a plain sleep (`tests/test_platform_wait.cpp`). | On, 30 FPS |
 | Viewport resolution | Draws the 3D view at 100 / 75 / 50 / 35 % and stretches it (same setting as Lighting > Rendering > Render scale). | 100 % |
 | Performance mode (Scene view) | The Scene view only (the Game view and builds keep the scene's own look): no ambient occlusion, bloom, FXAA or supersampling, render scale at most 75 %, and while the Game panel is closed one shadow cascade at 1024 texels at most. | Off |
 

@@ -1,5 +1,6 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
+#include <algorithm>
 #include <atomic>
 #include "Internal.hpp"
 #include <chrono>
@@ -268,6 +269,32 @@ uint64_t PerfFrequency() {
 void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+namespace {
+std::atomic<bool> g_wakeWanted{false};
+}
+void NoteWake() { g_wakeWanted.store(true); }
+bool TakeWake() { return g_wakeWanted.exchange(false); }
+
+// The portable wait: short sleeps, each followed by a look at the system's queue and the wake flag, so an event is
+// picked up within a slice (2 ms) and the loop never spins.
+bool Backend::WaitEvents(uint32_t timeoutMs) {
+    const uint64_t f = PerfFrequency(), t0 = PerfCounter();
+    for (;;) {
+        PumpEvents();
+        if (TakeWake() || HasPendingEvents()) return true;
+        const uint64_t spentMs = f ? (PerfCounter() - t0) * 1000ull / f : timeoutMs;
+        if (spentMs >= timeoutMs) return false;
+        DelayMs((uint32_t)std::min<uint64_t>(2, timeoutMs - spentMs));
+    }
+}
+void Backend::WakeWait() { NoteWake(); }
+
+void WakeMainLoop() {
+    NoteWake();
+    if (BackendsShutDown()) return;   // (a worker ending after the backend has gone)
+    if (Backend* b = Default()) b->WakeWait();
 }
 
 void Log(const std::string& line) {

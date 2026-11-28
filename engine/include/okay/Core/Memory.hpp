@@ -3,12 +3,18 @@
 // pool, with a shared stats struct. Header-only and header-light. None of it
 // throws on failure (a refused allocation returns nullptr and is counted) and
 // none of it is thread safe: give each thread its own. See docs/engine/core_runtime.md.
+//
+// The end of the file has the memory report: the process's own memory as the operating system counts it
+// (QueryProcessMemory) and named byte counters that the big owners register (AddMemoryCounter), printed by
+// MemoryReportText. The editor and the launcher print it with OKAY_MEMORY_REPORT=1 (docs/engine/core_runtime.md).
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -469,5 +475,62 @@ private:
     std::size_t m_capacity = 0, m_live = 0, m_high = 0;
     std::uint64_t m_allocs = 0, m_failures = 0;
 };
+
+// ---------------------------------------------------------------- the memory report
+
+/// The process's memory as the operating system counts it. Zero fields when unknown.
+struct ProcessMemory {
+    bool known = false;
+    std::size_t residentBytes = 0;       // in RAM now: Linux VmRSS, Windows WorkingSetSize
+    std::size_t privateBytes = 0;        // private to this process: Linux RssAnon (resident anonymous), Windows PrivateUsage
+                                         // (commit charge; Task Manager's "Memory" column is the private working set, close to it)
+    std::size_t peakResidentBytes = 0;   // the most ever resident: Linux VmHWM, Windows PeakWorkingSetSize
+};
+
+/// Reads the numbers above (Linux /proc/self/status; Windows K32GetProcessMemoryInfo, looked up at run time).
+ProcessMemory QueryProcessMemory();
+
+/// The bytes the C library's heap hands out now (malloc / new): glibc mallinfo2 on Linux, a HeapWalk of every process heap on
+/// Windows. 0 when unknown. The report shows it next to the private bytes, so what lies outside the heap (the graphics
+/// driver, system libraries, stacks) is visible too.
+std::size_t HeapInUseBytes();
+
+/// Parses the text of a /proc/<pid>/status file (the Linux branch of QueryProcessMemory; tested on its own).
+ProcessMemory ParseProcStatus(std::string_view text);
+
+/// A named byte counter for the report: `name` reads like "Fonts: editor font cache". `bytes` is called on the main
+/// thread when a report is made, so it must be cheap and must not allocate much. Adding a name again replaces it.
+void AddMemoryCounter(const std::string& name, std::function<std::size_t()> bytes);
+void RemoveMemoryCounter(const std::string& name);
+/// The current value of every counter, in the order they were added.
+std::vector<std::pair<std::string, std::size_t>> MemoryCounters();
+
+/// "title: resident X MB, private Y MB, peak Z MB" then one line per counter, biggest first, and the share of the
+/// private bytes the counters explain.
+std::string MemoryReportText(const std::string& title);
+
+/// True when OKAY_MEMORY_REPORT is set to something other than "" or "0": the editor and the launcher then print
+/// MemoryReportText to stdout when their main loop ends (before anything is freed).
+bool MemoryReportWanted();
+
+/// How often a running program reports, from OKAY_MEMORY_REPORT: a number of seconds of at least 5 ("60") = every that many
+/// seconds; any other wanted value ("1") = once, 10 s after start. 0 = not wanted. Every program also reports at exit.
+double MemoryReportEverySeconds();
+/// The programs' report: MemoryReportText(title) printed to stdout and appended, with the time, to
+/// <Paths::LogDir()>/memory_report.txt (the Windows editor and launcher have no console to print to).
+void EmitMemoryReport(const std::string& title);
+/// Call once per frame from a main loop: emits the report when MemoryReportEverySeconds says one is due. `seconds` = time since
+/// the program started.
+void MemoryReportTick(const std::string& title, double seconds);
+
+// ---------------------------------------------------------------- start-up milestones (the same report files)
+
+/// Milliseconds since this process started, as the operating system recorded the start (Linux: /proc/self/stat starttime
+/// against /proc/uptime, 10 ms steps; Windows: GetProcessTimes creation time). Negative when unknown.
+double ProcessAgeMs();
+/// A start-up milestone ("first frame drawn", "interactive"): with OKAY_STARTUP_REPORT=1 the line "<title>: <what> at N ms (heap M MB)"
+/// is printed and appended to <Paths::LogDir()>/startup_report.txt. Each `what` is reported once per process; without the
+/// variable it costs one getenv the first time. Main thread only.
+void StartupMark(const std::string& title, const std::string& what);
 
 } // namespace okay

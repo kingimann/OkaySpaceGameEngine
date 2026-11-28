@@ -27,6 +27,8 @@ void OpenTimelineFile(const std::string& path);
 // Put back everything the preview moved (objects and the camera). Called before
 // Play and before the scene is rebuilt, so neither snapshots a previewed pose.
 void StopTimelinePreview();
+// True while the preview plays (the idle throttle keeps full speed then).
+bool TimelinePreviewPlaying();
 
 // Ctrl+Z / Ctrl+Y while the window is focused: undo or redo a sequence edit.
 // False when the window isn't focused or has nothing to undo.

@@ -3956,6 +3956,22 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
     set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    # The idle wait (Backend::WaitEvents / WakeWait): it ends at once on a mouse move, a key, a window event (from a second X
+    # connection) and a finished okay::thr job, and lasts its timeout otherwise. Skips (77) without Xvfb.
+    add_executable(test_platform_wait test_platform_wait.cpp)
+    target_link_libraries(test_platform_wait PRIVATE okay::platform)
+    target_include_directories(test_platform_wait PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    if(OKAY_TEST_X11_LIB AND EXISTS /usr/include/X11/Xlib.h)
+        target_compile_definitions(test_platform_wait PRIVATE OKAY_TEST_HAVE_X11)
+        target_link_libraries(test_platform_wait PRIVATE ${OKAY_TEST_X11_LIB})
+    endif()
+    find_package(Threads)
+    if(Threads_FOUND)
+        target_link_libraries(test_platform_wait PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME platform_wait COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_wait>)
+    set_tests_properties(platform_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
     # Tray-icon callback protocol model (header only, hand-computed Win32 message values).
     add_executable(test_platform_tray test_platform_tray.cpp)
     target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)

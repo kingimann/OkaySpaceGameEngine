@@ -2,9 +2,13 @@
 // controllers, all loaded at run time (see OwnLinux.hpp). No SDL.
 #include "Internal.hpp"
 #include "OwnLinux.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <ctime>
 #include <deque>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
 
 namespace okay::platform {
 namespace {
@@ -17,7 +21,15 @@ uint64_t MonoNs() {
 
 class OwnBackend final : public Backend {
 public:
-    OwnBackend() : m_epochNs(MonoNs()) {}
+    OwnBackend() : m_epochNs(MonoNs()) {
+        // The wake pipe: WakeWait writes a byte, WaitEvents polls the read end next to the X connection (poll(2), pipe(2)).
+        if (pipe(m_wakeFd) == 0) {
+            for (int fd : m_wakeFd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); fcntl(fd, F_SETFD, FD_CLOEXEC); }
+        } else {
+            m_wakeFd[0] = m_wakeFd[1] = -1;
+        }
+    }
+    ~OwnBackend() override { for (int fd : m_wakeFd) if (fd >= 0) close(fd); }
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags& f) override {
@@ -58,6 +70,32 @@ public:
     void PumpEvents() override {
         Event e;
         while (m_x11 && m_x11->PollEvent(e)) m_pending.push_back(std::move(e));
+    }
+    // The idle wait: poll(2) on the X connection and the wake pipe. Xlib may already hold events it read from the socket,
+    // which poll cannot see, so PumpEvents runs first and after every wake-up.
+    bool WaitEvents(uint32_t timeoutMs) override {
+        const int xfd = m_x11 ? m_x11->ConnectionFd() : -1;
+        if (xfd < 0 || m_wakeFd[0] < 0) return Backend::WaitEvents(timeoutMs);
+        PumpEvents();
+        if (TakeWake() || !m_pending.empty()) return true;
+        const uint64_t t0 = MonoNs(), limit = (uint64_t)timeoutMs * 1000000ull;
+        for (;;) {
+            const uint64_t spent = MonoNs() - t0;
+            if (spent >= limit) return false;
+            pollfd fds[2] = {{xfd, POLLIN, 0}, {m_wakeFd[0], POLLIN, 0}};
+            const int left = (int)((limit - spent + 999999ull) / 1000000ull);
+            const int r = poll(fds, 2, left);
+            if (r < 0 && errno != EINTR) return false;
+            char drain[64];
+            while (read(m_wakeFd[0], drain, sizeof drain) > 0) {}
+            PumpEvents();
+            if (TakeWake() || !m_pending.empty()) return true;
+            // The socket had data that made no event (a reply, a filtered key): wait out the rest.
+        }
+    }
+    void WakeWait() override {
+        NoteWake();
+        if (m_wakeFd[1] >= 0) { const char b = 1; ssize_t n = write(m_wakeFd[1], &b, 1); (void)n; }   // a full pipe is already a wake
     }
     bool PushEvent(const Event& e) override {
         if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
@@ -131,6 +169,7 @@ public:
 private:
     void Drain() { for (auto& e : m_pendingVec) m_pending.push_back(std::move(e)); m_pendingVec.clear(); }
     uint64_t m_epochNs;
+    int m_wakeFd[2] = {-1, -1};   // the wake pipe: [0] read end, [1] write end
     InitFlags m_flags;
     std::unique_ptr<own::X11System> m_x11;
     std::string m_err;

@@ -2,6 +2,7 @@
 // ConsoleModel::Rows() so filters, collapse and the source link are the model's.
 #include "EditorCommon.hpp"
 #include "ConsolePanel.hpp"
+#include <atomic>
 #include "EditorWidgets.hpp"
 #include "MainShared.hpp"
 #include "ProblemsPanel.hpp"
@@ -126,10 +127,13 @@ static void SaveConsoleLog(const std::string& text) {
     else ConsoleLog("Couldn't save the Console: " + err, 2);
 }
 void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_consoleMirror = fn; }
+static std::atomic<unsigned long long> g_consoleSerial{0};   // ConsoleLineSerial (atomic: a worker thread may log)
+unsigned long long ConsoleLineSerial() { return g_consoleSerial.load(std::memory_order_relaxed); }
 
 void ConsoleLog(const std::string& msg, int level) {
     if (level < 0) level = 0;
     if (level > 2) level = 2;
+    g_consoleSerial.fetch_add(1, std::memory_order_relaxed);
     okaycrash::ctx::ConsoleLine(level, msg.c_str());   // a copy for the crash report, kept as logged
     if (!g_clockSet) { g_model.SetClock(WallClock); g_clockSet = true; }
     std::string category, text = msg;

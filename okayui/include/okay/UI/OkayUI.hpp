@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -300,6 +301,10 @@ struct DrawData {
     operator ImDrawData*() const;
 };
 DrawData GetDrawData();
+/// A 64-bit fingerprint of what `d` draws (every vertex, index, draw range, clip rectangle and texture handle): equal
+/// fingerprints on two frames mean the same picture, as long as no texture's pixels changed in between. A host uses it to
+/// slow down while nothing on screen changes (the launcher's idle frame rate). About 0.1 ms for a busy launcher page.
+std::uint64_t DrawDataHash(const DrawData& d);
 /// The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
 /// look's own font lacks), or null when `texture` is not one. A custom backend uploads that font's atlas itself.
 okay::TtfFont* FallbackFontOf(const void* texture);

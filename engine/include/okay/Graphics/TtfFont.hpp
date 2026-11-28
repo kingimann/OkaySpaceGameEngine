@@ -103,9 +103,14 @@ public:
     /// How many subpixel phases GlyphForPhase takes.
     static constexpr int kPhases = 4;
 
+    /// The memory this font holds: its file bytes (once, however many sized faces share them) and the RGBA atlases of
+    /// this face and of the faces ForPixelHeight / ForDeviceSize made from it. For the memory report.
+    std::size_t MemoryBytes() const;
+
 private:
     struct Info;   // the parsed font (ttf::Face) over m_bytes
     bool  Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name);
+    bool  LoadShared(std::shared_ptr<const std::vector<unsigned char>> bytes, float bakeHeightPx, const std::string& name);
     bool  Place(int w, int h, int& x, int& y) const;
     float m_coverageGamma = 1.0f;          // coverage ^ this at bake time (1 = as rasterised)
     mutable std::unordered_map<std::uint32_t, Glyph> m_phased[3];   // subpixel variants, phases 1..3
@@ -114,7 +119,7 @@ private:
     float m_lineHeight = 0.0f;   // at bake height
     float m_ascent = 0.0f;       // at bake height
     std::string m_name;
-    std::vector<unsigned char> m_bytes;    // the font file, for glyphs baked later
+    std::shared_ptr<const std::vector<unsigned char>> m_bytes;   // the font file, for glyphs baked later (shared with the sized faces)
     std::unique_ptr<Info> m_info;
     Glyph m_glyphs[kCount];
     // Glyphs baked after load share the atlas: a shelf packer below the ASCII rows.
@@ -158,5 +163,7 @@ TtfFont* ActiveUIFont();
 TtfFont* FontForText(TtfFont* wanted, const std::string& text);
 /// Installed fonts the fallback looks at, best first (the ones that exist here).
 const std::vector<std::string>& SystemFallbackFonts();
+/// The bytes GetFont's cache and BuiltinUIFont hold (TtfFont::MemoryBytes of each), for the memory report.
+std::size_t FontCacheBytes();
 
 } // namespace okay

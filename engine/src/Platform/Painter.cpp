@@ -5,7 +5,26 @@
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/UI/UIImageScale.hpp"
 
+#include <atomic>
+
 namespace okay::platform {
+
+namespace {
+std::atomic<std::size_t> g_texBytes{0};
+std::atomic<int> g_texCount{0};
+std::atomic<std::uint64_t> g_texChanges{0};
+}
+TextureTally PainterTextures() { return TextureTally{g_texBytes.load(), g_texCount.load()}; }
+std::uint64_t PainterTextureChanges() { return g_texChanges.load(); }
+void NotePainterTextureChange() { g_texChanges.fetch_add(1); }
+void CountedTexture::Count(int w, int h) {
+    const std::size_t now = w > 0 && h > 0 ? (std::size_t)w * (std::size_t)h * 4 : 0;
+    if (now == m_bytes) return;
+    NotePainterTextureChange();
+    if (m_bytes == 0) g_texCount.fetch_add(1); else if (now == 0) g_texCount.fetch_sub(1);
+    g_texBytes.fetch_add(now); g_texBytes.fetch_sub(m_bytes);
+    m_bytes = now;
+}
 
 void Painter::GeometryRaw(ui2d::Tex t, const float* xy, int xyStride, const std::uint8_t* rgba, int rgbaStride, const float* uv, int uvStride,
                           int numVerts, const void* indices, int numIndices, int indexSize) {

@@ -1040,7 +1040,7 @@ Closes the "per-draw heading and code fonts" gap of 6.18 (test `okayui_fonts`, 7
 - **Draw data.** The glyph atlas is a fallback-font texture: `FallbackFontOf(cmd.texture)` returns the font, and a backend uploads it the way it already does for the launcher look's fallback fonts (`DrawData` is unchanged). At most 8 such atlases per frame in all (the existing limit), so five user fonts leave room for the launcher look's own fallbacks.
 - **io.Fonts.** `AddFontFromMemoryTTF(bytes, size, px)`, `AddFontFromFileTTF(path, px)` and `AddFontFromMemoryCompressedBase85TTF(array, px)` now return these real fonts (and are still recorded in `FontRequests()`); `AddFontDefault` returns a copy of the default font.
 - **The base-85 arrays are gone.** The editor and launcher no longer use Dear ImGui's compressed base-85 font arrays: every program reads the fonts from our own OKF1 data through `shared/EmbeddedFonts.hpp` (`okf::RobotoMediumTtf`, `okf::JetBrainsMonoTtf`, and `okf::AddToAtlas`, which calls `AddFontFromMemoryTTF`). So the launcher and editor built on OkayUI now get the real Roboto and JetBrains Mono through `AddFontFromMemoryTTF`. `AddFontFromMemoryCompressedBase85TTF` and `RegisterBase85FontSource` stay in the compatibility layer for code that still calls them (an unmapped array gives the default font).
-- **Not done:** font fallback chains and merge mode (`MergeMode` is recorded, not applied; the editor's `MergeLocalizationFonts` for CJK would map to the existing fallback-font mechanism), kerning, and a font atlas size choice (bake height is 48 px, like `okay::TtfFont`'s default).
+- **Not done:** font fallback chains and merge mode (`MergeMode` is recorded and loads nothing; CJK and emoji text is drawn by the fallback font, `okay::FontForText`. The editor's `MergeLocalizationFonts` and the launcher's `MergeEmojiFallback` were removed on claude/memory-1: each loaded a 10 to 20 MB system font two or three times that nothing drew), kerning, and a font atlas size choice (bake height is 48 px, like `okay::TtfFont`'s default).
 
 ### 6.24 Window mode: the plan to run the editor on OkayUI alone (round 8)
 
@@ -3794,3 +3794,15 @@ above). Pictures are outside the repository. Tests: every `okayui_*`, `launcher_
 display at 125% or 150% (the scale was set through the appearance file), and an input method. **Not done:** fields placed after
 SameLine keep the plain layout (Cast Shadows / Receive Shadows on one line, the header card's Static and Lock); the Transform's custom
 rows were moved to the column by hand, other custom rows that draw their own label after their fields were not all found.
+
+## 37. Performance helpers (claude/memory-1, 2026-11-28)
+
+- `OkayUI::DrawDataHash(DrawData)`: a 64-bit fingerprint of the frame's vertices, indices, draw ranges, clips and textures.
+  With `okay::platform::PainterTextureChanges()` (bumped by every painter on texture create, free, upload and render-target
+  use) a host can tell that the picture has not changed; the launcher drops to 20 fps then (`okay::SettledPicture`,
+  `okay::UiFrameRate` in `okay/Core/FramePacing.hpp`; test `frame_pacing`).
+- The compatibility `CalcTextSize(text, textEnd, hideAfterHash, wrap)` measures a whole label in place instead of copying it
+  into a `std::string` first (one heap allocation per label over 15 bytes, every frame). `okayui_frame_budget` checks that
+  1000 calls allocate nothing and measure the same.
+- `OkayUI::UserFontMemoryBytes()`: the memory the AddFontTtf fonts hold, for the memory report.
+

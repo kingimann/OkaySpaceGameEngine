@@ -22,6 +22,7 @@ namespace ui2d = okay::ui2d;
 constexpr int kMaxDim = 16384;
 
 struct STex {
+    okay::platform::CountedTexture counted;   // its share of PainterTextures() (the memory report)
     int w = 0, h = 0;
     std::vector<std::uint8_t> px;
     BlendMode blend = BlendMode::Blend;
@@ -102,6 +103,7 @@ public:
         t->px.assign((std::size_t)d.width * (std::size_t)d.height * 4, 0);
         if (rgba) std::memcpy(t->px.data(), rgba, t->px.size());
         m_texs.insert(t);
+        t->counted.Count(t->w, t->h);
         return t;
     }
     bool UpdateTexture(ui2d::Tex tex, const ui2d::Rect* r, const void* rgba, int pitch) override {
@@ -111,6 +113,7 @@ public:
         if (r) rc = *r;
         if (rc.x < 0 || rc.y < 0 || rc.w <= 0 || rc.h <= 0 || rc.x + (long long)rc.w > t->w || rc.y + (long long)rc.h > t->h) return false;
         if (pitch < rc.w * 4) return false;
+        okay::platform::NotePainterTextureChange();
         const std::uint8_t* src = (const std::uint8_t*)rgba;
         for (int y = 0; y < rc.h; ++y)
             std::memcpy(&t->px[((std::size_t)(rc.y + y) * (std::size_t)t->w + (std::size_t)rc.x) * 4], src + (std::size_t)y * (std::size_t)pitch, (std::size_t)rc.w * 4);
@@ -120,6 +123,7 @@ public:
     bool SetRenderTarget(ui2d::Tex tex) override {
         STex* nt = nullptr;
         if (tex) { nt = (STex*)tex; if (!m_texs.count(nt) || !nt->target) return false; }
+        if (nt) okay::platform::NotePainterTextureChange();   // whatever is drawn next changes that texture's pixels
         if (nt == m_target) return true;
         LeaveTarget();
         if (nt) {

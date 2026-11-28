@@ -3,6 +3,8 @@
 #include <vector>
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/OkayUICompat.hpp"
+#include "okay/Core/Memory.hpp"        // AddMemoryReportCounters
+#include "okay/Platform/Painter.hpp"   // PainterTextures
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 #include "OkayUIInternal.hpp"   // wrappedTextSize
@@ -294,6 +296,11 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const c
 // With a wrap width, or line breaks in the text: Dear ImGui's measure of the wrapped lines (the widest line, a text line per line).
 Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float wrapWidth) {
     if (!text) return Vec2{0, 0};
+    // The common call (a whole string, no "##" to hide, no wrap): measured in place. It runs for every label every frame, and the
+    // copy below was a heap allocation for each label longer than 15 bytes.
+    const bool wraps = std::isfinite(wrapWidth) && wrapWidth > 0.0f;
+    if (!wraps && (!textEnd || *textEnd == '\0') && (!hideAfterHash || !std::strstr(text, "##")) && !std::strchr(text, '\n'))
+        return CalcTextSize(text);
     std::string buf(text, textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text));
     if (hideAfterHash) buf.resize((std::size_t)(FindRenderedTextEnd(buf.c_str()) - buf.c_str()));
     if ((std::isfinite(wrapWidth) && wrapWidth > 0.0f) || buf.find('\n') != std::string::npos)
@@ -440,11 +447,25 @@ Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const ch
     u = *FontDefault(); u.ttf = e->font.get(); u.px = px;
     return &u;
 }
+namespace {
+std::vector<std::vector<unsigned char>>& KeptFontFiles() { static std::vector<std::vector<unsigned char>> keep; return keep; }
+}
+std::size_t UserFontMemoryBytes() {
+    std::size_t n = 0;
+    for (int i = 0; i < g_nTtfs; ++i) if (g_ttfs[i].font) n += g_ttfs[i].font->MemoryBytes();
+    for (const auto& f : KeptFontFiles()) n += f.capacity();
+    return n;
+}
+void AddMemoryReportCounters() {
+    okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
+    okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
+    okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return UserFontMemoryBytes(); });
+}
 Font* AddFontTtfFile(const char* path, float px) {
     if (!path || !*path) return nullptr;
     FILE* fp = std::fopen(path, "rb");
     if (!fp) return nullptr;
-    static std::vector<std::vector<unsigned char>> keep;   // the bytes of files read here (the font copies them; the key must stay unique per file)
+    auto& keep = KeptFontFiles();   // the bytes of files read here (the font copies them; the key must stay unique per file)
     std::vector<unsigned char> b; unsigned char tmp[4096]; std::size_t n;
     while ((n = std::fread(tmp, 1, sizeof tmp, fp)) > 0 && b.size() < (64u << 20)) b.insert(b.end(), tmp, tmp + n);
     std::fclose(fp);
@@ -458,15 +479,22 @@ void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::
     if (g_nB85 < 8) g_b85[g_nB85++] = B85{array, ttf, size};
 }
 ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return Record(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg, nullptr); }
+// OkayUI never merges one font into another (text a font lacks is drawn by the fallback font, okay::FontForText), so a MergeMode
+// request is only recorded: loading it would read the file, copy it and bake an atlas that nothing draws (the editor's CJK merge and
+// the launcher's emoji merge held 2 copies of a 10 to 20 MB system font each, for nothing).
+static bool Merging(const ImFontConfig* cfg) { return cfg && cfg->MergeMode; }
 ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) {
-    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg, size > 0 ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
+    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg,
+                  size > 0 && !Merging(cfg) ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
 }
 ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) {
     ImFont* made = nullptr;
-    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
+    for (int i = 0; i < g_nB85 && !Merging(cfg); ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
     return Record(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg, made);
 }
-ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, AddFontTtfFile(file, px)); }
+ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) {
+    return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, Merging(cfg) ? nullptr : AddFontTtfFile(file, px));
+}
 void FontAtlasRef::Clear() { g_nFontReqs = 0; g_nFontPool = 0; }
 int FontAtlasRef::FontCount() const { return g_nFontPool + g_nUserFonts; }
 FontAtlasRef* GetFontAtlasRef() { return &g_atlasRef; }

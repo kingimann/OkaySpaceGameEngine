@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
+#include "okay/Core/Memory.hpp"       // the memory report (OKAY_MEMORY_REPORT=1 prints it at exit)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
@@ -1110,9 +1111,10 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 extern bool g_showGame;   // (defined with the panel flags below)
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
-// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
+// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp); remembered in okay_settings.txt.
 int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
-bool  g_idleThrottle = false;   // slow to g_idleFps while nothing is clicked, typed or playing
+bool  g_idleThrottle = okay::editor::perf::kIdleThrottleDefault;   // ON: slow to g_idleFps while nothing is clicked, held, typed, playing or previewing
+int   g_keysHeld = 0;           // keys down in the editor window now (a held key keeps the idle throttle awake)
 int   g_idleFps = 30;
 bool  g_perfMode = false;       // cheaper Scene-view rendering (no AO / bloom / FXAA / supersampling, one small shadow cascade)
 bool  g_showPerfOverlay = false; // the frame-time overlay (FPS, ms graph, where the frame went)
@@ -2567,7 +2569,7 @@ void LoadSettings() {
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "editorfpscap") g_fpsCapEditor = v < 0 ? 0 : (v > 1000 ? 1000 : v);
-        else if (k == "idlethrottle") g_idleThrottle = (v != 0);
+        else if (k == "idle_throttle") g_idleThrottle = (v != 0);   // (the old "idlethrottle" line was written for everyone, so it is not read: everyone starts on)
         else if (k == "idlefps") g_idleFps = v < 5 ? 5 : (v > 240 ? 240 : v);
         else if (k == "perfmode") g_perfMode = (v != 0);
         else if (k == "perfoverlay") g_showPerfOverlay = (v != 0);
@@ -2639,7 +2641,7 @@ void SaveSettings() {
       << "aamode "     << g_aaMode << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "editorfpscap " << g_fpsCapEditor << "\n"
-      << "idlethrottle " << (g_idleThrottle ? 1 : 0) << "\n"
+      << "idle_throttle " << (g_idleThrottle ? 1 : 0) << "\n"
       << "idlefps " << g_idleFps << "\n"
       << "perfmode " << (g_perfMode ? 1 : 0) << "\n"
       << "perfoverlay " << (g_showPerfOverlay ? 1 : 0) << "\n"
@@ -44138,6 +44140,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::StartupMark("[startup] editor", "main() entered");   // OKAY_STARTUP_REPORT: the start-up milestones (okay/Core/Memory.hpp)
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
@@ -44205,6 +44208,8 @@ int main(int argc, char** argv) {
     // The window, input, audio and gamepads are our own okay::platform backend.
     okay::platform::Backend* plat = okay::platform::Default();
     if (!plat) { std::cerr << "no okay::platform backend in this build\n"; return 1; }
+    okay::thr::ThreadFinishedHook() = &okay::platform::WakeMainLoop;   // a finished background job ends the idle wait at once
+    if (okay::MemoryReportWanted()) OkayUI::AddMemoryReportCounters();   // OKAY_MEMORY_REPORT (okay/Core/Memory.hpp): the big owners
     plat->SetPerMonitorDpiAware();
     if (!plat->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
         std::cerr << "the window system could not start: " << plat->LastError() << "\n";
@@ -44249,6 +44254,7 @@ int main(int argc, char** argv) {
     // The 2D painter: OpenGL on the window, else the software painter (shared/OwnPainter.hpp; OKAY_OWN_PAINTER=software picks it).
     okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);
     okay::pb::Renderer* renderer = okay::pb::CreateRenderer(*winSeam);
+    okay::StartupMark("[startup] editor", "window and painter made");
     if (!renderer) { std::cerr << "CreateRenderer failed: " << plat->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
@@ -44304,7 +44310,7 @@ int main(int argc, char** argv) {
     };
     // One loading frame: begin start-up step `step` (the steps before it count as done) and show it.
     auto splashFrame = [&](const char* step) {
-        if (step) StartSplash().steps.Begin(step);
+        if (step) { StartSplash().steps.Begin(step); okay::StartupMark("[startup] editor", std::string("step: ") + step); }   // OKAY_STARTUP_REPORT
         StartSplash().style = splashStyle();
         const okay::SplashProgress st = StartSplashProgress();
         int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
@@ -44348,7 +44354,6 @@ int main(int argc, char** argv) {
         // simply absent from Roboto, so those are drawn or swapped in the code.)
         if (!okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 18.0f, fc))
             io.Fonts->AddFontDefault();
-        MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 22.0f, fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
@@ -44724,6 +44729,7 @@ int main(int argc, char** argv) {
     int testExitCode = 0;
 #endif
     okay::editor::hang::Start(OKAY_ENGINE_VERSION);   // from here a main loop that stops for OKAY_HANG_REPORT_S (5 s) is reported
+    okay::StartupMark("[startup] editor", "main loop starts");
     while (running) {
         std::uint64_t g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
@@ -44808,6 +44814,8 @@ int main(int argc, char** argv) {
             using PKey = okay::platform::Key;
             if (e.type == EvT::KeyDown && !e.repeat && e.key == PKey::Escape)
                 g_escapeEdge = true;
+            if (e.type == EvT::KeyDown && !e.repeat) ++g_keysHeld;                       // (the idle throttle's "a key is held")
+            else if (e.type == EvT::KeyUp && g_keysHeld > 0) --g_keysHeld;
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
@@ -46259,15 +46267,38 @@ int main(int argc, char** argv) {
 #endif
         DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
+        okay::MemoryReportTick("[memory] editor", (double)okay::platform::TicksMs() / 1000.0);   // OKAY_MEMORY_REPORT: while it runs
+        okay::StartupMark("[startup] editor", "first frame drawn");                              // OKAY_STARTUP_REPORT
+        if (StartSplash().finish.Done()) okay::StartupMark("[startup] editor", "interactive (loading screen gone)");
 
 
-        {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
+        {   // Frame limiter (View > Rendering, off by default) and idle throttle (on by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
-            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
+            if (!winSeam->HasInputFocus()) g_keysHeld = 0;   // a key released in another window sends no KeyUp here
+            okay::editor::perf::IdleWake wake;
+            wake.playing = ed.isPlaying();
+            wake.pointerHeld = ImGui::IsAnyMouseDown();
+            wake.keyHeld = g_keysHeld > 0;
+            wake.preview = TimelinePreviewPlaying() || g_livePrevCh || g_maScenePrev || okay::editor::apreview::ActiveCharacter();
+            wake.debugger = okay::vs::VsDebugger::Get().Active();
+            wake.splash = !StartSplash().finish.Done();
+            // A new Console line (build output, a download, an import, a file reload, a background job reporting) is activity:
+            // full speed for a moment after it.
+            static unsigned long long s_serial = 0; static std::uint64_t s_activity = okay::platform::PerfCounter();
+            if (ConsoleLineSerial() != s_serial) { s_serial = ConsoleLineSerial(); s_activity = okay::platform::PerfCounter(); }
+            const double sinceActivity = (double)(okay::platform::PerfCounter() - s_activity) / (double)okay::platform::PerfFrequency();
+            const double target = okay::editor::perf::TargetFps(ps, wake, okay::editor::perf::QuietSeconds(g_secSinceInput, sinceActivity),
+                                                                 winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((uint32_t)(wait * 1000.0)); }
+                if (wait >= 0.001) {
+                    OKAY_PROFILE("Pacing.Sleep");
+                    // The idle sleep ends at once on a mouse move, a key, a window event or a finished background job
+                    // (okay::thr::ThreadFinishedHook); the frame cap's sleep does not, so the cap holds.
+                    if (okay::editor::perf::SleepEndsOnInput(ps, target)) plat->WaitEvents((uint32_t)(wait * 1000.0));
+                    else okay::platform::DelayMs((uint32_t)(wait * 1000.0));
+                }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).
@@ -46295,6 +46326,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
+    if (okay::MemoryReportWanted()) okay::EmitMemoryReport("[memory] editor at exit");   // before anything is freed
     DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window

@@ -7,6 +7,11 @@
 namespace okay::platform {
 std::unique_ptr<Backend> CreateOwnBackend();    // OwnLinux.cpp / OwnWin32.cpp / WebBackend.cpp (OKAY_PLATFORM_HAVE_OWN)
 
+/// The WakeWait flag every backend shares (Platform.cpp): NoteWake sets it, TakeWake reads and clears it. A backend whose
+/// WaitEvents blocks in the system also gets a system wake (a pipe write, an event handle) from its own WakeWait.
+void NoteWake();
+bool TakeWake();
+
 // NullAudio.cpp: the null audio device, for machines with no sound card (CI runners, servers).
 /// True when OKAY_AUDIO_DEVICE=null: every backend's OpenAudio then opens OpenNullAudio, and lists one device, "null".
 bool NullAudioRequested();

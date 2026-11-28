@@ -110,6 +110,40 @@ int main() {
         CHECK(perf::SleepSeconds(std::numeric_limits<double>::infinity(), 0.001) == 0.0);
     }
 
+    // ---- idle throttle: on by default, and every wake reason keeps full speed ---------------------------------------------------------
+    {
+        CHECK(perf::kIdleThrottleDefault);   // the editor starts with it on (was off: an untouched editor redrew as fast as it could)
+        perf::PacingSettings p; p.idleThrottle = perf::kIdleThrottleDefault; p.idleFps = 30;
+        const perf::IdleWake none;
+        CHECK_NEAR(perf::TargetFps(p, none, 5.0), 30.0, 1e-9);     // nothing happening for 5 s: the idle rate
+        CHECK(perf::TargetFps(p, none, 0.1) == 0.0);               // input 0.1 s ago: full speed at once
+        perf::IdleWake w;
+        w = none; w.playing = true;     CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // Play mode
+        w = none; w.pointerHeld = true; CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // a drag, a right-drag fly camera
+        w = none; w.keyHeld = true;     CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // a held key with no repeat events
+        w = none; w.preview = true;     CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // an animation / timeline / model preview
+        w = none; w.debugger = true;    CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // the visual-script debugger
+        w = none; w.splash = true;      CHECK(perf::TargetFps(p, w, 5.0) == 0.0);   // the loading screen and its fade
+        CHECK(!perf::Awake(none));
+        // Activity without input (a Console line from a build, a download, an import, a file reload or a job finishing) is "just now".
+        CHECK_NEAR(perf::QuietSeconds(8.0, 0.2), 0.2, 1e-12);
+        CHECK(perf::TargetFps(p, none, perf::QuietSeconds(8.0, 0.2)) == 0.0);
+        CHECK_NEAR(perf::TargetFps(p, none, perf::QuietSeconds(8.0, 3.0)), 30.0, 1e-9);
+        CHECK(perf::QuietSeconds(std::numeric_limits<double>::quiet_NaN(), 3.0) == 0.0);
+        CHECK(perf::QuietSeconds(-1.0, 3.0) == 0.0);
+        // A minimized window still holds 10 FPS; Play still overrides it.
+        CHECK_NEAR(perf::TargetFps(p, none, 0.0, true), perf::kMinimizedFps, 1e-9);
+        w = none; w.playing = true; CHECK(perf::TargetFps(p, w, 0.0, true) == 0.0);
+        // The idle sleep is an idle wait (Backend::WaitEvents: any event or finished job ends it, tests/test_platform_wait.cpp);
+        // the person's frame cap is a plain sleep, so the cap still holds while the mouse moves.
+        CHECK(perf::SleepEndsOnInput(p, 30.0));                       // idle rate, no cap
+        perf::PacingSettings capped = p; capped.fpsCap = 60;
+        CHECK(perf::SleepEndsOnInput(capped, 30.0));                  // the idle rate is below the cap: an idle wait
+        CHECK(!perf::SleepEndsOnInput(capped, 60.0));                 // the cap is what limits: a plain sleep
+        CHECK(!perf::SleepEndsOnInput(p, 0.0));                       // no sleep at all
+        CHECK(perf::SleepEndsOnInput(p, perf::kMinimizedFps));        // minimized: an idle wait (restoring the window wakes it)
+    }
+
     // ---- viewport scale and size -----------------------------------------------------------------------------------------------------
     {
         CHECK_NEAR(perf::EffectiveScale(1.0f, false), 1.0, 1e-6);

@@ -393,6 +393,7 @@ What the seam gained (each with a default, so a backend that cannot do it says s
 | API | sdl2 | own Linux / own Windows |
 |---|---|---|
 | `Backend::PumpEvents()` | `SDL_PumpEvents` | reads waiting input into the backend's queue; the next `PollEvent` returns it, in order, nothing lost |
+| `Backend::WaitEvents(ms)` / `WakeWait()` / `WakeMainLoop()` | (none: `SDL_WaitEventTimeout` was never used) | sleeps until an event is queued, `WakeWait` is called from any thread, or the time is up. Linux: `poll` on the X connection and a wake pipe; Windows: `MsgWaitForMultipleObjectsEx` on the message queue and a wake event; the web and the fallback: 2 ms slices. The editor's idle throttle sleeps in it (`tests/test_platform_wait.cpp`) |
 | `Backend::PushEvent(Event)` | `SDL_PushEvent` for Quit, WindowClose, focus gained / lost, KeyDown / Up, TextInput, MouseMove, button down / up, wheel, DropFile | queues any event type except `NoEvent` and `Other` |
 | `Event::native` | `const SDL_Event*` of the event just returned (valid until the next poll) | null |
 | `Backend::ReportUnmappedEvents(bool)` and `EventType::Other` | with `true`, events the seam has no type for (pointer enter / leave, display changes, IME composition ...) come back as `Other` with `native` set, so imgui_impl_sdl2 still sees every event | nothing to report |

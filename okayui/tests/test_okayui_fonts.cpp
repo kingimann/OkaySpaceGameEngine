@@ -224,5 +224,24 @@ int main() {
         for (int i = 0; i < 10; ++i) CHECK(io.Fonts->AddFontFromMemoryTTF(roboto.data(), (int)roboto.size(), 10.0f + (float)i) != nullptr);
         for (int i = 0; i < 40; ++i) CHECK(io.Fonts->AddFontDefault() != nullptr);
     }
+
+    {   // ---- a MergeMode request is recorded but loads nothing: OkayUI never merges fonts, so a merged face was a dead copy ----
+        // (the editor merged an installed CJK font, the launcher an emoji font: each read the whole file twice and baked an atlas
+        // that nothing drew; CJK and emoji text is drawn by the fallback font, okay::FontForText)
+        Reset();
+        UI::IO& io = UI::GetIO();
+        io.Fonts->Clear();   // (the blocks above filled the request list)
+        const std::vector<unsigned char> copy = roboto;   // other bytes than the ones registered above: a new font file
+        UI::ImFontConfig fc; fc.MergeMode = true;
+        UI::ImFont* fromMemory = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(copy.data()), (int)copy.size(), 16.0f, &fc);
+        UI::ImFont* fromFile = io.Fonts->AddFontFromFileTTF(OKAYUI_GOLDEN_DIR "/../../../assets/fonts/DejaVuSans.ttf", 16.0f, &fc);
+        CHECK(fromMemory != nullptr && fromFile != nullptr);                        // still answered with a font (PushFont keeps working)
+        CHECK(fromMemory->ttf == nullptr && fromFile->ttf == nullptr);              // and nothing loaded for it
+        int n = 0; const UI::FontRequest* rq = UI::FontRequests(&n);
+        CHECK(n >= 2 && rq[n - 2].merge && rq[n - 1].merge && rq[n - 2].font == fromMemory && rq[n - 1].font == fromFile);   // recorded
+        UI::ImFontConfig plain;                                                     // the same bytes without MergeMode do load
+        UI::ImFont* loaded = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(copy.data()), (int)copy.size(), 16.0f, &plain);
+        CHECK(loaded != nullptr && loaded->ttf != nullptr);
+    }
     TEST_MAIN_RESULT();
 }

@@ -41,10 +41,11 @@ void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id);       // emoji `id` c
 void DrawHeart(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
 void EmojiPicker(const char* id, char* buf, std::size_t cap);    // emoji button + picker for any text box
 extern ImFont* g_fontMono;                                       // JetBrains Mono for `code` (loaded in main)
-void MergeEmojiFallback(float size);                             // merge the system emoji font into the font just added
 void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f);   // a message body with markup, emoji and link cards
 float MeasureChatBodyWidth(const std::string& bodyIn, float maxW);
 void IconTile(const std::string& name, float size);              // a coloured tile with the name's initial
 void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b);
-unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h);   // RGBA8, free with std::free; nullptr on failure
+// RGBA8, free with std::free; nullptr on failure. `maxSide` > 0: a picture with a longer side than that is filtered down to fit,
+// keeping its shape (covers and avatars are drawn at a few hundred pixels at most; a full-size photo held 8 to 30 MB as a texture).
+unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h, int maxSide = 0);
 } // namespace okl

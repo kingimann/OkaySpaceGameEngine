@@ -439,6 +439,7 @@ public:
     void Unregister(::Window w) { m_wins.erase(w); if (m_focus == w) m_focus = 0; }
 
     // ---- events ---------------------------------------------------------------------
+    int ConnectionFd() const override { return m_dpy ? ConnectionNumber(m_dpy) : -1; }   // (the Xlib.h macro: the Display's socket)
     bool PollEvent(Event& out) override {
         for (;;) {
             if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }

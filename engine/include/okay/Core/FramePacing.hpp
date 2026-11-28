@@ -115,4 +115,31 @@ private:
     double m_last = 0.0;     // when the current frame was due to start
 };
 
+/// Whether a UI's picture has stopped changing. Feed it one fingerprint per drawn frame (OkayUI::DrawDataHash mixed with
+/// okay::platform::PainterTextureChanges); Settled() is true once `need` frames in a row looked exactly like the one before.
+/// An animation, a spinner, a caret blink, a progress bar or a new chat line changes the fingerprint and unsettles it at once.
+class SettledPicture {
+public:
+    explicit SettledPicture(int need = 2) : m_need(need < 1 ? 1 : need) {}
+    bool Frame(std::uint64_t fingerprint) {
+        if (m_any && fingerprint == m_last) { if (m_same < m_need) ++m_same; }
+        else { m_same = 0; m_last = fingerprint; m_any = true; }
+        return Settled();
+    }
+    bool Settled() const { return m_same >= m_need; }
+private:
+    int m_need;
+    int m_same = 0;
+    bool m_any = false;
+    std::uint64_t m_last = 0;
+};
+
+/// The frame rate a UI loop holds: `activeFps`, or `idleFps` (when lower) once nothing was put in for `idleAfterSeconds`
+/// and the picture has settled. The idle wait must end on any event (Backend::WaitEvents), so the first frame after input
+/// is never late; only something that starts moving on its own (a timer) can show up to 1 / idleFps later.
+inline double UiFrameRate(double activeFps, double idleFps, double secondsSinceInput, bool settled, double idleAfterSeconds = 0.75) {
+    const bool idle = settled && std::isfinite(secondsSinceInput) && secondsSinceInput >= idleAfterSeconds && idleFps > 0.0;
+    return idle && (activeFps <= 0.0 || idleFps < activeFps) ? idleFps : activeFps;
+}
+
 } // namespace okay

@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 74 headers, 1115 names.
+Back to the [code index](../code_index.md). 73 headers, 1101 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -861,23 +861,6 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 - `TabStripResult` struct, line 62: What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), the tab
 - `ParseProgramArgs` function, line 97: A window program's command line: words that do not start with '-' are paths, "--frames N" ends the program after N frames
 
-## `shared/OkayUIBackend.hpp`
-
-- `Backend` enum, line 26
-- `CompiledIn` function, line 29: True when this binary can host OkayUI at all (the okay_ui library is linked in).
-- `BuildDefault` function, line 38: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
-- `Name` function, line 41: The short name stored in settings files and read from the environment: "imgui" or "okayui".
-- `Label` function, line 43: The words the settings screens show.
-- `Parse` function, line 47: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
-- `Normalize` function, line 58: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
-- `FromSettingInt` function, line 63: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
-- `ToSettingInt` function, line 65: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
-- `DevMode` function, line 68: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
-- `SettingRowVisible` function, line 71: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
-- `Resolve` function, line 76: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
-- `Source` function, line 85: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
-- `InspectorOn` function, line 95: The Inspector drawn by OkayUI (a preview; docs/ui/own_ui_toolkit.md sections 14-22; on by default through the Settings > Experimental items since 2026-11-23). I
-
 ## `shared/OkayUIFrame.hpp`
 
 - `OkayUIHostState` function, line 15: OkayUI's own renderer state for the app's SDL renderers (OKAY_UI_OWN_RENDER, OkayUIRenderSDL.hpp).
@@ -928,26 +911,26 @@ Back to the [code index](../code_index.md). 74 headers, 1115 names.
 
 ## `shared/OwnStack.hpp`
 
-- `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
-- `Readers` function, line 40
-- `Setting` struct, line 53
-- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
-- `Requested` function, line 69: True when OKAY_OWN_STACK is "1" in the environment.
-- `SetIfUnset` function, line 74
-- `ApplyEnvironment` function, line 85: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
-- `Info` struct, line 94
-- `FormatLine` function, line 104: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 122: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 129: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 136: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 171
-- `Startup` function, line 175: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `ReaderSwitch` struct, line 36: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
+- `Readers` function, line 38
+- `Setting` struct, line 51
+- `RuntimeSettings` function, line 56: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers and the okay::platform backend (our HTTP client and
+- `Requested` function, line 66: True when OKAY_OWN_STACK is "1" in the environment.
+- `SetIfUnset` function, line 71
+- `ApplyEnvironment` function, line 82: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
+- `Info` struct, line 91
+- `FormatLine` function, line 101: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 119: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 126: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 133: What this process would use right now. 'ui' is the UI toolkit the caller names ("okayui" / "none"); null: "okayui" where
+- `Describe` function, line 174
+- `Startup` function, line 178: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
-- `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `Items` function, line 49: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 - `Context` struct, line 59: What is true on this machine: used to hide items that cannot work here.
 - `Available` function, line 74
 - `SplitIds` function, line 82

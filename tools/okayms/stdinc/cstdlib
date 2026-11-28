@@ -9,6 +9,11 @@ void free(void *p);
 namespace std {
 inline int abs(int v) { return v < 0 ? -v : v; }
 extern "C" {
+// std::malloc, std::calloc and std::free ([cstdlib.syn]; Round 33, JsRuntime.cpp's std::calloc): the same C runtime
+// functions as the global ones above (extern "C": one plain name for both).
+void *malloc(unsigned long long n);
+void *calloc(unsigned long long count, unsigned long long size);
+void free(void *p);
 int atoi(const char *s);
 long strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);

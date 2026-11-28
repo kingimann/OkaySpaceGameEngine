@@ -15,6 +15,18 @@
 #include <iterator>
 #include <stdexcept>
 namespace std {
+// The node handle of map::extract ([container.node]; Round 33, Localization.cpp's rename): own simplification, it holds a
+// copy of the entry (okay-ms's map keeps entries in a vector, not in nodes); empty() when nothing was extracted.
+template <typename K, typename V>
+struct __okay_map_node {
+    pair<K, V> entry__;
+    bool has__;
+    __okay_map_node() : entry__(), has__(false) {}
+    bool empty() const { return !has__; }
+    explicit operator bool() const { return has__; }
+    K& key() { return entry__.first; }
+    V& mapped() { return entry__.second; }
+};
 template <typename K, typename V, typename C = less<K> >
 class map {
     vector<pair<K, V> > items_;
@@ -123,6 +135,22 @@ public:
         items_.erase(items_.begin() + at);
         return items_.begin() + at;
     }
+    typedef __okay_map_node<K, V> node_type;
+    // extract(key) and insert(node) ([map.modifiers]): the entry taken out, and put back (under a key that may have been
+    // changed). An insert of an empty node or of a key already present does nothing.
+    __okay_map_node<K, V> extract(const K& key) {
+        __okay_map_node<K, V> n;
+        const size_t at = lower(key);
+        if (!found_at(at, key)) return n;
+        n.entry__ = items_[at];
+        n.has__ = true;
+        items_.erase(items_.begin() + at);
+        return n;
+    }
+    void insert(__okay_map_node<K, V>&& n) {
+        if (n.has__) insert(n.entry__);
+        n.has__ = false;
+    }
     pair<K, V>* lower_bound(const K& key) { return items_.begin() + lower(key); }
     const pair<K, V>* lower_bound(const K& key) const { return items_.begin() + lower(key); }
     pair<K, V>* upper_bound(const K& key) {
@@ -134,5 +162,91 @@ public:
     // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
     bool operator==(const map& o) const { return items_ == o.items_; }
     bool operator!=(const map& o) const { return !(*this == o); }
+};
+// std::multimap ([multimap]; Round 33: VsTypes.cpp's multimap<int, int>, JsRuntime.cpp's unordered_multimap): the same
+// sorted vector, where several entries may share a key; a new entry goes after the entries with an equal key, so
+// equal keys keep the order they were inserted in ([associative.reqmts] 9).
+template <typename K, typename V, typename C = less<K> >
+class multimap {
+    vector<pair<K, V> > items_;
+    C cmp_;
+
+    size_t lower(const K& key) const {
+        size_t lo = 0;
+        size_t hi = items_.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (cmp_(items_[mid].first, key)) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+    size_t upper(const K& key) const {
+        size_t lo = 0;
+        size_t hi = items_.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (!cmp_(key, items_[mid].first)) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+public:
+    typedef K key_type;
+    typedef V mapped_type;
+    typedef pair<K, V> value_type;
+    typedef size_t size_type;
+    typedef pair<K, V>* iterator;
+    typedef const pair<K, V>* const_iterator;
+
+    multimap() {}
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    pair<K, V>* begin() { return items_.begin(); }
+    const pair<K, V>* begin() const { return items_.begin(); }
+    pair<K, V>* end() { return items_.end(); }
+    const pair<K, V>* end() const { return items_.end(); }
+    void clear() { items_.clear(); }
+    pair<K, V>* insert(const pair<K, V>& entry) {
+        const size_t at = upper(entry.first);
+        items_.insert(items_.begin() + at, entry);
+        return items_.begin() + at;
+    }
+    pair<K, V>* emplace(const K& key, const V& value) { return insert(pair<K, V>(key, value)); }
+    size_t count(const K& key) const { return upper(key) - lower(key); }
+    pair<K, V>* find(const K& key) {
+        const size_t at = lower(key);
+        return at < upper(key) ? items_.begin() + at : items_.end();
+    }
+    const pair<K, V>* find(const K& key) const {
+        const size_t at = lower(key);
+        return at < upper(key) ? items_.begin() + at : items_.end();
+    }
+    pair<K, V>* lower_bound(const K& key) { return items_.begin() + lower(key); }
+    pair<K, V>* upper_bound(const K& key) { return items_.begin() + upper(key); }
+    pair<pair<K, V>*, pair<K, V>*> equal_range(const K& key) {
+        return pair<pair<K, V>*, pair<K, V>*>(items_.begin() + lower(key), items_.begin() + upper(key));
+    }
+    pair<const pair<K, V>*, const pair<K, V>*> equal_range(const K& key) const {
+        return pair<const pair<K, V>*, const pair<K, V>*>(items_.begin() + lower(key), items_.begin() + upper(key));
+    }
+    pair<K, V>* erase(pair<K, V>* pos) {
+        const size_t at = (size_t)(pos - items_.begin());
+        items_.erase(items_.begin() + at);
+        return items_.begin() + at;
+    }
+    pair<K, V>* erase(pair<K, V>* first, pair<K, V>* last) {
+        const size_t from = (size_t)(first - items_.begin());
+        const size_t n = (size_t)(last - first);
+        for (size_t i = 0; i < n; ++i) items_.erase(items_.begin() + from);
+        return items_.begin() + from;
+    }
+    size_t erase(const K& key) {
+        const size_t from = lower(key);
+        const size_t n = upper(key) - from;
+        for (size_t i = 0; i < n; ++i) items_.erase(items_.begin() + from);
+        return n;
+    }
 };
 }

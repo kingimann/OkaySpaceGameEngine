@@ -142,7 +142,6 @@ jobs:
     needs: build
     runs-on: windows-latest
     timeout-minutes: 120
-    env:
     steps:
       # The runner's git turns LF into CRLF on checkout; the tests compare files byte for byte with what the code
       # writes (docs/engine_api.md, scenes, fixtures), so check out exactly the bytes the Linux build saw.

@@ -4,7 +4,7 @@
 # a bundled .okaymesh asset).
 #
 #   powershell -File tests/export/verify.ps1 -Editor path\to\OkayEngine.exe [-Work dir]
-# The player runtime (OkaySpacePlayer.exe + SDL2.dll) must sit beside the editor.
+# The player runtime (OkaySpacePlayer.exe) must sit beside the editor; SDL2 is gone, so no SDL2.dll ships.
 param([Parameter(Mandatory = $true)][string]$Editor, [string]$Work = "")
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -27,7 +27,7 @@ $rc = Run $Editor @("--build-game", "vs_export.okayscene", "`"$out`"", "--name",
 if ($rc -ne 0) { throw "export failed (exit $rc)" }
 $game = Join-Path $out "VsExport.exe"
 if (-not (Test-Path $game)) { throw "export didn't produce $game" }
-if (-not (Test-Path (Join-Path $out "SDL2.dll"))) { throw "export didn't copy SDL2.dll beside the game" }
+if (Test-Path (Join-Path $out "SDL2.dll")) { throw "export copied SDL2.dll beside the game, but no program uses SDL2 any more" }
 if (-not (Test-Path (Join-Path $out "VsExport_Data/build.json"))) { throw "export didn't write VsExport_Data/build.json (the Folder layout)" }
 
 # Run from elsewhere, so the game can only use what the export embedded.

@@ -54,6 +54,11 @@ TreeRow treeRowPlace(int id, unsigned flags, float h, float arrowEnd, bool* open
         g_active = id;
         if (!leaf && onDbl && g_dblClick) doToggle = true;
     }
+    {   // Tab reaches the row and the arrows walk the rows; Space or Enter opens or closes it, Right opens it, Left closes it
+        int st = 0;
+        const bool act = navRow(id, r.x, r.y, r.w, h, g_theme.radiusSmall, NavKind::Tree, &st);
+        if (!leaf && (act || (st > 0 && !*open) || (st < 0 && *open))) doToggle = true;
+    }
     if (doToggle) { *open = !*open; g_toggledId = id; }
     return r;
 }
@@ -93,6 +98,7 @@ bool treeNodeFramedLook(const char* label, unsigned flags, int id, bool* open, b
     else if (!leaf)   // a chevron in the arrow's place: right when closed, down when open; brighter under the pointer
         chevron(ax + padX + th * 0.5f, cy, std::max(7.0f, th * 0.5f), *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
     drawText(ax + th + padX * (framed ? 3.0f : 2.0f), y + (h - th) * 0.5f, VisLabel(label).b, s, tc);
+    navRowRing(id, x, y, w, h, std::min(g_theme.radiusSmall, h * 0.35f));
     return leaf || *open;
 }
 }
@@ -111,6 +117,10 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) { *open = !*open; g_toggledId = id; } g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    {   // Tab reaches it, the arrows walk to it; Space or Enter opens or closes it, Right opens it, Left closes it
+        int st = 0;
+        if (navRow(id, x, y, w, h, rnd(), NavKind::Tree, &st) || (st > 0 && !*open) || (st < 0 && *open)) { *open = !*open; g_toggledId = id; }
+    }
     // A section header: a raised band with a chevron that turns as it opens, the label in the text colour; hover and press
     // ease in. Designs with accent headers put a short accent bar on its left edge.
     unsigned char st[4];
@@ -121,6 +131,7 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     if (g_theme.accentHeaders) rrect(x, y + 4.0f, 3.0f, h - 8.0f, 1.5f, g_theme.accent);
     chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
     drawText(x + (g_look ? 28.0f : 8.0f + fCharW() * s * 2.0f), y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
+    navRowRing(id, x, y, w, h, rd);
     return *open;
 }
 
@@ -156,6 +167,7 @@ bool TreeNodeEx(const char* label, unsigned flags) {
         if (bullet) fillCircle(cx, y + h * 0.5f, 3.0f, g_theme.textDim);
         else if (!leaf) chevron(cx, y + h * 0.5f, 8.0f, *open, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         drawText(g_look ? ax + 24.0f : ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
+        navRowRing(id, x, y, w, h, g_theme.radiusSmall);
     }
     if (shown && !(flags & TreeNode_NoTreePushOnOpen) && g_treeTop < 16) { g_treeGuide[g_treeTop] = {g_look ? ax + 11.0f : ax + 4.0f + fCharW() * s * 0.5f, y + h}; ++g_treeTop; }
     if (shown && !(flags & TreeNode_NoTreePushOnOpen)) treeIndentPush(16.0f);   // children indent until TreePop()

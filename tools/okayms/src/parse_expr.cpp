@@ -904,6 +904,20 @@ bool Parser::static_type(const Node& node, Type* out) const {
             *out = peel_array(inner);
             return true;
         }
+        if ((node.op == TPlusPlus || node.op == TMinusMinus) && !(inner.base == 3 && inner.pointers == 0)) {
+            // ++x, x++, --x, x-- of a number or a pointer: the operand's type ([expr.post.incr] 1, [expr.pre.incr] 1;
+            // Round 36, `auto dead = it++;` with a pointer iterator, before "cannot work out the type").
+            inner.is_ref = false;
+            if (inner.pointers == 0) inner.is_const = false;
+            *out = inner;
+            return true;
+        }
+        if (node.op == TNot && !(inner.base == 3 && inner.pointers == 0)) {
+            // !x is a bool ([expr.unary.op] 9; Round 36: before it had no type, and `return !x;` for a class result
+            // was not converted by the class's bool constructor).
+            *out = bool_type();
+            return true;
+        }
         if (node.op == TAmp) {
             inner.is_ref = false;
             if (inner.is_array()) {
@@ -935,8 +949,9 @@ bool Parser::static_type(const Node& node, Type* out) const {
         if (node.kids.size() != 2) return false;
         if (node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
             node.op == TGe || node.op == TAndAnd || node.op == TOrOr) {
-            *out = Type{};
-            out->base = 1;
+            // A bool ([expr.rel] 6, [expr.eq] 6, [expr.log.and] 1, [expr.log.or] 1). Before Round 36 an int, so
+            // `return a == b;` and `Kind(a == b)` chose an int overload over a bool one (silent wrong code).
+            *out = bool_type();
             return true;
         }
         Type left;
@@ -988,6 +1003,12 @@ bool Parser::static_type(const Node& node, Type* out) const {
     case Node::Ternary: {
         if (node.kids.size() != 3 || !static_type(node.kids[1], out)) return false;
         if (out->base == 0 && out->pointers == 0) return static_type(node.kids[2], out);  // c ? throw x : y
+        if (node.kids[1].kind == Node::IntLit && node.kids[1].number == 0 && out->pointers == 0) {
+            // c ? nullptr : p (nullptr and 0 are a 0 here): the type is the pointer's ([expr.cond] 7.3; Round 36,
+            // HumanoidActionsRuntime.cpp's `auto* tp = fp ? nullptr : go->GetComponent<T>()`, before an int).
+            Type other;
+            if (static_type(node.kids[2], &other) && other.pointers > 0) *out = other;
+        }
         return true;
     }
     case Node::Call:
@@ -1235,9 +1256,12 @@ bool Parser::parse_new(Node* out) {
         }
     }
     const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
-    bool plain_copy = false;  // new C(other) where C has constructors but no copy constructor: the bytes are copied
+    // new C(other) where C has constructors but no copy or move constructor: the bytes are copied. (A class with a move
+    // constructor and no copy constructor, unique_ptr, is moved by it: before Round 36 its bytes were copied, so
+    // `new (p) T(std::move(x))` in vector::push_back left x owning the object too, and x's destructor deleted it.)
+    bool plain_copy = false;
     if (obj && args.size() == 1 && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) &&
-        !class_has_copy(ty.struct_id)) {
+        !class_has_copy(ty.struct_id) && !has_move_ctor(ty.struct_id)) {
         Type from;
         plain_copy = static_type(args[0], &from) && from.base == 3 && from.pointers == 0 && !from.is_array() &&
                      from.struct_id == ty.struct_id;

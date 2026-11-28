@@ -2955,6 +2955,32 @@ struct Parser {
                 return false;
             }
             const Node& d = defaults[args->size()];
+            if (d.kind == Node::Block && d.text == "tokdefm" && d.kids.size() == 2) {
+                const int owner = static_cast<int>(d.kids[0].number) - 1;
+                bool member = false;
+                if (owner >= 0 && owner < static_cast<int>(structs.size()))
+                    for (const Method& om : structs[static_cast<size_t>(owner)].methods)
+                        if (om.name == tokens[static_cast<size_t>(d.number)].text && om.is_static) member = true;
+                if (!member) {
+                    args->push_back(d.kids[1]);
+                    continue;
+                }
+                const size_t saved = at;
+                const int saved_class = cur_class;
+                at = static_cast<size_t>(d.number);
+                TdefSaves bound = bind_class_tdefs(owner);
+                open_structs.push_back(owner);
+                cur_class = owner;
+                Node made;
+                const bool ok = parse_expr(1, &made);
+                cur_class = saved_class;
+                open_structs.pop_back();
+                unbind_class_tdefs(bound);
+                at = saved;
+                if (!ok) return false;
+                args->push_back(std::move(made));
+                continue;
+            }
             if (d.kind == Node::Block && d.text == "tokdef") {
                 const size_t saved = at;
                 at = static_cast<size_t>(d.number);
@@ -3365,8 +3391,28 @@ struct Parser {
                         } else if (is(TComma) && depth == 0) break;
                         next();
                     }
-                } else if (!parse_expr(1, &def_expr)) {
-                    return false;
+                } else {
+                    // `file = DefaultFile()` in a class: the name may be a static member function, which the class
+                    // does not list until its body ends. The default is read here as before (kids[1]) and its place
+                    // is kept: at a call, a static member of that name in the class is called ([dcl.fct.default] 5;
+                    // Round 36, SaveData.hpp's `Save::SetFloat(k, v)` from NodesWave4.hpp; before "unknown function
+                    // DefaultFile"), otherwise kids[1] is used.
+                    const size_t def_at = at;
+                    const bool member_form = !open_structs.empty() && is(TIdent) && tokens[at + 1].kind == TLParen;
+                    if (!parse_expr(1, &def_expr)) return false;
+                    if (member_form && def_expr.kind == Node::Call && def_expr.text == tokens[def_at].text) {
+                        Node keep;
+                        keep.kind = Node::Block;
+                        keep.text = "tokdefm";
+                        keep.number = def_at;
+                        keep.type = pt;
+                        Node owner;
+                        owner.kind = Node::IntLit;
+                        owner.number = static_cast<uint64_t>(open_structs.back() + 1);
+                        keep.kids.push_back(owner);
+                        keep.kids.push_back(std::move(def_expr));
+                        def_expr = std::move(keep);
+                    }
                 }
                 out->param_defaults.resize(param_index + 1);
                 out->param_defaults[param_index] = std::move(def_expr);
@@ -3637,6 +3683,12 @@ struct Parser {
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
         if (i >= 1 && tokens[i - 1].kind == TIdent && tokens[i - 1].text == "new") return true;  // new S, new S()
+        if (i >= 1 && (tokens[i - 1].kind == TLParen || tokens[i - 1].kind == TComma) && i + 1 < tokens.size() &&
+            (tokens[i + 1].kind == TRParen || tokens[i + 1].kind == TComma))
+            return true;  // f(S) and f(int, S): an unnamed parameter (a class name is no value there; Round 36,
+                          // Interpreter.cpp's `operator()(std::monostate)`)
+        if (i >= 1 && tokens[i - 1].kind == TArrow && i + 1 < tokens.size() && tokens[i + 1].kind == TLBrace)
+            return true;  // [&](int) -> S { ... }: a trailing result type before a body (Round 36, NavGrid3D.hpp)
         if (i >= 2 && tokens[i - 1].kind == TRParen && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen) {
             // new (place) S(args): the '(' of the placement goes back to a `new`
             int depth = 0;
@@ -4884,7 +4936,8 @@ struct Parser {
 
     // A hidden local of type t given `value` before the statement (stmt_pre), destroyed after it when its class has a
     // destructor (stmt_temps). Returns its name.
-    std::string materialize_temp(const Type& t, Node value) {
+    // destroy = false: the object is handed to a callee as a by-value argument, which destroys it (see adjust_args).
+    std::string materialize_temp(const Type& t, Node value, bool destroy = true) {
         Local hidden;
         hidden.name = "__bt" + std::to_string(tmp_count++);
         hidden.type = t;
@@ -4899,7 +4952,8 @@ struct Parser {
         stmt.kind = Node::ExprStmt;
         stmt.kids.push_back(std::move(assign));
         stmt_pre.push_back(std::move(stmt));
-        if (t.base == 3 && t.pointers == 0 && t.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]))
+        if (destroy && t.base == 3 && t.pointers == 0 && t.struct_id >= 0 &&
+            class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]))
             stmt_temps.push_back(Temp{hidden.name, t.struct_id});
         return hidden.name;
     }
@@ -4992,7 +5046,8 @@ struct Parser {
                         return false;
                     }
                     stmt_pre.push_back(std::move(call));
-                    if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
+                    // A by-value parameter is destroyed by the callee (see below); a reference's temporary here.
+                    if (pt.is_ref && class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
                         stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
                     arg = pt.is_ref ? node_addr(node_name(hidden.name)) : node_name(hidden.name);
                     continue;
@@ -5048,7 +5103,7 @@ struct Parser {
                 Type held = pt;
                 held.is_const = false;
                 held.pconst = false;
-                arg = node_name(materialize_temp(held, std::move(arg)));
+                arg = node_name(materialize_temp(held, std::move(arg), false));
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -5071,8 +5126,11 @@ struct Parser {
                 deref.op = TStar;
                 deref.kids.push_back(std::move(call));
                 arg = std::move(deref);
-                if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
-                    stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+                // The copy is not destroyed here: the callee owns a by-value parameter and destroys it when it
+                // returns ([expr.call] 7 leaves the place to the implementation; the Microsoft x64 convention has the
+                // callee destroy it). Before Round 36 the caller destroyed this copy while the callee had worked on a
+                // byte copy of it: what the callee moved out of its parameter (`name(std::move(n))`,
+                // `v.push_back(std::move(p))`) was freed again by the caller, silent wrong code.
             }
         }
         return true;
@@ -7098,9 +7156,26 @@ struct Parser {
                 local.type.pointers -= 1;
                 local.type.is_ref = true;
             }
+            // An unnamed by-value parameter that the function destroys (below) gets a hidden name.
+            if (local.name.empty() && obj_needs_dtor(local.type)) local.name = "__pa" + std::to_string(p);
             place_local(&locals, local);
         }
         fn->nparams = static_cast<int>(fn->params.size());
+        // The function destroys its by-value parameters of a class with a destructor when it returns, latest first
+        // ([expr.call] 7: implementation-defined; the Microsoft x64 convention has the callee destroy them; Round 36).
+        // They are the objects of a scope around the body, so a return and unwinding destroy them too. The caller
+        // hands its copy over and does not destroy it (adjust_args).
+        dscopes.emplace_back();
+        std::vector<Node> param_records;
+        for (size_t p = 0; p < fn->param_names.size(); ++p) {
+            const Local pl = locals[static_cast<size_t>(fn->param_base) + p];  // a copy: eh_push_object adds locals
+            if (pl.type.is_ref || !obj_needs_dtor(pl.type) || pl.type.is_array()) continue;
+            if (!eh_push_object(&param_records, node_addr(node_name(pl.name)), pl.type.struct_id, 0, &locals)) return false;
+            DObj obj;
+            obj.name = pl.name;
+            obj.sid = pl.type.struct_id;
+            dscopes.back().push_back(std::move(obj));
+        }
         if (cls >= 0 && structs[static_cast<size_t>(cls)].local_fn && saved_locals != nullptr &&
             structs[static_cast<size_t>(cls)].name.compare(0, 5, "__lam") != 0) {
             // A class defined in a function body may name the function's static locals ([class.local] 1; Round 30,
@@ -7121,6 +7196,21 @@ struct Parser {
             ok = parse_block(&fn->body, &locals);
         } else {
             ok = parse_special_body(fn, cls, special, implicit, &locals);
+        }
+        if (ok && !dscopes.empty() && !dscopes.back().empty()) {
+            std::vector<Node> param_dtors;
+            ok = dtor_nodes(dscopes.size() - 1, &param_dtors);
+            if (ok && fn->body.kind != Node::Block) {
+                Node wrap;
+                wrap.kind = Node::Block;
+                wrap.kids.push_back(std::move(fn->body));
+                fn->body = std::move(wrap);
+            }
+            if (ok) {
+                fn->body.kids.insert(fn->body.kids.begin(), std::make_move_iterator(param_records.begin()),
+                                     std::make_move_iterator(param_records.end()));
+                for (Node& n : param_dtors) fn->body.kids.push_back(std::move(n));
+            }
         }
         fn->end_line = at > 0 ? tokens[at - 1].line : 0;
         dscopes = saved_dscopes;
@@ -10194,6 +10284,21 @@ struct Parser {
                 if (!parse_template_decl()) return false;
                 continue;
             }
+            if (is(TIdent) && cur().text == "template" && at + 1 < tokens.size() &&
+                tokens[at + 1].kind == TStruct) {
+                // template class X<A>; an explicit instantiation definition ([temp.explicit]; Round 36,
+                // OkayScriptVM.cpp's `template class okayscript::BasicRuntime<okay::vs::VsValue>;`): the class is made
+                // here, with its member functions, as when it is first named. Own difference: members written in the
+                // class stay internal symbols of this file (as for every template instance in okay-ms).
+                next();
+                next();
+                Type inst;
+                bool imp = false;
+                bool exp = false;
+                if (!parse_type(&inst, &imp, &exp)) return false;
+                if (!expect(TSemi, "';'")) return false;
+                continue;
+            }
             if (explicit_member_def_ahead()) {
                 if (!parse_template_decl(true)) return false;
                 continue;
@@ -10242,7 +10347,13 @@ struct Parser {
                 next();
                 next();
                 Declarator decl;
-                if (!parse_param_list(&decl)) return false;
+                // The class's member types are names in the parameter list ([basic.scope.class]; Round 36,
+                // GpuTimer.cpp's `CpuFenceGpuTimer::CpuFenceGpuTimer(Fence fence, Clock clock)`), as for a member
+                // function defined outside the class.
+                const TdefSaves ctor_names = bind_class_tdefs(sid);
+                const bool ctor_params_ok = parse_param_list(&decl);
+                unbind_class_tdefs(ctor_names);
+                if (!ctor_params_ok) return false;
                 StructDef& owner = structs[static_cast<size_t>(sid)];
                 size_t mi = owner.methods.size();
                 for (size_t i = 0; i < owner.methods.size(); ++i) {
@@ -10414,6 +10525,17 @@ struct Parser {
                 if (owner.methods[mi].has_body) {
                     error = "member function " + mname + " is defined twice";
                     return false;
+                }
+                if (mname == "operator=" && is(TAssign) && at + 2 < tokens.size() && tokens[at + 1].kind == TDefault &&
+                    tokens[at + 2].kind == TSemi) {
+                    // C& C::operator=(C&&) noexcept = default; outside the class ([dcl.fct.def.default] 5; Round 36,
+                    // WavDecoder.cpp): the assignment the compiler makes, as for `= default` in the class: the method is
+                    // marked implicit, so an assignment copies member by member (operator_binary) and nothing calls it.
+                    owner.methods[mi].implicit = true;
+                    next();
+                    next();
+                    next();
+                    continue;
                 }
                 owner.methods[mi].has_body = true;
                 owner.methods[mi].out_of_class = !written_inline(decl_begin);

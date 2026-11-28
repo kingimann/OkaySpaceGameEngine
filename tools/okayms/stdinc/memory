@@ -18,6 +18,9 @@
 #include <type_traits>
 #include <utility>
 namespace std {
+// addressof ([specialized.addressof]): the address of an object even when its class has an operator& (Round 36,
+// Jobs.hpp's ParallelFor). Own version: written as &r, so a class that overloads unary & is not supported here.
+template <typename T> T* addressof(T& r) { return &r; }
 template <typename T>
 class unique_ptr {
     T* p_;
@@ -27,6 +30,9 @@ public:
     unique_ptr() : p_(0) {}
     unique_ptr(T* p) : p_(p) {}
     unique_ptr(unique_ptr&& other) : p_(other.p_) { other.p_ = 0; }
+    // From a unique_ptr of a derived class ([unique.ptr.single.ctor] 18): it takes over the object (Round 36,
+    // NodeGraph::Add's `AddNode(std::make_unique<T>(...))` with AddNode taking unique_ptr<VsNode>).
+    template <typename U> unique_ptr(unique_ptr<U>&& other) : p_(other.release()) {}
     ~unique_ptr() {
         if (p_) delete p_;
     }
@@ -37,6 +43,10 @@ public:
             other.p_ = 0;
             if (old) delete old;
         }
+        return *this;
+    }
+    template <typename U> unique_ptr& operator=(unique_ptr<U>&& other) {
+        reset(other.release());
         return *this;
     }
     T* get() const { return p_; }

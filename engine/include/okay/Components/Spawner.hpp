@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Random.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -60,7 +61,7 @@ public:
         m_wavesDone = 0; m_total = 0;
         m_tag = "spawn:" + (gameObject ? gameObject->name : std::string("?"));
         Vec3 p = transform ? transform->Position() : Vec3{0, 0, 0};
-        m_seed = (uint32_t)(std::fabs(p.x) * 73856093.0f + std::fabs(p.z) * 19349663.0f) + 7u;
+        m_seed = Random::PositionSeed(p.x, p.z, 7u);   // defined at any distance (#888 F52)
         if (deactivateTemplate) if (GameObject* t = Template()) if (t != gameObject) t->active = false;
     }
 

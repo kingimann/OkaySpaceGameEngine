@@ -187,6 +187,7 @@ private:
         if (preview_) return preview_;
         GameObject* p = s.CreateGameObject("BlockPreview");
         if (!p) return nullptr;
+        p->transient = true;   // the ghost is runtime-only: never saved, so a load does not leave one behind (#888 F54)
         p->tag = "BlockPreview";        // NOT blockTag → never removable or counted
         auto* mr = p->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Cube();

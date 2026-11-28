@@ -169,5 +169,15 @@ int main() {
         CHECK(sc->VM()->GetGlobal("dropped").AsString() == "sword");
     }
 
+    // ---- Count past INT_MAX across stacks (#888 F8): it summed into an int, so a full bag of gold read negative ----
+    {
+        Scene s("big"); auto* inv = s.CreateGameObject("P")->AddComponent<Inventory>();
+        inv->capacity = 3; inv->maxStack = 0;           // no stack limit: each stack holds up to INT_MAX
+        CHECK(inv->Add("gold", INT_MAX));
+        CHECK(inv->Add("gold", 10));                     // a second stack
+        CHECK(inv->Count("gold") == INT_MAX);            // held at the largest int, never negative
+        CHECK(inv->Has("gold", 1) && inv->Has("gold", INT_MAX));
+    }
+
     TEST_MAIN_RESULT();
 }

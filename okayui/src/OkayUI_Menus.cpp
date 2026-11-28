@@ -96,7 +96,11 @@ bool BeginMenuBar() {
         place(bw, h, x, y);
     }
     barFrame();
-    g_curBar = ((unsigned)(int)std::floor(x) * 73856093u) ^ ((unsigned)(int)std::floor(y) * 19349663u) ^ 0x6ba5u;
+    {   // the bar's id from where it is drawn; a far-away place (a hidden window lays out at 1e30) is clamped first, because
+        // turning a float larger than any int into an int is undefined (UBSan: "1e+30 is outside the range of ... 'int'")
+        const auto cell = [](float v) { return (unsigned)(int)std::floor(std::fmax(-1.0e9f, std::fmin(1.0e9f, v))); };
+        g_curBar = (cell(x) * 73856093u) ^ (cell(y) * 19349663u) ^ 0x6ba5u;
+    }
     {   // Alt tapped alone: open the first menu of the first bar (Windows' menu key); Alt again or Escape closes it
         bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown || g_in.ctrl || g_in.shift
                   || g_in.enter || g_in.escape || g_in.up || g_in.down || g_in.left || g_in.right || g_in.backspace || g_in.del || (g_in.text && *g_in.text);
@@ -656,6 +660,7 @@ void CloseCurrentPopup() {
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
 // drawing the background using last frame's measured height. Returns true if open.
 bool ui_core::beginPopupBody(int id) {
+    clearNextWindowData();   // a popup uses up what SetNextWindow* set before it, open or not: it must not move or size the next window
     // Depth guard first: past the popup-stack capacity the parent layout cannot
     // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
     // state that was never saved and stomp another popup's measured height.
@@ -762,9 +767,7 @@ void EndPopup() {
 bool BeginPopup(const char* id) {
     const int pid = hashLabel(id);
     if (id) if (PopupSlot* p = popupSlot(pid, false); p && p->open && !p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", id);   // (opened by id: the name for IsPopupOpen)
-    const bool r = beginPopupBody(pid);
-    if (!r) { g_nextWinSize.set = false; g_nextWinPos.set = false; }   // used up even when it is not open (Dear ImGui's rule; see BeginPopupModal)
-    return r;
+    return beginPopupBody(pid);   // (which uses up the SetNextWindow* calls made for it, open or not: Dear ImGui's rule)
 }
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
@@ -797,8 +800,8 @@ bool BeginPopupModal(const char* name, bool* open) {
     const int id = hashLabel(name);
     PopupSlot* p = popupSlot(id, false);
     // Not open: the SetNextWindow* calls made for it are used up all the same, as Dear ImGui's BeginPopupModal does; they reached the
-    // next modal instead (the launcher's closed New Project dialog left 820 x 680 for "Close OkaySpace?").
-    if (!p || !p->open) { if (open) *open = false; g_nextWinSize.set = false; g_nextWinPos.set = false; return false; }
+    // next modal instead (the launcher's closed New Project dialog left 820 x 680 for "Close OkaySpace?", and for the corner toast).
+    if (!p || !p->open) { clearNextWindowData(); if (open) *open = false; return false; }
     p->modal = true;
     if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
     if (g_modalAutoFit) {

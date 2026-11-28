@@ -361,6 +361,6 @@ Back to the [code index](../code_index.md). 31 headers, 268 names.
 
 ## `engine/include/okay/Platform/Workshop.hpp`
 
-- `WorkshopItem` struct, line 26
-- `WorkshopReview` struct, line 43
-- `Workshop` class, line 51
+- `WorkshopItem` struct, line 29
+- `WorkshopReview` struct, line 46
+- `Workshop` class, line 54

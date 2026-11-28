@@ -236,6 +236,9 @@ public:
     // here instead of throwing out_of_range).
     string(const string& other, size_t pos, size_t n = npos) : data_(0), size_(0), cap_(0) { assign(other, pos, n); }
     explicit string(string_view v) : data_(0), size_(0), cap_(0) { assign(v.data(), v.size()); }
+    // [string.cons] 4: the part [pos, pos + n) of a string_view (Round 35: with `explicit` constructors left out of
+    // implicit conversions, these string_view members are needed where a string_view was made into a string before).
+    string(string_view v, size_t pos, size_t n) : data_(0), size_(0), cap_(0) { assign(v, pos, n); }
     // The characters of [first, last) for any input iterator ([string.cons] 12), e.g. istreambuf_iterator.
     template <typename It>
     string(It first, It last) : data_(0), size_(0), cap_(0) {
@@ -300,6 +303,12 @@ public:
     }
     string& assign(const char* s) { return assign(s, length_of(s)); }
     string& assign(const string& other) { return assign(other.data_, other.size_); }
+    string& assign(string_view v) { return assign(v.data(), v.size()); }
+    string& assign(string_view v, size_t pos, size_t n = npos) {
+        if (pos > v.size()) pos = v.size();
+        if (n > v.size() - pos) n = v.size() - pos;
+        return assign(v.data() + pos, n);
+    }
     string& assign(const string& other, size_t pos, size_t n = npos) {
         if (pos > other.size_) pos = other.size_;
         if (n > other.size_ - pos) n = other.size_ - pos;
@@ -546,6 +555,7 @@ public:
     }
     string& insert(size_t pos, const char* s) { return insert(pos, s, length_of(s)); }
     string& insert(size_t pos, const string& s) { return insert(pos, s.data_, s.size_); }
+    string& insert(size_t pos, string_view v) { return insert(pos, v.data(), v.size()); }
     // insert(p, c) ([string.insert] 11; Round 33, JsLibNumber.cpp's d.insert(d.begin(), '1')): c before the character p
     // points at; the result points at the inserted character.
     char* insert(const char* p, char c) {
@@ -575,6 +585,7 @@ public:
     }
     string& replace(size_t pos, size_t n, const char* s) { return replace(pos, n, s, length_of(s)); }
     string& replace(size_t pos, size_t n, const string& s) { return replace(pos, n, s.data_, s.size_); }
+    string& replace(size_t pos, size_t n, string_view v) { return replace(pos, n, v.data(), v.size()); }
     string& replace(size_t pos, size_t n, size_t count, char c) {
         string run;
         run.append(count, c);

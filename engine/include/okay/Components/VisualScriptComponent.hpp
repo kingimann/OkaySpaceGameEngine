@@ -34,7 +34,13 @@ public:
     /// The .okayvs file this graph came from ("" = embedded text only). Saving
     /// the graph in the editor reloads every object that uses the file.
     const std::string& Path() const { return m_path; }
-    void SetPath(const std::string& p) { m_path = p; if (m_graph) m_graph->debugKey = p; }
+    void SetPath(const std::string& p) { m_path = p; m_scenePath.clear(); if (m_graph) m_graph->debugKey = p; }
+    /// The loader's form: `resolved` is the file opened (Path()), `written` the text the scene file had, e.g.
+    /// "movement.okayvs" next to the scene. Saving writes `written` back while the component still uses that file, so a
+    /// scene does not take this machine's full path on its first save (#888 F42).
+    void SetPathFromScene(const std::string& written, const std::string& resolved) { SetPath(resolved); m_scenePath = written; }
+    /// What a scene file stores for this graph: the text it was loaded with while Path() is still that file, else Path().
+    const std::string& ScenePath() const { return m_scenePath.empty() ? m_path : m_scenePath; }
     /// Re-read the file (keeps variables). False if there's no file or it doesn't parse.
     bool Reload(std::string* error = nullptr);
     /// The last load error ("" = the graph loaded fine).
@@ -219,6 +225,7 @@ private:
     vs::VsContext m_ctx;
     std::string m_source;
     std::string m_path;
+    std::string m_scenePath;   // the scene file's text for m_path ("" = write m_path); see ScenePath
     std::string m_error;
 };
 

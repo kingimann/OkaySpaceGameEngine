@@ -79,17 +79,46 @@ const char* kObjNames[] = {"talk", "collect", "kill", "reach", "custom"};
 const char* kObjLabels[] = {"Talk to", "Collect", "Kill", "Reach", "Custom"};
 const char* kStatusNames[] = {"inactive", "active", "completed", "failed"};
 
+// A list of quest ids as one text: "a,b,c". An id may hold any text (#888 F53: "Find the sword" came back as
+// "Findthesword"), so inside an item a comma or a backslash gets a backslash before it, and so does a space at either
+// end of the item. Split trims plain spaces around each item, as files written before had "a, b"; a backslash before
+// any other character is kept as it is (files written before never escaped anything).
 std::string Join(const std::vector<std::string>& v) {
     std::string s;
-    for (const auto& x : v) { if (!s.empty()) s += ','; s += x; }
+    bool first = true;
+    for (const auto& x : v) {
+        if (!first) s += ',';
+        first = false;
+        for (std::size_t i = 0; i < x.size(); ++i) {
+            const char c = x[i];
+            if (c == ',' || c == '\\' || (c == ' ' && (i == 0 || i + 1 == x.size()))) s += '\\';
+            s += c;
+        }
+    }
     return s;
 }
 std::vector<std::string> Split(const std::string& s) {
     std::vector<std::string> out;
     std::string cur;
-    for (char c : s + ",") {
-        if (c == ',') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
-        else if (c != ' ') cur += c;
+    std::size_t keep = 0;   // cur's length up to its last character that was not a plain space (escaped spaces count)
+    bool started = false;   // a non-space (or escaped) character was seen in this item
+    for (std::size_t i = 0; i <= s.size(); ++i) {
+        const char c = i < s.size() ? s[i] : ',';   // the end closes the last item
+        if (c == ',') {
+            cur.resize(keep);
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear(); keep = 0; started = false;
+            continue;
+        }
+        if (c == '\\' && i + 1 < s.size() && (s[i + 1] == ',' || s[i + 1] == '\\' || s[i + 1] == ' ')) {
+            cur += s[++i];
+            keep = cur.size(); started = true;
+            continue;
+        }
+        if (c == ' ' && !started) continue;   // plain spaces before the item
+        cur += c;
+        if (c != ' ') keep = cur.size();
+        started = true;
     }
     return out;
 }

@@ -105,6 +105,7 @@ bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* e
     }
     std::stringstream ss;
     ss << f.rdbuf();
+    if (path != m_path) m_scenePath.clear();   // another file: the scene's text no longer names it
     m_path = path;
     return LoadFromText(ss.str(), error);
 }

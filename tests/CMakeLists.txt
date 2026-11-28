@@ -112,6 +112,9 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/run_windows_tests.py runs the cross-compiled tests on the Windows runner; its self-test includes printing a
+    # test's non-ASCII output to a cp1252 console without stopping the run.
+    add_test(NAME run_windows_tests_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/run_windows_tests.py --self-test)
     # SDL use may only go down: fails and lists the words when a file uses more SDL than tests/data/sdl_ratchet.json
     # (docs/platform/platform_layer.md). Reads the working tree, so it sees an uncommitted new SDL call too.
     add_test(NAME sdl_ratchet COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/sdl_inventory.py --ratchet)
@@ -5101,6 +5104,13 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+# asset_streaming_stress holds streaming work per frame to a few-millisecond budget. On Linux it measures the main thread's
+# CPU time, so sharing the machine does not matter; Windows has no fine thread-CPU clock and it measures wall time, which
+# counts the moments the OS gave the CPU to the other tests (it failed one of its 620 checks on the Windows runner while
+# sharing it, 2026-11-27). There it runs alone, as the timing tests above do.
+if(WIN32 AND TEST asset_streaming_stress)
+    set_tests_properties(asset_streaming_stress PROPERTIES RUN_SERIAL TRUE)
+endif()
 
 # Typed actions, composites, processors and control schemes (Input/ActionSet.hpp), with the real Input fed by hand; pictures with OKAY_SHOT_DIR.
 add_executable(test_action_set test_action_set.cpp)

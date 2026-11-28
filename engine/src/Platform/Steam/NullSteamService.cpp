@@ -365,7 +365,7 @@ private:
     std::map<std::string, std::map<std::string, std::int32_t>> m_leaderboards;
     std::unordered_map<std::string, std::string> m_cloud;
     std::map<std::uint64_t, WorkshopItem> m_workshop;
-    std::uint64_t m_nextWorkshopId = 1000;
+    std::uint64_t m_nextWorkshopId = 2847193562ull;   // ten digits, like a real Workshop id (scripts must keep them exact)
 };
 
 #if !defined(OKAY_WITH_STEAM)

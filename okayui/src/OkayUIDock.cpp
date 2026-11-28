@@ -615,16 +615,10 @@ Rect GetDockStripRect(int leaf) {
 bool DockAdoptTitle(const char* title) {
     if (!title || !*title) return false;
     DockLayout& L = C().layout;
-    if (L.Contains(title)) return true;
-    if (ReturnHome(C(), title)) return true;   // a closed tab's window opened again: its ordinary Begin docks it where it was
-    const char* key = std::strstr(title, "###");
-    if (!key) return false;
-    const std::size_t keyLen = std::strlen(key);
-    for (const std::string& n : L.Windows()) {
-        const std::size_t at = n.find("###");
-        if (at != std::string::npos && n.size() - at == keyLen && n.compare(at, keyLen, key) == 0) return L.Rename(n, title);
-    }
-    return false;
+    const std::string have = L.SameWindowName(title);   // the title itself, or the same "###" id under its earlier text
+    if (have == title) return true;
+    if (!have.empty()) return L.Rename(have, title);
+    return ReturnHome(C(), title);   // a closed tab's window opened again: its ordinary Begin docks it where it was
 }
 bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
 bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)

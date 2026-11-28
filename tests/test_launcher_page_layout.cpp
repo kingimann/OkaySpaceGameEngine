@@ -375,6 +375,62 @@ void CheckChatTop(float winW) {
     }
 }
 
+
+// The Play page (launcher/main.cpp, tab 1): the header toolbar, the "Continue playing" banner, the tiles and the list
+// columns at every window size, including the launcher's default 1600 x 1135 and a narrow window.
+void CheckPlayPage(float winW) {
+    const float pw = PageW(winW);
+    // Header: search, sort, the List / Grid toggle, Folder, Refresh.
+    CheckToolbar(pw, {"Favourites first", "List  Grid", "Folder", "Refresh"});
+    // Shelves.
+    std::vector<std::string> shelves;
+    for (int i = 0; i < (int)L::PlayShelf::Count; ++i) shelves.push_back(std::string(L::PlayShelfName((L::PlayShelf)i)) + " 12");
+    CheckChips(pw, shelves);
+    const float btnH = LineH() + Px(18.0f), pad = Px(22.0f), gap = Px(10.0f);
+    const float playW = L::ButtonW(TextW("Play"), Px(30.0f), Px(150.0f)), moreW = L::ButtonW(TextW("Details"), Px(16.0f), Px(96.0f));
+    for (float heroW : {pw, pw * 0.6f, 300.0f}) {   // the whole page, beside the details sheet, and a narrow page
+        const L::PlayHero h = L::LayoutPlayHero(heroW, Px(190.0f), pad, LineH(), LineH() * 1.7f, playW, moreW, btnH, gap, Px(560.0f));
+        for (const L::Rect& r : {h.kicker, h.title, h.meta, h.play}) CHECK(L::Inside(r, h.hero));
+        CHECK(NoOverlaps({h.kicker, h.title, h.meta, h.play}));
+        CHECK(h.play.w >= TextW("Play") + Px(8.0f));
+        if (h.more.w > 0) { CHECK(L::Inside(h.more, h.hero)); CHECK(!L::Overlaps(h.more, h.play)); CHECK(!L::Overlaps(h.more, h.meta)); }
+        if (!h.artFull) { CHECK(h.title.R() <= h.art.x + 0.5f); CHECK(h.play.R() <= h.art.x + 0.5f || h.more.w == 0); }
+        CHECK(h.artFull == (heroW < Px(560.0f)));
+    }
+    // Tiles: 2 to 6 a row; everything inside its tile.
+    const L::Grid g = L::FitGrid(pw, Px(200.0f), Px(14.0f), 6);
+    CHECK(g.cols >= 1 && g.cols <= 6);
+    CHECK(g.cols * g.cardW + (g.cols - 1) * g.gap <= pw + 0.5f);
+    const L::PlayTile t = L::LayoutPlayTile(g.cardW, LineH(), Px(12.0f), Px(54.0f), Px(28.0f));
+    for (const L::Rect& r : {t.cover, t.play, t.star, t.title, t.meta}) CHECK(L::Inside(r, t.tile));
+    CHECK(L::Inside(t.play, t.cover) && L::Inside(t.star, t.cover));
+    CHECK(!L::Overlaps(t.play, t.star));
+    CHECK(NoOverlaps({t.cover, t.title, t.meta}));
+    // List columns: the name keeps its room, the columns never overlap, a narrow list drops columns.
+    // The list gets the whole page, or what the details sheet leaves (launcher/main.cpp: the sheet is 27% of the page, 290..360 px,
+    // beside the list only from 900 px).
+    const float sheetW = std::clamp(pw * 0.27f, Px(290.0f), Px(360.0f));
+    const L::SidePanel side = L::LayoutSidePanel(pw, sheetW, Px(16.0f), Px(900.0f), false, false);
+    CHECK(side.contentW > 0.0f && (side.shown || side.contentW == pw));
+    for (float lw : {pw, side.contentW}) {
+        const float rowH = Px(60.0f);
+        const float lastW = L::ButtonW(TextW("Last played"), 0, Px(96.0f)), timeW = L::ButtonW(TextW("Play time"), 0, Px(92.0f));
+        const float sizeW = L::ButtonW(TextW("999.9 MB"), 0, Px(76.0f)), actW = Px(40.0f) + gap + playW * 0.6f;
+        const L::PlayColumns c = L::LayoutPlayColumns(lw, rowH, Px(12.0f), Px(42.0f), lastW, timeW, sizeW, actW, Px(150.0f), gap, playW * 0.6f);
+        const L::Rect row{0, 0, lw, rowH};
+        std::vector<L::Rect> cols{c.icon, c.name, c.actions};
+        if (c.showLast) cols.push_back(c.last);
+        if (c.showTime) cols.push_back(c.time);
+        if (c.showSize) cols.push_back(c.size);
+        CHECK(NoOverlaps(cols));
+        for (const L::Rect& r : cols) CHECK(L::Inside(r, row) || r.w == 0);
+        CHECK(c.name.w >= Px(150.0f) || (!c.showLast && c.narrowActions && c.name.w >= Px(60.0f)));   // a very narrow row: Play only, the name keeps some room
+        CHECK(!c.showSize || c.showTime); CHECK(!c.showTime || c.showLast);   // dropped from the right: Size, Play time, Last played
+        CHECK(!c.narrowActions || !c.showLast);                                // the buttons shrink only once every column is gone
+        if (lw >= Px(1000.0f)) CHECK(c.showSize && !c.narrowActions);
+    }
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -397,6 +453,7 @@ void RunAll() {
         CheckMarketFold(s[0]);
         CheckChatTop(s[0]);
     }
+    for (float w : {720.0f, 960.0f, 1280.0f, 1600.0f, 1920.0f}) CheckPlayPage(w);   // 1600: the launcher's default window; 720: a narrow one
 }
 
 }  // namespace
@@ -446,6 +503,49 @@ int main() {
             q.view = 2; CHECK(L::MarketMatches(q, 0, 0.0f, true, false, "x")); CHECK(!L::MarketMatches(q, 0, 0.0f, false, true, "x"));
             q.Open(42); CHECK(q.detail == 42); q.Back(); CHECK(q.detail == 0); CHECK(q.view == 2);   // Back keeps the view and filters
             CHECK(L::ShortCount(980) == "980"); CHECK(L::ShortCount(1530) == "1.5k"); CHECK(L::ShortCount(42100) == "42k"); CHECK(L::ShortCount(1200000) == "1.2M");
+        }
+        // The Play page's library: shelves, search and the four persisted sorts.
+        {
+            std::vector<L::PlayGame> gs(5);
+            gs[0].name = "Orbit Hopper"; gs[0].path = "/g/orbit"; gs[0].plays = 2; gs[0].recentRank = 1; gs[0].lastPlayed = 100;
+            gs[1].name = "asteroids";    gs[1].path = "/g/ast";   gs[1].favorite = true; gs[1].installed = true;
+            gs[2].name = "Neon Drift";   gs[2].path = "/c/neon";  gs[2].plays = 9; gs[2].recentRank = 0; gs[2].lastPlayed = 200; gs[2].installed = true;
+            gs[3].name = "Zed";          gs[3].path = "/g/zed";   gs[3].favorite = true; gs[3].plays = 1; gs[3].lastPlayed = 50;
+            gs[4].name = "Paper Planes"; gs[4].path = "/w/pp";    gs[4].web = true;
+            auto names = [&](const std::vector<std::size_t>& o) { std::string r; for (std::size_t i : o) r += gs[i].name + ","; return r; };
+            CHECK(names(L::PlayOrder(gs, 0, L::PlayShelf::All, "")) == "asteroids,Zed,Neon Drift,Orbit Hopper,Paper Planes,");   // favourites first, then A-Z (case ignored)
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::All, "")) == "asteroids,Neon Drift,Orbit Hopper,Paper Planes,Zed,");
+            CHECK(names(L::PlayOrder(gs, 2, L::PlayShelf::All, "")) == "Neon Drift,Orbit Hopper,Zed,asteroids,Paper Planes,");   // the recent list, then launch time, then A-Z
+            CHECK(names(L::PlayOrder(gs, 3, L::PlayShelf::All, "")) == "Neon Drift,Orbit Hopper,Zed,asteroids,Paper Planes,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Favorites, "")) == "asteroids,Zed,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Recent, "")) == "Neon Drift,Orbit Hopper,Zed,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Installed, "")) == "asteroids,Neon Drift,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Yours, "")) == "Orbit Hopper,Zed,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Web, "")) == "Paper Planes,");
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::All, "o")) == "asteroids,Neon Drift,Orbit Hopper,");   // search: name, any case
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::All, "ORBIT")).empty());   // the needle is lower case already
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::All, "zzz")).empty());
+            gs[0].inCollection = false;                                              // a collection filter that leaves it out
+            CHECK(names(L::PlayOrder(gs, 1, L::PlayShelf::Recent, "")) == "Neon Drift,Zed,");
+            CHECK(L::PlayShelfCount(gs, L::PlayShelf::All) == 4);
+            gs[0].inCollection = true;
+            CHECK(L::PlayShelfCount(gs, L::PlayShelf::All) == 5 && L::PlayShelfCount(gs, L::PlayShelf::Favorites) == 2);
+            CHECK(L::PlayContinueIndex(gs) == 2);                                    // played last
+            gs[2].recentRank = L::kPlayNotRecent; gs[0].recentRank = L::kPlayNotRecent;
+            CHECK(L::PlayContinueIndex(gs) == 2);                                    // no recent list: the newest launch
+            CHECK(L::PlayContinueIndex(std::vector<L::PlayGame>(gs.begin() + 4, gs.end())) == -1);   // a web game is never "continued"
+            CHECK(L::PlayContinueIndex({}) == -1);
+            // Arrow keys in a grid of 7 with 3 a row, and in the list.
+            CHECK(L::PlayKeyMove(-1, 7, 3, 1, 0) == 0);                              // nothing selected: the first
+            CHECK(L::PlayKeyMove(0, 7, 3, 1, 0) == 1 && L::PlayKeyMove(0, 7, 3, -1, 0) == 0);
+            CHECK(L::PlayKeyMove(1, 7, 3, 0, 1) == 4 && L::PlayKeyMove(4, 7, 3, 0, 1) == 4);   // no tile under 4 in the last row: stays
+            CHECK(L::PlayKeyMove(5, 7, 3, 0, -1) == 2 && L::PlayKeyMove(2, 7, 3, 0, -1) == 2);
+            CHECK(L::PlayKeyMove(6, 7, 3, 1, 0) == 6);
+            CHECK(L::PlayKeyMove(3, 7, 1, 0, 1) == 4 && L::PlayKeyMove(3, 7, 1, 0, -1) == 2);
+            CHECK(L::PlayKeyMove(3, 0, 3, 1, 0) == -1);
+            CHECK(L::PlaytimeText(0).empty()); CHECK(L::PlaytimeText(30) == "Under a minute");
+            CHECK(L::PlaytimeText(45 * 60) == "45 min"); CHECK(L::PlaytimeText(3 * 3600 + 20 * 60 + 5) == "3 h 20 min");
+            CHECK(L::PlaytimeText(2 * 3600) == "2 h"); CHECK(L::PlaytimeText(150 * 3600 + 60) == "150 h");
         }
         // The Notifications page's filters and empty state.
         CHECK(L::NotifMatches(0, 2, false));                                   // All: everything

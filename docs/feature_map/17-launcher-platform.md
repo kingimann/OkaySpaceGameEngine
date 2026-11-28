@@ -282,23 +282,24 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.13 Play page: library, web games, collections, playtime
 - **System:** Launcher
-- **What:** The Play page: the official game card, the games you built or downloaded, HTML games that open in the browser, Steam-style collections, cover art and playtime.
+- **What:** The Play page: a game library of the games you exported or installed and HTML games, with a "Continue playing" banner, covers, shelves, collections, a details sheet and playtime. Only exported games play (owner, 2026-11-28): projects open in the editor from Create.
 - **Parts:**
-  - 17.13.1 Library and Play - `launcher/main.cpp` (tab 1, L18720) - finds games in the launcher's games and community folders and extra Game libraries and runs them through `OkaySpacePlayer.exe` or their own exe
-  - 17.13.2 Web games - `launcher/main.cpp` (L18728) - a folder with `index.html` or a loose `.html` plays in the default browser
-  - 17.13.3 Collections and cover art - `launcher/main.cpp` (L1922, L2974) - library categories; optional per-game cover image
-  - 17.13.4 Pre-launch integrity check - `launcher/main.cpp` (L1181) - checks games that carry a `game.okayconfig` against `Data/manifest.json` when anti-cheat is on (39.4)
-  - 17.13.5 Community page and Downloads - `launcher/main.cpp` (tab 2 L19208, tab 10 L24597) - the community folder's shared scenes and games with a hero card and Publish to Marketplace; the download list
-- **Code:** `launcher/main.cpp`
-- **API:** launcher Play page; `Settings > Game libraries`
-- **Editor:** none
+  - 17.13.1 Library and Play - `launcher/main.cpp` (tab 1) - the header (title, game count, search, sort, List / Grid, Folder, Refresh); the shelves All games / Favourites / Recently played / Installed / Your games / Web games with counts (`play_shelf` in `launcher.cfg`); a "Continue playing" banner for the last game played with a big Play (hidden while searching, on another shelf or in a collection); grid tiles (16:10 cover, hover lifts the tile and shows a round Play, favourite star) and a list with columns Name, Last played, Play time, Size (a narrow list drops Size, then Play time, then Last played, then the star); a details sheet beside the list for the selected game (art, Play, favourite, Open folder, last played, play time, launches, size on disk, version from `build.json`, collections, location, Remove for installed games), a popup on a narrow page; right-click menu (Play, favourite, Details, Collections, Open folder, Copy path, Publish to Marketplace, Forget play history, Remove from library for installed games); keyboard: arrows move, Enter plays, Escape lets go; empty states per shelf. Sort (`play_sort`), view (`play_view`), favourites, recent and stats are kept as before. Layout and rules: `launcher/PageLayout.hpp` (`PlayOrder`, `PlayOnShelf`, `PlaySortsBefore`, `PlayContinueIndex`, `PlayKeyMove`, `PlaytimeText`, `LayoutPlayHero`, `LayoutPlayTile`, `LayoutPlayColumns`); covers and the no-cover art (the game's own colour, two soft circles, its initials): `launcher/CoverArtAvatars.cpp` (`DrawGameArt`, `DrawCoverFill`, `DrawCoverPlaceholder`)
+  - 17.13.2 Web games - `launcher/main.cpp` (tab 1) - a folder with `index.html` or a loose `.html` is listed with a WEB tag and plays in the default browser
+  - 17.13.3 Collections and cover art - `launcher/main.cpp` - library categories (a chip row: All collections, one per collection, + New collection, Delete); optional per-game cover image `cover.png` / `cover.jpg` beside the scene or, for an export, beside its program
+  - 17.13.4 Pre-launch integrity check - `launcher/main.cpp` - checks games that carry a `game.okayconfig` against `Data/manifest.json` when anti-cheat is on (39.4)
+  - 17.13.5 Community page and Downloads - `launcher/main.cpp` (tab 2, tab 10) - the community folder's shared scenes and games with a hero card and Publish to Marketplace; the download list; Play there is only for exported games
+  - 17.13.6 Exported games only - `shared/LibraryScan.hpp` (`IsExportedGame`, `ExportedGameRoot`, `NotExportedMessage`), `launcher/main.cpp` (`IsExportedGame` cached, `PlayerMayRun`, `Launch`), `launcher/Multiplayer.cpp` - owner 2026-11-28: "i dont want users to be able to play anything that wasnt exported". An exported game is what the editor's Build writes (`editor/BuildGame.cpp`): the game's program at the root and `game.okayconfig` with the scenes beside it, in `Data/` or in `<Game>_Data/`; a folder with an `.okayproj` never counts. Every way the launcher starts the player asks it (Play page, Continue playing, Community, a dropped `.okayscene`, multiplayer join and matchmaking); anything else gets "Export this project from the editor (Build) to play it." The Create page's "Play (no export)" is gone. Old favourites, recent entries and stats of projects stay saved and are not shown
+- **Code:** `launcher/main.cpp`, `launcher/PageLayout.hpp`, `launcher/CoverArtAvatars.cpp`, `shared/LibraryScan.hpp`
+- **API:** launcher Play page; `Settings > Game libraries`; `launcher.cfg` keys `play_sort`, `play_view`, `play_shelf`, `fav`, `recent`, `stat`
+- **Editor:** File > Build Game makes what the Play page lists
 - **Docs:** `docs/release/packaging.md`
-- **Tests:** none
-- **Status:** Works - shipping page; untested
-- **Open:** none recorded
+- **Tests:** `library_scan` (exported or not: the three Build layouts, an export inside its project, a project folder, an `.okayproj`, a project scene, a data folder with no program, a project with a copied config and program, a loose scene), `launcher_page_layout` (Play: the four sorts, every shelf, search, collection filter, Continue playing, arrow keys, play time text; header, banner, tiles and list columns at 720, 960, 1280, 1600 and 1920 px wide, UI scale 1 and 1.5)
+- **Status:** Works - the page and the rules are tested headless and the page was looked at under Xvfb on Linux; not run on Windows
+- **Open:** Remove from library is only for installed games (community folder): your own exports are not deleted from here; sizes are walked on the UI thread the first time a game shows (as the Community page does)
 - **Related:** 17.14, 17.6, 39.4, 18.6
-- **Words:** Play page, library, games, collections, cover art, web games, index.html, Game libraries, playtime
-- **Seen as:** my built game doesn't show in Play; a game starts the wrong player; HTML game opens in the browser
+- **Words:** Play page, library, games, collections, cover art, web games, index.html, Game libraries, playtime, continue playing, shelves, favourites, details, exported game, Build, IsExportedGame
+- **Seen as:** my built game doesn't show in Play; a game starts the wrong player; HTML game opens in the browser; my project is not on Play; "Export this project from the editor (Build) to play it."
 - **Ask me like:** "show my exported game in the Play list"
 
 ### 17.14 Official game: install, update, publish
@@ -380,7 +381,8 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput (hot-plug events and timed rumble: `Win32XInput.hpp`), Raw Input HID pads; compiles under MinGW, never run
   - 17.17.5 Build - `cmake/OkayPlatform.cmake` - picks the backend's files for the platform (Linux, Windows, Emscripten); nothing to choose since 2026-11-27
   - 17.17.6 2D painter - `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `GLPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp` - one interface for a window's 2D drawing (rects, lines, clip, textures, triangles, present, vsync); OpenGL implementation (desktop GL 3.3 / 3.0, and OpenGL ES 3.0 on WebGL 2 for the web player), software implementation (CPU, okayui rasteriser, `Window::PresentPixels` = X11 `XPutImage` / Win32 `StretchDIBits`; off, not ready)
-- **Code:** `Platform/Platform`, `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `engine/src/Platform/GLPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/WebBackend.cpp`, `engine/src/Platform/WebInput.hpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
+  - 17.17.7 Null audio device - `engine/src/Platform/NullAudio.cpp` - `OKAY_AUDIO_DEVICE=null` opens a device that needs no sound card on every backend (CI runners, servers): real-rate callbacks and queue drain, silent capture; test `platform_null_audio`
+- **Code:** `Platform/Platform`, `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `engine/src/Platform/GLPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/NullAudio.cpp`, `engine/src/Platform/WebBackend.cpp`, `engine/src/Platform/WebInput.hpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
 - **API:** `okay::platform::Backend`, `Window`, `Window::PresentPixels`, `Painter`, `CreateGLPainter`, `OkayUI::soft::CreateWindowPainter`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
 - **Editor:** none
 - **Docs:** `docs/platform/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)

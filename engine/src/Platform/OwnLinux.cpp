@@ -112,12 +112,15 @@ public:
 
     std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* name, AudioSpec* got) override {
         std::string err;
-        auto d = own::OpenAlsa(want, capture, name, got, err);
+        auto d = NullAudioRequested() ? OpenNullAudio(want, capture, got, err) : own::OpenAlsa(want, capture, name, got, err);
         if (!d) m_err = err;
         return d;
     }
-    int AudioDeviceCount(bool capture) override { return own::AlsaDeviceCount(capture); }
-    std::string AudioDeviceName(int i, bool capture) override { return own::AlsaDeviceName(i, capture); }
+    int AudioDeviceCount(bool capture) override { return NullAudioRequested() ? 1 : own::AlsaDeviceCount(capture); }
+    std::string AudioDeviceName(int i, bool capture) override {
+        if (NullAudioRequested()) return i == 0 ? "null" : "";
+        return own::AlsaDeviceName(i, capture);
+    }
 
     int GamepadDeviceCount() override { return own::EvdevGamepadCount(); }
     bool IsGamepad(int i) override { return i >= 0 && i < own::EvdevGamepadCount(); }

@@ -160,6 +160,10 @@ jobs:
 
       - name: Run the tests
         shell: pwsh
+        # The runner has no sound card (WASAPI: no default device). OKAY_AUDIO_DEVICE=null opens the platform layer's null
+        # audio device instead (engine/src/Platform/NullAudio.cpp), as SDL_AUDIODRIVER=dummy did before SDL2 left.
+        env:
+          OKAY_AUDIO_DEVICE: "null"
         run: |
           $root = (Get-Content wt/build-root.txt).Trim()
           python scripts/run_windows_tests.py --tests wt/tests.json --build-root $root --bin "$PWD/wt/bin" `

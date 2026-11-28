@@ -18,6 +18,10 @@
 #include <cmath>
 #include <utility>
 
+namespace okay::automation::detail {
+void AddScriptRunApi(std::vector<ScriptApiEntry>& out);   // engine/src/Automation/ScriptRun.cpp
+}
+
 namespace okay::detail {
 
 namespace {
@@ -98,6 +102,7 @@ int GroupArg(const Args& a) {
 
 void RegisterCoreScriptApis(std::vector<ScriptApiEntry>& out) {
     auto add = [&out](ScriptApiEntry e) { out.push_back(std::move(e)); };
+    okay::automation::detail::AddScriptRunApi(out);   // automation_call (engine/src/Automation/ScriptRun.cpp): only inside script.run
 
     // ---- Input: keys (the "game" reads: a typing key is off while a text field has the keyboard) ----
     {

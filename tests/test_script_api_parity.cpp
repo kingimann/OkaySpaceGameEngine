@@ -33,6 +33,8 @@ static Sample SampleFor(const ScriptApiParam& p) {
     if (p.name == "group") return str("Music");
     if (p.name == "player") return Sample{"0", "0"};
     if (p.name == "volume") return Sample{"0.25", "0.25f"};
+    if (p.name == "command") return str("scene.info");   // automation_call_json: refused the same way outside script.run
+    if (p.name == "params") return str("{}");
     if (p.type == ScriptApiType::Vector3) return Sample{"vec3(1, 2, 3)", "new Vector3(1, 2, 3)"};
     return Sample{"", "", false};
 }

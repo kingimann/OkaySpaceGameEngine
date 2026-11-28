@@ -407,6 +407,13 @@ struct CurMenu {
     // popup's row height and padding (Dear ImGui's menu rows: one text line plus the item spacing), so it matches the popup.
     float rowH = 0.0f, textInset = 10.0f;
     bool  fromPopup = false;
+    // A chain of sub-menus opened from a popup's row: the lists are drawn in the order they are submitted, so the popup's later rows would
+    // be drawn over a list that lies on it (the editor's tab menu: "Add Tab > World & Gameplay" turned back onto the menu and both were
+    // unreadable). [chainX0, chainX1) is the width the popup's row and the open lists of the chain take; a new list goes beside all of
+    // them, on the side the chain was going (`leftward`: it turned left for want of room), and only overlaps them when neither side has room.
+    // `anchorR`: a list placed to the left ends there (it keeps that edge when it widens).
+    bool  leftward = false;
+    float chainX0 = 0.0f, chainX1 = 0.0f, anchorR = 0.0f;
     // Kept inside the display: the list starts higher when last frame's height would run past the bottom; when it is taller than the
     // display it shows the band [clipY0, clipY1) and scrolls by whole rows (the wheel over it, or the keyboard highlight).
     float clipY0 = 0.0f, clipY1 = 0.0f;

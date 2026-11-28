@@ -4665,7 +4665,11 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') in >> w3->constantScale;
                 } else if (field == "eventsystem") {
-                    go->AddComponent<EventSystem>();
+                    auto* es = go->AddComponent<EventSystem>();
+                    KvIn k(in);   // a bare record (older files) keeps every default
+                    k.f("drag", es->dragThreshold); k.b("nav", es->navigation); k.b("blockWorld", es->blockWorldClicks);
+                    k.str("submit", es->submitAction); k.str("cancel", es->cancelAction);
+                    k.str("navigate", es->navigateAction); k.str("first", es->firstSelected);
                 } else if (field == "uiprogress") {
                     auto* pb = go->AddComponent<UIProgressBar>();
                     Color bg, fl;

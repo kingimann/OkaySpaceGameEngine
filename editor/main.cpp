@@ -33160,12 +33160,64 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* es = dynamic_cast<EventSystem*>(curComp)) {
         if (CompHeader("Event System", es, &toRemove)) {
-            ImGui::TextDisabled("Routes pointer input to UI widgets.");
-            GameObject* h = es->Hovered();
-            ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
-            GameObject* s = es->Selected();
-            ImGui::Text("Selected: %s", s ? s->name.c_str() : "(none)");
-            if (ImGui::SmallButton("Remove##es")) toRemove = es;
+            ImGui::TextDisabled("All game UI input goes through here: pointer, keys and gamepad.");
+            if (SceneHasSeveralEventSystems(ed.scene())) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.70f, 0.30f, 1.0f));
+                ImGui::TextWrapped("This scene has more than one Event System. Only the first one is used; remove the others.");
+                ImGui::PopStyleColor();
+            }
+            SectionHeader("Pointer");
+            if (ImGui::DragFloat("Drag Threshold##es", &es->dragThreshold, 0.5f, 0.0f, 200.0f, "%.0f px")) ed.dirty = true;
+            oked::FieldTip("Drag Threshold##es");
+            if (ImGui::Checkbox("Block World Clicks##es", &es->blockWorldClicks)) ed.dirty = true;
+            oked::FieldTip("Block World Clicks##es");
+            SectionHeader("Keyboard and Gamepad");
+            if (ImGui::Checkbox("Navigation##es", &es->navigation)) ed.dirty = true;
+            oked::FieldTip("Navigation##es");
+            // An input action picked from the project's actions; "(built-in keys only)" clears it.
+            auto actionCombo = [&](const char* label, std::string& action, const char* builtIn) {
+                const bool known = action.empty() || InputActions::Has(action);
+                std::string shown = action.empty() ? std::string("(built-in keys only)") : action;
+                if (!known) shown += " (not defined: built-in keys only)";
+                if (ImGui::BeginCombo(label, shown.c_str())) {
+                    if (ImGui::Selectable("(built-in keys only)", action.empty())) { action.clear(); ed.dirty = true; }
+                    for (const auto& act : InputActions::All())
+                        if (ImGui::Selectable(act.name.c_str(), action == act.name)) { action = act.name; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                    const std::string tip = oked::FieldTooltip("EventSystem", label);
+                    ImGui::SetTooltip("%s.\nBuilt-in keys: %s.", tip.c_str(), builtIn);
+                }
+            };
+            actionCombo("Submit Action##es", es->submitAction, "Enter, Space, pad A");
+            actionCombo("Cancel Action##es", es->cancelAction, "Escape, pad B");
+            actionCombo("Navigate Action##es", es->navigateAction, "arrow keys, WASD, D-pad");
+            {   // the widget that takes the focus first: one of the scene's focusable widgets
+                const char* cur = es->firstSelected.empty() ? "(first in reading order)" : es->firstSelected.c_str();
+                if (ImGui::BeginCombo("First Selected##es", cur)) {
+                    if (ImGui::Selectable("(first in reading order)", es->firstSelected.empty())) { es->firstSelected.clear(); ed.dirty = true; }
+                    for (const auto& up : ed.scene().Objects())
+                        if (up->active && IsNavFocusable(up.get()))
+                            if (ImGui::Selectable((up->name + "##esf" + std::to_string((std::uintptr_t)up.get())).c_str(), es->firstSelected == up->name)) {
+                                es->firstSelected = up->name; ed.dirty = true;
+                            }
+                    ImGui::EndCombo();
+                }
+                oked::FieldTip("First Selected##es");
+            }
+            SectionHeader("Live State");
+            if (!ed.isPlaying() || !es->Live()) {
+                ImGui::TextDisabled("Live state appears while the game is playing.");
+            } else {
+                auto nm = [](GameObject* g) { return g ? g->name.c_str() : "nothing"; };
+                ImGui::Text("Pointer: %.0f, %.0f%s", es->Pointer().x, es->Pointer().y, es->IsPointerOverUI() ? "  (over UI)" : "  (not over UI)");
+                ImGui::Text("Hovered: %s", nm(es->Hovered()));
+                ImGui::Text("Pressed: %s%s", nm(es->Pressed()), es->Dragging() ? "  (dragging)" : "");
+                ImGui::Text("Selected: %s", nm(es->Selected()));
+                const std::string last = es->LastEventText();
+                ImGui::TextDisabled("Last event: %s", last.empty() ? "none yet" : last.c_str());
+            }
         }
     }
     if (auto* nm = dynamic_cast<NetworkManager*>(curComp)) {

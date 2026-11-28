@@ -301,6 +301,7 @@ add_library(okay_engine
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp
     src/Components/UIListView.cpp
+    src/Components/EventSystem.cpp
     src/Components/UIModal.cpp
     src/Components/UIContextMenu.cpp
     src/Components/UIKeybindField.cpp

@@ -295,6 +295,7 @@ void DrawScriptDocs() {
         fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
         fapi("get_clipboard_text() / set_clipboard_text(\"s\")", "read or set the text a player can copy and paste");
         fapi("ui_set_focus(\"n\")", "move keyboard/gamepad focus to a widget and show its ring");
+        fapi("ui_selected()", "name of the widget the Event System has selected (\"\" for none)");
         fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
         fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
         fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
@@ -744,7 +745,7 @@ const std::vector<std::string>& ScriptCompletions() {
         // networking
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
-        "ui_set_text","ui_get_text","ui_set_focus","ui_clicked","ui_slider_value","ui_set_slider",
+        "ui_set_text","ui_get_text","ui_set_focus","ui_selected","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress","ui_get_rotation","ui_set_rotation","ui_get_scale","ui_set_scale",
         "set_swatch","swatch_value", // grok/ui-color
         "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
@@ -868,7 +869,7 @@ const std::unordered_map<std::string, std::string>& ScriptSignatureMap() {
         {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
-        {"ui_set_focus","ui_set_focus(\"n\")"},
+        {"ui_set_focus","ui_set_focus(\"n\")"}, {"ui_selected","ui_selected()"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
         {"ui_get_rotation","ui_get_rotation(\"n\")"}, {"ui_set_rotation","ui_set_rotation(\"n\", degrees)"},
         {"ui_get_scale","ui_get_scale(\"n\")"}, {"ui_set_scale","ui_set_scale(\"n\", x, y)"},

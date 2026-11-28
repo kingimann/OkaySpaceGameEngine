@@ -1133,8 +1133,16 @@ void BindEventSystem() {
         {"Pressed", {}, 0, ArgKind::Object, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return sb::RetObject(s.Pressed()); }, true},
         {"Selected", {}, 0, ArgKind::Object, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return sb::RetObject(s.Selected()); }, true},
         {"Pointer", {}, 0, ArgKind::Vec2, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return sb::RetVec2(s.Pointer()); }, true},
+        {"Dragging", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.Dragging()}; }, true},
         {"IsPointerOverUI", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.IsPointerOverUI()}; }, true},
+        {"Live", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.Live()}; }, true},
         {"Select", {ArgKind::Object}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<EventSystem&>(self); s.Select(sb::ArgObject(a[0])); return V{}; }, false},
+        {"SelectedName", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.SelectedName()}; }, true},
+        {"LastEventText", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.LastEventText()}; }, true},
+        {"Reaches", {ArgKind::Object, ArgKind::Vec2, ArgKind::Float, ArgKind::Float}, 4, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<EventSystem&>(self); return V{s.Reaches(sb::ArgObject(a[0]), sb::ArgVec2(a[1]), static_cast<float>(a[2].AsFloat()), static_cast<float>(a[3].AsFloat()))}; }, false},
+        {"NoteFocus", {ArgKind::Object}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<EventSystem&>(self); s.NoteFocus(sb::ArgObject(a[0])); return V{}; }, false},
+        {"NoteNavigationFocus", {ArgKind::Object}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<EventSystem&>(self); s.NoteNavigationFocus(sb::ArgObject(a[0])); return V{}; }, false},
+        {"NoteSubmit", {ArgKind::Object}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<EventSystem&>(self); s.NoteSubmit(sb::ArgObject(a[0])); return V{}; }, false},
     };
     AddClass(std::move(c));
 }
@@ -4143,6 +4151,8 @@ void BindVisualScriptComponent() {
     c.methods = {
         {"Source", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.Source()}; }, true},
         {"Path", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.Path()}; }, true},
+        {"SetPathFromScene", {ArgKind::String, ArgKind::String}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.SetPathFromScene(a[0].AsString(), a[1].AsString()); return V{}; }, false},
+        {"ScenePath", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.ScenePath()}; }, true},
         {"LastError", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.LastError()}; }, true},
         {"Send", {ArgKind::String}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.Send(a[0].AsString()); return V{}; }, false},
         {"OnMouseDown", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.OnMouseDown(); return V{}; }, false},

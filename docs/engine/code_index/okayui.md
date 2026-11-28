@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 13 headers, 693 names.
+Back to the [code index](../code_index.md). 12 headers, 684 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -27,322 +27,320 @@ Back to the [code index](../code_index.md). 13 headers, 693 names.
 - `Tab` function, line 226: A tab in a tab bar: clicking sets *current to 'index'. Returns true while THIS
 - `InputTextFlags` enum, line 236: A single-line text field editing the caller-owned buffer 'buf' (capacity 'cap',
 - `TextField` function, line 251
-- `EndFrame` function, line 256: Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
-- `DrawFinishedFrame` function, line 260: The drawing half of EndFrame(SDL_Renderer*) alone: draws the frame that EndFrameData already finished through the SDL
-- `DrawVertex` struct, line 273: ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
-- `DrawCmd` struct, line 278
-- `DrawData` struct, line 290
-- `GetDrawData` function, line 311
-- `FallbackFontOf` function, line 314: The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
-- `DroppedGeometry` function, line 316: The same count as DrawData::dropped, for the frame being built or the last one finished.
-- `EndFrameData` function, line 320: Finalize the frame's interaction state WITHOUT drawing — for custom backends that
-- `Begin` function, line 337: Begin an auto-layout window at (x, y) sized w*h. The position is the INITIAL
-- `Cond` enum, line 342: The ImGui-style window: position and size come from SetNextWindowPos / SetNextWindowSize (else a first-use default of
-- `WindowFlags` enum, line 353: Window flags (OkayUI's own values; they are not the Dear ImGui numbers).
-- `End` function, line 359
-- `PinNextWindow` function, line 362: Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
-- `BareNextWindow` function, line 367: Make the next Begin() a bare panel: pinned at its (x, y), sized w*h, with no title bar, no collapse caret, no close
-- `ResizableNextWindow` function, line 370: Give the next Begin() a resize grip in its bottom-right corner (drag it to resize; the w and h
-- `BeginChild` function, line 377: A scrolling sub-region of 'w'*'h' at the cursor. Widgets called until EndChild()
-- `EndChild` function, line 379: Dear ImGui's form, BeginChild(id, size, childFlags, windowFlags), and its ChildFlags are in OkayUICompat.hpp.
-- `GetScrollY` function, line 382: The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
-- `GetScrollMaxY` function, line 383
-- `SetScrollY` function, line 386: Set the innermost child's scroll offset; it is clamped when EndChild measures the content, so SetScrollY(1e9) just
-- `PushClipRect` function, line 390: Manually clip subsequent geometry to a rectangle (screen coords). Nestable and
-- `PopClipRect` function, line 391
-- `SameLine` function, line 395: Keep the next widget on the current line instead of starting a new one
-- `SetNextItemWidth` function, line 401: Set the width (in pixels) of the NEXT full-width widget (slider, input, combo,
-- `PushItemWidth` function, line 403: Set a width for ALL following full-width widgets until PopItemWidth. Nestable.
-- `PopItemWidth` function, line 404
-- `Separator` function, line 406: A full-width horizontal divider.
-- `Spacing` function, line 408: Vertical empty space of height 'h'.
-- `Dummy` function, line 410: Reserve an invisible 'w'*'h' block at the cursor (for manual spacing/alignment).
-- `Indent` function, line 414: Shift the content's left edge right (Indent) or back left (Unindent). 'w' <= 0
-- `Unindent` function, line 415
-- `Bullet` function, line 417: A small filled dot at the cursor (list marker). BulletText draws a dot + text.
-- `BulletText` function, line 418
-- `Text` function, line 420: A line of text at the layout cursor.
-- `TextColored` function, line 422: Text in an explicit RGB color (0..255) — for labels, warnings, headings.
-- `TextDisabled` function, line 424: Dimmed text (hints, secondary info).
-- `BeginGroup` function, line 431: Until PopTextWrapPos, Text, TextColored and TextDisabled wrap their words. 'width' 0 wraps at the right edge
-- `EndGroup` function, line 432
-- `PushTextWrapPos` function, line 433
-- `PopTextWrapPos` function, line 434
-- `SeparatorText` function, line 436: A labeled divider: a line with 'label' at the left (ImGui's SeparatorText).
-- `SmallButton` function, line 445: A compact button (tight padding, no full-line height) — for inline actions.
-- `TabBar` function, line 448: A row of tabs: clicking a tab sets *current to its index. Draw the selected
-- `TabItemFlags` enum, line 458: Tabs with their own bodies, the usual way to build a tabbed panel:
-- `BeginTabBar` function, line 459
-- `BeginTabItem` function, line 460
-- `TabItemFlagNames` enum, line 462: The same flags under the names ported code uses (aliases of the Tab_* values).
-- `EndTabItem` function, line 463
-- `TabItemButton` function, line 464
-- `EndTabBar` function, line 465
-- `SliderFloat` function, line 470
-- `SliderInt` function, line 472: An integer slider over [minV, maxV]. Edits *value in place; true on change.
-- `FormatNumber` function, line 479: How a number is shown (the printf-style 'fmt' of Dear ImGui's drag, slider and float input widgets). 'fmt' holds literal text and at most
-- `SetNextNumberFormat` function, line 485: Set the format and flags of the NEXT Drag*, SliderFloat/SliderInt or InputFloat widget (used up by that widget; a null 'fmt' keeps the widget's
-- `GetLastNumberText` function, line 488: The text the last number widget showed in its cell 'cell' (0 for single widgets, 0..3 for vector cells, -1 for the last cell drawn); "" when
-- `VSliderFloat` function, line 491: A vertical slider 'w'*'h' tall — drag the handle up/down over [minV, maxV].
-- `Knob` function, line 494: A rotary knob of diameter 'size'. Drag up/down (or left/right) to change *value
-- `PlotOptions` struct, line 510: The full plots (okayui/src/OkayUIPlots.cpp): a ring buffer start, an overlay text, a size, values from a getter, and a hover: the point
-- `PlotLines` function, line 516
-- `PlotHistogram` function, line 518
-- `LabelText` function, line 521: A read-only "label: value" row (ImGui's LabelText) — value on the left, label right.
-- `ImageButton` function, line 533: A clickable image button ('id' for identity). Returns true the frame it's clicked.
-- `InputText` function, line 534
-- `InputTextMultiline` function, line 542: A multi-line text box editing the caller's buffer (capacity 'cap', always NUL-terminated), built on OkayUI::CodeEdit without the gutter,
-- `ScrollTextBoxToEnd` function, line 545: Scroll the multi-line box of this label (drawn this frame or the last, in the same ID scope as its InputTextMultiline call) to its
-- `TextLink` function, line 548: Dear ImGui's TextLink: the text in the link colour (Col_TextLink), underlined while the pointer is over it, with the hand cursor;
-- `InputTextWithHint` function, line 550: InputText that shows 'hint' in a dim colour while the field is empty (a placeholder such as "Search...").
-- `SetKeyboardFocusHere` function, line 552: The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
-- `CenterNextOnLine` function, line 555: The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
-- `InputInt` function, line 558: An integer field with [-]/[+] stepper buttons that change *value by 'step'; a 'step' of 0 or less draws no steppers (a plain
-- `CollapsingHeader` function, line 562: A collapsing section header. Returns true while expanded — put the section's
-- `Combo` function, line 569: A dropdown selecting one of items[0..count) into *current. The open list draws
-- `BeginCombo` function, line 574: A combo whose list is whatever you draw: the box shows 'preview'; while it is open, the widgets between
-- `EndCombo` function, line 575
-- `Tooltip` function, line 579: If the most recently issued widget is hovered, show a tooltip box at the cursor.
-- `SetTooltip` function, line 582: A tooltip at the cursor, always (the caller decides when: 'if (IsItemHovered()) SetTooltip("%d items", n);'). printf-style;
-- `TextUnformatted` function, line 584: Draw text as is (no formatting). With 'textEnd' only the characters before it.
-- `AlignTextToFramePadding` function, line 586: Accepted for compatibility: text in a row is already vertically centred with framed widgets, so this does nothing.
-- `DragFloat` function, line 591: Drag-to-scrub a float: hold and move the cursor left/right to change *v by
-- `DragInt` function, line 593: Drag-to-scrub an int (same idea). minV < maxV clamps. Returns true on change.
-- `DragFloat2` function, line 596: Two, three or four drag cells in one row that share one label (an inspector's Position / Rotation / Scale
-- `DragFloat3` function, line 597
-- `DragFloat4` function, line 598
-- `DragInt2` function, line 600: The integer versions (same rules as DragInt for speed and clamping).
-- `DragInt3` function, line 601
-- `DragInt4` function, line 602
-- `DragFloatRange2` function, line 604: A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
-- `FramedNumbersOn` function, line 611: Dear ImGui's formatted fields and framed sliders (StyleVar_FramedWidgets pushed): the format forms in OkayUICompat.hpp (DragFloat(.., fmt, flags),
-- `FramedDragFloatN` function, line 612
-- `FramedSliderFloat` function, line 613
-- `FramedSliderInt` function, line 614
-- `FramedSliderFloatN` function, line 615
-- `SearchField` function, line 619: The editor's search field: a text field with a magnifier drawn at the left (the text starts after it), 'hint' while it is empty, and a
-- `DragIntRange2` function, line 622: The integer version of DragFloatRange2.
-- `SliderFloat2` function, line 625: Two, three or four sliders in one row sharing one label; every cell runs over [minV, maxV]. True on any change.
-- `SliderFloat3` function, line 626
-- `SliderFloat4` function, line 627
-- `InputFloat` function, line 630: A float field with [-]/[+] steppers that change *value by 'step' (the float twin of InputInt). A NaN or
-- `ArrowButton` function, line 632: A square button with an arrow: dir 0 left, 1 right, 2 up, 3 down (anything else is left). 'id' names it.
-- `ColorEditFlags` enum, line 641: Colour widgets (new files: okayui/src/OkayUIColor.cpp for the picker; the swatch and the row editors are in OkayUI.cpp).
-- `ColorButton` function, line 649: A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; 'size' <= 0 uses the row height.
-- `ColorEdit4` function, line 653: An RGBA color editor: a swatch plus four 0..1 sliders (see ColorEditFlags); clicking the swatch opens a ColorPicker4 popup.
-- `NewLine` function, line 655: Ends the current line: the next widget starts on a new row even right after SameLine().
-- `ColorEdit3` function, line 659: An RGB color editor: a swatch plus three 0..1 channel sliders on one row (ColorEdit4 with ColorEdit_NoAlpha).
-- `ColorPicker4` function, line 664: A full color picker: a saturation/value square, a hue bar, an alpha bar (ColorPicker4), a current / original preview, a hex field
-- `ColorPicker3` function, line 665
-- `ColorToHex` function, line 669: "#RRGGBB" (or "#RRGGBBAA" with 'alpha') from floats 0..1, written into 'out' (cap >= 10 bytes), and back. ColorFromHex accepts an
-- `ColorFromHex` function, line 670
-- `TreeNode` function, line 674: A collapsing tree node. Returns true while expanded; when it does, the widgets
-- `TreeNodeFlags` enum, line 675
-- `TreeNodeEx` function, line 688: TreeNode with flags (TreeNodeFlags).
-- `SetNextItemOpen` function, line 690: The next TreeNode, TreeNodeEx or CollapsingHeader is forced open or closed (once).
-- `IsItemToggledOpen` function, line 692: True when the last TreeNode or CollapsingHeader was opened or closed by a click this frame.
-- `TreePop` function, line 695: Close the most recent open TreeNode (removes one indent level). Pair with each
-- `BeginMenuBar` function, line 704: ---- Menus ---------------------------------------------------------------------
-- `EndMenuBar` function, line 705
-- `BeginMenu` function, line 707: A menu on the bar; returns true while its dropdown is open (then add MenuItems).
-- `EndMenu` function, line 714: Close a BeginMenu() block (handles click-outside dismissal).
-- `MenuItem` function, line 716: An item in the currently-open menu; returns true the frame it is clicked.
-- `MenuSeparator` function, line 721: A thin dividing line between groups of items inside a BeginMenu block.
-- `Selectable` function, line 725: A full-width selectable row (list entries). Drawn highlighted when 'selected';
-- `SelectableFlags` enum, line 735: Selectable with flags and a size. 'size.x' <= 0 fills the width to the right edge, 'size.y' <= 0 is one row. With the pointer
-- `OpenPopup` function, line 743: ---- Popups / context menus ----------------------------------------------------
-- `BeginPopupContextItem` function, line 747: Open a popup when the LAST widget is right-clicked; returns true while it's open
-- `BeginPopupContextWindow` function, line 750: Open a popup when the empty background of the current window is right-clicked (not an item, not a window above it); returns
-- `BeginPopup` function, line 752: Returns true while the named popup (opened via OpenPopup) is showing.
-- `BeginPopupModal` function, line 757: A modal dialog: while the popup named 'name' is open (OpenPopup(name) first) the area behind it is dimmed and
-- `IsPopupOpen` function, line 761: True while the named popup (or modal) is open.
-- `EndPopup` function, line 764: Close the popup body opened by the matching Begin*Popup. Pair each with End only
-- `CloseCurrentPopup` function, line 766: Close the currently-open popup (call after an item is chosen).
-- `Columns` function, line 778: ---- Columns -------------------------------------------------------------------
-- `NextColumn` function, line 781
-- `EndColumns` function, line 782
-- `BeginTable` function, line 794: ---- Tables --------------------------------------------------------------------
-- `TableFlags` enum, line 819: The flag-style table, for tables whose columns are described one by one (the usual way to build a table):
-- `TableColumnFlags` enum, line 832
-- `TableColumnFlagNames` enum, line 846: The same column flags under the names ported code uses. Stretch is the default (flag 0), Fixed is Col_WidthFixed.
-- `TableSetupColumn` function, line 855: 'userId' comes back in the sort specs.
-- `TableSetupScrollFreeze` function, line 857: Keep the first 'cols' columns and 'rows' rows (the header row counts) fixed while the rest scrolls (ScrollX / ScrollY tables).
-- `TableHeadersRow` function, line 859: The header bar with the labels given to TableSetupColumn.
-- `TableColumnSortSpecs` struct, line 861: One sort key: the column, its position among the keys (0 = main) and the direction.
-- `TableSortSpecs` struct, line 866
-- `TableGetSortSpecs` function, line 871: The sort keys of the current Sortable table (null when it is not sortable). Valid until EndTable; clear 'specsDirty' once you have sorted.
-- `TableBgTarget` enum, line 872
-- `TableSetBgColor` function, line 876: Paint the current row (RowBg0 replaces the even-row colour, RowBg1 the odd-row one, whichever the row is) or a cell ('column' < 0: the
-- `TableGetScrollX` function, line 878: The scroll position of the current ScrollX / ScrollY table, and a way to set it (clamped to the content on the next frame).
-- `TableGetScrollY` function, line 879
-- `TableSetScroll` function, line 880
-- `TableSetColumnIndex` function, line 882: Jump to column 'column' of the current row (false when it does not exist); like TableNextColumn but not in order.
-- `TableGetColumnIndex` function, line 883
-- `TableGetRowIndex` function, line 884
-- `TableSetColumnEnabled` function, line 889: Hiding columns (flag-style tables). A column starts hidden with Col_DefaultHide; a Table_Hideable table's header row opens a menu on
-- `TableGetColumnIsEnabled` function, line 890
-- `TableGetColumnCount` function, line 891
-- `TableGetColumnName` function, line 893: The label and the flags given to TableSetupColumn (column < 0: the current column; "" and 0 when there is none).
-- `TableGetColumnFlags` function, line 894
-- `TableGetHoveredColumn` function, line 896: The visible column under the pointer while it is over the table (header and rows so far), else -1.
-- `SetTableRowClipping` function, line 898: The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
-- `TableRowIsVisible` function, line 899
-- `CalcTextWidth` function, line 901: Width in pixels of 'text' in the current UI font (for fitting/truncating).
-- `TableNextRow` function, line 903: Start a new row (call before the row's TableNextColumn cells).
-- `TableNextColumn` function, line 907: Advance to the next cell; returns true (visible). Widgets after it land in-cell.
-- `EndTable` function, line 908
-- `Heading` function, line 914: ---- Launcher-style building blocks ----------------------------------------------
-- `Caption` function, line 916: Small coloured text, e.g. a green "NOW PLAYING" label.
-- `TextWrapped` function, line 918: Text that wraps to the available width.
-- `PrimaryButton` function, line 920: An accent-filled call-to-action button (Play, Join, Confirm).
-- `Badge` function, line 922: A rounded pill with short text (counts, tags, "NEW"). r=g=b=0: the accent colour.
-- `Avatar` function, line 924: A circle with the name's initial, coloured per name. size 0 = one row tall.
-- `BeginCard` function, line 926: A raised, rounded card; widgets until EndCard() go inside (it fits its content).
-- `EndCard` function, line 927
-- `CardFillColor` function, line 929: The fill colour BeginCard uses in the launcher look, from the current theme (RGBA). One rule for the drawing and its tests.
-- `DrawChevron` function, line 933
-- `ListItem` function, line 935: A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
-- `KeyValue` function, line 937: A dim label on the left and its value on the right (stats, settings summaries).
-- `Spinner` function, line 939: A spinning "busy" ring. size 0 = one row tall.
-- `Toast` function, line 942: Show a toast in the bottom-right corner (kind: 0 info, 1 success, 2 error).
-- `PushTextScale` function, line 944: Scale the text of the following widgets (1 = normal) until PopTextScale().
-- `PopTextScale` function, line 945
-- `DragSource` function, line 953: ---- Drag and drop -------------------------------------------------------------
-- `DropTarget` function, line 956: Mark the last-issued widget as a drop target. On the frame a drag is released over
-- `IsDragging` function, line 958: True while any drag is in progress (e.g. to change hover styling).
-- `DragPayload` struct, line 971
-- `DragDropFlags` enum, line 981: DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
-- `BeginDragDropSource` function, line 982
-- `SetDragDropPayload` function, line 983
-- `SetDragDropPreview` function, line 984
-- `EndDragDropSource` function, line 985
-- `BeginDragDropTarget` function, line 986
-- `AcceptDragDropPayload` function, line 988
-- `EndDragDropTarget` function, line 989
-- `GetDragDropPayload` function, line 992: The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
-- `SetExternalDragDrop` function, line 998: A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
-- `IsDragDropExternal` function, line 1000: True while the drag in flight came from SetExternalDragDrop.
-- `CancelDragDrop` function, line 1002: End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
-- `PushID` function, line 1008: ---- ID stack ------------------------------------------------------------------
-- `PopID` function, line 1010
-- `Font` struct, line 1016: ---- Fonts ---------------------------------------------------------------------
-- `ImFontConfig` struct, line 1029: What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
-- `SetFont` function, line 1031: Set the active font (null restores the built-in 8x8).
-- `GetFont` function, line 1032
-- `FontDefault` function, line 1034: Built-in fonts: the default 8x8, and a synthesized bold variant.
-- `FontBold` function, line 1035
-- `Rect` struct, line 1039: ---- Item queries and state reset ------------------------------------------------
-- `GetItemRect` function, line 1042: The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
-- `GetOverlayCount` function, line 1046: The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
-- `GetOverlayRect` function, line 1047
-- `IsItemHovered` function, line 1050: True when the mouse is over the last auto-layout item and nothing covers it (a blocked
-- `WantsTextInput` function, line 1053: True while a text field has keyboard focus: the host should send typed text and key edges
-- `SetClipboardText` function, line 1057: Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
-- `GetClipboardText` function, line 1058
-- `GetFrameInput` function, line 1062: Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
-- `GetKeyboardFocusId` function, line 1063
-- `SetKeyboardFocusId` function, line 1064
-- `ResetState` function, line 1068: Forget all remembered state: window positions and collapsed flags, tree / header / combo
-- `Col` enum, line 1079
-- `GetColorU32` function, line 1081: A theme colour packed, with its alpha scaled by 'alphaMul' (0..1).
-- `ColorMulAlpha` function, line 1083: 'c' with its alpha scaled by 'alphaMul' (0..1).
-- `DrawFlags` enum, line 1092: Drawing into the current window's batch (GetWindowDrawList) or on top of everything (GetForegroundDrawList). Both
-- `ImVector` struct, line 1101: A growable array of plain values with the field names and calls ported code uses ('Size', 'Data', 'begin()', 'push_front', 'find_index',
-- `ImDrawVert` struct, line 1168
-- `ImTextureRect` struct, line 1169
-- `ImTextureStatus` enum, line 1170
-- `ImTextureData` struct, line 1171
-- `ImTextureRef` struct, line 1189
-- `ImDrawCmd` struct, line 1194
-- `DrawList` struct, line 1201
-- `GetFontTexUvWhitePixel` function, line 1301: The uv a flat-coloured vertex should carry (a white texel of the glyph atlas in the launcher look; (0, 0) in the classic look, which ignores uv).
-- `DrawListHandle` struct, line 1305: What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so 'GetWindowDrawList().AddLine(...)' and 'const DrawList& dl = ...' work
-- `ImDrawData` struct, line 1315: What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. 'Textures' points at a list holding
-- `GetWindowDrawList` function, line 1322
-- `GetForegroundDrawList` function, line 1323
-- `CalcTextSize` function, line 1328: Width and height of one line of text in the current font and text scale (height is the line height).
-- `GetTextLineHeight` function, line 1329
-- `GetFontSize` function, line 1330
-- `GetFrameHeight` function, line 1331
-- `GetTextLineHeightWithSpacing` function, line 1332
-- `GetFrameHeightWithSpacing` function, line 1333
-- `GetCursorScreenPos` function, line 1335: Where the next item will be placed (screen pixels), honouring a pending SameLine. Zero outside a window.
-- `SetCursorScreenPos` function, line 1337: Place the NEXT item at this screen position (a one-shot; the layout continues below it afterwards).
-- `GetCursorPos` function, line 1339: The same relative to the window's (or child's) content origin.
-- `SetCursorPos` function, line 1340
-- `GetCursorPosX` function, line 1341
-- `GetCursorPosY` function, line 1342
-- `SetCursorPosX` function, line 1343
-- `SetCursorPosY` function, line 1344
-- `GetContentRegionAvail` function, line 1346: Width from the cursor to the right edge of the content, and height down to the bottom of the visible content area.
-- `InvisibleButton` function, line 1350: An item with no drawing, 'w'*'h' pixels (0 = full width / one row), that behaves like a button: use it as a hit area
-- `IsItemFocused` function, line 1355: Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
-- `GetID` function, line 1357: The id a widget of this label would get in the current ID scope (what PushID changes).
-- `GetItemID` function, line 1359: An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
-- `IsAnyItemActive` function, line 1361: True while any widget is held (pressed or being dragged).
-- `IsItemVisible` function, line 1363: True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
-- `IsRectVisible` function, line 1364
-- `IsAnyMouseDown` function, line 1366
-- `IsItemActive` function, line 1367
-- `IsItemActivated` function, line 1368
-- `IsItemDeactivated` function, line 1369
-- `IsItemEdited` function, line 1372: True when the last value widget (checkbox, radio, switch, slider, drag, input, combo, list box, colour edit) changed its value
-- `IsItemDeactivatedAfterEdit` function, line 1376: True on the frame the last item stops being held (or, for a text field, loses the keyboard) if its value changed at any point
-- `CalcItemWidth` function, line 1379: The width the next full-width item would get (the room left on the line, or the SetNextItemWidth / PushItemWidth width when
-- `IsItemClicked` function, line 1380
-- `IsMouseDown` function, line 1381
-- `IsMouseClicked` function, line 1382
-- `IsMouseReleased` function, line 1383
-- `GetMousePos` function, line 1384
-- `GetMouseDelta` function, line 1385
-- `GetItemRectMin` function, line 1387: The last item's rectangle as corners / size (the same rectangle as GetItemRect()).
-- `GetItemRectMax` function, line 1388
-- `GetItemRectSize` function, line 1389
-- `GetTime` function, line 1391: Seconds since the start (Input::time when the host sets it, otherwise frames / 60) and the number of frames begun.
-- `GetFrameCount` function, line 1392
-- `IsMouseDoubleClicked` function, line 1394: The left button went down for the second time within 0.3 s and 6 px of the first press (this frame only).
-- `IsMouseDragging` function, line 1396: The left button is held and has moved more than 'threshold' pixels (default 4) since it went down.
-- `IsKeyDown` function, line 1400: Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with 'repeat', again every 0.05 s
-- `IsKeyPressed` function, line 1401
-- `IsKeyReleased` function, line 1402
-- `StyleVar` enum, line 1427: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
-- `PushStyleVar` function, line 1435
-- `PopStyleVar` function, line 1437
-- `IsMouseHoveringRect` function, line 1438
-- `GetWindowPos` function, line 1442: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
-- `GetWindowSize` function, line 1443
-- `GetWindowWidth` function, line 1444
-- `GetWindowHeight` function, line 1445
-- `IsWindowHovered` function, line 1446
-- `IsWindowFocused` function, line 1447
-- `IsWindowAppearing` function, line 1448
-- `SetWindowFocus` function, line 1449
-- `SetWindowFontScale` function, line 1451: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
-- `MouseCursor` enum, line 1454: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
-- `SetMouseCursor` function, line 1456
-- `GetMouseCursor` function, line 1457
-- `IO` struct, line 1461: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
-- `Composition` struct, line 1506: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
-- `GetComposition` function, line 1507
-- `ImeRect` struct, line 1511: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
-- `GetImeRect` function, line 1512
-- `SetImeRect` function, line 1513
-- `SetNextWindowPos` function, line 1515: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
-- `SetNextWindowSize` function, line 1516
-- `BeginDisabled` function, line 1525: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
-- `EndDisabled` function, line 1526
-- `IsDisabled` function, line 1527
-- `Style` function, line 1530: The active theme (mutable — tweak colors/sizes in place).
-- `PushStyleColor` function, line 1561: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
-- `PopStyleColor` function, line 1565
-- `SetStyleColor` function, line 1567: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
-- `ResetStyleColor` function, line 1568
-- `GetStyleColorVec4` function, line 1571: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
-- `GetStyleColorName` function, line 1572
-- `ColorConvertU32ToFloat4` function, line 1574: Dear ImGui style colour conversions (all components 0..1; hue wraps).
-- `ColorConvertFloat4ToU32` function, line 1575
-- `ColorConvertRGBtoHSV` function, line 1576
-- `ColorConvertHSVtoRGB` function, line 1577
+- `DrawVertex` struct, line 264: ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
+- `DrawCmd` struct, line 269
+- `DrawData` struct, line 281
+- `GetDrawData` function, line 302
+- `FallbackFontOf` function, line 305: The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
+- `DroppedGeometry` function, line 307: The same count as DrawData::dropped, for the frame being built or the last one finished.
+- `EndFrameData` function, line 311: Finalize the frame's interaction state WITHOUT drawing — for custom backends that
+- `Begin` function, line 328: Begin an auto-layout window at (x, y) sized w*h. The position is the INITIAL
+- `Cond` enum, line 333: The ImGui-style window: position and size come from SetNextWindowPos / SetNextWindowSize (else a first-use default of
+- `WindowFlags` enum, line 344: Window flags (OkayUI's own values; they are not the Dear ImGui numbers).
+- `End` function, line 350
+- `PinNextWindow` function, line 353: Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
+- `BareNextWindow` function, line 358: Make the next Begin() a bare panel: pinned at its (x, y), sized w*h, with no title bar, no collapse caret, no close
+- `ResizableNextWindow` function, line 361: Give the next Begin() a resize grip in its bottom-right corner (drag it to resize; the w and h
+- `BeginChild` function, line 368: A scrolling sub-region of 'w'*'h' at the cursor. Widgets called until EndChild()
+- `EndChild` function, line 370: Dear ImGui's form, BeginChild(id, size, childFlags, windowFlags), and its ChildFlags are in OkayUICompat.hpp.
+- `GetScrollY` function, line 373: The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
+- `GetScrollMaxY` function, line 374
+- `SetScrollY` function, line 377: Set the innermost child's scroll offset; it is clamped when EndChild measures the content, so SetScrollY(1e9) just
+- `PushClipRect` function, line 381: Manually clip subsequent geometry to a rectangle (screen coords). Nestable and
+- `PopClipRect` function, line 382
+- `SameLine` function, line 386: Keep the next widget on the current line instead of starting a new one
+- `SetNextItemWidth` function, line 392: Set the width (in pixels) of the NEXT full-width widget (slider, input, combo,
+- `PushItemWidth` function, line 394: Set a width for ALL following full-width widgets until PopItemWidth. Nestable.
+- `PopItemWidth` function, line 395
+- `Separator` function, line 397: A full-width horizontal divider.
+- `Spacing` function, line 399: Vertical empty space of height 'h'.
+- `Dummy` function, line 401: Reserve an invisible 'w'*'h' block at the cursor (for manual spacing/alignment).
+- `Indent` function, line 405: Shift the content's left edge right (Indent) or back left (Unindent). 'w' <= 0
+- `Unindent` function, line 406
+- `Bullet` function, line 408: A small filled dot at the cursor (list marker). BulletText draws a dot + text.
+- `BulletText` function, line 409
+- `Text` function, line 411: A line of text at the layout cursor.
+- `TextColored` function, line 413: Text in an explicit RGB color (0..255) — for labels, warnings, headings.
+- `TextDisabled` function, line 415: Dimmed text (hints, secondary info).
+- `BeginGroup` function, line 422: Until PopTextWrapPos, Text, TextColored and TextDisabled wrap their words. 'width' 0 wraps at the right edge
+- `EndGroup` function, line 423
+- `PushTextWrapPos` function, line 424
+- `PopTextWrapPos` function, line 425
+- `SeparatorText` function, line 427: A labeled divider: a line with 'label' at the left (ImGui's SeparatorText).
+- `SmallButton` function, line 436: A compact button (tight padding, no full-line height) — for inline actions.
+- `TabBar` function, line 439: A row of tabs: clicking a tab sets *current to its index. Draw the selected
+- `TabItemFlags` enum, line 449: Tabs with their own bodies, the usual way to build a tabbed panel:
+- `BeginTabBar` function, line 450
+- `BeginTabItem` function, line 451
+- `TabItemFlagNames` enum, line 453: The same flags under the names ported code uses (aliases of the Tab_* values).
+- `EndTabItem` function, line 454
+- `TabItemButton` function, line 455
+- `EndTabBar` function, line 456
+- `SliderFloat` function, line 461
+- `SliderInt` function, line 463: An integer slider over [minV, maxV]. Edits *value in place; true on change.
+- `FormatNumber` function, line 470: How a number is shown (the printf-style 'fmt' of Dear ImGui's drag, slider and float input widgets). 'fmt' holds literal text and at most
+- `SetNextNumberFormat` function, line 476: Set the format and flags of the NEXT Drag*, SliderFloat/SliderInt or InputFloat widget (used up by that widget; a null 'fmt' keeps the widget's
+- `GetLastNumberText` function, line 479: The text the last number widget showed in its cell 'cell' (0 for single widgets, 0..3 for vector cells, -1 for the last cell drawn); "" when
+- `VSliderFloat` function, line 482: A vertical slider 'w'*'h' tall — drag the handle up/down over [minV, maxV].
+- `Knob` function, line 485: A rotary knob of diameter 'size'. Drag up/down (or left/right) to change *value
+- `PlotOptions` struct, line 501: The full plots (okayui/src/OkayUIPlots.cpp): a ring buffer start, an overlay text, a size, values from a getter, and a hover: the point
+- `PlotLines` function, line 507
+- `PlotHistogram` function, line 509
+- `LabelText` function, line 512: A read-only "label: value" row (ImGui's LabelText) — value on the left, label right.
+- `ImageButton` function, line 524: A clickable image button ('id' for identity). Returns true the frame it's clicked.
+- `InputText` function, line 525
+- `InputTextMultiline` function, line 533: A multi-line text box editing the caller's buffer (capacity 'cap', always NUL-terminated), built on OkayUI::CodeEdit without the gutter,
+- `ScrollTextBoxToEnd` function, line 536: Scroll the multi-line box of this label (drawn this frame or the last, in the same ID scope as its InputTextMultiline call) to its
+- `TextLink` function, line 539: Dear ImGui's TextLink: the text in the link colour (Col_TextLink), underlined while the pointer is over it, with the hand cursor;
+- `InputTextWithHint` function, line 541: InputText that shows 'hint' in a dim colour while the field is empty (a placeholder such as "Search...").
+- `SetKeyboardFocusHere` function, line 543: The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
+- `CenterNextOnLine` function, line 546: The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
+- `InputInt` function, line 549: An integer field with [-]/[+] stepper buttons that change *value by 'step'; a 'step' of 0 or less draws no steppers (a plain
+- `CollapsingHeader` function, line 553: A collapsing section header. Returns true while expanded — put the section's
+- `Combo` function, line 560: A dropdown selecting one of items[0..count) into *current. The open list draws
+- `BeginCombo` function, line 565: A combo whose list is whatever you draw: the box shows 'preview'; while it is open, the widgets between
+- `EndCombo` function, line 566
+- `Tooltip` function, line 570: If the most recently issued widget is hovered, show a tooltip box at the cursor.
+- `SetTooltip` function, line 573: A tooltip at the cursor, always (the caller decides when: 'if (IsItemHovered()) SetTooltip("%d items", n);'). printf-style;
+- `TextUnformatted` function, line 575: Draw text as is (no formatting). With 'textEnd' only the characters before it.
+- `AlignTextToFramePadding` function, line 577: Accepted for compatibility: text in a row is already vertically centred with framed widgets, so this does nothing.
+- `DragFloat` function, line 582: Drag-to-scrub a float: hold and move the cursor left/right to change *v by
+- `DragInt` function, line 584: Drag-to-scrub an int (same idea). minV < maxV clamps. Returns true on change.
+- `DragFloat2` function, line 587: Two, three or four drag cells in one row that share one label (an inspector's Position / Rotation / Scale
+- `DragFloat3` function, line 588
+- `DragFloat4` function, line 589
+- `DragInt2` function, line 591: The integer versions (same rules as DragInt for speed and clamping).
+- `DragInt3` function, line 592
+- `DragInt4` function, line 593
+- `DragFloatRange2` function, line 595: A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
+- `FramedNumbersOn` function, line 602: Dear ImGui's formatted fields and framed sliders (StyleVar_FramedWidgets pushed): the format forms in OkayUICompat.hpp (DragFloat(.., fmt, flags),
+- `FramedDragFloatN` function, line 603
+- `FramedSliderFloat` function, line 604
+- `FramedSliderInt` function, line 605
+- `FramedSliderFloatN` function, line 606
+- `SearchField` function, line 610: The editor's search field: a text field with a magnifier drawn at the left (the text starts after it), 'hint' while it is empty, and a
+- `DragIntRange2` function, line 613: The integer version of DragFloatRange2.
+- `SliderFloat2` function, line 616: Two, three or four sliders in one row sharing one label; every cell runs over [minV, maxV]. True on any change.
+- `SliderFloat3` function, line 617
+- `SliderFloat4` function, line 618
+- `InputFloat` function, line 621: A float field with [-]/[+] steppers that change *value by 'step' (the float twin of InputInt). A NaN or
+- `ArrowButton` function, line 623: A square button with an arrow: dir 0 left, 1 right, 2 up, 3 down (anything else is left). 'id' names it.
+- `ColorEditFlags` enum, line 632: Colour widgets (new files: okayui/src/OkayUIColor.cpp for the picker; the swatch and the row editors are in OkayUI.cpp).
+- `ColorButton` function, line 640: A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; 'size' <= 0 uses the row height.
+- `ColorEdit4` function, line 644: An RGBA color editor: a swatch plus four 0..1 sliders (see ColorEditFlags); clicking the swatch opens a ColorPicker4 popup.
+- `NewLine` function, line 646: Ends the current line: the next widget starts on a new row even right after SameLine().
+- `ColorEdit3` function, line 650: An RGB color editor: a swatch plus three 0..1 channel sliders on one row (ColorEdit4 with ColorEdit_NoAlpha).
+- `ColorPicker4` function, line 655: A full color picker: a saturation/value square, a hue bar, an alpha bar (ColorPicker4), a current / original preview, a hex field
+- `ColorPicker3` function, line 656
+- `ColorToHex` function, line 660: "#RRGGBB" (or "#RRGGBBAA" with 'alpha') from floats 0..1, written into 'out' (cap >= 10 bytes), and back. ColorFromHex accepts an
+- `ColorFromHex` function, line 661
+- `TreeNode` function, line 665: A collapsing tree node. Returns true while expanded; when it does, the widgets
+- `TreeNodeFlags` enum, line 666
+- `TreeNodeEx` function, line 679: TreeNode with flags (TreeNodeFlags).
+- `SetNextItemOpen` function, line 681: The next TreeNode, TreeNodeEx or CollapsingHeader is forced open or closed (once).
+- `IsItemToggledOpen` function, line 683: True when the last TreeNode or CollapsingHeader was opened or closed by a click this frame.
+- `TreePop` function, line 686: Close the most recent open TreeNode (removes one indent level). Pair with each
+- `BeginMenuBar` function, line 695: ---- Menus ---------------------------------------------------------------------
+- `EndMenuBar` function, line 696
+- `BeginMenu` function, line 698: A menu on the bar; returns true while its dropdown is open (then add MenuItems).
+- `EndMenu` function, line 705: Close a BeginMenu() block (handles click-outside dismissal).
+- `MenuItem` function, line 707: An item in the currently-open menu; returns true the frame it is clicked.
+- `MenuSeparator` function, line 712: A thin dividing line between groups of items inside a BeginMenu block.
+- `Selectable` function, line 716: A full-width selectable row (list entries). Drawn highlighted when 'selected';
+- `SelectableFlags` enum, line 726: Selectable with flags and a size. 'size.x' <= 0 fills the width to the right edge, 'size.y' <= 0 is one row. With the pointer
+- `OpenPopup` function, line 734: ---- Popups / context menus ----------------------------------------------------
+- `BeginPopupContextItem` function, line 738: Open a popup when the LAST widget is right-clicked; returns true while it's open
+- `BeginPopupContextWindow` function, line 741: Open a popup when the empty background of the current window is right-clicked (not an item, not a window above it); returns
+- `BeginPopup` function, line 743: Returns true while the named popup (opened via OpenPopup) is showing.
+- `BeginPopupModal` function, line 748: A modal dialog: while the popup named 'name' is open (OpenPopup(name) first) the area behind it is dimmed and
+- `IsPopupOpen` function, line 752: True while the named popup (or modal) is open.
+- `EndPopup` function, line 755: Close the popup body opened by the matching Begin*Popup. Pair each with End only
+- `CloseCurrentPopup` function, line 757: Close the currently-open popup (call after an item is chosen).
+- `Columns` function, line 769: ---- Columns -------------------------------------------------------------------
+- `NextColumn` function, line 772
+- `EndColumns` function, line 773
+- `BeginTable` function, line 785: ---- Tables --------------------------------------------------------------------
+- `TableFlags` enum, line 810: The flag-style table, for tables whose columns are described one by one (the usual way to build a table):
+- `TableColumnFlags` enum, line 823
+- `TableColumnFlagNames` enum, line 837: The same column flags under the names ported code uses. Stretch is the default (flag 0), Fixed is Col_WidthFixed.
+- `TableSetupColumn` function, line 846: 'userId' comes back in the sort specs.
+- `TableSetupScrollFreeze` function, line 848: Keep the first 'cols' columns and 'rows' rows (the header row counts) fixed while the rest scrolls (ScrollX / ScrollY tables).
+- `TableHeadersRow` function, line 850: The header bar with the labels given to TableSetupColumn.
+- `TableColumnSortSpecs` struct, line 852: One sort key: the column, its position among the keys (0 = main) and the direction.
+- `TableSortSpecs` struct, line 857
+- `TableGetSortSpecs` function, line 862: The sort keys of the current Sortable table (null when it is not sortable). Valid until EndTable; clear 'specsDirty' once you have sorted.
+- `TableBgTarget` enum, line 863
+- `TableSetBgColor` function, line 867: Paint the current row (RowBg0 replaces the even-row colour, RowBg1 the odd-row one, whichever the row is) or a cell ('column' < 0: the
+- `TableGetScrollX` function, line 869: The scroll position of the current ScrollX / ScrollY table, and a way to set it (clamped to the content on the next frame).
+- `TableGetScrollY` function, line 870
+- `TableSetScroll` function, line 871
+- `TableSetColumnIndex` function, line 873: Jump to column 'column' of the current row (false when it does not exist); like TableNextColumn but not in order.
+- `TableGetColumnIndex` function, line 874
+- `TableGetRowIndex` function, line 875
+- `TableSetColumnEnabled` function, line 880: Hiding columns (flag-style tables). A column starts hidden with Col_DefaultHide; a Table_Hideable table's header row opens a menu on
+- `TableGetColumnIsEnabled` function, line 881
+- `TableGetColumnCount` function, line 882
+- `TableGetColumnName` function, line 884: The label and the flags given to TableSetupColumn (column < 0: the current column; "" and 0 when there is none).
+- `TableGetColumnFlags` function, line 885
+- `TableGetHoveredColumn` function, line 887: The visible column under the pointer while it is over the table (header and rows so far), else -1.
+- `SetTableRowClipping` function, line 889: The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
+- `TableRowIsVisible` function, line 890
+- `CalcTextWidth` function, line 892: Width in pixels of 'text' in the current UI font (for fitting/truncating).
+- `TableNextRow` function, line 894: Start a new row (call before the row's TableNextColumn cells).
+- `TableNextColumn` function, line 898: Advance to the next cell; returns true (visible). Widgets after it land in-cell.
+- `EndTable` function, line 899
+- `Heading` function, line 905: ---- Launcher-style building blocks ----------------------------------------------
+- `Caption` function, line 907: Small coloured text, e.g. a green "NOW PLAYING" label.
+- `TextWrapped` function, line 909: Text that wraps to the available width.
+- `PrimaryButton` function, line 911: An accent-filled call-to-action button (Play, Join, Confirm).
+- `Badge` function, line 913: A rounded pill with short text (counts, tags, "NEW"). r=g=b=0: the accent colour.
+- `Avatar` function, line 915: A circle with the name's initial, coloured per name. size 0 = one row tall.
+- `BeginCard` function, line 917: A raised, rounded card; widgets until EndCard() go inside (it fits its content).
+- `EndCard` function, line 918
+- `CardFillColor` function, line 920: The fill colour BeginCard uses in the launcher look, from the current theme (RGBA). One rule for the drawing and its tests.
+- `DrawChevron` function, line 924
+- `ListItem` function, line 926: A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
+- `KeyValue` function, line 928: A dim label on the left and its value on the right (stats, settings summaries).
+- `Spinner` function, line 930: A spinning "busy" ring. size 0 = one row tall.
+- `Toast` function, line 933: Show a toast in the bottom-right corner (kind: 0 info, 1 success, 2 error).
+- `PushTextScale` function, line 935: Scale the text of the following widgets (1 = normal) until PopTextScale().
+- `PopTextScale` function, line 936
+- `DragSource` function, line 944: ---- Drag and drop -------------------------------------------------------------
+- `DropTarget` function, line 947: Mark the last-issued widget as a drop target. On the frame a drag is released over
+- `IsDragging` function, line 949: True while any drag is in progress (e.g. to change hover styling).
+- `DragPayload` struct, line 962
+- `DragDropFlags` enum, line 972: DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
+- `BeginDragDropSource` function, line 973
+- `SetDragDropPayload` function, line 974
+- `SetDragDropPreview` function, line 975
+- `EndDragDropSource` function, line 976
+- `BeginDragDropTarget` function, line 977
+- `AcceptDragDropPayload` function, line 979
+- `EndDragDropTarget` function, line 980
+- `GetDragDropPayload` function, line 983: The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
+- `SetExternalDragDrop` function, line 989: A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
+- `IsDragDropExternal` function, line 991: True while the drag in flight came from SetExternalDragDrop.
+- `CancelDragDrop` function, line 993: End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
+- `PushID` function, line 999: ---- ID stack ------------------------------------------------------------------
+- `PopID` function, line 1001
+- `Font` struct, line 1007: ---- Fonts ---------------------------------------------------------------------
+- `ImFontConfig` struct, line 1020: What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
+- `SetFont` function, line 1022: Set the active font (null restores the built-in 8x8).
+- `GetFont` function, line 1023
+- `FontDefault` function, line 1025: Built-in fonts: the default 8x8, and a synthesized bold variant.
+- `FontBold` function, line 1026
+- `Rect` struct, line 1030: ---- Item queries and state reset ------------------------------------------------
+- `GetItemRect` function, line 1033: The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
+- `GetOverlayCount` function, line 1037: The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
+- `GetOverlayRect` function, line 1038
+- `IsItemHovered` function, line 1041: True when the mouse is over the last auto-layout item and nothing covers it (a blocked
+- `WantsTextInput` function, line 1044: True while a text field has keyboard focus: the host should send typed text and key edges
+- `SetClipboardText` function, line 1048: Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
+- `GetClipboardText` function, line 1049
+- `GetFrameInput` function, line 1053: Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
+- `GetKeyboardFocusId` function, line 1054
+- `SetKeyboardFocusId` function, line 1055
+- `ResetState` function, line 1059: Forget all remembered state: window positions and collapsed flags, tree / header / combo
+- `Col` enum, line 1070
+- `GetColorU32` function, line 1072: A theme colour packed, with its alpha scaled by 'alphaMul' (0..1).
+- `ColorMulAlpha` function, line 1074: 'c' with its alpha scaled by 'alphaMul' (0..1).
+- `DrawFlags` enum, line 1083: Drawing into the current window's batch (GetWindowDrawList) or on top of everything (GetForegroundDrawList). Both
+- `ImVector` struct, line 1092: A growable array of plain values with the field names and calls ported code uses ('Size', 'Data', 'begin()', 'push_front', 'find_index',
+- `ImDrawVert` struct, line 1159
+- `ImTextureRect` struct, line 1160
+- `ImTextureStatus` enum, line 1161
+- `ImTextureData` struct, line 1162
+- `ImTextureRef` struct, line 1180
+- `ImDrawCmd` struct, line 1185
+- `DrawList` struct, line 1192
+- `GetFontTexUvWhitePixel` function, line 1292: The uv a flat-coloured vertex should carry (a white texel of the glyph atlas in the launcher look; (0, 0) in the classic look, which ignores uv).
+- `DrawListHandle` struct, line 1296: What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so 'GetWindowDrawList().AddLine(...)' and 'const DrawList& dl = ...' work
+- `ImDrawData` struct, line 1306: What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. 'Textures' points at a list holding
+- `GetWindowDrawList` function, line 1313
+- `GetForegroundDrawList` function, line 1314
+- `CalcTextSize` function, line 1319: Width and height of one line of text in the current font and text scale (height is the line height).
+- `GetTextLineHeight` function, line 1320
+- `GetFontSize` function, line 1321
+- `GetFrameHeight` function, line 1322
+- `GetTextLineHeightWithSpacing` function, line 1323
+- `GetFrameHeightWithSpacing` function, line 1324
+- `GetCursorScreenPos` function, line 1326: Where the next item will be placed (screen pixels), honouring a pending SameLine. Zero outside a window.
+- `SetCursorScreenPos` function, line 1328: Place the NEXT item at this screen position (a one-shot; the layout continues below it afterwards).
+- `GetCursorPos` function, line 1330: The same relative to the window's (or child's) content origin.
+- `SetCursorPos` function, line 1331
+- `GetCursorPosX` function, line 1332
+- `GetCursorPosY` function, line 1333
+- `SetCursorPosX` function, line 1334
+- `SetCursorPosY` function, line 1335
+- `GetContentRegionAvail` function, line 1337: Width from the cursor to the right edge of the content, and height down to the bottom of the visible content area.
+- `InvisibleButton` function, line 1341: An item with no drawing, 'w'*'h' pixels (0 = full width / one row), that behaves like a button: use it as a hit area
+- `IsItemFocused` function, line 1346: Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
+- `GetID` function, line 1348: The id a widget of this label would get in the current ID scope (what PushID changes).
+- `GetItemID` function, line 1350: An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
+- `IsAnyItemActive` function, line 1352: True while any widget is held (pressed or being dragged).
+- `IsItemVisible` function, line 1354: True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
+- `IsRectVisible` function, line 1355
+- `IsAnyMouseDown` function, line 1357
+- `IsItemActive` function, line 1358
+- `IsItemActivated` function, line 1359
+- `IsItemDeactivated` function, line 1360
+- `IsItemEdited` function, line 1363: True when the last value widget (checkbox, radio, switch, slider, drag, input, combo, list box, colour edit) changed its value
+- `IsItemDeactivatedAfterEdit` function, line 1367: True on the frame the last item stops being held (or, for a text field, loses the keyboard) if its value changed at any point
+- `CalcItemWidth` function, line 1370: The width the next full-width item would get (the room left on the line, or the SetNextItemWidth / PushItemWidth width when
+- `IsItemClicked` function, line 1371
+- `IsMouseDown` function, line 1372
+- `IsMouseClicked` function, line 1373
+- `IsMouseReleased` function, line 1374
+- `GetMousePos` function, line 1375
+- `GetMouseDelta` function, line 1376
+- `GetItemRectMin` function, line 1378: The last item's rectangle as corners / size (the same rectangle as GetItemRect()).
+- `GetItemRectMax` function, line 1379
+- `GetItemRectSize` function, line 1380
+- `GetTime` function, line 1382: Seconds since the start (Input::time when the host sets it, otherwise frames / 60) and the number of frames begun.
+- `GetFrameCount` function, line 1383
+- `IsMouseDoubleClicked` function, line 1385: The left button went down for the second time within 0.3 s and 6 px of the first press (this frame only).
+- `IsMouseDragging` function, line 1387: The left button is held and has moved more than 'threshold' pixels (default 4) since it went down.
+- `IsKeyDown` function, line 1391: Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with 'repeat', again every 0.05 s
+- `IsKeyPressed` function, line 1392
+- `IsKeyReleased` function, line 1393
+- `StyleVar` enum, line 1418: Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
+- `PushStyleVar` function, line 1426
+- `PopStyleVar` function, line 1428
+- `IsMouseHoveringRect` function, line 1429
+- `GetWindowPos` function, line 1433: About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
+- `GetWindowSize` function, line 1434
+- `GetWindowWidth` function, line 1435
+- `GetWindowHeight` function, line 1436
+- `IsWindowHovered` function, line 1437
+- `IsWindowFocused` function, line 1438
+- `IsWindowAppearing` function, line 1439
+- `SetWindowFocus` function, line 1440
+- `SetWindowFontScale` function, line 1442: Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
+- `MouseCursor` enum, line 1445: The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
+- `SetMouseCursor` function, line 1447
+- `GetMouseCursor` function, line 1448
+- `IO` struct, line 1452: Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
+- `Composition` struct, line 1497: ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
+- `GetComposition` function, line 1498
+- `ImeRect` struct, line 1502: Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
+- `GetImeRect` function, line 1503
+- `SetImeRect` function, line 1504
+- `SetNextWindowPos` function, line 1506: Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
+- `SetNextWindowSize` function, line 1507
+- `BeginDisabled` function, line 1516: Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
+- `EndDisabled` function, line 1517
+- `IsDisabled` function, line 1518
+- `Style` function, line 1521: The active theme (mutable — tweak colors/sizes in place).
+- `PushStyleColor` function, line 1552: Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
+- `PopStyleColor` function, line 1556
+- `SetStyleColor` function, line 1558: Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
+- `ResetStyleColor` function, line 1559
+- `GetStyleColorVec4` function, line 1562: What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
+- `GetStyleColorName` function, line 1563
+- `ColorConvertU32ToFloat4` function, line 1565: Dear ImGui style colour conversions (all components 0..1; hue wraps).
+- `ColorConvertFloat4ToU32` function, line 1566
+- `ColorConvertRGBtoHSV` function, line 1567
+- `ColorConvertHSVtoRGB` function, line 1568
 
 ## `okayui/include/okay/UI/OkayUICapture.hpp`
 
@@ -714,23 +712,13 @@ Back to the [code index](../code_index.md). 13 headers, 693 names.
 
 ## `okayui/include/okay/UI/OkayUIRenderBackends.hpp`
 
-- `CreateSoftBackend` function, line 27: ---- software (reference) ---------------------------------------------------------------------------------
-- `CreatePainterBackend` function, line 33: ---- okay::platform::Painter ------------------------------------------------------------------------------
-- `GLFlavor` enum, line 36: ---- OpenGL ------------------------------------------------------------------------------------------------
-- `CreateGLBackend` function, line 42: A GL context of the right kind must be current, now and for every later call on the backend. 'getProc' resolves
-- `GLShaderSource` function, line 44: The shader source the OpenGL backend builds (for tests and tools): stage 0 = vertex, 1 = fragment.
-- `CreateD3D11Backend` function, line 50: ---- Direct3D 11 (Windows) --------------------------------------------------------------------------------
-- `D3D11ShaderSource` function, line 53: The HLSL source (one file, entry points VSMain and PSMain) the Direct3D 11 backend compiles, on every platform, so
-
-## `okayui/include/okay/UI/OkayUIRenderSDL.hpp`
-
-- `HostPath` enum, line 48: Which renderer drew the last frame.
-- `HostFrame` struct, line 50
-- `OwnRenderSwitchValue` function, line 59: The switch: OKAY_UI_OWN_RENDER. On for "1", "on", "true", "yes" (any case); off when unset, empty, "0" or anything else.
-- `OwnRenderSwitchOn` function, line 60
-- `PickGLFlavor` function, line 64: The OpenGL flavour the own renderer would use with an SDL renderer called 'driverName' (SDL_RendererInfo::name) whose context
-- `HostBackendFor` function, line 67: Which own backend can draw into an SDL renderer called 'driverName': OwnGL ("opengl", "opengles2"), OwnD3D11 ("direct3d11"; it
-- `SdlHost` class, line 69
+- `CreateSoftBackend` function, line 26: ---- software (reference) ---------------------------------------------------------------------------------
+- `CreatePainterBackend` function, line 32: ---- okay::platform::Painter ------------------------------------------------------------------------------
+- `GLFlavor` enum, line 35: ---- OpenGL ------------------------------------------------------------------------------------------------
+- `CreateGLBackend` function, line 41: A GL context of the right kind must be current, now and for every later call on the backend. 'getProc' resolves
+- `GLShaderSource` function, line 43: The shader source the OpenGL backend builds (for tests and tools): stage 0 = vertex, 1 = fragment.
+- `CreateD3D11Backend` function, line 49: ---- Direct3D 11 (Windows) --------------------------------------------------------------------------------
+- `D3D11ShaderSource` function, line 52: The HLSL source (one file, entry points VSMain and PSMain) the Direct3D 11 backend compiles, on every platform, so
 
 ## `okayui/include/okay/UI/OkayUI_D3D11.hpp`
 

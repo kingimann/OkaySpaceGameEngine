@@ -392,7 +392,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an event arrives on the host but not on the other players | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | an example has no camera | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an example opens and shows only text | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
-| an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | an image is missing | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
@@ -775,7 +774,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no idea where players quit a level | [48.2](43-proposals.md#482-opt-in-analytics-events) Opt-in analytics events |
 | no in-game console | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | no log file after a crash | [1.10](01-core-scene.md#110-logging-and-profiling) Logging and profiling |
-| no MinGW" or "SDL2_MINGW_PREFIX not set" errors | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| no MinGW" errors | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | no place to find or install mods | [47.3](43-proposals.md#473-mod-packaging-and-sharing) Mod packaging and sharing |
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |

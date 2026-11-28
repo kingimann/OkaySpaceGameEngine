@@ -14042,6 +14042,12 @@ int main(int argc, char** argv) {
                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
                 ImGui::Dummy(ImVec2(0, 10));
+                {   // the buttons at the bottom right of the box (it is as wide as the line above or the buttons)
+                    const float bw = okl::FitButtonW("Exit", okl::UiPx(120.0f)) + okl::FitButtonW("Minimize", okl::UiPx(120.0f)) +
+                                     okl::FitButtonW("Cancel", okl::UiPx(120.0f)) + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                    const float room = ImGui::GetContentRegionAvail().x - bw;
+                    if (room > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + room);
+                }
                 if (ImGui::Button("Exit", ImVec2(okl::FitButtonW("Exit", okl::UiPx(120.0f)), 0))) {
                     if (EditorRunning()) g_afterEditor = 1;   // the editor closes (saved) first
                     else running = false;

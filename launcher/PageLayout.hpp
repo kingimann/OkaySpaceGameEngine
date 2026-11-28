@@ -4,6 +4,7 @@
 // tested headless (tests/test_launcher_page_layout.cpp): text fits its button, nothing overlaps, nothing leaves its card,
 // at the small window size and at UI scale 1.5.
 #pragma once
+#include "okay/Core/StringUtil.hpp"         // okay::str::LowerAscii (the Play page search, std only)
 #include "../editor/EditorLayoutMath.hpp"   // okay::edlayout::Rc, Overlaps, Inside: the one rectangle test, shared with the editor (std only)
 #include <algorithm>
 #include <cmath>
@@ -457,10 +458,6 @@ struct PlayGame {
     long lastPlayed = 0, seconds = 0;          // unix time; total play time
     unsigned long long bytes = 0;              // size on disk (0 = not known yet)
 };
-inline std::string PlayLower(std::string s) {
-    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    return s;
-}
 inline bool PlayOnShelf(const PlayGame& g, PlayShelf s) {
     switch (s) {
         case PlayShelf::Favorites: return g.favorite;
@@ -473,7 +470,7 @@ inline bool PlayOnShelf(const PlayGame& g, PlayShelf s) {
 }
 /// Does the search (`needle`, lower case) match the game's name? An empty search matches everything.
 inline bool PlayMatches(const PlayGame& g, const std::string& needle) {
-    return needle.empty() || PlayLower(g.name).find(needle) != std::string::npos;
+    return needle.empty() || okay::str::LowerAscii(g.name).find(needle) != std::string::npos;
 }
 /// The persisted sort (g_playSort): 0 favourites first, 1 name A-Z, 2 recently played, 3 most played. Ties go by name
 /// (case ignored), then by path, so the order never jumps between frames.
@@ -482,7 +479,7 @@ inline bool PlaySortsBefore(const PlayGame& a, const PlayGame& b, int sort) {
     if (sort == 2 && a.recentRank != b.recentRank) return a.recentRank < b.recentRank;
     if (sort == 2 && a.lastPlayed != b.lastPlayed) return a.lastPlayed > b.lastPlayed;
     if (sort == 3 && a.plays != b.plays) return a.plays > b.plays;
-    const std::string la = PlayLower(a.name), lb = PlayLower(b.name);
+    const std::string la = okay::str::LowerAscii(a.name), lb = okay::str::LowerAscii(b.name);
     if (la != lb) return la < lb;
     return a.path < b.path;
 }

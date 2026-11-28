@@ -15907,7 +15907,7 @@ int main(int argc, char** argv) {
                 games.push_back(g);
             }
             const PL::PlayShelf shelf = (PL::PlayShelf)std::clamp(g_playShelf, 0, (int)PL::PlayShelf::Count - 1);
-            const std::string needle = PL::PlayLower(playFilter);
+            const std::string needle = okay::str::LowerAscii(playFilter);
             const std::vector<std::size_t> order = PL::PlayOrder(games, g_playSort, shelf, needle);
 
             // The selected game (by path; the details sheet shows it). Dropped when it leaves the library.

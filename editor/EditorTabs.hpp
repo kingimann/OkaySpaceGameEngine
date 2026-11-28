@@ -308,4 +308,21 @@ inline bool ReadPanelOpenLine(const std::string& key, const std::vector<std::str
     return false;
 }
 
+/// The okay_settings.txt line that remembers which tab group the side tabs show: "sideanchor_<key> 1" for the panel the group was
+/// chosen by (right-click a tab > Show Group as Side Tabs), its key as in PanelSettingKey without "panel_"; empty when no panel chose
+/// it (the default group: Hierarchy's or Inspector's).
+inline std::string SideAnchorLine(const std::string& label) {
+    if (label.empty()) return std::string();
+    return "sideanchor_" + PanelSettingKey(label).substr(6) + " 1\n";
+}
+/// One "key value" pair read from okay_settings.txt: when it is a side-anchor line, returns true and sets `index` to the panel of
+/// `labels` it names, or -1 for a panel this editor does not have.
+inline bool ReadSideAnchorLine(const std::string& key, const std::vector<std::string>& labels, int& index) {
+    if (key.rfind("sideanchor_", 0) != 0) return false;
+    index = -1;
+    for (std::size_t i = 0; i < labels.size(); ++i)
+        if ("sideanchor_" + PanelSettingKey(labels[i]).substr(6) == key) { index = (int)i; break; }
+    return true;
+}
+
 }  // namespace okay::edtabs

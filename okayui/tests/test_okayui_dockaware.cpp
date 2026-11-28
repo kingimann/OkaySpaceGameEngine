@@ -261,6 +261,18 @@ int main() {
             const UI::DockLayout::Node* n = L.Find(L.NodeOf(w));
             CHECK(n && n->tabs[(size_t)n->active] == w);
         }
+        {   // the side tabs' highlight: with the strip hidden and the LAST tab chosen, the chosen window is the one marked DockTabIsVisible; the
+            // node's first window is the first in tab order (the editor highlighted Windows[0], so another panel stayed lit while one was shown)
+            const int leafNow = L.NodeOf("Stats");
+            const std::string last = L.Find(leafNow)->tabs.back();
+            UI::GetDockLayout().SetActive(last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, true); f(); f();
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            int lit = 0; std::string litName;
+            if (node) for (int k = 0; k < node->Windows.Size; ++k) if (node->Windows[k]->DockTabIsVisible) { ++lit; litName = node->Windows[k]->Name; }
+            CHECK(node && node->Windows.Size == 3 && std::string(node->Windows[0]->Name) != last && lit == 1 && litName == last);
+            UI::GetDockLayout().SetNoTabBar(leafNow, false); f();
+        }
         std::string why; CHECK(L.Validate(&why));
         UI::SetDockAwareBegin(false);
     }

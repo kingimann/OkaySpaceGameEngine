@@ -835,7 +835,7 @@ private:
                 e.kids.push_back(std::move(cond));
                 return checkExprBody(e);
             }
-            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && !quiet_) {
+            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && quiet_ <= quietBase_) {
                 // Two objects of one class, not both lvalues: a branch that is a temporary gets a
                 // name (destroyed after the full expression only if that branch ran, by its flag),
                 // and the result is *(c ? &x : &y) as above.
@@ -861,7 +861,7 @@ private:
                 e.kids.push_back(std::move(cond));
                 return checkExprBody(e);
             }
-            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && quiet_) {
+            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && quiet_ > quietBase_) {
                 r.type = cloneType(*a.type);  // (a probe: the real check names the temporary, above)
                 return r;
             }
@@ -5288,6 +5288,7 @@ private:
     // A name used inside a lambda that is a local of the enclosing function: a capture. By
     // reference it becomes *__self->name (the closure holds a pointer), by copy __self->name.
     int unevaluated_ = 0;  // inside decltype(..)
+    int quietBase_ = 0;    // quiet_ when the lambda body being checked was met (checkLambda)
     bool captureName(Expr& e) {
         if (lamStack_.empty() || e.text.empty() || e.text.find("::") != std::string::npos || unevaluated_ > 0) return false;
         LamCtx& lc = lamStack_.back();
@@ -5693,12 +5694,14 @@ private:
         }
         loops_ = 0;
         switches_ = 0;
-        // The body is checked once (its function is taken below), so never as a probe: under a
-        // quiet check a class result c ? T() : x kept no temporary and was not lowered.
-        const int savedQuiet = quiet_;
-        quiet_ = 0;
+        // The body is checked once (its function is taken below), also when the lambda expression
+        // is first met in a probe: the rewrites that a probe skips are made in it all the same
+        // (quietBase_; a class result c ? T() : x kept no temporary and was not lowered). Its
+        // messages stay quiet in a probe, as before.
+        const int savedQuietBase = quietBase_;
+        quietBase_ = quiet_;
         if (d.body) checkStmts(*d.body);
-        quiet_ = savedQuiet;
+        quietBase_ = savedQuietBase;
         closeLambdaFn(d);
         std::vector<std::pair<std::string, int>> used = std::move(lamStack_.back().used);
         lamStack_.pop_back();
@@ -6237,12 +6240,13 @@ private:
         temps_.clear();
         std::vector<LamCtx> savedLam = std::move(lamStack_);
         lamStack_.clear();
-        const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_;
-        loops_ = switches_ = quiet_ = 0;
+        const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_, savedBase = quietBase_;
+        loops_ = switches_ = quiet_ = quietBase_ = 0;
         body();
         loops_ = savedLoops;
         switches_ = savedSwitches;
         quiet_ = savedQuiet;
+        quietBase_ = savedBase;
         lamStack_ = std::move(savedLam);
         temps_ = std::move(savedTemps);
         for (auto& sc : outer) scopes_.push_back(std::move(sc));

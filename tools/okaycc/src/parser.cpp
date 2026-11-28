@@ -6143,6 +6143,15 @@ private:
         if (!isCtor && !isDtor) return false;
         Type* T = classOf(tag);
         Pos pos = here();
+        // The class's own names (its enumerators, static constants) in the body and the member
+        // initializers, as in a member function defined outside the class ([basic.lookup.unqual]
+        // p8; MemoryTracker::MemoryTracker() reading kBuiltinCount).
+        struct BodyBack {
+            std::string& b;
+            std::string v;
+            ~BodyBack() { b = v; }
+        } bodyBack{bodyClass_, bodyClass_};
+        bodyClass_ = tag;
         if (isCtor) {
             advance();
             advance();
@@ -6475,7 +6484,10 @@ private:
                 const Type* ret = type->inner.get();
                 decl->type = std::move(type);
                 std::size_t memberMark = pushMemberNames(classOf(clsTag));
+                std::string savedBody = bodyClass_;
+                bodyClass_ = clsTag;  // its class's enumerators and constants (Input::GamepadButtonLabel)
                 decl->body = parseBody(ret);
+                bodyClass_ = savedBody;
                 localNames_.resize(memberMark);
                 extras_.push_back(std::move(decl));
                 flushExtras(tu);

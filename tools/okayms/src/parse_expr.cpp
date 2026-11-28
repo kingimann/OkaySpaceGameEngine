@@ -691,7 +691,7 @@ bool Parser::parse_lambda(Node* out) {
         m.params = decl.params;
         m.param_names = decl.param_names;
         m.defaults = decl.param_defaults;
-        m.is_static = list.empty() && !cap_this;
+        m.is_static = list.empty() && !cap_this && decl.param_defaults.empty();
         m.has_body = true;
         m.body_at = body_at;
         // Does the body return a value?
@@ -765,7 +765,10 @@ bool Parser::parse_lambda(Node* out) {
     } else {
         at = body_end + 1;
     }
-    if (generic_names.empty() && list.empty() && !cap_this) {
+    // A lambda with default arguments stays an object even when it captures nothing ([expr.prim.lambda.closure] 4: the
+    // defaults belong to its operator(); a function pointer has none): `rgb(38, 38, 42)` with
+    // `[](int r, int g, int b, int a = 255)` (VehicleBuilder.hpp, Round 35; before "wrong number of arguments to rgb").
+    if (generic_names.empty() && list.empty() && !cap_this && decl.param_defaults.empty()) {
         *out = node_name(qname);
         return true;
     }

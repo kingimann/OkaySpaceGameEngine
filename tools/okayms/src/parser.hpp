@@ -1764,6 +1764,23 @@ struct Parser {
             error = "an array of objects needs a function";
             return false;
         }
+        // An array of more than one dimension (`Vec3 buf[2][9]`, Round 35): every element, through a pointer to the first
+        // one, over count times the other dimensions ([dcl.array] 6: the elements of an array of arrays are contiguous).
+        Node flat_base;
+        if (base_ptr == nullptr && count_expr == nullptr && !name.empty()) {
+            Type whole;
+            if (static_type(node_name(name), &whole) && whole.is_array() && !whole.more.empty()) {
+                Type elem = whole;
+                for (int d : whole.more) count *= d;
+                elem.array_len = -1;
+                elem.more.clear();
+                elem.pointers = 1;
+                elem.is_const = false;
+                elem.is_ref = false;
+                flat_base = cast_node(elem, node_addr(node_name(name)));
+                base_ptr = &flat_base;
+            }
+        }
         Local hidden;
         hidden.name = "__ai" + std::to_string(rv_count++);
         hidden.type.base = 1;
@@ -3192,6 +3209,22 @@ struct Parser {
                 Type mt;
                 if (!parse_memfn_declarator(pt, &pname, &mt)) return false;
                 out->params.push_back(mt);
+                out->param_names.push_back(pname);
+                continue;
+            }
+            if (is(TLParen) && at + 3 < tokens.size() && tokens[at + 1].kind == TAmp && tokens[at + 2].kind == TIdent &&
+                tokens[at + 3].kind == TRParen && at + 4 < tokens.size() && tokens[at + 4].kind == TLBrack) {
+                // T (&a)[N] and T (&a)[M][N]: a reference to an array ([dcl.ref], [dcl.array]; MdlReader.cpp's
+                // `const T (&v)[3]`, UVUnwrap.cpp's `const double (&m)[3][3]`; Round 35). Held as a reference to the
+                // array, as `T a[M][N]` below: a[i] reads through the address the caller passed.
+                next();
+                next();
+                const std::string pname = cur().text;
+                next();
+                next();
+                if (!parse_brackets(&pt)) return false;
+                pt.is_ref = true;
+                out->params.push_back(pt);
                 out->param_names.push_back(pname);
                 continue;
             }
@@ -8977,14 +9010,23 @@ struct Parser {
                 return false;
             }
             literal_type(call_args[i], &at_type);
-            if (at_type.is_array()) {
+            Type pat = pt;
+            if (pt.is_ref && pt.is_array() && at_type.is_array() && pt.more.size() == at_type.more.size()) {
+                // `const T (&v)[3]` given an int[3] ([temp.deduct.call] 3, [dcl.array]; Round 35, MdlReader.cpp): the
+                // array is not turned into a pointer, and T is deduced from the element type.
+                pat.array_len = -1;
+                pat.more.clear();
+                pat.is_ref = false;
+                at_type.array_len = -1;
+                at_type.more.clear();
+            } else if (at_type.is_array()) {
                 at_type = peel_array(at_type);
                 at_type.pointers += 1;
                 at_type.array_len = -1;
             }
             at_type.is_ref = false;
             match_loose = true;
-            const bool fits = match_type(pt, at_type, &args, &given);
+            const bool fits = match_type(pat, at_type, &args, &given);
             match_loose = false;
             if (!fits && pt.tpat >= 0 && at_type.base == 3 && at_type.pointers == 0 && at_type.struct_id >= 0 &&
                 structs[static_cast<size_t>(at_type.struct_id)].name.compare(0, 5, "__lam") == 0)
@@ -9655,8 +9697,8 @@ struct Parser {
         } else if (obj_needs_ctor(type)) {
             Node call;
             if (type.is_array()) {
-                if (!type.more.empty() || !args.empty()) {
-                    error = "a global array of objects needs one dimension and no arguments";
+                if (!args.empty()) {
+                    error = "a global array of objects takes no arguments";
                     ok = false;
                 } else {
                     ok = element_loop(name, type.array_len, false, sid, "<ctor>", &call);
@@ -9693,14 +9735,19 @@ struct Parser {
             if (tokens[k].inl) return true;
         return false;
     }
-    void rewrite_returns(Node& n, FuncDecl& fn, const char* fini_name) {
+    void rewrite_returns(Node& n, FuncDecl& fn, const std::vector<const char*>& fini_names) {
         if (n.kind == Node::Return) {
-            Node call;
-            call.kind = Node::Call;
-            call.text = fini_name;
             Node call_stmt;
-            call_stmt.kind = Node::ExprStmt;
-            call_stmt.kids.push_back(std::move(call));
+            call_stmt.kind = Node::Block;
+            for (const char* fini_name : fini_names) {
+                Node call;
+                call.kind = Node::Call;
+                call.text = fini_name;
+                Node one;
+                one.kind = Node::ExprStmt;
+                one.kids.push_back(std::move(call));
+                call_stmt.kids.push_back(std::move(one));
+            }
             Node block;
             block.kind = Node::Block;
             block.line = n.line;
@@ -9736,7 +9783,7 @@ struct Parser {
             n = std::move(block);
             return;
         }
-        for (Node& kid : n.kids) rewrite_returns(kid, fn, fini_name);
+        for (Node& kid : n.kids) rewrite_returns(kid, fn, fini_names);
     }
 
     // A member function that is declared in its class and defined in another file (the engine's Sha512::Update): a call of
@@ -9834,30 +9881,33 @@ struct Parser {
             if (g.vtable || g.name.find("?$") != std::string::npos) g.is_static = true;
         for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
         static_objs.clear();
-        // The start-up tables (Round 35; PE/COFF "Grouped Sections"). The file with main (or entry) carries the markers of
-        // the tables and the functions that walk them (compile.cpp adds their text, kStartupText); each file puts the
-        // address of its own start-up function in .CRT$XCU, its end function in .CRT$XTU, and those of its thread_local
-        // objects in .CRT$XDU and .okaytd$U. The linker puts every table's entries between its two markers.
+        // The start-up tables (Round 35; PE/COFF "Grouped Sections"). A file without main (or entry) puts the address of
+        // its start-up function in .CRT$XCU and of its end function in .CRT$XTU; okay-ms's runtime (runtime/startup.c)
+        // runs them before main and after it, through its markers .CRT$XCA, .CRT$XCZ, .CRT$XTA and .CRT$XTZ (the linker
+        // puts every file's entries between them). The file with main runs its own two functions from main, as before.
+        // thread_local objects of class type go into .CRT$XDU and .okaytd$U in every file (see kThreadLocalText).
         static const std::pair<const char*, const char*> kMarkers[] = {
             {"__okay_xc_a", ".CRT$XCA"}, {"__okay_xc_z", ".CRT$XCZ"}, {"__okay_xd_a", ".CRT$XDA"},
             {"__okay_xd_z", ".CRT$XDZ"}, {"__okay_xt_a", ".CRT$XTA"}, {"__okay_xt_z", ".CRT$XTZ"},
             {"__okay_td_a", ".okaytd$A"}, {"__okay_td_z", ".okaytd$Z"}};
-        bool tables = false;  // this file walks the tables (it has main and the start-up text)
         for (Global& g : globals)
             for (const auto& m : kMarkers)
                 if (g.name == m.first && !g.external) {
                     g.section = m.second;
                     g.bss = false;
                     g.init_bytes.assign(8, 0);
-                    tables = true;
                 }
-        FuncDecl* start = nullptr;
-        for (FuncDecl& fn : funcs)
-            if (fn.name == "main" && fn.defined) start = &fn;
-        if (start == nullptr)
+        auto find_start = [&]() -> FuncDecl* {
             for (FuncDecl& fn : funcs)
-                if (fn.name == "entry" && fn.defined) start = &fn;
-        if (start == nullptr) tables = false;
+                if (fn.name == "main" && fn.defined) return &fn;
+            for (FuncDecl& fn : funcs)
+                if (fn.name == "entry" && fn.defined) return &fn;
+            return nullptr;
+        };
+        bool tls_text = false;  // the thread_local text was added to this file (it has main)
+        for (const FuncDecl& fn : funcs)
+            if (fn.name == "__okay_run_td" && fn.defined) tls_text = true;
+        const bool has_start = find_start() != nullptr;
         const bool need_fini = !global_objs.empty();
         const bool need_tls_fini = !tls_objs.empty();
         auto make_fn = [&](const std::string& name, Node body, std::vector<Local> locals) {
@@ -9917,8 +9967,6 @@ struct Parser {
             *symbol = make_fn(name, std::move(body), std::move(fini_locals));
             return true;
         };
-        // thread_local objects of class type: always through the tables (a file without main has them made by the
-        // TLS callback of the file with main).
         if (tls_used) {
             tls_body.kind = Node::Block;
             table_entry("__okay_xdu", ".CRT$XDU", make_fn("__okay_tls_init", std::move(tls_body), tls_locals));
@@ -9928,39 +9976,41 @@ struct Parser {
             if (!make_fini(tls_objs, "__okay_tls_fini", &sym)) return false;
             table_entry("__okay_tdu", ".okaytd$U", sym);
         }
-        if (!init_used && !need_fini && !tables) return true;
-        // A file with main and without the start-up text (it was not found when the tokens were read) runs its own
-        // functions from main, as before Round 35; every other file puts them in the tables.
-        const bool direct = start != nullptr && !tables;
+        if (!init_used && !need_fini && !tls_text) return true;
         if (init_used) {
             init_body.kind = Node::Block;
             const std::string sym = make_fn("__okay_init", std::move(init_body), init_locals);
-            if (!direct) table_entry("__okay_xcu", ".CRT$XCU", sym);
+            if (!has_start) table_entry("__okay_xcu", ".CRT$XCU", sym);
         }
         if (need_fini) {
             std::string sym;
             if (!make_fini(global_objs, "__okay_fini", &sym)) return false;
-            if (!direct) table_entry("__okay_xtu", ".CRT$XTU", sym);
+            if (!has_start) table_entry("__okay_xtu", ".CRT$XTU", sym);
         }
+        // Found after make_fn (which may have moved the functions).
+        FuncDecl* start = find_start();
         if (start == nullptr) return true;
-        // main runs the start-up functions first and the end functions at each return and at its end (the tables'
-        // walkers, or this file's own two functions).
-        const char* run_init = tables ? "__okay_run_xc" : init_used ? "__okay_init" : nullptr;
-        const char* run_fini = tables ? "__okay_run_xt" : need_fini ? "__okay_fini" : nullptr;
-        if (run_fini != nullptr) {
-            rewrite_returns(start->body, *start, run_fini);
-            Node call;
-            call.kind = Node::Call;
-            call.text = run_fini;
-            Node call_stmt;
-            call_stmt.kind = Node::ExprStmt;
-            call_stmt.kids.push_back(std::move(call));
-            start->body.kids.push_back(std::move(call_stmt));
+        // main runs its file's start-up function first, and at each return and at its end the destructors of its
+        // thread's thread_local objects, then its file's end function ([basic.start.term] 1: thread_locals first).
+        std::vector<const char*> at_end;
+        if (tls_text) at_end.push_back("__okay_run_td");
+        if (need_fini) at_end.push_back("__okay_fini");
+        if (!at_end.empty()) {
+            rewrite_returns(start->body, *start, at_end);
+            for (const char* name : at_end) {
+                Node call;
+                call.kind = Node::Call;
+                call.text = name;
+                Node call_stmt;
+                call_stmt.kind = Node::ExprStmt;
+                call_stmt.kids.push_back(std::move(call));
+                start->body.kids.push_back(std::move(call_stmt));
+            }
         }
-        if (run_init != nullptr) {
+        if (init_used) {
             Node call;
             call.kind = Node::Call;
-            call.text = run_init;
+            call.text = "__okay_init";
             Node call_stmt;
             call_stmt.kind = Node::ExprStmt;
             call_stmt.kids.push_back(std::move(call));

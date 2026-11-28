@@ -67,7 +67,8 @@ bool build_runtime(Tally& tally, const std::string& cl, const std::string& root)
     CHECK(tally, lib.ok() && write_bytes(std::string(kDir) + "/okayrt.lib", lib.value));
     okayms::Archive kernel;
     for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile", "GetProcessHeap", "HeapAlloc", "HeapFree",
-                             "QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime"}) {
+                             "QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime",
+                             "CreateThread", "WaitForSingleObject", "CloseHandle"}) {
         okayms::ArchiveMember member;
         member.name = name;
         member.is_import = true;
@@ -186,6 +187,8 @@ int main(int argc, char** argv) {
         check_program(tally, root, {"link_math", {}});
         // Round 35: an engine file whose namespace-scope std::string is made by the .CRT$XCU start-up table.
         check_program(tally, root, {"link_scene_lists", {"engine/src/Scene/ProjectLists.cpp"}, true});
+        // Round 35: thread_local objects of class type in an object without main, made by the runtime's TLS callback.
+        check_program(tally, root, {"link_thread_local", {"tools/okayms/linktests/tls_part.cpp"}});
     }
     // The folder goes when every check passed; a failed run keeps its files for a look.
     if (tally.fail == 0) std::system(("rm -rf " + kDir).c_str());

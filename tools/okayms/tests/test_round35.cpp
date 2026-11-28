@@ -205,6 +205,58 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Silent wrong code found while linking engine/src/Scene/ProjectLists.cpp (Round 35; the Round 34 compiler's result in
+// brackets):
+// - a member that is an array of objects (`std::string e[4]`, std::array's elems_) had only its first element made by
+//   the implicit constructor and destroyed by the destructor ([class.base.init] 9, [class.dtor] 13): the others held
+//   what the stack held, and a store to e[2] freed that [access violation, exit 5];
+// - `c ? f() : s` with a class prvalue and an lvalue s took s's bytes without its copy constructor ([expr.cond] 7): the
+//   result shared s's buffer [a change to the copy changed s, exit 3];
+// - an `explicit` constructor made implicit conversions ([class.conv.ctor] 1) [the overload taking the class was
+//   chosen for an int, exit 5].
+static void r35_wrong_code(Tally& tally) {
+    std::printf("r35_wrong_code\n");
+    okayms_test::run_both(kRun, tally, "wrong_code", std::string(kAlloc) + R"OKMS(
+#include <array>
+#include <string>
+static int made = 0;
+static int gone = 0;
+struct Tracked { int v; Tracked() : v(7) { ++made; } ~Tracked() { ++gone; } };
+struct Holder { Tracked t[3]; Tracked grid[2][2]; int n = 5; };
+static int Dirty() { volatile char buf[2048]; for (int i = 0; i < 2048; ++i) buf[i] = (char)0x5A; return buf[7]; }
+static int Use() {
+  std::array<std::string, 4> a{};
+  int r = (int)a[2].size() + (int)a[3].size();
+  a[2] = "Ignore Raycast";
+  a[3] = "x";
+  return r + (int)a[2].size() + (int)a[3].size();
+}
+static std::string g_name = "Default";
+static std::string Name(int i) {
+  const std::string& s = g_name;
+  return i ? ("Layer " + std::to_string(i)) : s;
+}
+static int Len(const std::string& t) { return (int)t.size(); }
+struct Wrapped { int v; explicit Wrapped(int x) : v(x) {} };
+static int Pick(const Wrapped&) { return 1; }
+static int Pick(double) { return 2; }
+int entry(void) {
+  Dirty();
+  CK(1, Use() == 15);
+  {
+    Holder h;
+    CK(2, made == 7 && h.t[2].v == 7 && h.grid[1][1].v == 7 && h.n == 5);
+  }
+  CK(3, gone == 7);
+  CK(4, Len(Name(0)) == 7 && g_name == "Default");
+  { std::string a = Name(0); a[0] = 'X'; }
+  CK(5, g_name == "Default" && Name(3) == "Layer 3");
+  CK(6, Pick(3) == 2 && Pick(Wrapped(3)) == 1);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -212,5 +264,6 @@ int main(int argc, char** argv) {
     r35_posix_headers(tally);
     r35_preprocessor_library(tally);
     r35_thread_local(tally);
-    return tally.finish(3);
+    r35_wrong_code(tally);
+    return tally.finish(4);
 }

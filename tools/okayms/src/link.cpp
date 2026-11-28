@@ -216,16 +216,21 @@ bool wants_tls_directory(const std::vector<ObjectFile>& objects) {
     }
     return tls;
 }
-// When an object defines __okay_tls_callback (okay-ms writes it into the file that has main: it runs the constructors of
-// thread_local objects for each new thread, and their destructors when a thread ends; Round 35), the callback list holds
-// its address, then the null end (PE/COFF "TLS Callback Functions").
-bool defines_tls_callback(const std::vector<ObjectFile>& objects) {
+// When an object defines __okay_tls_callback (okay-ms writes it into the file with main when that file names
+// thread_local), or else __okay_tls_callback_rt (okay-ms's runtime, runtime/startup.c), the callback list holds its
+// address, then the null end (PE/COFF "TLS Callback Functions"). The callback runs the constructors of the thread_local
+// objects for each new thread and their destructors when a thread ends (Round 35). Empty when neither is defined.
+std::string tls_callback_name(const std::vector<ObjectFile>& objects) {
+    std::string found;
     for (const ObjectFile& object : objects)
-        for (const Symbol& symbol : object.symbols)
-            if (symbol.name == "__okay_tls_callback" && symbol.section > 0 && symbol.storage == kClassExternal) return true;
-    return false;
+        for (const Symbol& symbol : object.symbols) {
+            if (symbol.section <= 0 || symbol.storage != kClassExternal) continue;
+            if (symbol.name == "__okay_tls_callback") return symbol.name;
+            if (symbol.name == "__okay_tls_callback_rt") found = symbol.name;
+        }
+    return found;
 }
-ObjectFile tls_directory(bool callback) {
+ObjectFile tls_directory(const std::string& callback) {
     ObjectFile object;
     Section dir;
     dir.name = ".rdata";
@@ -255,9 +260,9 @@ ObjectFile tls_directory(bool callback) {
         reloc.type = kRelAmd64Addr64;
         object.sections[0].relocations.push_back(reloc);
     }
-    if (callback) {
+    if (!callback.empty()) {
         Symbol sym;
-        sym.name = "__okay_tls_callback";
+        sym.name = callback;
         sym.storage = kClassExternal;  // undefined here: the object that defines it supplies it
         object.symbols.push_back(sym);
         Relocation reloc;
@@ -276,7 +281,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     const bool make_tls = wants_tls_directory(objects_in);
     if (make_tls) {
         objects_tls = objects_in;
-        objects_tls.push_back(tls_directory(defines_tls_callback(objects_in)));
+        objects_tls.push_back(tls_directory(tls_callback_name(objects_in)));
     }
     const std::vector<ObjectFile>& objects = make_tls ? objects_tls : objects_in;
     if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {
@@ -880,7 +885,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         }
     };
     {
-        std::vector<std::string> roots{options.entry, "__okay_tls_callback", "_tls_used"};
+        std::vector<std::string> roots{options.entry, "__okay_tls_callback", "__okay_tls_callback_rt", "_tls_used"};
         for (const std::string& name : exp.names) roots.push_back(name);
         for (const std::string& name : roots) {
             const auto found = defined_at.find(name);

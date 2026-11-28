@@ -19,25 +19,22 @@ namespace okayms {
 using namespace compiler;
 
 namespace {
-// The start-up text added to a file that defines main or entry (Round 35; ISO/IEC 14882 [basic.start.dynamic],
-// [basic.start.term], [basic.stc.thread]; PE/COFF "Grouped Sections" and "TLS Callback Functions"). The eight markers
-// get their sections in finish_program (.CRT$XCA and .CRT$XCZ around the start-up functions of every file, .CRT$XDA and
-// .CRT$XDZ around the thread_local constructors, .CRT$XTA and .CRT$XTZ around the end functions, .okaytd$A and .okaytd$Z
-// around the thread_local destructors); the linker puts each file's entries between them. main calls __okay_run_xc first
-// and __okay_run_xt at its end; the linker makes __okay_tls_callback the image's TLS callback, which the Windows loader
-// calls for main's thread before main (reason 1) and for every other thread when it starts (2) and ends (3). Our own
-// design, written from those documents; the walkers skip null entries (a marker, or padding).
-const char* const kStartupText = R"OKMS(
+// The thread_local text added to a file that defines main or entry and names thread_local (Round 35; ISO/IEC 14882
+// [basic.stc.thread], [basic.start.term]; PE/COFF "Grouped Sections" and "TLS Callback Functions"). The four markers
+// get their sections in finish_program (.CRT$XDA and .CRT$XDZ around the thread_local constructors of every file,
+// .okaytd$A and .okaytd$Z around their destructors); the linker puts each file's entries between them and makes
+// __okay_tls_callback the image's TLS callback, which the Windows loader calls for main's thread before main (reason 1)
+// and for every other thread when it starts (2) and ends (3). main calls __okay_run_td at its end (main's thread's
+// objects). A program linked with okay-ms's runtime has the same in runtime/startup.c (__okay_tls_callback_rt), for
+// files that have thread_local objects when the file with main has none. Our own design, written from those documents;
+// the walkers skip null entries (a marker, or padding).
+const char* const kThreadLocalText = R"OKMS(
 typedef void (*__okay_pfv)(void);
-static __okay_pfv __okay_xc_a = 0;
-static __okay_pfv __okay_xc_z = 0;
 static __okay_pfv __okay_xd_a = 0;
 static __okay_pfv __okay_xd_z = 0;
-static __okay_pfv __okay_xt_a = 0;
-static __okay_pfv __okay_xt_z = 0;
 static __okay_pfv __okay_td_a = 0;
 static __okay_pfv __okay_td_z = 0;
-static void __okay_run_table(__okay_pfv *from, __okay_pfv *to, int backward) {
+static void __okay_run_tls_table(__okay_pfv *from, __okay_pfv *to, int backward) {
     if (backward) {
         while (to > from + 1) {
             --to;
@@ -48,14 +45,10 @@ static void __okay_run_table(__okay_pfv *from, __okay_pfv *to, int backward) {
             if (*p) (*p)();
     }
 }
-static void __okay_run_xc(void) { __okay_run_table(&__okay_xc_a, &__okay_xc_z, 0); }
-static void __okay_run_xt(void) {
-    __okay_run_table(&__okay_td_a, &__okay_td_z, 1);
-    __okay_run_table(&__okay_xt_a, &__okay_xt_z, 1);
-}
+static void __okay_run_td(void) { __okay_run_tls_table(&__okay_td_a, &__okay_td_z, 1); }
 extern "C" void __okay_tls_callback(void *module, unsigned long reason, void *reserved) {
-    if (reason == 1 || reason == 2) __okay_run_table(&__okay_xd_a, &__okay_xd_z, 0);
-    else if (reason == 3) __okay_run_table(&__okay_td_a, &__okay_td_z, 1);
+    if (reason == 1 || reason == 2) __okay_run_tls_table(&__okay_xd_a, &__okay_xd_z, 0);
+    else if (reason == 3) __okay_run_td();
 }
 )OKMS";
 
@@ -131,9 +124,12 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         const int line = at_line == std::string::npos ? 0 : std::atoi(lex_error.c_str() + at_line + 8);
         return Result<CompileOutput>::fail(where(line) + lex_error);
     }
-    if (defines_start(tokens)) {
+    bool names_thread_local = false;
+    for (const Token& t : tokens)
+        if (t.kind == TIdent && t.text == "thread_local") names_thread_local = true;
+    if (names_thread_local && defines_start(tokens)) {
         std::string startup_error;
-        std::vector<Token> startup = lex(kStartupText, &startup_error);
+        std::vector<Token> startup = lex(kThreadLocalText, &startup_error);
         if (!startup_error.empty()) return Result<CompileOutput>::fail("start-up text: " + startup_error);
         for (Token& t : startup) t.line = 0;
         if (!startup.empty() && startup.back().kind == TEnd) startup.pop_back();

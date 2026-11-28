@@ -21,6 +21,7 @@ if(EMSCRIPTEN)
     set(_okay_web_dir ${CMAKE_SOURCE_DIR}/platform/web)
     target_link_options(okay-player PRIVATE
         "-sMAX_WEBGL_VERSION=2"       # the painter's WebGL 2 context (Emscripten links WebGL 1 only without it)
+        "-sGL_ENABLE_GET_PROC_ADDRESS"   # WebBackend.cpp looks GL functions up with emscripten_webgl_get_proc_address
         "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0"
         "-sENVIRONMENT=web"            # browser only: no Node.js or worker start-up code in the .js
         "-sFORCE_FILESYSTEM=1" "-lidbfs.js"   # okay_web.js writes the game pack into FS and mounts the saves on IDBFS

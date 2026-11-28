@@ -452,7 +452,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
             if timeout 120 sudo apt-get $APT update && \
-               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsodium-dev ccache; then
+               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build libx11-dev libxrandr-dev libgl-dev libasound2-dev libgl1-mesa-dri g++ libsodium-dev ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"

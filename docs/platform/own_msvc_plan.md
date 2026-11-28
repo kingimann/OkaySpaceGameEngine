@@ -1260,3 +1260,54 @@ Not done / unverified / differences (Round 35):
 - With a file with main that names no `thread_local`, main's thread's thread_local objects in other files are not destroyed at the end (other threads' are).
 - `<linux/input.h>`, X11 and SDL headers (plain survey) are not written; a local pointer to an array `T (*p)[N]` (not a parameter), virtual bases (no engine file uses one) and `<d3d11.h>` are not done.
 - The `.okaytd` section (thread_local destructors) is our own name, not an MSVC one.
+
+### Round 36: callee-destroyed by-value parameters, one static local per program (COMDAT), a bigger engine slice linked and run, and four silent wrong-code bugs
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-36`, 2026-11-28. Not run on Windows. Started from Round 35 merged with main (8bbd860d1; main had dropped SDL2 and its file list is now 513).
+
+**Calls and objects (ISO/IEC 14882):**
+
+- By-value parameters of a class with a destructor are destroyed by the callee, once, when it returns or unwinds ([expr.call] 7 leaves the place to the implementation; Microsoft's x64 convention has the callee do it). The caller hands its copy over and does not destroy it. An unnamed one gets a hidden name.
+- `!x`, comparisons, `&&` and `||` are of type bool ([expr.unary.op] 9, [expr.rel] 6, [expr.eq] 6, [expr.log.and] 1, [expr.log.or] 1); `x++` and `++x` have the operand's type; `c ? nullptr : p` has the pointer's type ([expr.cond] 7.3).
+- `obj = value` with a value that is not an object of the class: a temporary made by a converting constructor, then the implicit copy assignment ([over.match.oper] 3, [class.copy.assign]; Nodes.hpp's `ctx.variables[name] = !cur;`).
+- A default argument `= DefaultFile()` naming a static member function of the class, used from outside the class ([dcl.fct.default] 5; SaveData.hpp).
+- Unnamed parameters of a plain struct (`operator()(std::monostate)`), a local class as a lambda's trailing result, explicit instantiation `template class X<A>;` (the class is made with its members), an out-of-class `C::C(Fence f)` with Fence a member type, `W& W::operator=(W&&) noexcept = default;` outside the class, `.5` and `.00074f`, `constexpr` functions are inline ([dcl.constexpr] 1), a lambda in a lambda that captures what the outer one captured, global objects of a class with an initializer-list constructor from a braced list, and the definition of an array static data member with its bounds written again.
+- Overloads: a conversion function's second standard conversion decides between two of them ([over.ics.rank] 3.3; `VsValue{go->active}` with ActiveFlag's operator bool takes the bool constructor), and a parameter reachable only through a constructor template that okay-ms takes to accept any argument ranks after conversions known to work.
+
+**One static local per program (PE/COFF "COMDAT Sections", [dcl.inline] 6):** a static local of an inline function (a member written in its class, a function written `inline` or `constexpr`; not one of a local class or of a class in an anonymous namespace) and its guard are external symbols in a COMDAT section of their own, selection 2 ("any"), named from the function's decorated name, the variable's name and its number among the function's static locals of that name. The linker keeps the first copy, and a symbol of a dropped copy resolves to the kept one (before Round 36 it was "undefined symbol" in the object whose copy was dropped). An object may now have up to 32767 sections (96 before: that is the Windows loader's limit for an image, not an object's). `linktests/link_scene_lists.cpp` now reads and changes Tags and Layers directly, and ProjectLists.cpp sees the same lists.
+
+**Linkage:** a template instance is told by a template-id in the qualified part of the decorated name (before the first `@@`); before, any `?$`, also in a parameter type, made the function internal (`CommandLine::Parse(const std::vector<std::string>&)` could not be called from another object).
+
+**Silent wrong code fixed (four; each has a check in `tests/test_round36.cpp` or `test_engine_link.cpp`; the Round 35 compiler's result in brackets):**
+
+- By-value class parameters [the caller made a copy, passed the callee a byte copy of it, and destroyed its own copy after the call: what the callee moved out of its parameter was freed a second time; `ToggleNode(std::string n) : name(std::move(n))` left `name` pointing at freed text, exit 8 with okay-ms's own heap].
+- Placement new of a class with a move constructor and no copy constructor [its bytes were copied, not moved: `vector<unique_ptr<T>>::push_back(std::move(p))` left `p` owning the object, and its destructor deleted it].
+- `return a == b;` and `Kind(a == b)` [the int overload or constructor was chosen over the bool one].
+- An inline function's static local [one per object: a change from one file was not seen from another].
+
+**Our own headers and library (declarations from Microsoft's public reference, or the C and C++ standards):** `<io.h>` (the low-level file functions), `<shellapi.h>` (DragAcceptFiles, DragQueryFileW, DragQueryPoint, DragFinish, ShellExecuteW, CommandLineToArgvW), `<hidusage.h>` (usage pages and usages from the USB-IF HID Usage Tables); `_fileno` and `_fdopen`; `unique_ptr<Derived>` to `unique_ptr<Base>` ([unique.ptr.single.ctor] 18; NodeGraph::Add); `std::visit` and `std::bad_variant_access`; `std::erf` and `std::erfc` (a positive series below 3 and Laplace's continued fraction above, checked against their known values); `duration::zero`, `min`, `max`; `min_element` and `max_element` with a comparison; `error_category::message`; `deque::rbegin` and `rend`; `std::addressof`. The runtime (`runtime/printf.c`) has `__acrt_iob_func`, `fprintf`, `fputs`, `fputc`, `fwrite` and `fflush` for stdout and stderr.
+
+**Linked and run engine objects:** `tests/test_engine_link.cpp` now also builds `engine/src/Core/CommandLine.cpp` and `engine/src/Core/StringId.cpp` (interned names behind the engine's CRITICAL_SECTION lock) with a test main (`linktests/link_core_slice.cpp`), and `linktests/link_inline_static.cpp` with `inline_part.cpp` (inline functions' static locals across two objects); each at /O0, /O1 and /O2, run under Wine, and the printed text must equal MinGW g++'s.
+
+Measurement: `tools/okayms/survey.sh` (300-second limit per file, 1 job) on the 513 `engine/src/**/*.cpp` files of main as merged into this branch, with the compiler and headers of commit 01003292c. "Before" is the Round 35 compiler and headers (commit 8bbd860d1) on the same files, run at the start of this round.
+
+| Survey | Before (Round 35, 513 files) | After |
+|---|---|---|
+| Windows (default) | 436 of 513 | **466 of 513** (no time-outs) |
+| Plain (`SURVEY_PLAIN=1`) | 443 of 513 | **473 of 513** (no time-outs) |
+
+No file that compiled before stops compiling (checked file by file, both surveys). Left on the Windows survey (47 files, each its own first error): headers not written (`<d3d11.h>` 2, `<d3d12.h>`, `<imm.h>` for OwnWin32.cpp, `<initguid.h>` and the audio COM headers for OwnWin32Audio.cpp, `<hidpi.h>` for OwnWin32Hid.cpp, `<linux/input.h>`, Steam's), a local pointer to an array `T (*p)[N]` (ImageDecode.cpp, ImageDecodeJpeg.cpp), `&(m[k] = g)` with an implicit assignment (TtfFont.cpp), a temporary with a destructor in a for condition (ItemDatabase.cpp), iostream members `copyfmt` and `pubseekoff` (SceneSerializer*.cpp), and single compiler gaps in the rest (BehaviorTree.cpp's `case K::Key:` is "expected a case value" only in the file; small copies of it compile).
+
+Tests: new `tests/test_round36.cpp`, 8 tests (programs built by okay-cl at /O0, /O1, /O2, run under Wine and compared with MinGW g++; the by-value test links okay-ms's own heap so a second free is not hidden): `tests 8, checks passed 115, failed 0`. With the Round 35 compiler (and this round's headers): `tests 8, checks passed 37, failed 24`, every one of the 8 programs failing (first errors: "cannot work out the type of the auto variable", "not an address: a unary operator or cast", "unknown function DefaultFile", exit 1 for unique_ptr, exit 8 for by-value parameters, "expected a type", "cannot deduce template arguments of shared_ptr", "a global object with a constructor takes arguments in parentheses"). `test_engine_link`: `tests 2, checks passed 129, failed 0` (6 linked programs). The whole suite (`tools/okayms/build.sh`, 78 test programs, `env -u TMPDIR -u TEMP -u TMP`) on commit 01003292c: 78 of 78 passed. link_inline_static with the compiler before the COMDAT change printed "names 1 counter 1 greeting hello there?" and 7 failures, g++ "names 2 counter 2 greeting hello there!?!".
+
+Written from ISO/IEC 14882 (the sections named above), ISO/IEC 9899 (7.12.8, 7.21), the Microsoft PE/COFF specification (COMDAT sections, auxiliary section definitions, section numbers), Microsoft's public Win32 and C runtime reference pages (the functions named in `<io.h>` and `<shellapi.h>`), and the USB-IF HID Usage Tables (`<hidusage.h>`'s numbers). erf and erfc use a textbook series and Laplace's continued fraction, written here; their checks use published values. No code from MSVC, its CRT or STL, the Windows SDK, MinGW, glibc, musl, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography.
+
+Not done / unverified / differences (Round 36):
+
+- Not run on Windows. No decorated name, COMDAT section or argument-passing convention compared with MSVC: okay-ms objects link only with okay-ms objects and its runtime.
+- `<d3d11.h>`, `<d3d12.h>` and the audio COM headers (`<mmdeviceapi.h>`, `<audioclient.h>`) are not written: their interfaces are COM tables whose slot order is fixed by the SDK's interface definitions, and the public reference pages list the methods in alphabetical order, so the layout cannot be taken from them alone. `<hidpi.h>`, `<hidsdi.h>`, `<imm.h>`, `<xinput.h>` and the window and raw-input parts of `<windows.h>` are not written yet either.
+- A temporary made for a by-value argument (`f(C(4))`) is not destroyed when an exception leaves the statement (a named object passed by value is: the callee destroys its parameter on unwinding).
+- An inline variable (`inline int g;`) is still one per file; only static locals of inline functions are shared. A static local of a lambda in an inline function is one per file.
+- `template class X<A>;` makes the class and its members in this file, but members written in the class stay internal symbols (as for every template instance).
+- `SaveFile.cpp` compiles because okay-cl takes a `const char*` argument for a `const unsigned short*` parameter without a diagnostic (checked with a two-line file; our `filesystem::path` is narrow): its `_wfopen(p.c_str(), L"wb")` would pass the wrong kind of text on Windows. Found, not fixed.
+- Virtual bases are not done (no engine file uses one).

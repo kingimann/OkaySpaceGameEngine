@@ -520,7 +520,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     int next_section = 2;
     std::vector<const Global*> own_sections;  // globals with a section of their own, in order (Round 35)
     for (const Global& global : globals) {
-        if (!global.external && !global.section.empty()) {
+        if (!global.external && (!global.section.empty() || global.comdat)) {
             own_sections.push_back(&global);
             add_sym(global.name, 0, 0, global.is_static ? kClassStatic : kClassExternal, 0);
             continue;
@@ -610,7 +610,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         for (size_t k = 0; k < own_sections.size(); ++k)
             if (sym.name == own_sections[k]->name) sym.section = static_cast<int16_t>(own_first + static_cast<int>(k));
         for (const Global& global : globals) {
-            if (sym.name != global.name || global.external || !global.section.empty()) continue;
+            if (sym.name != global.name || global.external || !global.section.empty() || global.comdat) continue;
             sym.section = static_cast<int16_t>(global.vtable ? rdata_section
                                                : global.tls ? tls_section
                                                : global.bss ? bss_section
@@ -667,14 +667,41 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         tls.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite | kScnAlign8;
         object.sections.push_back(std::move(tls));
     }
+    // The section symbols of the COMDAT sections (Round 36), written after the others: storage class static, the
+    // section's name, and one auxiliary record whose byte 14 is the selection (PE/COFF specification, "Auxiliary Format
+    // 5: Section Definitions"; 2 = any: the linker keeps one of the sections of that symbol and drops the others).
+    struct ComdatSym {
+        std::string name;
+        int16_t section;
+        std::vector<uint8_t> aux;
+    };
+    std::vector<ComdatSym> comdat_syms;
     for (const Global* global : own_sections) {
         // Read-only initialized data, 8-byte aligned, so that pointer tables of several objects meet without a gap.
+        // A COMDAT static local (Round 36) is writable data of its own, 16-byte aligned.
         Section own;
-        own.name = global->section;
-        own.data = global->init_bytes;
+        own.name = global->comdat ? ".data" : global->section;
+        if (!global->bss) own.data = global->init_bytes;
+        if (!global->bss && own.data.empty()) {
+            for (int k = 0; k < 4; ++k) own.data.push_back(static_cast<uint8_t>(global->init >> (8 * k)));
+        }
         own.data.resize(std::max<size_t>(own.data.size(), static_cast<size_t>(std::max(1, gen.size_of(global->type)))), 0);
         own.virtual_size = static_cast<uint32_t>(own.data.size());
         own.characteristics = kScnCntInitData | kScnMemRead | kScnAlign8;
+        if (global->comdat) {
+            own.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite | kScnLnkComdat | kScnAlign16;
+            ComdatSym cs;
+            cs.name = ".data";
+            cs.section = static_cast<int16_t>(object.sections.size() + 1);
+            cs.aux.assign(18, 0);
+            const uint32_t length = static_cast<uint32_t>(own.data.size());
+            for (int k = 0; k < 4; ++k) cs.aux[static_cast<size_t>(k)] = static_cast<uint8_t>(length >> (8 * k));
+            const uint16_t nrel = static_cast<uint16_t>(global->addr_relocs.size());
+            cs.aux[4] = static_cast<uint8_t>(nrel);
+            cs.aux[5] = static_cast<uint8_t>(nrel >> 8);
+            cs.aux[14] = 2;
+            comdat_syms.push_back(std::move(cs));
+        }
         for (const auto& slot : global->addr_relocs) {
             const auto found = index.find(slot.second);
             if (found == index.end()) {
@@ -823,6 +850,14 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         out_sym.section = sym.section;
         out_sym.type = sym.type;
         out_sym.storage = sym.storage;
+        object.symbols.push_back(std::move(out_sym));
+    }
+    for (ComdatSym& cs : comdat_syms) {
+        Symbol out_sym;
+        out_sym.name = cs.name;
+        out_sym.section = cs.section;
+        out_sym.storage = kClassStatic;
+        out_sym.aux = std::move(cs.aux);
         object.symbols.push_back(std::move(out_sym));
     }
     out->object = std::move(object);

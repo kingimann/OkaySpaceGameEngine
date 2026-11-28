@@ -68,7 +68,10 @@ bool build_runtime(Tally& tally, const std::string& cl, const std::string& root)
     okayms::Archive kernel;
     for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile", "GetProcessHeap", "HeapAlloc", "HeapFree",
                              "QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime",
-                             "CreateThread", "WaitForSingleObject", "CloseHandle"}) {
+                             "CreateThread", "WaitForSingleObject", "CloseHandle",
+                             // Round 36: the engine's lock (CoreThreads.hpp) in StringId.cpp
+                             "InitializeCriticalSection", "EnterCriticalSection", "LeaveCriticalSection",
+                             "DeleteCriticalSection"}) {
         okayms::ArchiveMember member;
         member.name = name;
         member.is_import = true;
@@ -189,6 +192,10 @@ int main(int argc, char** argv) {
         check_program(tally, root, {"link_scene_lists", {"engine/src/Scene/ProjectLists.cpp"}, true});
         // Round 35: thread_local objects of class type in an object without main, made by the runtime's TLS callback.
         check_program(tally, root, {"link_thread_local", {"tools/okayms/linktests/tls_part.cpp"}});
+        // Round 36: inline functions' static locals are one object in the program (COMDAT sections, [dcl.inline] 6).
+        check_program(tally, root, {"link_inline_static", {"tools/okayms/linktests/inline_part.cpp"}});
+        // Round 36: a bigger engine slice, the command-line parser and the interned names.
+        check_program(tally, root, {"link_core_slice", {"engine/src/Core/CommandLine.cpp", "engine/src/Core/StringId.cpp"}});
     }
     // The folder goes when every check passed; a failed run keeps its files for a look.
     if (tally.fail == 0) std::system(("rm -rf " + kDir).c_str());

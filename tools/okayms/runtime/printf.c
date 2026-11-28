@@ -247,3 +247,54 @@ int snprintf(char *buf, unsigned int cap, char *fmt, ...) {
 }
 
 int puts(char *s) { return printf("%s\n", s); }
+
+/* The C runtime's three standard streams (Round 36), for programs that write to stderr or stdout through a FILE:
+ * __acrt_iob_func(i) gives stream i (0 stdin, 1 stdout, 2 stderr; the UCRT entry point <cstdio> names), and fprintf,
+ * fputs, fputc, fwrite and fflush write to stdout and stderr through WriteFile on the process's standard handles
+ * (STD_OUTPUT_HANDLE -11, STD_ERROR_HANDLE -12, Microsoft's GetStdHandle documentation). Own minimal version: these
+ * streams only, no buffering (fflush does nothing), and nothing is read from stdin. Written from ISO/IEC 9899 7.21.
+ */
+unsigned int strlen(char *s);
+static int okay_streams[3] = {0, 1, 2};
+
+void *__acrt_iob_func(unsigned int index) { return index < 3 ? (void *)&okay_streams[index] : 0; }
+
+static void *okay_stream_handle(void *stream) {
+    int which = stream ? *(int *)stream : 1;
+    return GetStdHandle(which == 2 ? 0xFFFFFFF4 : 0xFFFFFFF5);
+}
+
+int fprintf(void *stream, char *fmt, ...) {
+    char out[1024];
+    unsigned int wrote;
+    int count;
+    va_list ap;
+    va_start(ap, fmt);
+    count = format_out(out, 1024, fmt, ap);
+    va_end(ap);
+    WriteFile(okay_stream_handle(stream), out, count, &wrote, 0);
+    return count;
+}
+
+unsigned long long fwrite(void *data, unsigned long long size, unsigned long long count, void *stream) {
+    unsigned int wrote = 0;
+    if (size == 0 || count == 0) return 0;
+    WriteFile(okay_stream_handle(stream), data, (unsigned int)(size * count), &wrote, 0);
+    return wrote / size;
+}
+
+int fputs(char *s, void *stream) {
+    unsigned int wrote;
+    WriteFile(okay_stream_handle(stream), s, strlen(s), &wrote, 0);
+    return 0;
+}
+
+int fputc(int c, void *stream) {
+    char one = (char)c;
+    unsigned int wrote;
+    WriteFile(okay_stream_handle(stream), &one, 1, &wrote, 0);
+    return c & 255;
+}
+
+int fflush(void *stream) { return 0; }
+

@@ -659,7 +659,41 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
         std::vector<Node> args;
         args.push_back(*right);
         const Method* m = find_method(lt.struct_id, name, 1, &args);
-        if (m == nullptr || m->implicit || m->is_static) return true;
+        if (m == nullptr || m->implicit || m->is_static) {
+            // obj = value with a value that is not a class object (`v = !b;`, `v = i;`, `v = "text";`): the implicit
+            // copy assignment takes `const C&`, so the value is first made into a temporary C by a converting
+            // constructor ([over.match.oper] 3, [class.copy.assign], [over.ics.user]); the temporary is destroyed after
+            // the statement. Round 36: before, `!x`, comparisons, constants and casts were "not an address".
+            Type from;
+            const StructDef& sd = structs[static_cast<size_t>(lt.struct_id)];
+            if (!rc && cur_locals != nullptr && class_needs_ctor(sd) && static_type(*right, &from) &&
+                !(from.base == 0 && from.pointers == 0) && converts_by_ctor(lt.struct_id, *right, from)) {
+                Local hidden;
+                hidden.name = "__bt" + std::to_string(tmp_count++);
+                hidden.type = lt;
+                hidden.type.is_ref = false;
+                hidden.type.rref = false;
+                hidden.type.is_const = false;
+                hidden.type.pconst = false;
+                place_local(cur_locals, hidden);
+                std::vector<Node> cargs;
+                cargs.push_back(std::move(*right));
+                Node call;
+                ++conv_depth;
+                const bool made = conv_depth <= 1 &&
+                                  special_call(lt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call);
+                --conv_depth;
+                if (!made) {
+                    if (error.empty()) error = "no conversion to " + sd.name + " for the assignment";
+                    return false;
+                }
+                stmt_pre.push_back(std::move(call));
+                if (class_needs_dtor(structs[static_cast<size_t>(lt.struct_id)]))
+                    stmt_temps.push_back(Temp{hidden.name, lt.struct_id});
+                *right = node_name(hidden.name);
+            }
+            return true;
+        }
         Node result;
         if (!method_call(&result, std::move(*left), false, name, {}, &args)) return false;
         *left = std::move(result);

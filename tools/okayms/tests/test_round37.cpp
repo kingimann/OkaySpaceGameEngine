@@ -295,6 +295,104 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// The implicit copy and move assignment operators and the implicit move constructor ([class.copy.assign] 2, 4, 12;
+// [class.copy.ctor] 8, 14): each base and member is assigned or made by its own operator= or constructor. Before Round
+// 37 `a = b;` for a struct with a std::string member copied the string's bytes (both then owned one buffer: silent wrong
+// code, check 1), and moving a struct with a unique_ptr member left the source owning the object too (a double delete;
+// found by linking engine/src/Core/Undo.cpp, whose UndoStack keeps `struct Entry { std::unique_ptr<ICommand> cmd; ... }`
+// in a deque and a vector).
+static void r37_implicit_members(Tally& tally) {
+    std::printf("r37_implicit_members\n");
+    okayms_test::run_both(kRunEh, tally, "implicit_members", R"OKMS(
+#include <string>
+#include <memory>
+#include <vector>
+#include <deque>
+#include <utility>
+static int g_live = 0;
+struct Obj { int v; Obj(int x) : v(x) { ++g_live; } ~Obj() { --g_live; } };
+struct S { std::string s; int k; };
+struct U { std::unique_ptr<Obj> p; unsigned long long bytes = 0; };
+struct Base { std::string name; };
+struct Derived : Base { std::string extra[2]; int n; };
+struct Holder { std::deque<U> q; std::vector<U> w; };
+int entry(void) {
+  {
+    S a, b;
+    b.s = "a long text that has to live on the heap, not inside";
+    b.k = 4;
+    a = b;
+    b.s[0] = 'X';
+    CK(1, a.s[0] == 'a' && b.s[0] == 'X' && a.k == 4);
+    U u, w;
+    u.p.reset(new Obj(1));
+    w = std::move(u);
+    CK(2, !u.p && w.p && w.p->v == 1 && g_live == 1);
+    U m(std::move(w));
+    CK(3, !w.p && m.p->v == 1 && g_live == 1);
+    Holder h;
+    U x; x.p.reset(new Obj(2)); x.bytes = 8;
+    h.q.push_back(std::move(x));
+    U y; y.p.reset(new Obj(3));
+    h.q.push_back(std::move(y));
+    U back = std::move(h.q.back());
+    h.q.pop_back();
+    h.w.push_back(std::move(back));
+    CK(4, h.q.size() == 1 && h.q.front().p->v == 2 && h.q.front().bytes == 8 && h.w.back().p->v == 3 && g_live == 3);
+    h.w.push_back(std::move(h.q.front()));
+    h.w.erase(h.w.begin());
+    CK(5, h.w.size() == 1 && h.w[0].p->v == 2 && g_live == 2);
+    Derived d1, d2;
+    d2.name = "the base part, long enough to be on the heap";
+    d2.extra[1] = "the second element of an array of strings, also long";
+    d2.n = 9;
+    d1 = d2;
+    d2.name[0] = 'Q';
+    d2.extra[1][0] = 'Q';
+    CK(6, d1.name[0] == 't' && d1.extra[1][0] == 't' && d1.n == 9);
+    Derived d3(std::move(d1));
+    CK(7, d3.name[0] == 't' && d3.extra[1].size() > 20);
+  }
+  CK(8, g_live == 0);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// The right operand of && and || runs only when it is needed, after the left one ([expr.log.and] 1, [expr.log.or] 1),
+// also when it makes a temporary of class type (a call returning a std::string). Before Round 37 the temporary was
+// made before the whole statement: `s.Undo() && s.NextRedoName() == "Set B"` read the name before Undo() ran.
+static void r37_logic_order(Tally& tally) {
+    std::printf("r37_logic_order\n");
+    okayms_test::run_both(kRun, tally, "logic_order", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+struct St {
+  std::vector<std::string> r;
+  int calls = 0, names = 0;
+  bool Undo() { ++calls; r.push_back("Set B"); return true; }
+  std::string Name() { ++names; return r.empty() ? std::string("none") : r.back(); }
+};
+int entry(void) {
+  St s;
+  int b = 10;
+  bool ok = s.Undo() && b == 10 && s.Name() == "Set B";
+  CK(1, ok && s.calls == 1 && s.names == 1);
+  CK(2, s.Undo() && s.Name() == "Set B" && s.calls == 2);
+  bool skip = s.calls > 5 && s.Name() == "x";
+  CK(3, !skip && s.names == 2);
+  bool any = s.calls > 0 || s.Name() == "x";
+  CK(4, any && s.names == 2);
+  int loops = 0;
+  while (s.calls < 4 && s.Name() != "stop") { s.Undo(); ++loops; }
+  CK(5, loops == 2 && s.calls == 4);
+  for (int i = 0; i < 2 && s.Name() == "Set B"; ++i) ++loops;
+  CK(6, loops == 4);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -305,5 +403,7 @@ int main(int argc, char** argv) {
     r37_by_value_unwind(tally);
     r37_win32_layouts(tally);
     r37_single_file_blockers(tally);
-    return tally.finish(6);
+    r37_implicit_members(tally);
+    r37_logic_order(tally);
+    return tally.finish(8);
 }

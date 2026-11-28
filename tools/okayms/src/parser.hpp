@@ -1205,6 +1205,7 @@ struct Parser {
     int cur_special = 0;
     bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
+    bool cur_implicit_move = false;  // the implicit move constructor or move assignment is being made (Round 37)
     // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
     // its static locals are COMDAT objects named from it (Round 36).
     bool cur_fn_inline = false;
@@ -4993,6 +4994,126 @@ struct Parser {
         return best;
     }
     bool class_has_copy(int sid) const { return copy_ctor(sid) != nullptr; }
+    // operator= of class sid taking `const C&` or `C&` (or C by value), or `C&&` with move (Round 37).
+    const Method* assign_op(int sid, bool move) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name != "operator=" || m.params.size() != 1 || m.is_static) continue;
+            if (m.implicit && !m.implicit_assign) continue;
+            const Type& p = m.params[0];
+            if (p.base != 3 || p.pointers != 0 || p.struct_id != sid) continue;
+            if (move ? (p.is_ref && p.rref) : !(p.is_ref && p.rref)) return &m;
+        }
+        return nullptr;
+    }
+    bool has_any_assign(int sid) const { return assign_op(sid, false) != nullptr || assign_op(sid, true) != nullptr; }
+    // The parts of a class (bases, then members) for the implicit special members: their classes, -1 for a part that is
+    // not of class type; arrays of objects count by their element class.
+    std::vector<int> part_classes(const StructDef& def, int self) const {
+        std::vector<int> out;
+        for (const StructDef::BaseInfo& bi : def.bases) out.push_back(bi.sid);
+        for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+            const Field& f = def.fields[fi];
+            if (f.name.compare(0, 6, "__vptr") == 0) continue;
+            const Type& ft = f.type;
+            if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && ft.struct_id >= 0 && ft.struct_id != self && ft.more.empty())
+                out.push_back(ft.struct_id);
+            else
+                out.push_back(-1);
+        }
+        return out;
+    }
+    // The implicit copy and move assignment operators and the implicit move constructor of a class that declares none
+    // ([class.copy.assign] 2, 4; [class.copy.ctor] 8), made only when a base or member has its own operator= or move
+    // constructor (otherwise the bytes are copied, as before Round 37) and every part can be assigned or made that way.
+    // Before Round 37 `a = b;` for a struct with a std::string member copied the string's bytes (both then owned one
+    // buffer), and moving a struct with a unique_ptr member left the source owning the object too.
+    bool implicit_special_members(StructDef* def, int self, bool user_copy, bool has_dtor) {
+        if (def->local_fn) return true;  // own limit: not for local classes
+        bool user_copy_assign = false;
+        bool user_move_assign = false;
+        bool user_move = false;
+        for (const Method& m : def->methods) {
+            if (m.name == "operator=" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].pointers == 0 &&
+                m.params[0].struct_id == self) {
+                if (m.params[0].is_ref && m.params[0].rref) user_move_assign = true;
+                else user_copy_assign = true;
+            }
+            if (is_move_param(m, self)) user_move = true;
+        }
+        const std::vector<int> parts = part_classes(*def, self);
+        bool any_assign = false;
+        bool copy_assignable = true;
+        bool move_assign_needed = false;
+        bool any_move_ctor = false;
+        bool move_constructible = true;
+        for (int sid : parts) {
+            if (sid < 0) continue;
+            const bool ca = assign_op(sid, false) != nullptr;
+            const bool ma = assign_op(sid, true) != nullptr;
+            if (ca || ma) any_assign = true;
+            if (ma) move_assign_needed = true;
+            if (!ca && ma) copy_assignable = false;
+            if (has_move_ctor(sid)) any_move_ctor = true;
+            if (!has_move_ctor(sid) && !class_has_copy(sid) && class_needs_ctor(structs[static_cast<size_t>(sid)]) &&
+                !has_ctor_template(sid))
+                move_constructible = false;
+        }
+        Type self_ref;
+        self_ref.base = 3;
+        self_ref.struct_id = self;
+        self_ref.is_ref = true;
+        Type self_rref = self_ref;
+        self_rref.rref = true;
+        Type result = self_ref;
+        auto add_assign = [&](const Type& param) {
+            Method m;
+            m.name = "operator=";
+            m.ret = result;
+            m.params.push_back(param);
+            m.param_names.push_back("__o");
+            m.implicit = true;
+            m.implicit_assign = true;
+            m.has_body = true;
+            m.body_at = 1;
+            return add_method(def, self, std::move(m));
+        };
+        if (!user_copy_assign && any_assign && copy_assignable) {
+            Type cref = self_ref;
+            cref.is_const = true;
+            cref.pconst = true;
+            if (!add_assign(cref)) return false;
+        }
+        const bool no_user_special = !user_copy && !user_copy_assign && !user_move && !user_move_assign && !has_dtor;
+        if (no_user_special && move_assign_needed) {
+            if (!add_assign(self_rref)) return false;
+        }
+        if (no_user_special && any_move_ctor && move_constructible) {
+            Method m;
+            m.name = "<ctor>";
+            m.ret.base = 3;
+            m.ret.struct_id = self;
+            m.ret.pointers = 1;
+            m.params.push_back(self_rref);
+            m.param_names.push_back("__o");
+            m.implicit = true;
+            m.implicit_copy = true;
+            m.implicit_move = true;
+            m.has_body = true;
+            m.body_at = 1;
+            if (!add_method(def, self, std::move(m))) return false;
+        }
+        return true;
+    }
+    // An rvalue of the object p points at (std::move(*p)): what `T&&` parameters bind to.
+    static Node xvalue_of(Node p) {
+        Node d;
+        d.kind = Node::Unary;
+        d.op = TStar;
+        d.text = "xval";
+        d.kids.push_back(std::move(p));
+        return d;
+    }
     const Method* move_ctor(int sid) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods)
@@ -6369,6 +6490,7 @@ struct Parser {
                 m.body_at = 1;
                 if (!add_method(&def, self, std::move(m))) return false;
             }
+            if (!implicit_special_members(&def, self, user_copy, has_dtor)) return false;
             if (!has_dtor && class_needs_dtor(structs[static_cast<size_t>(self)])) {
                 Method m;
                 m.name = "<dtor>";
@@ -6563,6 +6685,7 @@ struct Parser {
         const size_t resume = at;
         at = m.body_at;
         cur_implicit_copy = m.implicit_copy;
+        cur_implicit_move = m.implicit_move || (m.implicit_assign && !m.params.empty() && m.params[0].rref);
         cur_inherit_sid = m.inherit_sid;
         // An out-of-class definition may call the class template's parameters by other names.
         TDecl alias;
@@ -6580,7 +6703,9 @@ struct Parser {
         // The class's member types (typedefs, using names, enumerations) are names in its member functions
         // ([basic.scope.class]), also when the body is read after the class (a nested class's members; Round 30).
         const TdefSaves class_names = bind_class_tdefs(sid);
-        const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
+        const bool ok = parse_function_body(&fn, sid,
+                                            m.implicit_assign ? 3 : m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0,
+                                            m.implicit);
         unbind_class_tdefs(class_names);
         unbind_params(alias_bound);
         // A failure outside a template instance stops the compile: the error then names the line it happened on, not
@@ -6753,6 +6878,99 @@ struct Parser {
         return -1;
     }
 
+    // The body of an implicit copy or move assignment (Round 37, [class.copy.assign] 12): each base subobject, then
+    // each member in declaration order, is assigned from the source's: by its class's operator= (given an rvalue of the
+    // source's part in the move form), element by element for an array of such objects, and by its bytes otherwise.
+    // The result is *this.
+    bool implicit_assign_body(FuncDecl* fn, const StructDef& def, int cls) {
+        const bool move = cur_implicit_move;
+        Node block;
+        block.kind = Node::Block;
+        block.text = "scope";
+        auto source_part = [&](Node lvalue) { return move ? xvalue_of(node_addr(std::move(lvalue))) : lvalue; };
+        auto call_assign = [&](int sid, Node target, Node source) -> bool {
+            std::vector<Node> args;
+            args.push_back(std::move(source));
+            Node call;
+            if (!method_call(&call, std::move(target), false, "operator=", {}, &args)) return false;
+            for (Node& n : stmt_pre) block.kids.push_back(std::move(n));
+            stmt_pre.clear();
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(call));
+            block.kids.push_back(std::move(stmt));
+            (void)sid;
+            return true;
+        };
+        auto byte_copy = [&](Node target, Node source) {
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;  // a plain copy of the bytes, as an initialization makes it
+            assign.kids.push_back(std::move(target));
+            assign.kids.push_back(std::move(source));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            block.kids.push_back(std::move(stmt));
+        };
+        auto other_field = [&](const std::string& f) {
+            Node o;
+            o.kind = Node::Field;
+            o.op = TDot;
+            o.text = f;
+            o.kids.push_back(node_name("__o"));
+            return o;
+        };
+        auto deref = [](Node p) {
+            Node d;
+            d.kind = Node::Unary;
+            d.op = TStar;
+            d.kids.push_back(std::move(p));
+            return d;
+        };
+        for (const StructDef::BaseInfo& bi : def.bases) {
+            if (has_any_assign(bi.sid)) {
+                Node target = deref(bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid));
+                Node source = deref(offset_ptr(node_addr(node_name("__o")), bi.off, bi.sid));
+                if (!call_assign(bi.sid, std::move(target), source_part(std::move(source)))) return false;
+            } else {
+                for (size_t fi = bi.f0; fi < bi.f1; ++fi)
+                    if (def.fields[fi].name.compare(0, 6, "__vptr") != 0)
+                        byte_copy(node_this_field(def.fields[fi].name), other_field(def.fields[fi].name));
+            }
+        }
+        for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+            const Field& field = def.fields[fi];
+            if (field.name.compare(0, 6, "__vptr") == 0) continue;
+            const Type& ft = field.type;
+            const bool obj = ft.base == 3 && ft.pointers == 0 && !ft.is_ref && ft.struct_id >= 0 && ft.struct_id != cls &&
+                             ft.more.empty() && has_any_assign(ft.struct_id);
+            if (obj && !ft.is_array()) {
+                if (!call_assign(ft.struct_id, node_this_field(field.name), source_part(other_field(field.name)))) return false;
+            } else if (obj && ft.array_len > 0) {
+                for (int k = 0; k < ft.array_len; ++k) {
+                    Node t;
+                    t.kind = Node::Index;
+                    t.kids.push_back(node_this_field(field.name));
+                    t.kids.push_back(int_node(k));
+                    Node o;
+                    o.kind = Node::Index;
+                    o.kids.push_back(other_field(field.name));
+                    o.kids.push_back(int_node(k));
+                    if (!call_assign(ft.struct_id, std::move(t), source_part(std::move(o)))) return false;
+                }
+            } else {
+                byte_copy(node_this_field(field.name), other_field(field.name));
+            }
+        }
+        Node ret;
+        ret.kind = Node::Return;
+        ret.kids.push_back(node_name("this"));
+        block.kids.push_back(std::move(ret));
+        fn->body = std::move(block);
+        return true;
+    }
     bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
         // The body is a "scope" block around the user's block (below): the code generator opens a scope for it, so
         // the parser opens one too, first, and the scope numbers of the locals match the generator's (Round 30:
@@ -6763,6 +6981,7 @@ struct Parser {
             ~ScopeGuard() { p.pop_scope(); }
         } scope_guard(*this);
         const StructDef def = structs[static_cast<size_t>(cls)];
+        if (special == 3) return implicit_assign_body(fn, def, cls);
         std::vector<Node> pre;
         std::vector<Node> post;
         int eh_held = 0;  // sub-objects recorded for unwinding while the constructor runs
@@ -6872,7 +7091,16 @@ struct Parser {
             // Each base in declaration order ([class.copy.ctor] 14): by its copy constructor, given the base subobject of
             // the source, or field by field.
             for (const StructDef::BaseInfo& bi : def.bases) {
-                if (class_has_copy(bi.sid)) {
+                if (cur_implicit_move && (has_move_ctor(bi.sid) || class_has_copy(bi.sid))) {
+                    // The move constructor: the base from an rvalue of the source's base subobject (Round 37).
+                    std::vector<Node> args;
+                    args.push_back(xvalue_of(offset_ptr(node_addr(node_name("__o")), bi.off, bi.sid)));
+                    Node call;
+                    if (!special_call(bi.sid, "<ctor>", bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid),
+                                      std::move(args), &call))
+                        return false;
+                    push_ctor_call(std::move(call));
+                } else if (class_has_copy(bi.sid)) {
                     std::vector<Node> args;
                     args.push_back(node_name("__o"));
                     Node call;
@@ -6890,7 +7118,16 @@ struct Parser {
                 const Field& field = def.fields[fi];
                 if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const Type& ft = field.type;
-                if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                if (cur_implicit_move && ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() &&
+                    ft.struct_id >= 0 && (has_move_ctor(ft.struct_id) || class_has_copy(ft.struct_id))) {
+                    // The move constructor: the member from an rvalue of the source's member (Round 37).
+                    std::vector<Node> args;
+                    args.push_back(xvalue_of(node_addr(other_field(field.name))));
+                    Node call;
+                    if (!special_call(ft.struct_id, "<ctor>", node_addr(node_this_field(field.name)), std::move(args), &call))
+                        return false;
+                    push_ctor_call(std::move(call));
+                } else if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
                     class_has_copy(ft.struct_id)) {
                     std::vector<Node> args;
                     args.push_back(other_field(field.name));

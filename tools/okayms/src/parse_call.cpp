@@ -655,11 +655,12 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
     if (!operator_name(op, &name)) return true;
     if (!lc && !rc) return true;
     if (op == TAssign && lc) {
-        // Only a user-written operator= is called; without one the members are copied as before.
+        // A user-written operator=, or the implicit one the compiler made (Round 37, implicit_special_members), is called;
+        // without one the members are copied as bytes.
         std::vector<Node> args;
         args.push_back(*right);
         const Method* m = find_method(lt.struct_id, name, 1, &args);
-        if (m == nullptr || m->implicit || m->is_static) {
+        if (m == nullptr || (m->implicit && !m->implicit_assign) || m->is_static) {
             // obj = value with a value that is not a class object (`v = !b;`, `v = i;`, `v = "text";`): the implicit
             // copy assignment takes `const C&`, so the value is first made into a temporary C by a converting
             // constructor ([over.match.oper] 3, [class.copy.assign], [over.ics.user]); the temporary is destroyed after

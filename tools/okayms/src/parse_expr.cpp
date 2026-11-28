@@ -3362,6 +3362,8 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         Node right;
         const int next_min = is_assign_op(op) ? p : p + 1;
         Type assigned;
+        const size_t logic_pre = stmt_pre.size();
+        const size_t logic_temps = stmt_temps.size();
         if (op == TAssign && is(TLBrace) && cur_locals != nullptr && class_object_type(*out, &assigned)) {
             // x = {a, b}; assigns a temporary made from the list ([expr.ass]).
             if (!braced_temp(assigned.struct_id, &right)) return false;
@@ -3396,6 +3398,61 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                 if (lt.memptr >= 0 && lt.pointers == 0 && memptr_null_constant(right)) right = memptr_null(lt);
                 if (rt.memptr >= 0 && rt.pointers == 0 && memptr_null_constant(*out)) *out = memptr_null(rt);
             }
+        }
+        if ((op == TAndAnd || op == TOrOr) && cur_locals != nullptr && stmt_pre.size() > logic_pre) {
+            // `a && f().g()` and `a || s == "x"` where the right operand needs statements before it (a temporary made
+            // by a call): they run only when the right operand is evaluated, after the left one ([expr.log.and] 1,
+            // [expr.log.or] 1). The value goes into a hidden bool in a statement before this one:
+            //   h = (bool)left; if (h) { right's statements; h = (bool)right; its temporaries destroyed }   (|| : if (!h))
+            // Before Round 37 the right operand's statements ran before the whole statement, first: `undo.Undo() &&
+            // undo.NextRedoName() == "Set B"` read the name before Undo() ran (Core/Undo.cpp linked test).
+            std::vector<Node> right_pre(std::make_move_iterator(stmt_pre.begin() + static_cast<std::ptrdiff_t>(logic_pre)),
+                                        std::make_move_iterator(stmt_pre.end()));
+            stmt_pre.resize(logic_pre);
+            std::vector<Temp> right_temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(logic_temps), stmt_temps.end());
+            stmt_temps.resize(logic_temps);
+            Local hidden;
+            hidden.name = "__lg" + std::to_string(tmp_count++);
+            hidden.type = bool_type();
+            place_local(cur_locals, hidden);
+            auto set_hidden = [&](Node value) {
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.kids.push_back(node_name(hidden.name));
+                assign.kids.push_back(cast_node(bool_type(), std::move(value)));
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                return stmt;
+            };
+            memptr_truth(out);
+            memptr_truth(&right);
+            stmt_pre.push_back(set_hidden(std::move(*out)));
+            Node branch;
+            branch.kind = Node::Block;
+            for (Node& n : right_pre) branch.kids.push_back(std::move(n));
+            branch.kids.push_back(set_hidden(std::move(right)));
+            for (size_t i = right_temps.size(); i-- > 0;) {
+                Node call;
+                if (!temp_end_call(right_temps[i], &call)) return false;
+                branch.kids.push_back(std::move(call));
+            }
+            Node test = node_name(hidden.name);
+            if (op == TOrOr) {
+                Node neg;
+                neg.kind = Node::Unary;
+                neg.op = TNot;
+                neg.kids.push_back(std::move(test));
+                test = std::move(neg);
+            }
+            Node cond;
+            cond.kind = Node::If;
+            cond.kids.push_back(std::move(test));
+            cond.kids.push_back(std::move(branch));
+            stmt_pre.push_back(std::move(cond));
+            *out = node_name(hidden.name);
+            continue;
         }
         Node bin;
         const bool compound = is_compound_op(op);

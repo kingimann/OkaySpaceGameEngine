@@ -1667,6 +1667,33 @@ static bool flatten_expr_stmts(const Node& n, std::vector<Node>* out) {
             if (!flatten_expr_stmts(k, out)) return false;
         return true;
     }
+    if (n.kind == Node::If && n.kids.size() == 2) {
+        // `if (h) { e1; e2; }` (the right operand of && or || that needs statements; Round 37) becomes the expression
+        // `h ? (e1, e2, 0) : 0`.
+        std::vector<Node> inner;
+        if (!flatten_expr_stmts(n.kids[1], &inner)) return false;
+        Node zero;
+        zero.kind = Node::IntLit;
+        zero.type.base = 1;
+        Node chain = zero;
+        for (size_t i = inner.size(); i-- > 0;) {
+            Node comma;
+            comma.kind = Node::Binary;
+            comma.op = TComma;
+            comma.type.base = 1;
+            comma.kids.push_back(std::move(inner[i]));
+            comma.kids.push_back(std::move(chain));
+            chain = std::move(comma);
+        }
+        Node tern;
+        tern.kind = Node::Ternary;
+        tern.type.base = 1;
+        tern.kids.push_back(n.kids[0]);
+        tern.kids.push_back(std::move(chain));
+        tern.kids.push_back(std::move(zero));
+        out->push_back(std::move(tern));
+        return true;
+    }
     return false;
 }
 

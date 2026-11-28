@@ -210,6 +210,12 @@ struct Method {
     bool is_explicit = false;
     // The implicit copy constructor: copies the base and each member.
     bool implicit_copy = false;
+    // The implicit move constructor (Round 37, [class.copy.ctor] 8, 14): implicit_copy is set too, and each base and
+    // member is made from an rvalue of the source's part (its move constructor when it has one).
+    bool implicit_move = false;
+    // The implicit copy or move assignment operator (Round 37, [class.copy.assign] 2, 4, 12): each base and member is
+    // assigned by its own operator= (from an rvalue for the move form, params[0].rref), the others by their bytes.
+    bool implicit_assign = false;
     // An inherited constructor (Round 34, [class.inhctor.init]): the base inherit_sid is made by its constructor
     // with these parameters, then the other members as the implicit default constructor makes them.
     int inherit_sid = -1;

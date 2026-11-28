@@ -930,33 +930,33 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 - `Item` struct, line 35
 - `Items` function, line 50: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 - `Context` struct, line 58: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 73
-- `SplitIds` function, line 81
-- `JoinIds` function, line 90
-- `Has` function, line 95
-- `Find` function, line 99
-- `Select` function, line 105: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 114: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 124: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 131: The default: everything on.
-- `AllOff` function, line 133: "Back to the third-party parts": everything off.
-- `Set` function, line 134
-- `AppliedVar` function, line 143
-- `PutEnv` function, line 145
-- `DropEnv` function, line 152
-- `AppliedNow` function, line 159
-- `SetByUser` function, line 165: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 171: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 186
-- `StatusOf` function, line 189: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 196
-- `DefaultPath` function, line 207: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 221
-- `SaveFile` function, line 228
-- `State` struct, line 239: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 244
-- `Startup` function, line 247: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 254: Save the screen's choice to the file Startup() read.
+- `Available` function, line 72
+- `SplitIds` function, line 80
+- `JoinIds` function, line 89
+- `Has` function, line 94
+- `Find` function, line 98
+- `Select` function, line 104: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 113: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 123: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 130: The default: everything on.
+- `AllOff` function, line 132: "Back to the third-party parts": everything off.
+- `Set` function, line 133
+- `AppliedVar` function, line 142
+- `PutEnv` function, line 144
+- `DropEnv` function, line 151
+- `AppliedNow` function, line 158
+- `SetByUser` function, line 164: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 170: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 185
+- `StatusOf` function, line 188: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 195
+- `DefaultPath` function, line 206: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 220
+- `SaveFile` function, line 227
+- `State` struct, line 238: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 243
+- `Startup` function, line 246: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 253: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

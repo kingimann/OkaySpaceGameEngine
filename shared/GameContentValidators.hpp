@@ -6,10 +6,12 @@
 //   .okayvs      okay::vs::ValidateGraphText (the graph checker the editor and Project diagnostics use): any ERROR (severity 0) refuses it,
 //                a parse failure is an error too. Warnings are allowed.
 //   .okayscript  okay::OkayScriptVM::Validate (parse / syntax check, does not run anything).
+//   .okaylive    LiveConfigProblem (ContentLiveConfig.hpp): a damaged live config is refused whole.
 //   other kinds  accepted (no code in them); the manifest already refuses executable extensions.
 #include <cctype>
 #include <string>
 
+#include "ContentLiveConfig.hpp"
 #include "ContentSync.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
@@ -20,9 +22,10 @@ inline std::string ValidateContentFile(const Entry& e, const std::string& path) 
     std::string ext;
     const std::size_t dot = e.path.rfind('.');
     if (dot != std::string::npos) for (std::size_t i = dot; i < e.path.size(); ++i) ext += static_cast<char>(std::tolower(static_cast<unsigned char>(e.path[i])));
-    if (ext != ".okayvs" && ext != ".okayscript") return std::string();
+    if (ext != ".okayvs" && ext != ".okayscript" && ext != ".okaylive") return std::string();
     std::string text;
     if (!detail::ReadAll(detail::P(path), text, 4u << 20) || text.empty()) return "the file is empty, too large (over 4 MB) or unreadable";
+    if (ext == ".okaylive") { const std::string bad = LiveConfigProblem(text); return bad.empty() ? bad : "the live config is not valid: " + bad; }
     if (ext == ".okayvs") {
         // The graph loader quietly ignores lines it does not know, so garbage parses as an empty graph. A downloaded graph must be a graph:
         // every line is blank, a '#' comment, or starts with a directive NodeGraph::Parse knows, and there is at least one node.

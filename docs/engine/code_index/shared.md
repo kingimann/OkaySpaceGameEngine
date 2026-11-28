@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 72 headers, 1094 names.
+Back to the [code index](../code_index.md). 76 headers, 1131 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -203,65 +203,108 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 
 - `ScriptLink` function, line 15: Fills 'path' and 'line' (0 = none) and returns true when the entry points to a script file; false (both cleared) otherwise.
 
+## `shared/ContentBackendStorage.hpp`
+
+- `StorageTransport` class, line 28
+
 ## `shared/ContentHttpTransport.hpp`
 
 - `HttpTransport` class, line 17
 - `UwpTransportStub` class, line 80: The Xbox / UWP transport. NOT IMPLEMENTED: it only fails, with a plain message, so a UWP build never pretends to download.
 - `MakeTransport` function, line 98: "" url -> nullptr. file://folder -> FileTransport. http(s):// -> HttpTransport, or the UWP stub when OKAY_XBOX_UWP is defined.
 
+## `shared/ContentLiveConfig.hpp`
+
+- `LiveConfig` class, line 38
+- `LiveConfigProblem` function, line 139: Why a live config file is refused ("" = fine): the content validator's check, before the file is visible.
+
 ## `shared/ContentManifest.hpp`
 
-- `Kind` enum, line 42
-- `KindName` function, line 44
-- `KindFromName` function, line 57
-- `Limits` struct, line 64: Hard limits. A client may pass tighter ones; a manifest that breaks any of them is refused whole.
-- `Entry` struct, line 72
-- `Manifest` struct, line 81
-- `PathProblem` function, line 137: Why a path is refused (empty = fine). Stricter than a script path: Portable rules plus no backslash (one spelling), no "." part,
-- `IsExecutableExtension` function, line 152: Extensions of native code and of things the system runs by itself. Content is data and scripts only; a manifest that lists one of
-- `EntryProblem` function, line 163: Validate one entry (paths, hash shape, size limits, names). Empty = fine.
-- `Problem` function, line 174: Check a whole manifest (also what Parse runs after reading). Empty = fine.
-- `Serialize` function, line 198: The exact bytes to sign and publish. Entries are written in path order (sorts a copy).
-- `Parse` function, line 212: Strict parse. False with a plain 'why' (and 'out' cleared) for anything outside the format or over a limit.
-- `SignedMessage` function, line 257
-- `MakeSignatureFile` function, line 260: The text of content.manifest.sig. For the publisher's tool and for tests with throw-away seeds; the real seed never lives in the repo.
-- `SigKind` enum, line 265
-- `SigVerdict` struct, line 266
-- `CheckSignature` function, line 276: 'trustedKeys' = "<64 hex>[,<64 hex>...]" (compiled in OKAY_CONTENT_TRUSTED_KEYS, or the game's config). Unlike the release index there is
-- `Sha256Hex` function, line 295: SHA-256 of bytes as 64 lowercase hex (the engine's okay::crypto::Sha256).
+- `Kind` enum, line 49
+- `KindName` function, line 51
+- `KindFromName` function, line 65
+- `Limits` struct, line 72: Hard limits. A client may pass tighter ones; a manifest that breaks any of them is refused whole.
+- `Entry` struct, line 80
+- `ApplyWhen` enum, line 90: When the publisher wants a version made visible (the manifest's 'apply' line). GameDefault = no line: the game decides.
+- `ApplyWhenName` function, line 92
+- `ApplyWhenFromName` function, line 102
+- `Manifest` struct, line 108
+- `PathProblem` function, line 166: Why a path is refused (empty = fine). Stricter than a script path: Portable rules plus no backslash (one spelling), no "." part,
+- `IsExecutableExtension` function, line 181: Extensions of native code and of things the system runs by itself. Content is data and scripts only; a manifest that lists one of
+- `EntryProblem` function, line 192: Validate one entry (paths, hash shape, size limits, names). Empty = fine.
+- `Problem` function, line 203: Check a whole manifest (also what Parse runs after reading). Empty = fine.
+- `Serialize` function, line 228: The exact bytes to sign and publish. Entries are written in path order (sorts a copy).
+- `Parse` function, line 244: Strict parse. False with a plain 'why' (and 'out' cleared) for anything outside the format or over a limit.
+- `Delta` struct, line 296: What changed from one manifest to the next, by path: a file is "changed" when its bytes (SHA-256 or size) differ. Kind, group or
+- `Diff` function, line 305: The delta from 'from' (what a client or the server has; an empty Manifest for nothing yet) to 'to'.
+- `SignedMessage` function, line 326
+- `MakeSignatureFile` function, line 329: The text of content.manifest.sig. For the publisher's tool and for tests with throw-away seeds; the real seed never lives in the repo.
+- `SigKind` enum, line 334
+- `SigVerdict` struct, line 335
+- `CheckSignature` function, line 345: 'trustedKeys' = "<64 hex>[,<64 hex>...]" (compiled in OKAY_CONTENT_TRUSTED_KEYS, or the game's config). Unlike the release index there is
+- `Sha256Hex` function, line 364: SHA-256 of bytes as 64 lowercase hex (the engine's okay::crypto::Sha256).
 
 ## `shared/ContentOverlay.hpp`
 
 - `Overlay` class, line 22
 
+## `shared/ContentPolicy.hpp`
+
+- `PeerVersions` struct, line 24: What one side runs. 'protocol' is the newest network protocol it speaks, 'minProtocol' the oldest (0 = only 'protocol').
+- `CompatRules` struct, line 32: How strict a game is. The defaults are the safe ones: same game version, same content version.
+- `CompatVerdict` enum, line 41
+- `UpdateSide` enum, line 42
+- `Compat` struct, line 44
+- `CheckCompat` function, line 61
+- `GameMoment` struct, line 99: What the game is doing right now (the game fills this in each time it asks).
+- `ApplyDecision` struct, line 105
+- `DecideApply` function, line 114: 'published' is the manifest's 'apply' (GameDefault = none given); 'gameDefault' is the game's own setting (GameDefault there means
+
+## `shared/ContentPublish.hpp`
+
+- `KindForPath` function, line 24: The manifest kind of a file, by extension. 'known' false for a type that is not content (refused by ScanFolder).
+- `PublishOptions` struct, line 72
+- `PublishResult` struct, line 78
+- `PublishVersion` function, line 89: Publish 'next' (its files are in 'folder', laid out by path) to 'store'. 'sigText' is content.manifest.sig for Serialize(next).
+
 ## `shared/ContentSync.hpp`
 
-- `Commit` struct, line 39: ---- The commit record ---------------------------------------------------------------------------------------------------------
-- `StorePaths` struct, line 113: Paths inside a content root.
-- `SerializeCommit` function, line 124
-- `ReadCommit` function, line 130: Strict read of current.txt. False when it is missing or damaged (the game then sees no downloaded content at all).
-- `ReadCommittedManifest` function, line 156: The manifest of the committed version, read from the store and parsed (not re-verified: see ContentOverlay for that).
-- `Rollback` function, line 166: Put the previous version back as the visible one (a bad release). Keeps 'floor'. False when there is no usable previous version.
-- `Phase` enum, line 187: ---- Configuration and result ----------------------------------------------------------------------------------------------------
-- `Progress` struct, line 189
-- `SyncConfig` struct, line 196
-- `Status` enum, line 216
-- `Reason` enum, line 217
-- `SyncResult` struct, line 219
-- `ReasonName` function, line 231
-- `SelectEntries` function, line 251: Which manifest entries this app wants: group filter and per-entry min-app. 'skipped' counts the rest.
-- `Sync` class, line 262
+- `Commit` struct, line 43: ---- The commit record ---------------------------------------------------------------------------------------------------------
+- `StorePaths` struct, line 117: Paths inside a content root.
+- `ReadRolledBack` function, line 135: Versions rolled back in this folder (rolled-back.txt: one number per line). Unreadable lines are ignored.
+- `AddRolledBack` function, line 142
+- `SerializeCommit` function, line 150
+- `ReadCommit` function, line 156: Strict read of current.txt. False when it is missing or damaged (the game then sees no downloaded content at all).
+- `ReadCommittedManifest` function, line 182: The manifest of the committed version, read from the store and parsed (not re-verified: see ContentOverlay for that).
+- `Rollback` function, line 194: Put the previous version back as the visible one (a bad release, a failed apply, or a start-up that keeps failing). Keeps 'floor',
+- `LaunchCheck` struct, line 221: ---- Start-up guard: roll back a version the game cannot start with ------------------------------------------------------------------
+- `LastGoodVersion` function, line 228
+- `BeginLaunch` function, line 235
+- `MarkLaunchGood` function, line 266: The game started with the visible version: trust it from now on.
+- `Phase` enum, line 275: ---- Configuration and result ----------------------------------------------------------------------------------------------------
+- `Progress` struct, line 277
+- `SyncConfig` struct, line 284
+- `Status` enum, line 306
+- `Reason` enum, line 307
+- `SyncResult` struct, line 310
+- `ReasonName` function, line 322
+- `SelectEntries` function, line 345: Which manifest entries this app wants: group filter and per-entry min-app. 'skipped' counts the rest.
+- `Sync` class, line 356
 
 ## `shared/ContentTransport.hpp`
 
-- `GetHead` struct, line 20: What the server answered, before the body.
-- `GetHandlers` struct, line 28: Hooks for one GET. onHead is called once, before any data; return false to stop (the transport then reports 'aborted').
-- `GetResult` struct, line 33
-- `Transport` class, line 39
-- `JoinUrl` function, line 51: "https://host/base" + "models/my ship.glb" -> "https://host/base/models/my%20ship.glb" (unreserved characters and '/' stay).
-- `FileTransport` class, line 65: Serves a local folder as if it were the server. Honours rangeFrom like a real server (206 with the right start; 416 past the end).
-- `FileUrlFolder` function, line 116: Pick a transport for a content URL: "file://<folder>" -> FileTransport. (http and https are made by the platform layer, see
-- `RetryPolicy` struct, line 126: Wait time before attempt number 'attempt' (1 = the first retry): base, 2x, 4x ... capped. Pure, so tests can check it.
+- `GetHead` struct, line 24: What the server answered, before the body.
+- `GetHandlers` struct, line 32: Hooks for one GET. onHead is called once, before any data; return false to stop (the transport then reports 'aborted').
+- `GetResult` struct, line 37
+- `Listed` struct, line 44: One name a provider holds (List).
+- `StoreResult` struct, line 50: The answer of Put and List.
+- `Transport` class, line 55
+- `WholeGet` struct, line 82: One whole-body GET into memory (a manifest, a signature, a config). 'status' is the reply's status (0 = no reply); 'tooBig' is set
+- `GetWhole` function, line 88
+- `JoinUrl` function, line 107: "https://host/base" + "models/my ship.glb" -> "https://host/base/models/my%20ship.glb" (unreserved characters and '/' stay).
+- `FileTransport` class, line 121: Serves a local folder as if it were the server. Honours rangeFrom like a real server (206 with the right start; 416 past the end).
+- `FileUrlFolder` function, line 209: Pick a transport for a content URL: "file://<folder>" -> FileTransport. (http and https are made by the platform layer, see
+- `RetryPolicy` struct, line 219: Wait time before attempt number 'attempt' (1 = the first retry): base, 2x, 4x ... capped. Pure, so tests can check it.
 
 ## `shared/CrashContext.hpp`
 
@@ -623,7 +666,7 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 
 ## `shared/GameContentValidators.hpp`
 
-- `ValidateContentFile` function, line 19
+- `ValidateContentFile` function, line 21
 
 ## `shared/HierarchyPanelModel.hpp`
 
@@ -746,6 +789,12 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 
 - `SceneKey` function, line 20: The same file always gives the same key, whichever folder it was reached through ("a/../b", symlinks).
 - `FindScenesUnder` function, line 35: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
+- `IsGameProgram` function, line 68: Is 'f' a program a Build put at a game's root: a '.exe' (any case), or on other systems an executable file without
+- `HasProjectFile` function, line 85: Does folder 'd' hold a project file (*.okayproj)?
+- `HasGameProgram` function, line 96: Does folder 'd' hold a game program (IsGameProgram)?
+- `ExportedGameRoot` function, line 107: The root folder of the exported game that 'p' belongs to, or "" when it is not one. 'p' is a scene (*.okayscene)
+- `IsExportedGame` function, line 138: THE check for "may the launcher play this?": only an exported game (ExportedGameRoot). A project folder, an
+- `NotExportedMessage` function, line 141: What the launcher says when it refuses to play something that is not an exported game.
 
 ## `shared/OfficialGame.hpp`
 
@@ -930,33 +979,33 @@ Back to the [code index](../code_index.md). 72 headers, 1094 names.
 - `Item` struct, line 35
 - `Items` function, line 50: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 - `Context` struct, line 58: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 73
-- `SplitIds` function, line 81
-- `JoinIds` function, line 90
-- `Has` function, line 95
-- `Find` function, line 99
-- `Select` function, line 105: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 114: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 124: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 131: The default: everything on.
-- `AllOff` function, line 133: "Back to the third-party parts": everything off.
-- `Set` function, line 134
-- `AppliedVar` function, line 143
-- `PutEnv` function, line 145
-- `DropEnv` function, line 152
-- `AppliedNow` function, line 159
-- `SetByUser` function, line 165: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 171: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 186
-- `StatusOf` function, line 189: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 196
-- `DefaultPath` function, line 207: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 221
-- `SaveFile` function, line 228
-- `State` struct, line 239: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 244
-- `Startup` function, line 247: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 254: Save the screen's choice to the file Startup() read.
+- `Available` function, line 72
+- `SplitIds` function, line 80
+- `JoinIds` function, line 89
+- `Has` function, line 94
+- `Find` function, line 98
+- `Select` function, line 104: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 113: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 123: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 130: The default: everything on.
+- `AllOff` function, line 132: "Back to the third-party parts": everything off.
+- `Set` function, line 133
+- `AppliedVar` function, line 142
+- `PutEnv` function, line 144
+- `DropEnv` function, line 151
+- `AppliedNow` function, line 158
+- `SetByUser` function, line 164: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 170: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 185
+- `StatusOf` function, line 188: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 195
+- `DefaultPath` function, line 206: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 220
+- `SaveFile` function, line 227
+- `State` struct, line 238: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 243
+- `Startup` function, line 246: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 253: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

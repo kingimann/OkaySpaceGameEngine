@@ -1,8 +1,12 @@
 // okay-content: build, sign, check and fetch game content (docs/release/content_delivery.md). Own code; uses shared/Content*.hpp.
 //
-//   okay-content make-manifest <folder> --game <id> --version <n> [--min-app <x.y.z>] [--group <path-prefix>=<name>]...
+//   okay-content make-manifest <folder> --game <id> --version <n> [--min-app <x.y.z>] [--min-game <x.y.z>] [--apply <when>] [--group <path-prefix>=<name>]...
 //       Scans <folder>, writes <folder>/content.manifest and, when OKAY_CONTENT_SIGNING_SEED is set, <folder>/content.manifest.sig.
 //       The folder is what gets uploaded. The seed (64 hex digits) is read from the environment only and is never printed.
+//       --apply: immediately | loading-screen | between-matches | next-launch (when the game may make the version visible).
+//   okay-content publish <folder> <dest-folder> [--keys <hex>[,<hex>]]
+//       Publishes the manifest made by make-manifest to a local or LAN folder that a game reads with a file:/// URL, sending only the
+//       files that changed since the version already there, the manifest last (ContentPublish.hpp).
 //   okay-content verify <folder> --keys <hex>[,<hex>] [--game <id>] [--manifest-only]
 //       Checks the signature and that every listed file has the listed size and SHA-256 (and that nothing else is in the folder).
 //   okay-content sync <url|folder> <dir> --game <id> --keys <hex>[,<hex>] [--app-version <v>] [--group <g>]... [--budget-mb <n>] [--allow-unsigned]
@@ -19,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "ContentPublish.hpp"
 #include "GameContent.hpp"
 
 #if defined(_WIN32)
@@ -42,25 +47,6 @@ bool Seed(okayac::ed25519::Seed& out) {
     return true;
 }
 
-Kind KindFor(const std::string& path, bool& known) {
-    known = true;
-    std::string ext;
-    const std::size_t dot = path.rfind('.');
-    if (dot != std::string::npos) ext = detail::Lower(path.substr(dot + 1));
-    static const std::map<std::string, Kind> m = {
-        {"glb", Kind::Model}, {"gltf", Kind::Model}, {"obj", Kind::Model}, {"fbx", Kind::Model}, {"dae", Kind::Model}, {"bin", Kind::Model}, {"mtl", Kind::Model}, {"okaymodel", Kind::Model},
-        {"png", Kind::Texture}, {"jpg", Kind::Texture}, {"jpeg", Kind::Texture}, {"tga", Kind::Texture}, {"bmp", Kind::Texture}, {"okaymat", Kind::Texture}, {"ktx", Kind::Texture},
-        {"okayanim", Kind::Animation}, {"bvh", Kind::Animation}, {"okayclips", Kind::Animation}, {"okaycutscene", Kind::Animation},
-        {"okayscene", Kind::Scene}, {"okayprefab", Kind::Scene},
-        {"wav", Kind::Audio}, {"ogg", Kind::Audio}, {"mp3", Kind::Audio}, {"flac", Kind::Audio},
-        {"okaydialog", Kind::Dialogue}, {"okayquest", Kind::Dialogue}, {"okayloc", Kind::Dialogue},
-        {"okayvs", Kind::Script}, {"okayscript", Kind::Script}, {"okaybt", Kind::Script},
-        {"okaydata", Kind::Data}, {"okayitems", Kind::Data}, {"okayweapon", Kind::Data}, {"json", Kind::Data}, {"txt", Kind::Data}, {"csv", Kind::Data}};
-    const auto it = m.find(ext);
-    if (it == m.end()) { known = false; return Kind::Data; }
-    return it->second;
-}
-
 struct Args {
     std::vector<std::string> pos;
     std::map<std::string, std::vector<std::string>> opt;
@@ -80,7 +66,8 @@ Args ParseArgs(int argc, char** argv, int from) {
 }
 
 int Usage() {
-    std::fputs("usage: okay-content make-manifest <folder> --game <id> --version <n> [--min-app <v>] [--group <prefix>=<name>]...\n"
+    std::fputs("usage: okay-content make-manifest <folder> --game <id> --version <n> [--min-app <v>] [--min-game <v>] [--apply <when>] [--group <prefix>=<name>]...\n"
+               "       okay-content publish <folder> <dest-folder> [--keys <hex>[,<hex>]]\n"
                "       okay-content verify <folder> --keys <hex>[,<hex>] [--game <id>] [--manifest-only]\n"
                "       okay-content sync <url|folder> <dir> --game <id> --keys <hex>[,<hex>] [--app-version <v>] [--group <g>]... [--budget-mb <n>] [--allow-unsigned]\n"
                "       okay-content status <dir> | rollback <dir> | pubkey\n", stderr);
@@ -96,32 +83,19 @@ int MakeManifest(const Args& a) {
     if (!detail::Digits(a.One("--version"), v, 1ull << 53)) { std::fputs("--version must be a whole number\n", stderr); return 2; }
     m.version = v;
     m.minApp = a.One("--min-app");
+    m.minGame = a.One("--min-game");
+    if (!a.One("--apply").empty() && !ApplyWhenFromName(a.One("--apply"), m.apply)) { std::fputs("--apply must be immediately, loading-screen, between-matches or next-launch\n", stderr); return 2; }
     std::vector<std::pair<std::string, std::string>> groups;
     for (const std::string& g : a.opt.count("--group") ? a.opt.at("--group") : std::vector<std::string>()) {
         const std::size_t eq = g.find('=');
         if (eq == std::string::npos) { std::fputs("--group needs <path-prefix>=<name>\n", stderr); return 2; }
         groups.emplace_back(g.substr(0, eq), g.substr(eq + 1));
     }
-    std::error_code ec;
-    int problems = 0;
-    for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->is_symlink(ec)) { std::fprintf(stderr, "refused: %s is a link\n", it->path().string().c_str()); ++problems; continue; }
-        if (!it->is_regular_file(ec)) continue;
-        std::string rel = fs::relative(it->path(), dir, ec).generic_string();
-        if (rel == kManifestName || rel == kSigName) continue;
-        Entry e;
-        e.path = rel;
-        bool known = false;
-        e.kind = KindFor(rel, known);
-        if (!known) { std::fprintf(stderr, "refused: %s (unknown file type; content is models, textures, animations, scenes, audio, dialogue, scripts and data only)\n", rel.c_str()); ++problems; continue; }
-        e.size = static_cast<std::uint64_t>(it->file_size(ec));
-        e.sha256 = detail::FileSha256Hex(it->path());
-        for (const auto& g : groups) if (rel.compare(0, g.first.size(), g.first) == 0) e.group = g.second;
-        if (std::string w = EntryProblem(e, Limits()); !w.empty()) { std::fprintf(stderr, "refused: %s\n", w.c_str()); ++problems; continue; }
-        m.entries.push_back(e);
-    }
+    std::vector<std::string> refused;
+    m.entries = ScanFolder(dir.u8string(), groups, refused);
+    for (const std::string& w : refused) std::fprintf(stderr, "refused: %s\n", w.c_str());
+    const int problems = static_cast<int>(refused.size());
     if (problems) { std::fprintf(stderr, "%d file(s) refused: nothing written\n", problems); return 1; }
-    std::sort(m.entries.begin(), m.entries.end(), [](const Entry& x, const Entry& y) { return x.path < y.path; });
     if (std::string w = Problem(m); !w.empty()) { std::fprintf(stderr, "manifest problem: %s\n", w.c_str()); return 1; }
     const std::string text = Serialize(m);
     if (!detail::WriteAtomic(dir / kManifestName, text)) { std::fputs("cannot write content.manifest\n", stderr); return 1; }
@@ -159,6 +133,21 @@ int Verify(const Args& a) {
     if (bad) return 1;
     std::printf("OK: version %llu, %zu files, signature valid (key %d)\n", static_cast<unsigned long long>(m.version), m.entries.size(), v.keyIndex);
     return 0;
+}
+
+int DoPublish(const Args& a) {
+    if (a.pos.size() != 2) return Usage();
+    const fs::path dir = fs::u8path(a.pos[0]);
+    const std::string text = SlurpFile((dir / kManifestName).u8string()), sig = SlurpFile((dir / kSigName).u8string());
+    Manifest m;
+    std::string why;
+    if (!Parse(text, m, &why)) { std::printf("FAIL: %s/content.manifest: %s (run make-manifest first)\n", a.pos[0].c_str(), why.c_str()); return 1; }
+    FileTransport dest(a.pos[1]);
+    PublishOptions o;
+    o.verifyKeys = a.One("--keys");
+    const PublishResult r = PublishVersion(dest, a.pos[0], m, sig, o);
+    std::printf("%s%s\n", r.ok ? "" : "FAIL: ", r.message.c_str());
+    return r.ok ? 0 : 1;
 }
 
 int DoSync(const Args& a) {
@@ -199,6 +188,7 @@ int main(int argc, char** argv) {
     if (cmd == "make-manifest") return MakeManifest(a);
     if (cmd == "verify") return Verify(a);
     if (cmd == "sync") return DoSync(a);
+    if (cmd == "publish") return DoPublish(a);
     if (cmd == "status" && a.pos.size() == 1) {
         Commit c;
         if (!ReadCommit(StorePaths{a.pos[0]}, c)) { std::puts("no content committed here"); return 1; }

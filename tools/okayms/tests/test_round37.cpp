@@ -1,0 +1,426 @@
+// Round 37: a wrong-code issue Round 36 found, temporaries and inline variables, our own Win32 input headers, and the
+// next blockers of the Windows engine survey. Each program returns 0 when all of its checks hold, or the number of the
+// first check that failed; it is built by okay-cl at /O0, /O1 and /O2 and run under Wine, and MinGW g++ builds the
+// same text with its own headers and must agree (program_check.hpp). Written from ISO/IEC 14882 (the sections are
+// named at each test). No code from other compilers or libraries.
+
+#include "program_check.hpp"
+
+#include <string>
+
+namespace {
+using okayms_test::Tally;
+const okayms_test::ProgramRun kRun{"r37", {}};
+const okayms_test::ProgramRun kRunEh{"r37", {}, false, true};  // own heap and exception runtime
+
+// Compiles `source` (with the test's own headers) and expects an error that contains `want`.
+void expect_error(Tally& tally, const char* what, const std::string& source, const std::string& want) {
+    okayms::CompileInput in;
+    in.source = source;
+    in.include_paths.push_back("tools/okayms/stdinc");
+    in.include_paths.push_back("stdinc");
+    const auto compiled = okayms::compile_c(in);
+    const bool good = !compiled.ok() && compiled.error.find(want) != std::string::npos;
+    CHECK(tally, good);
+    if (!good)
+        std::fprintf(stderr, "  %s: wanted an error with \"%s\", got %s\n", what, want.c_str(),
+                     compiled.ok() ? "no error" : compiled.error.c_str());
+}
+}  // namespace
+
+static const char* kAlloc = okayms_test::bump_alloc();
+
+// A pointer to one arithmetic type is not converted to a pointer to another ([conv.ptr] 1-3 name the only pointer
+// conversions: a null pointer constant, to `cv void*`, and to a base class; [conv.qual] adds cv-qualifiers). Before Round
+// 37 okay-cl took `const char*` for a `const wchar_t*` (here `const unsigned short*`) parameter, initializer,
+// assignment or return value, and passed the narrow text's address: SaveFile.cpp's `_wfopen(p.c_str(), L"wb")` with a
+// narrow path compiled to a call that gives Windows the wrong kind of text.
+static void r37_pointer_mismatch(Tally& tally) {
+    std::printf("r37_pointer_mismatch\n");
+    const std::string want = "no implicit conversion";
+    expect_error(tally, "argument", "void take(const wchar_t* p);\nvoid f() { take(\"abc\"); }\n", want);
+    expect_error(tally, "argument from a variable",
+                 "void take(const unsigned short* p);\nvoid f() { const char* s = \"x\"; take(s); }\n", want);
+    expect_error(tally, "initializer", "void f() { const char* s = \"x\"; const wchar_t* w = s; (void)w; }\n", want);
+    expect_error(tally, "assignment", "void f() { const char* s = \"x\"; const wchar_t* w = 0; w = s; (void)w; }\n", want);
+    expect_error(tally, "return", "const wchar_t* r() { const char* s = \"x\"; return s; }\n", want);
+    expect_error(tally, "int and float", "void f() { int a = 1; float* p = &a; (void)p; }\n", want);
+    expect_error(tally, "char and unsigned char",
+                 "void take(unsigned char* p);\nvoid f() { char b[4]; take(b); }\n", want);
+    expect_error(tally, "int and long long", "void f() { long long v = 0; int* p = &v; (void)p; }\n", want);
+    expect_error(tally, "member function argument",
+                 "struct W { void put(const wchar_t* s) { (void)s; } };\nvoid f() { W w; w.put(\"narrow\"); }\n", want);
+}
+
+// The conversions that do exist still compile and give the right values: a null pointer constant, `T*` to `const T*`
+// and to `const void*`, a string literal to `const char*`, L"..." to `const wchar_t*`, an explicit cast between pointer
+// types ([expr.reinterpret.cast] 7), and the narrow and wide overloads of one name chosen by the argument ([over.match]).
+static void r37_pointer_allowed(Tally& tally) {
+    std::printf("r37_pointer_allowed\n");
+    okayms_test::run_both(kRun, tally, "pointer_allowed", std::string(kAlloc) + R"OKMS(
+static int Len(const char* s) { int n = 0; while (s[n]) ++n; return n; }
+static int Len(const wchar_t* s) { int n = 0; while (s[n]) ++n; return 100 + n; }
+static int Bytes(const void* p, int n) { const unsigned char* b = (const unsigned char*)p; int t = 0; for (int i = 0; i < n; ++i) t += b[i]; return t; }
+static const wchar_t* Wide() { return L"wide"; }
+int entry(void) {
+  char buf[4] = {'a', 'b', 0, 0};
+  char* p = buf;
+  const char* cp = p;
+  const wchar_t* w = L"xyz";
+  const wchar_t* none = 0;
+  const char* nul = nullptr;
+  CK(1, Len(cp) == 2 && Len(w) == 103 && Len("four") == 4 && Len(L"ab") == 102);
+  CK(2, Bytes(p, 2) == 'a' + 'b' && Bytes(w, 2) == 'x');
+  CK(3, none == 0 && nul == nullptr && Len(Wide()) == 104);
+  const unsigned char* u = reinterpret_cast<const unsigned char*>(cp);
+  const unsigned short* s = (const unsigned short*)w;
+  CK(4, u[1] == 'b' && s[2] == 'z');
+  const void* v = u;
+  CK(5, v == cp);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// std::filesystem::path on Windows: its value_type is wchar_t and native(), c_str() and wstring() give the UTF-16 text
+// ([fs.class.path] 6, [fs.path.native.obs]); a path is made from UTF-8 (u8path) or wide text, and u8string() gives UTF-8
+// ([fs.path.type.cvt]). Before Round 37 okay-ms's path was narrow on Windows too, so `_wfopen(p.c_str(), ...)` did not
+// see wide text. MinGW's path is wide the same way.
+static void r37_wide_path(Tally& tally) {
+    std::printf("r37_wide_path\n");
+    okayms_test::run_both(kRun, tally, "wide_path", std::string(kAlloc) + R"OKMS(
+#include <filesystem>
+#include <string>
+#include <type_traits>
+int entry(void) {
+  namespace fs = std::filesystem;
+  CK(1, (std::is_same<fs::path::value_type, wchar_t>::value));
+  fs::path p = fs::u8path("dir/na\xC3\xAFve.txt");
+  const wchar_t* w = p.c_str();
+  CK(2, w[0] == L'd' && w[3] == L'/' && w[6] == 0xEF && w[7] == L'v' && w[13] == 0);
+  CK(3, p.native().size() == 13 && p.wstring().size() == 13 && p.u8string().size() == 14);
+  const wchar_t pair[] = {L'a', 0xD83D, 0xDE00, L'b', 0};
+  fs::path q(pair);
+  const std::string u = q.u8string();
+  CK(4, u.size() == 6 && (unsigned char)u[1] == 0xF0 && (unsigned char)u[2] == 0x9F && (unsigned char)u[3] == 0x98 &&
+            (unsigned char)u[4] == 0x80 && u[5] == 'b');
+  CK(5, q.c_str()[1] == 0xD83D && q.c_str()[2] == 0xDE00 && q.native().size() == 4);
+  fs::path r = fs::u8path("base");
+  r /= fs::path(L"file.bin");
+  CK(6, r.extension().wstring() == L".bin" && r.filename().native().size() == 8);
+  const std::wstring ws(L"C:\\x\\y.txt");
+  fs::path s(ws);
+  CK(7, s.parent_path().native() == L"C:\\x" && s.stem().u8string() == "y");
+  return 0;
+}
+)OKMS", 0);
+}
+
+// A by-value argument the caller made is destroyed when an exception leaves the statement before the call takes it
+// ([except.ctor] 1-2: every object of automatic storage duration constructed since the try block was entered is
+// destroyed; [expr.call] 7: the callee destroys its parameter, here by the Microsoft x64 convention). f(C(4)) passes the
+// temporary itself ([dcl.init] 17.6.1, no copy). Before Round 37, `two(C(4), boom(3))` left C(4) alive (g_live 1) and
+// `two(a, boom(3))` left the copy of a alive.
+static void r37_by_value_unwind(Tally& tally) {
+    std::printf("r37_by_value_unwind\n");
+    okayms_test::run_both(kRunEh, tally, "by_value_unwind", R"OKMS(
+static int g_live = 0, g_copies = 0;
+struct C { int v; C(int x) : v(x) { ++g_live; } C(const C& o) : v(o.v) { ++g_live; ++g_copies; } ~C() { --g_live; } };
+struct Big { C c; long long pad[4]; Big(int x) : c(x) {} };
+static int boom(int k) { if (k > 0) throw k; return k; }
+static int two(C c, int k) { return c.v + k; }
+static int two2(int k, C c) { return c.v + k; }
+static int big2(Big b, int k) { return b.c.v + k; }
+static int thr(C c) { if (c.v > 0) throw c.v; return 0; }
+int entry(void) {
+  int caught = 0;
+  try { two(C(4), boom(3)); } catch (int e) { caught = e; }
+  CK(1, caught == 3 && g_live == 0);
+  try { thr(C(5)); } catch (int e) { caught = e; }
+  CK(2, caught == 5 && g_live == 0);
+  try { big2(Big(6), boom(6)); } catch (int e) { caught = e; }
+  CK(3, caught == 6 && g_live == 0);
+  {
+    C a(4);
+    try { two(a, boom(7)); } catch (int e) { caught = e; }
+    CK(4, caught == 7 && g_live == 1);
+    try { two2(boom(8), a); } catch (int e) { caught = e; }
+    CK(5, caught == 8 && g_live == 1);
+    try { two(7, boom(9)); } catch (int e) { caught = e; }
+    CK(6, caught == 9 && g_live == 1);
+    const int copies = g_copies;
+    int r = two(C(2), 1);
+    CK(7, r == 3 && g_live == 1 && g_copies == copies);
+    bool no = false;
+    r = no && two(a, 2);
+    CK(8, r == 0 && g_live == 1);
+    for (int i = 0; i < 3; ++i) {
+      try { two(C(i), boom(i)); } catch (int e) { caught = e; }
+    }
+    CK(9, caught == 2 && g_live == 1);
+  }
+  CK(10, g_live == 0);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Our own <windows.h> window, raw-input and GDI parts, <imm.h>, <xinput.h>, <hidpi.h> and <hidsdi.h> (Round 37, from
+// Microsoft's public reference pages): the sizes and member offsets of their structures are the documented ones, the
+// same in okay-ms's headers and in MinGW's (the g++ half of the test); and a few user32 functions run under Wine.
+static void r37_win32_layouts(Tally& tally) {
+    std::printf("r37_win32_layouts\n");
+    const okayms_test::ProgramRun run{"r37", {"user32.dll:GetDoubleClickTime", "user32.dll:MapVirtualKeyW"}};
+    okayms_test::run_both(run, tally, "win32_layouts", std::string(kAlloc) + R"OKMS(
+#include <windows.h>
+#include <imm.h>
+#include <xinput.h>
+#include <hidusage.h>
+#include <hidpi.h>
+#include <hidsdi.h>
+#define OFF(T, m) ((int)((char*)&((T*)0x1000)->m - (char*)0x1000))
+int entry(void) {
+  CK(1, sizeof(POINT) == 8 && sizeof(RECT) == 16 && sizeof(MSG) == 48 && OFF(MSG, pt) == 36);
+  CK(2, sizeof(WNDCLASSEXW) == 80 && OFF(WNDCLASSEXW, lpfnWndProc) == 8 && OFF(WNDCLASSEXW, hIconSm) == 72);
+  CK(3, sizeof(CREATESTRUCTW) == 80 && OFF(CREATESTRUCTW, cy) == 32 && OFF(CREATESTRUCTW, dwExStyle) == 72);
+  CK(4, sizeof(MINMAXINFO) == 40 && OFF(MINMAXINFO, ptMinTrackSize) == 24 && sizeof(PAINTSTRUCT) == 72);
+  CK(5, sizeof(MONITORINFO) == 40 && sizeof(MONITORINFOEXW) == 104 && OFF(MONITORINFOEXW, szDevice) == 40);
+  CK(6, sizeof(DEVMODEW) == 220 && OFF(DEVMODEW, dmSize) == 68 && OFF(DEVMODEW, dmFields) == 72 &&
+            OFF(DEVMODEW, dmBitsPerPel) == 168 && OFF(DEVMODEW, dmPelsWidth) == 172 && OFF(DEVMODEW, dmDisplayFrequency) == 184);
+  CK(7, sizeof(FLASHWINFO) == 32 && sizeof(ICONINFO) == 32 && OFF(ICONINFO, hbmMask) == 16);
+  CK(8, sizeof(BITMAPINFOHEADER) == 40 && sizeof(BITMAPINFO) == 44 && sizeof(BITMAPV5HEADER) == 124 &&
+            OFF(BITMAPV5HEADER, bV5AlphaMask) == 52 && OFF(BITMAPV5HEADER, bV5Reserved) == 120);
+  CK(9, sizeof(PIXELFORMATDESCRIPTOR) == 40 && OFF(PIXELFORMATDESCRIPTOR, cDepthBits) == 23 &&
+            OFF(PIXELFORMATDESCRIPTOR, dwLayerMask) == 28);
+  CK(10, sizeof(RAWINPUTDEVICE) == 16 && sizeof(RAWINPUTHEADER) == 24 && sizeof(RAWMOUSE) == 24 &&
+             sizeof(RAWKEYBOARD) == 16 && OFF(RAWINPUT, data) == 24 && OFF(RAWMOUSE, lLastX) == 12);
+  CK(11, sizeof(RID_DEVICE_INFO) == 32 && OFF(RID_DEVICE_INFO, hid.usUsagePage) == 20 && sizeof(RAWINPUTDEVICELIST) == 16);
+  CK(12, sizeof(COMPOSITIONFORM) == 28 && sizeof(CANDIDATEFORM) == 32 && OFF(CANDIDATEFORM, rcArea) == 16);
+  CK(13, sizeof(XINPUT_GAMEPAD) == 12 && sizeof(XINPUT_STATE) == 16 && OFF(XINPUT_STATE, Gamepad.sThumbRY) == 14);
+  CK(14, sizeof(HIDP_CAPS) == 64 && OFF(HIDP_CAPS, NumberInputButtonCaps) == 46 && OFF(HIDP_CAPS, NumberFeatureDataIndices) == 62);
+  CK(15, sizeof(HIDP_BUTTON_CAPS) == 72 && OFF(HIDP_BUTTON_CAPS, IsRange) == 12 && OFF(HIDP_BUTTON_CAPS, Range.UsageMin) == 56);
+  CK(16, sizeof(HIDP_VALUE_CAPS) == 72 && OFF(HIDP_VALUE_CAPS, BitSize) == 18 && OFF(HIDP_VALUE_CAPS, LogicalMin) == 40 &&
+             OFF(HIDP_VALUE_CAPS, NotRange.Usage) == 56);
+  CK(17, HIDP_STATUS_SUCCESS == 0x00110000 && HidP_Input == 0 && sizeof(HIDD_ATTRIBUTES) == 12);
+  CK(18, WM_INPUT == 0xFF && WM_DPICHANGED == 0x2E0 && WS_OVERLAPPEDWINDOW == 0x00CF0000L && VK_F12 == 0x7B &&
+             RIDI_DEVICEINFO == 0x2000000b && GCS_COMPSTR == 8 && XINPUT_GAMEPAD_Y == 0x8000);
+  CK(19, GetDoubleClickTime() > 0);
+  CK(20, MapVirtualKeyW(VK_ESCAPE, 0) == 1);  // MAPVK_VK_TO_VSC: Escape is scan code 1
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Single-file blockers of the Windows survey (Round 37), each from ISO/IEC 14882:
+// - a range for over a braced list of class objects made from variables (`for (const std::string& p : {org, app})`,
+//   [stmt.ranged] 1, [dcl.init.list] 5; Platform.cpp, SequencePlayer.cpp, SaveGame.cpp): the objects are made, and
+//   destroyed after the loop, also when the body returns or breaks;
+// - `final` and `override` as variable names after a `)` ([lex.name] 2; NetworkManager.cpp's `if (k) final = true;`);
+// - `const char* const* C::f()` defined outside the class (Mcp.cpp);
+// - an enumeration and a class of one name in two namespaces ([basic.lookup.unqual]; Automation.cpp's struct Result
+//   beside okay::bindings' enum class Result);
+// - casts to function pointer types `(R (*)(A))p` and `reinterpret_cast<R (__stdcall *)(A)>(p)` ([expr.cast],
+//   [dcl.name]; GLPainter.cpp);
+// - `::f(x)` in a member function also named f calls the global f ([namespace.qual]; OwnWin32.cpp's ::SwapBuffers);
+// - vector::insert(pos, first, last) with other iterators ([sequence.reqmts]; Packet.hpp), offsetof
+//   ([support.types.layout]), wstring::assign(n, c) and find_last_of ([string.assign], [string.find.last.of]).
+static void r37_single_file_blockers(Tally& tally) {
+    std::printf("r37_single_file_blockers\n");
+    okayms_test::run_both(kRun, tally, "single_file_blockers", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+#include <cstddef>
+static int g_live = 0;
+struct T { std::string s; T(const std::string& v) : s(v) { ++g_live; } T(const T& o) : s(o.s) { ++g_live; } ~T() { --g_live; } };
+static int Joined(const std::string& a, const std::string& b) {
+  std::string all;
+  for (const std::string& part : {a, b, a + "!"}) all += part;
+  return (int)all.size();
+}
+static int FirstLong(const std::string& a, const std::string& b) {
+  for (const T& t : {T(a), T(b)}) if (t.s.size() > 3) return (int)t.s.size();
+  return 0;
+}
+struct V2 { float x, y; V2(float a, float b) : x(a), y(b) {} };  // a constructor and nothing to destroy (Physics2D.cpp)
+static float SumX(float a) {
+  float t = 0.0f;
+  for (const V2& v : {V2(a, 1.0f), V2(2.0f * a, 0.0f)}) t += v.x;
+  return t;
+}
+static int Breaks(const std::string& a) {
+  int n = 0;
+  for (const T& t : {T(a), T(a + a), T(a)}) { ++n; if (t.s.size() > 2) break; }
+  return n;
+}
+namespace bindings { enum class Result { NotFound, Ok, Error }; }
+namespace automation {
+struct Result { int ok; static Result Make(int v); };
+Result Result::Make(int v) { Result r; r.ok = v; return r; }
+}
+struct Versions { static const char* const* List(int* count); };
+static const char* const kList[] = {"2024-11-05", "2025-03-26"};
+const char* const* Versions::List(int* count) { if (count) *count = 2; return kList; }
+static int Twice(int x) { return 2 * x; }
+static void* Address() { return (void*)&Twice; }
+static int Swap(int v) { return v + 100; }
+struct Window { int Swap(int v) { return ::Swap(v) + 1; } };
+struct Vert { float x, y; unsigned char r, g, b, a; float u, v; };
+int entry(void) {
+  CK(1, Joined("ab", "cde") == 8);
+  CK(2, FirstLong("ab", "lengthy") == 7 && g_live == 0);
+  CK(3, Breaks("xy") == 2 && g_live == 0 && SumX(1.5f) == 4.5f);
+  bool final = false;
+  int k = 3;
+  if (k > 2) final = true;
+  bool override = final;
+  CK(4, final && override);
+  automation::Result r = automation::Result::Make(5);
+  bindings::Result e = bindings::Result::Ok;
+  CK(5, r.ok == 5 && e == bindings::Result::Ok);
+  int count = 0;
+  const char* const* list = Versions::List(&count);
+  CK(6, count == 2 && list[1][3] == '5');
+  int (*f1)(int) = (int (*)(int))Address();
+  int (*f2)(int) = reinterpret_cast<int (__stdcall *)(int)>(Address());
+  CK(7, f1(4) == 8 && f2(5) == 10);
+  Window w;
+  CK(8, w.Swap(1) == 102);
+  std::vector<unsigned char> bytes;
+  std::string text = "hey";
+  bytes.insert(bytes.end(), text.begin(), text.end());
+  std::vector<int> nums{1, 2};
+  nums.insert(nums.end(), {3, 4, 5});
+  CK(9, bytes.size() == 3 && bytes[2] == 'y' && nums.size() == 5 && nums[4] == 5);
+  CK(10, offsetof(Vert, r) == 8 && offsetof(Vert, u) == 12 && sizeof(Vert) == 20);
+  std::wstring ws(L"C:\\dir/file");
+  CK(11, ws.find_last_of(L"\\/") == 6 && ws.find_last_of(L"\\") == 2);
+  ws.assign(4, L'z');
+  CK(12, ws.size() == 4 && ws[3] == L'z');
+  return 0;
+}
+)OKMS", 0);
+}
+
+// The implicit copy and move assignment operators and the implicit move constructor ([class.copy.assign] 2, 4, 12;
+// [class.copy.ctor] 8, 14): each base and member is assigned or made by its own operator= or constructor. Before Round
+// 37 `a = b;` for a struct with a std::string member copied the string's bytes (both then owned one buffer: silent wrong
+// code, check 1), and moving a struct with a unique_ptr member left the source owning the object too (a double delete;
+// found by linking engine/src/Core/Undo.cpp, whose UndoStack keeps `struct Entry { std::unique_ptr<ICommand> cmd; ... }`
+// in a deque and a vector).
+static void r37_implicit_members(Tally& tally) {
+    std::printf("r37_implicit_members\n");
+    okayms_test::run_both(kRunEh, tally, "implicit_members", R"OKMS(
+#include <string>
+#include <memory>
+#include <vector>
+#include <deque>
+#include <utility>
+static int g_live = 0;
+struct Obj { int v; Obj(int x) : v(x) { ++g_live; } ~Obj() { --g_live; } };
+struct S { std::string s; int k; };
+struct U { std::unique_ptr<Obj> p; unsigned long long bytes = 0; };
+struct Base { std::string name; };
+struct Derived : Base { std::string extra[2]; int n; };
+struct Holder { std::deque<U> q; std::vector<U> w; };
+int entry(void) {
+  {
+    S a, b;
+    b.s = "a long text that has to live on the heap, not inside";
+    b.k = 4;
+    a = b;
+    b.s[0] = 'X';
+    CK(1, a.s[0] == 'a' && b.s[0] == 'X' && a.k == 4);
+    U u, w;
+    u.p.reset(new Obj(1));
+    w = std::move(u);
+    CK(2, !u.p && w.p && w.p->v == 1 && g_live == 1);
+    U m(std::move(w));
+    CK(3, !w.p && m.p->v == 1 && g_live == 1);
+    Holder h;
+    U x; x.p.reset(new Obj(2)); x.bytes = 8;
+    h.q.push_back(std::move(x));
+    U y; y.p.reset(new Obj(3));
+    h.q.push_back(std::move(y));
+    U back = std::move(h.q.back());
+    h.q.pop_back();
+    h.w.push_back(std::move(back));
+    CK(4, h.q.size() == 1 && h.q.front().p->v == 2 && h.q.front().bytes == 8 && h.w.back().p->v == 3 && g_live == 3);
+    h.w.push_back(std::move(h.q.front()));
+    h.w.erase(h.w.begin());
+    CK(5, h.w.size() == 1 && h.w[0].p->v == 2 && g_live == 2);
+    Derived d1, d2;
+    d2.name = "the base part, long enough to be on the heap";
+    d2.extra[1] = "the second element of an array of strings, also long";
+    d2.n = 9;
+    d1 = d2;
+    d2.name[0] = 'Q';
+    d2.extra[1][0] = 'Q';
+    CK(6, d1.name[0] == 't' && d1.extra[1][0] == 't' && d1.n == 9);
+    Derived d3(std::move(d1));
+    CK(7, d3.name[0] == 't' && d3.extra[1].size() > 20);
+  }
+  CK(8, g_live == 0);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// The right operand of && and || runs only when it is needed, after the left one ([expr.log.and] 1, [expr.log.or] 1),
+// also when it makes a temporary of class type (a call returning a std::string). Before Round 37 the temporary was
+// made before the whole statement: `s.Undo() && s.NextRedoName() == "Set B"` read the name before Undo() ran.
+static void r37_logic_order(Tally& tally) {
+    std::printf("r37_logic_order\n");
+    okayms_test::run_both(kRun, tally, "logic_order", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+struct St {
+  std::vector<std::string> r;
+  int calls = 0, names = 0;
+  bool Undo() { ++calls; r.push_back("Set B"); return true; }
+  std::string Name() { ++names; return r.empty() ? std::string("none") : r.back(); }
+};
+struct Tok { int kind; std::string text; };
+struct Sc {
+  int n = 0;
+  Tok Next() { Tok t; t.kind = n < 3 ? 1 : 0; t.text = n < 3 ? std::string("ab") : std::string("end of the words, long enough to be on the heap"); ++n; return t; }
+};
+int entry(void) {
+  St s;
+  int b = 10;
+  bool ok = s.Undo() && b == 10 && s.Name() == "Set B";
+  CK(1, ok && s.calls == 1 && s.names == 1);
+  CK(2, s.Undo() && s.Name() == "Set B" && s.calls == 2);
+  bool skip = s.calls > 5 && s.Name() == "x";
+  CK(3, !skip && s.names == 2);
+  bool any = s.calls > 0 || s.Name() == "x";
+  CK(4, any && s.names == 2);
+  int loops = 0;
+  while (s.calls < 4 && s.Name() != "stop") { s.Undo(); ++loops; }
+  CK(5, loops == 2 && s.calls == 4);
+  for (int i = 0; i < 2 && s.Name() == "Set B"; ++i) ++loops;
+  CK(6, loops == 4);
+  // A for loop whose init and step assign a class result (the implicit operator=; Md5Reader.cpp).
+  Sc sc;
+  Tok t;
+  int words = 0;
+  for (t = sc.Next(); t.kind != 0; t = sc.Next()) words += (int)t.text.size();
+  CK(7, words == 6 && t.text == "end of the words, long enough to be on the heap");
+  return 0;
+}
+)OKMS", 0);
+}
+
+int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+    Tally tally;
+    r37_pointer_mismatch(tally);
+    r37_pointer_allowed(tally);
+    r37_wide_path(tally);
+    r37_by_value_unwind(tally);
+    r37_win32_layouts(tally);
+    r37_single_file_blockers(tally);
+    r37_implicit_members(tally);
+    r37_logic_order(tally);
+    return tally.finish(8);
+}

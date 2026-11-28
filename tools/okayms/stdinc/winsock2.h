@@ -1,7 +1,7 @@
 // okay-ms own <winsock2.h>: the Windows Sockets 2 names the engine's UDP code uses (Net/UdpSocket.cpp,
 // Net/ServerQuery.cpp), declared in our own words from Microsoft's public Winsock documentation (WSAStartup, WSADATA,
 // socket, bind, connect, sendto, recvfrom, select and fd_set, ioctlsocket and FIONBIO, WSAIoctl, setsockopt and
-// SO_BROADCAST, getsockname, closesocket, the byte-order functions, sockaddr and sockaddr_in, the Windows Sockets error
+// SO_BROADCAST, getsockname, closesocket, listen, accept, shutdown, getpeername, the byte-order functions, sockaddr and sockaddr_in, the Windows Sockets error
 // codes). The numbers are the documented values (address family AF_INET 2, protocol IPPROTO_UDP 17 as in RFC 790,
 // WSAEWOULDBLOCK 10035 and the rest). No text from the Windows SDK, MinGW or Wine headers. The functions live in
 // ws2_32.dll. Add a name here when an engine file needs it.
@@ -32,6 +32,7 @@ typedef UINT_PTR SOCKET;
 // Socket options (setsockopt, level SOL_SOCKET).
 #define SOL_SOCKET 0xffff
 #define SO_REUSEADDR 0x0004
+#define SO_ERROR 0x1007
 #define SO_BROADCAST 0x0020
 #define SO_SNDBUF 0x1001
 #define SO_RCVBUF 0x1002
@@ -47,12 +48,15 @@ typedef UINT_PTR SOCKET;
 // Windows Sockets error codes (WSAGetLastError).
 #define WSAEINTR 10004
 #define WSAEWOULDBLOCK 10035
+#define WSAEINPROGRESS 10036
+#define WSAEALREADY 10037
 #define WSAEMSGSIZE 10040
 #define WSAEADDRINUSE 10048
 #define WSAENETRESET 10052
 #define WSAECONNRESET 10054
 #define WSAENOTCONN 10057
 #define WSAETIMEDOUT 10060
+#define WSAECONNREFUSED 10061
 
 #define WSADESCRIPTION_LEN 256
 #define WSASYS_STATUS_LEN 128
@@ -139,9 +143,20 @@ OKAY_WS2_IMPORT int WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_si
 OKAY_WS2_IMPORT SOCKET WINAPI socket(int family, int type, int protocol);
 OKAY_WS2_IMPORT int WINAPI bind(SOCKET s, const struct sockaddr* name, int name_size);
 OKAY_WS2_IMPORT int WINAPI connect(SOCKET s, const struct sockaddr* name, int name_size);
+// TCP servers (Round 37, Automation/Link.cpp): listen, accept and shutdown, from their Winsock reference pages.
+#define SOMAXCONN 0x7fffffff
+#define SD_RECEIVE 0
+#define SD_SEND 1
+#define SD_BOTH 2
+#define TCP_NODELAY 0x0001
+OKAY_WS2_IMPORT int WINAPI listen(SOCKET s, int backlog);
+OKAY_WS2_IMPORT SOCKET WINAPI accept(SOCKET s, struct sockaddr* address, int* address_size);
+OKAY_WS2_IMPORT int WINAPI shutdown(SOCKET s, int how);
+OKAY_WS2_IMPORT int WINAPI getpeername(SOCKET s, struct sockaddr* name, int* name_size);
 OKAY_WS2_IMPORT int WINAPI closesocket(SOCKET s);
 OKAY_WS2_IMPORT int WINAPI ioctlsocket(SOCKET s, long command, u_long* argument);
 OKAY_WS2_IMPORT int WINAPI setsockopt(SOCKET s, int level, int name, const char* value, int value_size);
+OKAY_WS2_IMPORT int WINAPI getsockopt(SOCKET s, int level, int name, char* value, int* value_size);
 OKAY_WS2_IMPORT int WINAPI getsockname(SOCKET s, struct sockaddr* name, int* name_size);
 OKAY_WS2_IMPORT int WINAPI sendto(SOCKET s, const char* data, int size, int flags, const struct sockaddr* to, int to_size);
 OKAY_WS2_IMPORT int WINAPI recvfrom(SOCKET s, char* buffer, int size, int flags, struct sockaddr* from, int* from_size);

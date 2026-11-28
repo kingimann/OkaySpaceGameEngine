@@ -5,6 +5,10 @@
 #include <cstddef>
 #include "winsock2.h"
 
+// The size of a socket address (Round 37, Link.cpp): an int on Windows (the Winsock documentation of getsockname and
+// accept gives `int*` for it; ws2tcpip.h names it socklen_t).
+typedef int socklen_t;
+
 typedef struct addrinfo {
     int ai_flags;
     int ai_family;

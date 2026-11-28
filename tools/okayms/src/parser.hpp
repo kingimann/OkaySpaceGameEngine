@@ -547,7 +547,13 @@ struct Parser {
             // `bool ok = true, final = false;`); Round 31 and before dropped the word everywhere.
             if (t.kind == TIdent && (t.text == "override" || t.text == "final")) {
                 const Tok nk = i + 1 < tokens.size() ? tokens[i + 1].kind : TEnd;
-                const bool next_ok = nk == TLBrace || nk == TSemi || nk == TAssign || nk == TColon ||
+                // Before `=` only as `= 0`, `= default` or `= delete` (Round 37: NetworkManager.cpp's
+                // `if (m_kicked) final = true;` lost its variable after the `)`).
+                const bool assign_ok =
+                    nk == TAssign && i + 2 < tokens.size() &&
+                    ((tokens[i + 2].kind == TNumber && tokens[i + 2].number == 0) || tokens[i + 2].kind == TDefault ||
+                     (tokens[i + 2].kind == TIdent && tokens[i + 2].text == "delete"));
+                const bool next_ok = nk == TLBrace || nk == TSemi || assign_ok || nk == TColon ||
                                      (nk == TIdent && (tokens[i + 1].text == "override" || tokens[i + 1].text == "final" ||
                                                        tokens[i + 1].text == "try" || tokens[i + 1].text == "noexcept"));
                 bool prev_ok = false;
@@ -885,6 +891,11 @@ struct Parser {
                     for (size_t k = i + 2; k < j; ++k) {
                         // volatile is dropped here too; `T *const` inside the cast loses its const as above.
                         if (tokens[k].kind == TIdent && tokens[k].text == "volatile") continue;
+                        // A calling convention in a function pointer type (`R (__stdcall *)(A)`; Round 37) is dropped
+                        // as it is everywhere else (one convention on x64).
+                        if (tokens[k].kind == TIdent && (tokens[k].text == "__stdcall" || tokens[k].text == "__cdecl" ||
+                                                         tokens[k].text == "__fastcall" || tokens[k].text == "__thiscall"))
+                            continue;
                         if (tokens[k].kind == TConst && !out.empty() && out.back().kind == TStar) continue;
                         out.push_back(tokens[k]);
                     }
@@ -1194,9 +1205,11 @@ struct Parser {
     int cur_special = 0;
     bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
+    bool cur_implicit_move = false;  // the implicit move constructor or move assignment is being made (Round 37)
     // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
     // its static locals are COMDAT objects named from it (Round 36).
     bool cur_fn_inline = false;
+    int fn_lambda_seq = 0;  // lambdas written so far in the function being read (StructDef::inline_key; Round 37)
     std::string cur_fn_symbol{};
     int cur_inherit_sid = -1;  // the base whose constructor the implicit constructor being made inherits (Round 34)
     int rv_count = 0;
@@ -2754,7 +2767,11 @@ struct Parser {
                     ed.nest = struct_nest;
                     enum_types_declared.push_back(ed);
                 }
-                typedefs[cur().text] = enum_type;
+                // At namespace scope the name is kept with its namespace, as a typedef's is (Round 37: okay::bindings'
+                // `enum class Result` replaced okay::automation's struct Result in every namespace after it; Automation.cpp,
+                // "expected ';'" at `Result Result::Fail(...)`).
+                if (struct_nest == 0 && cur_locals == nullptr) declare_ns_typedef(cur().text, enum_type);
+                else typedefs[cur().text] = enum_type;
                 if (struct_nest == 0) enum_ns_[enum_type.enum_id] = current_ns;
                 cur_enum_id = enum_type.enum_id;
                 next();
@@ -4346,6 +4363,52 @@ struct Parser {
         comma.kids.push_back(std::move(tern));
         return comma;
     }
+    // True when `value` is a pointer (or an array) to one arithmetic type and `to` a pointer to another, so no implicit
+    // conversion exists ([conv.ptr]: only a null pointer constant, to void*, and to a base class; [conv.qual] adds
+    // const only). `const char*` for `const wchar_t*` (here unsigned short) or `const int*` is ill-formed (Round 37:
+    // before, okay-cl passed the narrow text's address, and SaveFile.cpp's `_wfopen(p.c_str(), L"wb")` with a narrow
+    // path compiled). Only pointers to arithmetic types are compared; enumerations, classes, functions and member
+    // pointers are left to the other rules. *what names the two types for the message.
+    bool arith_ptr_mismatch(const Node& value, const Type& to, std::string* what) const {
+        if (to.is_ref || to.pointers < 1 || to.is_array() || to.func_id >= 0 || to.memptr >= 0 || to.memfn >= 0)
+            return false;
+        if (value.kind == Node::IntLit) return false;  // 0, NULL, nullptr: a null pointer constant
+        Type from;
+        if (!static_type(value, &from)) return false;
+        from.is_ref = false;
+        if (from.is_array()) {
+            from = peel_array(from);
+            from.pointers += 1;
+        }
+        if (from.pointers != to.pointers || from.func_id >= 0 || from.memptr >= 0 || from.memfn >= 0) return false;
+        auto arith = [](const Type& t) {
+            return (t.base == 1 || t.base == 2 || t.base == 4 || t.base == 5 || t.base == 6) && !t.is_enum() && t.tpat == -1;
+        };
+        if (!arith(from) || !arith(to)) return false;
+        auto size_of = [](const Type& t) {
+            if (t.base == 2) return 1;
+            if (t.base == 4) return 2;
+            if (t.base == 5) return 4;
+            if (t.base == 6) return 8;
+            return t.wide ? 8 : 4;
+        };
+        const bool fl_from = from.base >= 5;
+        const bool fl_to = to.base >= 5;
+        if (size_of(from) == size_of(to) && fl_from == fl_to && from.is_bool == to.is_bool &&
+            (fl_from || from.is_unsigned == to.is_unsigned))
+            return false;
+        auto name = [&](const Type& t) {
+            if (t.is_bool) return std::string("bool");
+            if (t.base == 5) return std::string("float");
+            if (t.base == 6) return std::string("double");
+            std::string s = t.is_unsigned ? "unsigned " : "";
+            if (t.base == 2) return s + "char";
+            if (t.base == 4) return s + "short (wchar_t)";
+            return s + (t.wide ? "long long" : "int");
+        };
+        *what = "a pointer to " + name(from) + " where a pointer to " + name(to) + " is wanted (no implicit conversion)";
+        return true;
+    }
     // A value converted to `to`, a pointer to a class: when the value is a pointer to a class derived from it and the
     // base is not at offset 0, the address moves to the base subobject ([conv.ptr] 3). With `down`, a pointer to a
     // base converted to a pointer to a derived class moves back ([expr.static.cast] 11).
@@ -4660,6 +4723,9 @@ struct Parser {
             q.is_ref = false;
             if (q.pointers > 0 || q.is_array() || q.func_id >= 0) return n <= 1 ? 2 : -1;
             if (q.base != 3) return n <= 1 ? 0 : -1;
+            // A std::initializer_list<T> parameter takes any braced list ([over.ics.list] 5; Round 37: v.insert(pos, {a,
+            // b, c}) was not viable, and a member template insert of the same name was tried instead).
+            if (is_init_list_class(q)) return 0;
             return class_takes_list(q.struct_id, n) ? 4 : -1;
         }
         Type a;
@@ -4679,6 +4745,13 @@ struct Parser {
             // A function (or pointer to one) for a function pointer parameter: the signatures decide ([over.ics.scs]),
             // so operator<<(ios_base& (*)(ios_base&)) takes std::hex and the const void* overload does not win.
             if (a.func_id >= 0 && p.func_id >= 0) return same_signature(a.func_id, p.func_id) ? 0 : -1;
+            {
+                // A pointer to another arithmetic type is not viable ([conv.ptr]; Round 37: `char*` for a
+                // `const unsigned char*` parameter ranked as an exact match, so vector<uint8_t>::insert(pos, const T*,
+                // const T*) hid the iterator template for a string's chars).
+                std::string what;
+                if (arith_ptr_mismatch(arg, p, &what)) return -1;
+            }
             if (a.pointers == p.pointers && a.base == p.base && (p.base != 3 || a.struct_id == p.struct_id) &&
                 (a.func_id >= 0) == (p.func_id >= 0))
                 return 0;
@@ -4921,6 +4994,126 @@ struct Parser {
         return best;
     }
     bool class_has_copy(int sid) const { return copy_ctor(sid) != nullptr; }
+    // operator= of class sid taking `const C&` or `C&` (or C by value), or `C&&` with move (Round 37).
+    const Method* assign_op(int sid, bool move) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name != "operator=" || m.params.size() != 1 || m.is_static) continue;
+            if (m.implicit && !m.implicit_assign) continue;
+            const Type& p = m.params[0];
+            if (p.base != 3 || p.pointers != 0 || p.struct_id != sid) continue;
+            if (move ? (p.is_ref && p.rref) : !(p.is_ref && p.rref)) return &m;
+        }
+        return nullptr;
+    }
+    bool has_any_assign(int sid) const { return assign_op(sid, false) != nullptr || assign_op(sid, true) != nullptr; }
+    // The parts of a class (bases, then members) for the implicit special members: their classes, -1 for a part that is
+    // not of class type; arrays of objects count by their element class.
+    std::vector<int> part_classes(const StructDef& def, int self) const {
+        std::vector<int> out;
+        for (const StructDef::BaseInfo& bi : def.bases) out.push_back(bi.sid);
+        for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+            const Field& f = def.fields[fi];
+            if (f.name.compare(0, 6, "__vptr") == 0) continue;
+            const Type& ft = f.type;
+            if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && ft.struct_id >= 0 && ft.struct_id != self && ft.more.empty())
+                out.push_back(ft.struct_id);
+            else
+                out.push_back(-1);
+        }
+        return out;
+    }
+    // The implicit copy and move assignment operators and the implicit move constructor of a class that declares none
+    // ([class.copy.assign] 2, 4; [class.copy.ctor] 8), made only when a base or member has its own operator= or move
+    // constructor (otherwise the bytes are copied, as before Round 37) and every part can be assigned or made that way.
+    // Before Round 37 `a = b;` for a struct with a std::string member copied the string's bytes (both then owned one
+    // buffer), and moving a struct with a unique_ptr member left the source owning the object too.
+    bool implicit_special_members(StructDef* def, int self, bool user_copy, bool has_dtor) {
+        if (def->local_fn) return true;  // own limit: not for local classes
+        bool user_copy_assign = false;
+        bool user_move_assign = false;
+        bool user_move = false;
+        for (const Method& m : def->methods) {
+            if (m.name == "operator=" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].pointers == 0 &&
+                m.params[0].struct_id == self) {
+                if (m.params[0].is_ref && m.params[0].rref) user_move_assign = true;
+                else user_copy_assign = true;
+            }
+            if (is_move_param(m, self)) user_move = true;
+        }
+        const std::vector<int> parts = part_classes(*def, self);
+        bool any_assign = false;
+        bool copy_assignable = true;
+        bool move_assign_needed = false;
+        bool any_move_ctor = false;
+        bool move_constructible = true;
+        for (int sid : parts) {
+            if (sid < 0) continue;
+            const bool ca = assign_op(sid, false) != nullptr;
+            const bool ma = assign_op(sid, true) != nullptr;
+            if (ca || ma) any_assign = true;
+            if (ma) move_assign_needed = true;
+            if (!ca && ma) copy_assignable = false;
+            if (has_move_ctor(sid)) any_move_ctor = true;
+            if (!has_move_ctor(sid) && !class_has_copy(sid) && class_needs_ctor(structs[static_cast<size_t>(sid)]) &&
+                !has_ctor_template(sid))
+                move_constructible = false;
+        }
+        Type self_ref;
+        self_ref.base = 3;
+        self_ref.struct_id = self;
+        self_ref.is_ref = true;
+        Type self_rref = self_ref;
+        self_rref.rref = true;
+        Type result = self_ref;
+        auto add_assign = [&](const Type& param) {
+            Method m;
+            m.name = "operator=";
+            m.ret = result;
+            m.params.push_back(param);
+            m.param_names.push_back("__o");
+            m.implicit = true;
+            m.implicit_assign = true;
+            m.has_body = true;
+            m.body_at = 1;
+            return add_method(def, self, std::move(m));
+        };
+        if (!user_copy_assign && any_assign && copy_assignable) {
+            Type cref = self_ref;
+            cref.is_const = true;
+            cref.pconst = true;
+            if (!add_assign(cref)) return false;
+        }
+        const bool no_user_special = !user_copy && !user_copy_assign && !user_move && !user_move_assign && !has_dtor;
+        if (no_user_special && move_assign_needed) {
+            if (!add_assign(self_rref)) return false;
+        }
+        if (no_user_special && any_move_ctor && move_constructible) {
+            Method m;
+            m.name = "<ctor>";
+            m.ret.base = 3;
+            m.ret.struct_id = self;
+            m.ret.pointers = 1;
+            m.params.push_back(self_rref);
+            m.param_names.push_back("__o");
+            m.implicit = true;
+            m.implicit_copy = true;
+            m.implicit_move = true;
+            m.has_body = true;
+            m.body_at = 1;
+            if (!add_method(def, self, std::move(m))) return false;
+        }
+        return true;
+    }
+    // An rvalue of the object p points at (std::move(*p)): what `T&&` parameters bind to.
+    static Node xvalue_of(Node p) {
+        Node d;
+        d.kind = Node::Unary;
+        d.op = TStar;
+        d.text = "xval";
+        d.kids.push_back(std::move(p));
+        return d;
+    }
     const Method* move_ctor(int sid) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods)
@@ -4952,7 +5145,45 @@ struct Parser {
     struct Temp {
         std::string name;
         int sid = -1;
+        // A by-value argument the caller made (Round 37): its exception record. At the end of the statement the record
+        // is taken off the list, and the object is destroyed only if the call it was made for was never reached
+        // (`c && f(C(1))`); otherwise the callee owns and destroys it.
+        std::string rec{};
     };
+    // The statement-end action for a temporary: its destructor, or for a handed-over argument the runtime's
+    // __okay_eh_end_arg.
+    bool temp_end_call(const Temp& t, Node* out) {
+        if (!t.rec.empty()) {
+            *out = eh_call("__okay_eh_end_arg", {node_name(t.rec)});
+            return true;
+        }
+        return special_call(t.sid, "<dtor>", node_addr(node_name(t.name)), {}, out);
+    }
+    // `arg` names a temporary of this statement made before it (stmt_pre) of the parameter's class: it becomes the
+    // by-value argument itself. Without exceptions in the file it only leaves the statement's list (the callee destroys
+    // it); with them it gets a record, pushed after it is made, that the call hands over (Node::handoff).
+    bool hand_over_temp(const Type& pt, Node* arg) {
+        for (size_t i = stmt_temps.size(); i-- > 0;) {
+            Temp& t = stmt_temps[i];
+            if (t.name != arg->text) continue;
+            if (t.sid != pt.struct_id || !t.rec.empty()) return false;
+            if (!eh_) {
+                stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(i));
+                return true;
+            }
+            const Method* dm = find_method(t.sid, "<dtor>", 0);
+            if (dm == nullptr) return false;
+            const std::string rec = eh_record_local(cur_locals);
+            stmt_pre.push_back(rec_store(rec, 1, int_node(0)));
+            stmt_pre.push_back(rec_store(rec, 2, node_addr(node_name(t.name))));
+            stmt_pre.push_back(rec_store(rec, 3, node_name(dm->qname)));
+            stmt_pre.push_back(eh_call("__okay_eh_push", {node_name(rec)}));
+            t.rec = rec;
+            arg->handoff = rec;
+            return true;
+        }
+        return false;
+    }
     std::vector<Temp> stmt_temps{};
     std::vector<Node> stmt_pre{};
     bool keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::vector<Local>* locals, std::vector<Node>* stmts,
@@ -5036,6 +5267,11 @@ struct Parser {
                     error = "an integer argument for a pointer parameter (no conversion)";
                     return false;
                 }
+                std::string what;
+                if (arith_ptr_mismatch(arg, pt, &what)) {
+                    error = what;
+                    return false;
+                }
             }
             {
                 Type from;
@@ -5072,9 +5308,23 @@ struct Parser {
                     }
                     stmt_pre.push_back(std::move(call));
                     // A by-value parameter is destroyed by the callee (see below); a reference's temporary here.
-                    if (pt.is_ref && class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
-                        stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+                    const bool dtor = class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]);
+                    if (pt.is_ref && dtor) stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
                     arg = pt.is_ref ? node_addr(node_name(hidden.name)) : node_name(hidden.name);
+                    if (!pt.is_ref && dtor && eh_) {
+                        // Until the call it belongs to the caller: unwinding destroys it if an argument evaluated
+                        // after it throws (Round 37; before, it was never destroyed then).
+                        std::vector<Node> rec_nodes;
+                        const size_t before = rec_nodes.size();
+                        if (!eh_push_object(&rec_nodes, node_addr(node_name(hidden.name)), pt.struct_id, 0, cur_locals))
+                            return false;
+                        if (rec_nodes.size() > before) {
+                            const std::string rec = "__eh" + std::to_string(eh_count - 1);
+                            for (Node& n : rec_nodes) stmt_pre.push_back(std::move(n));
+                            arg.handoff = rec;
+                            stmt_temps.push_back(Temp{hidden.name, pt.struct_id, rec});
+                        }
+                    }
                     continue;
                 }
             }
@@ -5129,6 +5379,11 @@ struct Parser {
                 held.is_const = false;
                 held.pconst = false;
                 arg = node_name(materialize_temp(held, std::move(arg), false));
+            } else if (cur_locals != nullptr && !pt.is_ref && pt.base == 3 && pt.pointers == 0 && !pt.is_array() &&
+                       arg.kind == Node::Name && arg.text.compare(0, 4, "__bt") == 0 && hand_over_temp(pt, &arg)) {
+                // f(C(4)): the temporary C(4) is the parameter itself ([dcl.init] 17.6.1, guaranteed copy elision in
+                // C++17): no copy is made, and the callee destroys it (Round 37; before, a copy was passed and the
+                // temporary was destroyed after the statement, and an exception from a later argument left it alive).
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -5149,7 +5404,20 @@ struct Parser {
                 Node deref;
                 deref.kind = Node::Unary;
                 deref.op = TStar;
-                deref.kids.push_back(std::move(call));
+                const Method* dm = eh_ ? find_method(pt.struct_id, "<dtor>", 0) : nullptr;
+                if (dm != nullptr && class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)])) {
+                    // The copy is made while the arguments are evaluated: __okay_eh_push_at records it once it is
+                    // built, so unwinding destroys it if a later argument throws; the call hands it over (Round 37).
+                    const std::string rec = eh_record_local(cur_locals);
+                    stmt_pre.push_back(rec_store(rec, 1, int_node(0)));
+                    stmt_pre.push_back(rec_store(rec, 3, node_name(dm->qname)));
+                    Node pushed = eh_call_value("__okay_eh_push_at", {node_name(rec), std::move(call)}, cm->ret);
+                    deref.kids.push_back(std::move(pushed));
+                    deref.handoff = rec;
+                    stmt_temps.push_back(Temp{hidden.name, pt.struct_id, rec});
+                } else {
+                    deref.kids.push_back(std::move(call));
+                }
                 arg = std::move(deref);
                 // The copy is not destroyed here: the callee owns a by-value parameter and destroys it when it
                 // returns ([expr.call] 7 leaves the place to the implementation; the Microsoft x64 convention has the
@@ -6024,8 +6292,10 @@ struct Parser {
                             sm.cval = v;
                         } else {
                             // static inline float s = 1.0f; static inline int a[4] = {...}; static constexpr T t[] = {...}:
-                            // a variable with that first value ([dcl.inline]). Own simplification: each file that includes
-                            // the class keeps its own copy (an internal symbol), as for inline functions here.
+                            // a variable with that first value ([dcl.inline]). With a constant first value it is one
+                            // object in the program, in a COMDAT section of its decorated name (Round 37; Cursor::visible,
+                            // AudioMixer::masterVolume); a value computed at startup, or a member of a local class or of
+                            // a class in an anonymous namespace, stays one copy per file (an internal symbol).
                             if (obj_needs_ctor(sm.type) || obj_needs_dtor(sm.type)) {
                                 error = "an in-class initialized static member of a class with a constructor is not supported";
                                 return false;
@@ -6039,6 +6309,14 @@ struct Parser {
                             g.is_static = true;
                             std::vector<DynLeaf> leaves;
                             if (!flatten_dyn(sm.type, init, &g, &leaves)) return false;
+                            bool own_file = def.local_fn || def.in_anon || anon_depth > 0;
+                            for (int up = def.parent; up >= 0; up = structs[static_cast<size_t>(up)].parent)
+                                if (structs[static_cast<size_t>(up)].in_anon || structs[static_cast<size_t>(up)].local_fn)
+                                    own_file = true;
+                            if (leaves.empty() && !own_file) {
+                                g.is_static = false;
+                                g.comdat = true;
+                            }
                             globals.push_back(g);
                             add_init_stmts(dyn_leaf_stmts(g.name, g.type, &leaves));
                         }
@@ -6212,6 +6490,7 @@ struct Parser {
                 m.body_at = 1;
                 if (!add_method(&def, self, std::move(m))) return false;
             }
+            if (!implicit_special_members(&def, self, user_copy, has_dtor)) return false;
             if (!has_dtor && class_needs_dtor(structs[static_cast<size_t>(self)])) {
                 Method m;
                 m.name = "<dtor>";
@@ -6406,6 +6685,7 @@ struct Parser {
         const size_t resume = at;
         at = m.body_at;
         cur_implicit_copy = m.implicit_copy;
+        cur_implicit_move = m.implicit_move || (m.implicit_assign && !m.params.empty() && m.params[0].rref);
         cur_inherit_sid = m.inherit_sid;
         // An out-of-class definition may call the class template's parameters by other names.
         TDecl alias;
@@ -6423,7 +6703,9 @@ struct Parser {
         // The class's member types (typedefs, using names, enumerations) are names in its member functions
         // ([basic.scope.class]), also when the body is read after the class (a nested class's members; Round 30).
         const TdefSaves class_names = bind_class_tdefs(sid);
-        const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
+        const bool ok = parse_function_body(&fn, sid,
+                                            m.implicit_assign ? 3 : m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0,
+                                            m.implicit);
         unbind_class_tdefs(class_names);
         unbind_params(alias_bound);
         // A failure outside a template instance stops the compile: the error then names the line it happened on, not
@@ -6596,6 +6878,109 @@ struct Parser {
         return -1;
     }
 
+    // The body of an implicit copy or move assignment (Round 37, [class.copy.assign] 12): each base subobject, then
+    // each member in declaration order, is assigned from the source's: by its class's operator= (given an rvalue of the
+    // source's part in the move form), element by element for an array of such objects, and by its bytes otherwise.
+    // The result is *this.
+    bool implicit_assign_body(FuncDecl* fn, const StructDef& def, int cls) {
+        const bool move = cur_implicit_move;
+        Node block;
+        block.kind = Node::Block;
+        block.text = "scope";
+        auto source_part = [&](Node lvalue) { return move ? xvalue_of(node_addr(std::move(lvalue))) : lvalue; };
+        // The body may be made while another statement is being read (a class template instance named in it): only
+        // what this body's calls put into stmt_pre and stmt_temps is its own.
+        const size_t pre_base = stmt_pre.size();
+        const size_t temps_base = stmt_temps.size();
+        auto call_assign = [&](int sid, Node target, Node source) -> bool {
+            std::vector<Node> args;
+            args.push_back(std::move(source));
+            Node call;
+            if (!method_call(&call, std::move(target), false, "operator=", {}, &args)) return false;
+            for (size_t h = pre_base; h < stmt_pre.size(); ++h) block.kids.push_back(std::move(stmt_pre[h]));
+            stmt_pre.resize(pre_base);
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(call));
+            block.kids.push_back(std::move(stmt));
+            for (size_t i = stmt_temps.size(); i-- > temps_base;) {
+                Node end;
+                if (!temp_end_call(stmt_temps[i], &end)) return false;
+                block.kids.push_back(std::move(end));
+            }
+            stmt_temps.resize(temps_base);
+            (void)sid;
+            return true;
+        };
+        auto byte_copy = [&](Node target, Node source) {
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;  // a plain copy of the bytes, as an initialization makes it
+            assign.kids.push_back(std::move(target));
+            assign.kids.push_back(std::move(source));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            block.kids.push_back(std::move(stmt));
+        };
+        auto other_field = [&](const std::string& f) {
+            Node o;
+            o.kind = Node::Field;
+            o.op = TDot;
+            o.text = f;
+            o.kids.push_back(node_name("__o"));
+            return o;
+        };
+        auto deref = [](Node p) {
+            Node d;
+            d.kind = Node::Unary;
+            d.op = TStar;
+            d.kids.push_back(std::move(p));
+            return d;
+        };
+        for (const StructDef::BaseInfo& bi : def.bases) {
+            if (has_any_assign(bi.sid)) {
+                Node target = deref(bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid));
+                Node source = deref(offset_ptr(node_addr(node_name("__o")), bi.off, bi.sid));
+                if (!call_assign(bi.sid, std::move(target), source_part(std::move(source)))) return false;
+            } else {
+                for (size_t fi = bi.f0; fi < bi.f1; ++fi)
+                    if (def.fields[fi].name.compare(0, 6, "__vptr") != 0)
+                        byte_copy(node_this_field(def.fields[fi].name), other_field(def.fields[fi].name));
+            }
+        }
+        for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+            const Field& field = def.fields[fi];
+            if (field.name.compare(0, 6, "__vptr") == 0) continue;
+            const Type& ft = field.type;
+            const bool obj = ft.base == 3 && ft.pointers == 0 && !ft.is_ref && ft.struct_id >= 0 && ft.struct_id != cls &&
+                             ft.more.empty() && has_any_assign(ft.struct_id);
+            if (obj && !ft.is_array()) {
+                if (!call_assign(ft.struct_id, node_this_field(field.name), source_part(other_field(field.name)))) return false;
+            } else if (obj && ft.array_len > 0) {
+                for (int k = 0; k < ft.array_len; ++k) {
+                    Node t;
+                    t.kind = Node::Index;
+                    t.kids.push_back(node_this_field(field.name));
+                    t.kids.push_back(int_node(k));
+                    Node o;
+                    o.kind = Node::Index;
+                    o.kids.push_back(other_field(field.name));
+                    o.kids.push_back(int_node(k));
+                    if (!call_assign(ft.struct_id, std::move(t), source_part(std::move(o)))) return false;
+                }
+            } else {
+                byte_copy(node_this_field(field.name), other_field(field.name));
+            }
+        }
+        Node ret;
+        ret.kind = Node::Return;
+        ret.kids.push_back(node_name("this"));
+        block.kids.push_back(std::move(ret));
+        fn->body = std::move(block);
+        return true;
+    }
     bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
         // The body is a "scope" block around the user's block (below): the code generator opens a scope for it, so
         // the parser opens one too, first, and the scope numbers of the locals match the generator's (Round 30:
@@ -6606,6 +6991,7 @@ struct Parser {
             ~ScopeGuard() { p.pop_scope(); }
         } scope_guard(*this);
         const StructDef def = structs[static_cast<size_t>(cls)];
+        if (special == 3) return implicit_assign_body(fn, def, cls);
         std::vector<Node> pre;
         std::vector<Node> post;
         int eh_held = 0;  // sub-objects recorded for unwinding while the constructor runs
@@ -6715,7 +7101,16 @@ struct Parser {
             // Each base in declaration order ([class.copy.ctor] 14): by its copy constructor, given the base subobject of
             // the source, or field by field.
             for (const StructDef::BaseInfo& bi : def.bases) {
-                if (class_has_copy(bi.sid)) {
+                if (cur_implicit_move && (has_move_ctor(bi.sid) || class_has_copy(bi.sid))) {
+                    // The move constructor: the base from an rvalue of the source's base subobject (Round 37).
+                    std::vector<Node> args;
+                    args.push_back(xvalue_of(offset_ptr(node_addr(node_name("__o")), bi.off, bi.sid)));
+                    Node call;
+                    if (!special_call(bi.sid, "<ctor>", bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid),
+                                      std::move(args), &call))
+                        return false;
+                    push_ctor_call(std::move(call));
+                } else if (class_has_copy(bi.sid)) {
                     std::vector<Node> args;
                     args.push_back(node_name("__o"));
                     Node call;
@@ -6733,7 +7128,16 @@ struct Parser {
                 const Field& field = def.fields[fi];
                 if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const Type& ft = field.type;
-                if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                if (cur_implicit_move && ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() &&
+                    ft.struct_id >= 0 && (has_move_ctor(ft.struct_id) || class_has_copy(ft.struct_id))) {
+                    // The move constructor: the member from an rvalue of the source's member (Round 37).
+                    std::vector<Node> args;
+                    args.push_back(xvalue_of(node_addr(other_field(field.name))));
+                    Node call;
+                    if (!special_call(ft.struct_id, "<ctor>", node_addr(node_this_field(field.name)), std::move(args), &call))
+                        return false;
+                    push_ctor_call(std::move(call));
+                } else if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
                     class_has_copy(ft.struct_id)) {
                     std::vector<Node> args;
                     args.push_back(other_field(field.name));
@@ -6843,7 +7247,7 @@ struct Parser {
                         for (Node& n : stmt_pre) pre.push_back(std::move(n));
                         for (size_t ti = stmt_temps.size(); ok && ti-- > 0;) {
                             Node dt;
-                            if (!special_call(stmt_temps[ti].sid, "<dtor>", node_addr(node_name(stmt_temps[ti].name)), {}, &dt))
+                            if (!temp_end_call(stmt_temps[ti], &dt))
                                 return false;
                             after.push_back(std::move(dt));
                         }
@@ -7168,6 +7572,16 @@ struct Parser {
         const std::string saved_fn_symbol = cur_fn_symbol;
         cur_fn_inline = fn->is_inline;
         cur_fn_symbol = fn->symbol.empty() ? fn->name : fn->symbol;
+        const int saved_lambda_seq = fn_lambda_seq;
+        fn_lambda_seq = 0;
+        if (cls >= 0 && !structs[static_cast<size_t>(cls)].inline_key.empty()) {
+            // A lambda's operator() in an inline function: its static locals are shared too (Round 37), named from the
+            // enclosing function and the lambda's number (StructDef::inline_key), not from the file's lambda counter.
+            const size_t sep = fn->name.find("::");
+            cur_fn_inline = true;
+            cur_fn_symbol = structs[static_cast<size_t>(cls)].inline_key + "$" +
+                            (sep == std::string::npos ? fn->name : fn->name.substr(sep + 2));
+        }
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
         const int saved_class = cur_class;
@@ -7262,6 +7676,7 @@ struct Parser {
         current_fn = saved_fn;
         cur_fn_inline = saved_fn_inline;
         cur_fn_symbol = saved_fn_symbol;
+        fn_lambda_seq = saved_lambda_seq;
         scope_depth = saved_depth;
         scope_parent = saved_parent;
         cur_class = saved_class;
@@ -9439,6 +9854,8 @@ struct Parser {
         add("__okay_throw", v, {p, i, cp, p});
         add("__okay_eh_alloc", p, {i});
         add("__okay_throw_built", v, {p, i, cp, p});
+        add("__okay_eh_push_at", p, {p, p});
+        add("__okay_eh_end_arg", v, {p});
     }
 
     static bool contains_return(const Node& n) {
@@ -10366,10 +10783,21 @@ struct Parser {
             bool exported = false;
             Type type;
             if (!parse_type(&type, &imported, &exported)) return false;
-            while (!is_typedef && is(TStar) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
-                   tokens[at + 2].kind == TColonColon) {
-                ++type.pointers;
-                next();
+            {
+                // T* C::f() and `const char* const* C::f()` (Round 37, Mcp.cpp's McpServer::SupportedVersions): the
+                // stars, and the const after a star, of a member function's result written outside the class. The
+                // result type is the one the class declared.
+                size_t k = at;
+                int stars = 0;
+                while (k < tokens.size() && (tokens[k].kind == TStar || (stars > 0 && tokens[k].kind == TConst))) {
+                    if (tokens[k].kind == TStar) ++stars;
+                    ++k;
+                }
+                if (!is_typedef && stars > 0 && k + 1 < tokens.size() && tokens[k].kind == TIdent &&
+                    tokens[k + 1].kind == TColonColon) {
+                    type.pointers += stars;
+                    at = k;
+                }
             }
             if (!is_typedef && (is(TAmp) || is(TAndAnd)) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
                 tokens[at + 2].kind == TColonColon && class_name_at(at + 1)) {
@@ -10687,8 +11115,9 @@ struct Parser {
                 continue;
             }
             decl.type.is_const = is_const;
-            // An inline variable ([dcl.inline]): own simplification as for inline functions, each file keeps its own
-            // copy (an internal symbol), so two files that include it link.
+            // An inline variable ([dcl.inline]): one object in the program when its first value is a constant (Round 37:
+            // a COMDAT section, see below); one with a constructor, or a value computed at startup, stays one copy per
+            // file (an internal symbol), so two files that include it link.
             bool inline_var = false;
             if (!decl.is_function)
                 for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
@@ -10785,7 +11214,7 @@ struct Parser {
                     stmt_pre.resize(pre_base);
                     for (size_t ti = list_temps.size(); ti-- > 0;) {
                         Node dcall;
-                        if (!special_call(list_temps[ti].sid, "<dtor>", node_addr(node_name(list_temps[ti].name)), {}, &dcall))
+                        if (!temp_end_call(list_temps[ti], &dcall))
                             return false;
                         init_body.kids.push_back(std::move(dcall));
                     }
@@ -10919,7 +11348,19 @@ struct Parser {
                         if (decl_extern) global.is_static = false;
                         for (const Global& earlier : globals)
                             if (earlier.name == global.name) taken = true;
-                        if (taken) {
+                        if (inline_var && anon_depth == 0 && !decl_tls && dyn_leaves_here.empty()) {
+                            // [dcl.inline] 6: an inline variable with external linkage is the same object in every
+                            // file. A COMDAT section ("any") named from its namespaces and name, the same in every
+                            // object, so the linker keeps one (Round 37; before, each file had its own copy and a change
+                            // made by one file was not seen by another).
+                            std::string cname = "__okay_iv_";
+                            for (char c : ns_mangled + "@" + decl.name)
+                                cname += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '$';
+                            global.name = cname;
+                            global.is_static = false;
+                            global.comdat = true;
+                            global_alias[decl.name] = global.name;
+                        } else if (taken) {
                             global.name = decl.name + "@" + std::to_string(globals.size());
                             global_alias[decl.name] = global.name;
                         } else {

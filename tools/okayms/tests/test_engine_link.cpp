@@ -196,6 +196,8 @@ int main(int argc, char** argv) {
         check_program(tally, root, {"link_inline_static", {"tools/okayms/linktests/inline_part.cpp"}});
         // Round 36: a bigger engine slice, the command-line parser and the interned names.
         check_program(tally, root, {"link_core_slice", {"engine/src/Core/CommandLine.cpp", "engine/src/Core/StringId.cpp"}});
+        // Round 37: the editor's undo history (virtual commands, unique_ptr, deque, std::function listeners).
+        check_program(tally, root, {"link_undo", {"engine/src/Core/Undo.cpp"}});
     }
     // The folder goes when every check passed; a failed run keeps its files for a look.
     if (tally.fail == 0) std::system(("rm -rf " + kDir).c_str());

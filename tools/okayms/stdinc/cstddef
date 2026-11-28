@@ -4,3 +4,8 @@ namespace std {
 typedef unsigned long long size_t;
 typedef long long ptrdiff_t;
 }
+// offsetof(type, member) ([support.types.layout] 1, ISO/IEC 9899 7.19 3): the member's offset in bytes, read as the
+// address of the member of an object placed at address 0 (Round 37, GLPainter.cpp's vertex attribute offsets).
+#ifndef offsetof
+#define offsetof(type, member) ((unsigned long long)&(((type*)0)->member))
+#endif

@@ -538,6 +538,7 @@ bool Parser::parse_lambda(Node* out) {
     StructDef def;
     def.name = "__lam" + std::to_string(lambda_count++);
     def.cxx = true;
+    if (cur_fn_inline) def.inline_key = cur_fn_symbol + "$lam" + std::to_string(fn_lambda_seq++);
     // The class around: the member function's class, or for a lambda in a lambda the class around that one.
     def.lam_scope = cur_class;
     if (cur_class >= 0 && structs[static_cast<size_t>(cur_class)].name.compare(0, 5, "__lam") == 0 && !cap_this)
@@ -2155,8 +2156,8 @@ bool Parser::parse_unary(Node* out) {
         };
         // (Not for ns::C(args), ns_class: a name written with a namespace is no member, Round 33: AccountService.hpp's
         // member Storage() returning okay::backend::supabase::Storage(...).)
-        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos &&
-            enclosing(cur_class) >= 0 &&
+        if (cur_class >= 0 && !from_global && !ns_class && !qualified_fn && !local_visible(name) &&
+            colons == std::string::npos && enclosing(cur_class) >= 0 &&
             find_field_named(structs[static_cast<size_t>(cur_class)], name) < 0) {
             // In a member function of a nested class: a static member of an enclosing class is found by its plain name
             // ([class.nest] 1, [basic.lookup.unqual] 8), after the nested class's own members.
@@ -2176,7 +2177,10 @@ bool Parser::parse_unary(Node* out) {
                         return parse_postfix(out);
                 }
         }
-        if (cur_class >= 0 && !ns_class && !qualified_fn && !local_visible(name) && colons == std::string::npos) {
+        // `::f(x)` names the global f, never a member ([namespace.qual] 2, [basic.lookup.qual]; Round 37, OwnWin32.cpp's
+        // `::SwapBuffers(m_dc)` in its own member SwapBuffers(): before "no member function SwapBuffers with 1 arguments").
+        if (cur_class >= 0 && !from_global && !ns_class && !qualified_fn && !local_visible(name) &&
+            colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
                 return parse_postfix(out);
@@ -2634,6 +2638,23 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
+            if (is(TLParen) && at + 2 < tokens.size() && tokens[at + 1].kind == TStar && tokens[at + 2].kind == TRParen) {
+                // (R (*)(A, B))p and reinterpret_cast<R (*)(A, B)>(p): a cast to a function pointer type, an abstract
+                // declarator ([dcl.name] 1, [expr.cast]; Round 37, GLPainter.cpp's loader). The type is made as a
+                // template argument's R(*)(A, B) is (parse_one_arg).
+                next();
+                next();
+                next();
+                Declarator fd;
+                if (!expect(TLParen, "'('") || !parse_param_list(&fd)) return false;
+                FuncType ft;
+                ft.ret = ty;
+                ft.params = fd.params;
+                ft.vararg = fd.vararg;
+                ty.pointers += 1;
+                ty.func_id = static_cast<int>(func_types.size());
+                func_types.push_back(ft);
+            }
             if (is(TAmp) || is(TAndAnd)) {
                 // (T&)x, (const T&)x, (T&&)x, and static_cast<const Base&>(derived), which is read as that: the object x
                 // seen as a T ([expr.static.cast] 2, [expr.cast]), here *(T*)&x. When x already has type T (and is not
@@ -3341,11 +3362,81 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         Node right;
         const int next_min = is_assign_op(op) ? p : p + 1;
         Type assigned;
+        const size_t logic_pre = stmt_pre.size();
+        const size_t logic_temps = stmt_temps.size();
         if (op == TAssign && is(TLBrace) && cur_locals != nullptr && class_object_type(*out, &assigned)) {
             // x = {a, b}; assigns a temporary made from the list ([expr.ass]).
             if (!braced_temp(assigned.struct_id, &right)) return false;
         } else if (!parse_expr(next_min, &right)) {
             return false;
+        }
+        if ((op == TAndAnd || op == TOrOr) && cur_locals != nullptr && stmt_pre.size() > logic_pre) {
+            // `a && f().g()` and `a || s == "x"` where the right operand needs statements before it (a temporary made
+            // by a call): they run only when the right operand is evaluated, after the left one ([expr.log.and] 1,
+            // [expr.log.or] 1). The value goes into a hidden bool in a statement before this one:
+            //   h = (bool)left; if (h) { right's statements; h = (bool)right; its temporaries destroyed }   (|| : if (!h))
+            // Before Round 37 the right operand's statements ran before the whole statement, first: `undo.Undo() &&
+            // undo.NextRedoName() == "Set B"` read the name before Undo() ran (Core/Undo.cpp linked test).
+            std::vector<Node> right_pre(std::make_move_iterator(stmt_pre.begin() + static_cast<std::ptrdiff_t>(logic_pre)),
+                                        std::make_move_iterator(stmt_pre.end()));
+            stmt_pre.resize(logic_pre);
+            std::vector<Temp> right_temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(logic_temps), stmt_temps.end());
+            stmt_temps.resize(logic_temps);
+            Local hidden;
+            hidden.name = "__lg" + std::to_string(tmp_count++);
+            hidden.type = bool_type();
+            place_local(cur_locals, hidden);
+            auto set_hidden = [&](Node value) {
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.kids.push_back(node_name(hidden.name));
+                assign.kids.push_back(cast_node(bool_type(), std::move(value)));
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                return stmt;
+            };
+            // A class operand (a shared_ptr result) is tested by its conversion to bool ([expr.log.and] 1: contextually
+            // converted), as operator_binary does for the built-in &&. What the left one's conversion needs runs
+            // before the left test, what the right one's needs only in the branch.
+            memptr_truth(out);
+            if (!convert_class(out, bool_type())) return false;
+            stmt_pre.push_back(set_hidden(std::move(*out)));
+            {
+                const size_t conv_pre = stmt_pre.size();
+                const size_t conv_temps = stmt_temps.size();
+                memptr_truth(&right);
+                if (!convert_class(&right, bool_type())) return false;
+                for (size_t h = conv_pre; h < stmt_pre.size(); ++h) right_pre.push_back(std::move(stmt_pre[h]));
+                stmt_pre.resize(conv_pre);
+                for (size_t h = conv_temps; h < stmt_temps.size(); ++h) right_temps.push_back(stmt_temps[h]);
+                stmt_temps.resize(conv_temps);
+            }
+            Node branch;
+            branch.kind = Node::Block;
+            for (Node& n : right_pre) branch.kids.push_back(std::move(n));
+            branch.kids.push_back(set_hidden(std::move(right)));
+            for (size_t i = right_temps.size(); i-- > 0;) {
+                Node call;
+                if (!temp_end_call(right_temps[i], &call)) return false;
+                branch.kids.push_back(std::move(call));
+            }
+            Node test = node_name(hidden.name);
+            if (op == TOrOr) {
+                Node neg;
+                neg.kind = Node::Unary;
+                neg.op = TNot;
+                neg.kids.push_back(std::move(test));
+                test = std::move(neg);
+            }
+            Node cond;
+            cond.kind = Node::If;
+            cond.kids.push_back(std::move(test));
+            cond.kids.push_back(std::move(branch));
+            stmt_pre.push_back(std::move(cond));
+            *out = node_name(hidden.name);
+            continue;
         }
         {
             bool handled = false;
@@ -3358,6 +3449,11 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             Type lt, rt;
             if (op == TAssign && static_type(*out, &lt)) {
                 lt.is_ref = false;
+                std::string what;
+                if (arith_ptr_mismatch(right, lt, &what)) {
+                    error = what;
+                    return false;
+                }
                 class_ptr_convert(&right, lt);
             } else if ((op == TEq || op == TNe) && static_type(*out, &lt) && static_type(right, &rt)) {
                 lt.is_ref = false;

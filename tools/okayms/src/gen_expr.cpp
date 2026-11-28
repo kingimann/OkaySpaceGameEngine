@@ -1103,6 +1103,22 @@ bool Gen::gen_expr(const Node& node) {
             saved.push_back(spill());
             if (!error.empty()) return false;
         }
+        // Every argument is evaluated: the by-value objects the caller made are handed over to the callee, whose own
+        // record destroys them from here on (Node::handoff; Round 37). mov qword [rbp+record+8], 5.
+        for (size_t arg_i = 0; arg_i < nargs; ++arg_i) {
+            const Node& a = node.kids[arg0 + arg_i];
+            if (a.handoff.empty()) continue;
+            Local* rec = find_local(a.handoff);
+            if (rec == nullptr) {
+                error = "the exception record of an argument was not found";
+                return false;
+            }
+            b(0x48);
+            b(0xC7);
+            b(0x85);
+            disp(rec->offset + 8);
+            u32(5);
+        }
         const int reg_base = sret ? 1 : 0;
         for (int i = static_cast<int>(saved.size()) - 1; i >= 0; --i) {
             const int reg = i + reg_base;

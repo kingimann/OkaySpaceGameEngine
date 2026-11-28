@@ -1,7 +1,7 @@
 // okay-ms own Win32 header, part of <windows.h>: the first user32 pieces the engine needs outside its window code
 // (message boxes and the clipboard). Written in our own words from Microsoft's public Win32 documentation of
 // MessageBoxW and the clipboard functions (OpenClipboard, SetClipboardData, the standard clipboard formats). The window,
-// message and input functions of the platform layer (OwnWin32.cpp) are not declared yet.
+// message and input functions of the platform layer (OwnWin32.cpp) are in window.h, rawinput.h and gdi.h (Round 37).
 #pragma once
 #include "base.h"
 

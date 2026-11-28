@@ -247,6 +247,21 @@ public:
         size_ += n;
         return data_ + at;
     }
+    // Any other pair of input iterators ([sequence.reqmts] 4.3, a.insert(p, i, j); Round 37, Packet.hpp's
+    // `m_data.insert(m_data.end(), s.begin(), s.end())` of a string's chars into a vector<uint8_t>): each element is
+    // made from *it. Two integers are a count and a value, as for assign.
+    template <typename It>
+    T* insert(T* pos, It first, It last) {
+        if constexpr (is_arithmetic<It>::value) {
+            return insert(pos, (size_t)first, (T)last);
+        } else {
+            const size_t at = (size_t)(pos - data_);
+            vector<T> items;
+            for (; first != last; ++first) items.push_back(T(*first));
+            if (items.size() == 0) return data_ + at;
+            return insert(data_ + at, (const T*)items.data(), (const T*)items.data() + items.size());
+        }
+    }
     T* insert(T* pos, initializer_list<T> list) { return insert(pos, list.begin(), list.end()); }
     T* insert(T* pos, size_t n, const T& value) {
         const size_t at = (size_t)(pos - data_);

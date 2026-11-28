@@ -17,4 +17,7 @@
 #include "okay_win32/modules.h"
 #include "okay_win32/strings.h"
 #include "okay_win32/memory.h"
+#include "okay_win32/window.h"
+#include "okay_win32/rawinput.h"
+#include "okay_win32/gdi.h"
 #include "okay_win32/user.h"

@@ -470,6 +470,7 @@ public:
         for (auto& kv : m_wins) if ((uint32_t)(uintptr_t)kv.first == id) return kv.first;   // the id is the handle's low 32 bits
         return nullptr;
     }
+    uint32_t ModState() override { return CurrentMods(); }   // GetKeyState: held keys, and the Caps / Num Lock toggles
     uint32_t MouseState(int* x, int* y) override {
         POINT p; GetCursorPos(&p);
         HWND f = GetForegroundWindow();
@@ -567,8 +568,10 @@ public:
         SetCursorPos(p.x, p.y);
     }
 
+    // Before Init the clipboard is not touched (as on X11, where it needs the display): headless tests that never start
+    // the window system keep their copy and paste inside OkayUI instead of racing on the desktop's clipboard.
     bool SetClipboardText(const std::string& t) override {
-        if (!OpenClipboard(nullptr)) return false;
+        if (!m_inited || !OpenClipboard(nullptr)) return false;
         EmptyClipboard();
         const std::wstring w = Wide(t);
         HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t));
@@ -583,7 +586,7 @@ public:
     }
     std::string GetClipboardText() override {
         std::string out;
-        if (!OpenClipboard(nullptr)) return out;
+        if (!m_inited || !OpenClipboard(nullptr)) return out;
         if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
             if (const wchar_t* w = (const wchar_t*)GlobalLock(h)) { out = Utf8(w, (int)wcslen(w)); GlobalUnlock(h); }
         }

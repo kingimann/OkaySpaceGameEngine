@@ -1,14 +1,12 @@
 // The shipped Settings screen, drawn: monitor, display mode, resolution, refresh,
 // Apply, and the "keep these settings?" question. Set OKAY_DISPLAY_SHOTS to a directory
 // outside the source tree to also save PNGs.
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/UITemplates.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
-#include <SDL.h>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -28,46 +26,16 @@ void Monitors() {
 }
 
 struct Shot {
-    SDL_Surface* sf = nullptr;
-    SDL_Renderer* rn = nullptr;
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    ui2d::SDLPainter* painter = nullptr;
     static constexpr int W = 1280, H = 720;
-    bool Open() {
-        sf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
-        rn = sf ? SDL_CreateSoftwareRenderer(sf) : nullptr;
-        if (!rn) return false;
-        painter = new ui2d::SDLPainter(rn, &cache, "");
-        return true;
-    }
+    bool Open() { return true; }
     int Draw(Scene& scene, const char* name) {
         UICanvas::Set((float)W, (float)H);
-        SDL_SetRenderDrawColor(rn, 20, 24, 30, 255);
-        SDL_RenderClear(rn);
-        SDL_SetRenderDrawBlendMode(rn, SDL_BLENDMODE_BLEND);
-        ui2d::RenderSceneUI(scene, *painter, W, H);
-        SDL_RenderPresent(rn);
+        Image img;
+        if (!okaytest::SoftRenderSceneUI(scene, W, H, img, false, 20, 24, 30)) return 0;
         int lit = 0;
-        for (int y = 0; y < H; ++y)
-            for (int x = 0; x < W; ++x) lit += ((const unsigned char*)sf->pixels)[y * sf->pitch + x * 4] > 60;
-        if (const char* dir = std::getenv("OKAY_DISPLAY_SHOTS")) {
-            if (*dir) {
-                Image img(W, H);
-                for (int y = 0; y < H; ++y)
-                    for (int x = 0; x < W; ++x) {
-                        const unsigned char* p = (const unsigned char*)sf->pixels + y * sf->pitch + x * 4;
-                        img.SetPixel(x, y, Color::FromBytes(p[0], p[1], p[2], 255));
-                    }
-                img.SavePNG(std::string(dir) + "/" + name + ".png");
-            }
-        }
+        for (int i = 0; i < W * H; ++i) lit += img.Data()[(std::size_t)i * 4] > 60;
+        if (const char* dir = std::getenv("OKAY_DISPLAY_SHOTS")) if (*dir) img.SavePNG(std::string(dir) + "/" + name + ".png");
         return lit;
-    }
-    ~Shot() {
-        delete painter;
-        for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-        if (rn) SDL_DestroyRenderer(rn);
-        if (sf) SDL_FreeSurface(sf);
     }
 };
 

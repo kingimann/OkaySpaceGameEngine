@@ -1,12 +1,10 @@
-// Headless picture of the UI-quality screen (tests/ui_quality_scene.hpp) through the same UI pass the game uses, on SDL's
-// software renderer. Usage: ui_quality_shot <out.png> <width> <height> [old|fast|good|best] [crop x y w h zoom]
+// Headless picture of the UI-quality screen (tests/ui_quality_scene.hpp) through the same UI pass the game uses, on the
+// software painter. Usage: ui_quality_shot <out.png> <width> <height> [old|fast|good|best] [crop x y w h zoom]
 // With a crop, that part of the picture is cut out and magnified with nearest-neighbour so single pixels can be inspected.
-#define SDL_MAIN_HANDLED
 #include "ui_quality_scene.hpp"
 #include "okay/UI/UIBatcher.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
-#include <SDL.h>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -38,18 +36,11 @@ int main(int argc, char** argv) {
     const bool batched = std::getenv("UI_QUALITY_BATCHED") != nullptr;
     const std::string tex = out + ".tex.png";
     ui_quality::WriteTexture(tex);
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    if (!ren) { std::cerr << "no software renderer\n"; return 1; }
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 14, 16, 22, 255);
-    SDL_RenderClear(ren);
     double ms = 0.0;
-    {
-        Scene scene("quality");
-        if (std::getenv("UI_QUALITY_EXAMPLE")) ui_quality::BuildExample(scene, tex, quality); else ui_quality::Build(scene, tex, quality);
-        ui2d::SDLPainter painter(ren, &cache, "");
+    Image img;
+    Scene scene("quality");
+    if (std::getenv("UI_QUALITY_EXAMPLE")) ui_quality::BuildExample(scene, tex, quality); else ui_quality::Build(scene, tex, quality);
+    const bool drew = okaytest::SoftPaint(W, H, 14, 16, 22, [&](okay::platform::Painter& painter) {
         const auto t0 = std::chrono::steady_clock::now();
         if (batched) {
             ui2d::BatchPainter batch(painter);
@@ -59,13 +50,8 @@ int main(int argc, char** argv) {
             ui2d::RenderSceneUI(scene, painter, W, H);
         }
         ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    }
-    SDL_RenderPresent(ren);
-    Image img(W, H);
-    for (int y = 0; y < H; ++y) {
-        const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
-        for (int x = 0; x < W; ++x) img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
-    }
+    }, img);
+    if (!drew) { std::cerr << "no software painter\n"; return 1; }
     if (argc > 9) {
         const int cx = std::atoi(argv[5]), cy = std::atoi(argv[6]), cw = std::atoi(argv[7]), ch = std::atoi(argv[8]), z = std::max(1, std::atoi(argv[9]));
         Image c(cw * z, ch * z);
@@ -79,9 +65,5 @@ int main(int argc, char** argv) {
     std::remove(tex.c_str());
     if (!img.SavePNG(out)) { std::cerr << "failed to write " << out << "\n"; return 1; }
     std::cout << "wrote " << out << " " << img.Width() << "x" << img.Height() << " (" << q << ", UI draw " << ms << " ms)\n";
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-    ui2d::SDLForgetRenderer(ren);
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     return 0;
 }

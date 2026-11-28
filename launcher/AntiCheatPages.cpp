@@ -497,7 +497,7 @@ void AcMeQueue(AcMeJob* j) {
 }
 // Every frame: my anti-cheat bans at sign-in and every 5 minutes.
 void PumpAcMyBans(bool signedIn) {
-    static Uint32 next = 0; static bool wasIn = false;
+    static std::uint32_t next = 0; static bool wasIn = false;
     if (std::getenv("OKAY_UI_DEMO_USER")) {
         static bool seeded = false;
         if (!seeded && std::getenv("OKAY_UI_DEMO_ACBAN")) {   // (env: dev screenshot hook)
@@ -511,7 +511,7 @@ void PumpAcMyBans(bool signedIn) {
     }
     if (!g_acMeMutex) g_acMeMutex = okay::thr::CreateMutex();
     if (!signedIn) { g_acMyBans.clear(); wasIn = false; return; }
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_acMeBusy && !g_pollCfgDir.empty()) { next = now + 300000; AcMeQueue(new AcMeJob); }
     okay::thr::LockMutex(g_acMeMutex);

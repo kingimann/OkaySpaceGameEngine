@@ -130,13 +130,13 @@ private:
         // Pump until we're in the room or the attempt clearly failed (~5s).
         for (int i = 0; i < 500 && m_client && !m_inRoom && !m_failed; ++i) {
             m_client->service();
-            SDL_DelayCompat();
+            DelayTenMs();
         }
         return m_inRoom;
     }
 
-    // 10ms sleep without dragging SDL in: portable this_thread wait.
-    static void SDL_DelayCompat() {
+    // 10ms sleep: portable this_thread wait.
+    static void DelayTenMs() {
         struct timespec ts { 0, 10 * 1000 * 1000 };
 #if defined(_WIN32)
         Sleep(10);

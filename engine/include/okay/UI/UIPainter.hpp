@@ -1,12 +1,10 @@
 #pragma once
-// The drawing surface the in-game UI renderer paints on. The engine has no SDL
-// dependency, so the UI pass (UIRenderer.hpp) draws through this interface and each
-// host supplies a backend: the player wraps its SDL_Renderer (UIPainterSDL.hpp).
+// The drawing surface the in-game UI renderer paints on. The UI pass (UIRenderer.hpp)
+// draws through this interface and each host supplies a backend: okay::platform::Painter
+// (the OpenGL painter, the software painter in okayui/soft, the sdl2 painter on the web).
 //
-// The calls deliberately mirror the subset of the SDL_Renderer API the UI pass was
-// written against (same argument order, pointer-or-null rects, draw colour state,
-// per-texture colour/alpha mods), so an SDL backend is a straight pass-through and
-// the pass draws exactly what it drew when it lived in the player.
+// The calls keep the shape of the 2D renderer API the UI pass was first written against
+// (argument order, pointer-or-null rects, draw colour state, per-texture colour/alpha mods).
 #include <cstdint>
 #include <string>
 
@@ -27,7 +25,7 @@ struct Vertex { FPoint position; RGBA color; FPoint tex_coord; };
 /// Flip flags for CopyEx/CopyExF (same values as SDL_RendererFlip).
 enum : int { FlipNone = 0, FlipH = 1, FlipV = 2 };
 
-/// A backend texture handle (an SDL_Texture* for the SDL painter). Null = none.
+/// A backend texture handle (whatever the painter that made it uses). Null = none.
 using Tex = void*;
 
 /// True and the overlap in `out` when the rects overlap; false and an empty (0x0)

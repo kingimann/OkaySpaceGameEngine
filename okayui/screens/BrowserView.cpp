@@ -290,14 +290,14 @@ void DrawBrowserPage(const br::LayoutResult& page, float x, float y, float w, fl
             break;
         }
         case br::DrawCmd::Image: {
-            SDL_Texture* tex = image ? image(c.text) : nullptr;
+            OkayUI::Tex tex = image ? image(c.text) : nullptr;
             const UI::Color32 tint = 0x00FFFFFFu | ((UI::Color32)c.color.a << 24);
             if (tex) dl->AddImage(tex, UI::Vec2(cx, cy), UI::Vec2(cx + c.w, cy + c.h), UI::Vec2(0, 0), UI::Vec2(1, 1), tint);
             else dl->AddRect(UI::Vec2(cx, cy), UI::Vec2(cx + c.w, cy + c.h), Pack(br::Color{160, 160, 160, 255}), 0.0f, 0, 1.0f);
             break;
         }
         case br::DrawCmd::BgImage: {
-            SDL_Texture* tex = image ? image(c.text) : nullptr;
+            OkayUI::Tex tex = image ? image(c.text) : nullptr;
             if (!tex || c.iw < 1 || c.ih < 1) break;
             UI::PushClipRect(std::max(cx, x), std::max(cy, y), std::max(0.0f, std::min(cx + c.w, x + w) - std::max(cx, x)), std::max(0.0f, std::min(cy + c.h, y + h) - std::max(cy, y)));
             float x0 = x + c.ix, y0 = top + c.iy;

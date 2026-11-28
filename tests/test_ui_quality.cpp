@@ -7,7 +7,7 @@
 //   * pictures: shrunk pictures are filtered (match an area average), the size rules, the pixel-art look untouched;
 //   * gradients: Best dithers (the mean follows the ramp, bands break up);
 //   * the quality setting: saved with the scene, defaulted, mapped from the environment names.
-// Drawn by the real UI pass on SDL's software renderer. Prints the UI draw time per quality (the benchmark).
+// Drawn by the real UI pass on the software painter. Prints the UI draw time per quality (the benchmark).
 #include "test_framework.hpp"
 #include "ui_quality_render.hpp"
 #include "ui_record_painter.hpp"

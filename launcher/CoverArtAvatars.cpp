@@ -12,12 +12,12 @@ namespace okl {
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
 // <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
-std::map<std::string, SDL_Texture*> g_coverCaches[2];
+std::map<std::string, okay::ui2d::Tex> g_coverCaches[2];
 
-SDL_Texture* GameCover(const std::string& gamePath) {
+okay::ui2d::Tex GameCover(const std::string& gamePath) {
     auto it = g_coverCache.find(gamePath);
     if (it != g_coverCache.end()) return it->second;
-    SDL_Texture* tex = nullptr;
+    okay::ui2d::Tex tex = nullptr;
     if (g_renderer) {
         fs::path gp(gamePath), dir = gp.parent_path(), stem = gp.stem();
         std::error_code ec;
@@ -41,7 +41,7 @@ SDL_Texture* GameCover(const std::string& gamePath) {
 
 // Draw a game's cover (rounded, cover-fit) if it has one, else the initial tile.
 void DrawGameIcon(const std::string& gamePath, const std::string& name, float size) {
-    SDL_Texture* tex = GameCover(gamePath);
+    okay::ui2d::Tex tex = GameCover(gamePath);
     if (!tex) { IconTile(name, size); return; }
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddImageRounded(
@@ -53,7 +53,7 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 // ---- Profile-picture (avatar) textures, loaded from a public URL ----------
 // Downloaded once to a per-URL cache file, decoded via okay::DecodeImage, cached as an
 // SDL texture. nullptr (cached) means "no avatar — draw the initial".
-std::map<std::string, SDL_Texture*> g_avatarCaches[2];
+std::map<std::string, okay::ui2d::Tex> g_avatarCaches[2];
 std::string* g_myAvatarSlot = nullptr;   // points at the Account card's cached avatar URL
 
 // Avatar downloads used to block the render thread (a freeze the first time a
@@ -77,7 +77,7 @@ int AvatarDlWorker(void* p) {
     return 0;
 }
 
-SDL_Texture* AvatarTexture(const std::string& url) {
+okay::ui2d::Tex AvatarTexture(const std::string& url) {
     if (url.empty() || !g_renderer) return nullptr;
     auto it = g_avatarCache.find(url);
     if (it != g_avatarCache.end()) return it->second;
@@ -88,7 +88,7 @@ SDL_Texture* AvatarTexture(const std::string& url) {
     fs::path cache = dir / (std::string(name) + ".img");
     if (fs::exists(cache, ec)) {
         // Already downloaded: decode + upload here (fast), then cache the texture.
-        SDL_Texture* tex = nullptr;
+        okay::ui2d::Tex tex = nullptr;
         int w = 0, h = 0;
         unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
@@ -118,7 +118,7 @@ void DrawAvatar(const std::string& url, const std::string& name, float size) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 ctr(p.x + size * 0.5f, p.y + size * 0.5f);
-    SDL_Texture* tex = AvatarTexture(url);
+    okay::ui2d::Tex tex = AvatarTexture(url);
     if (tex) {
         dl->AddImageRounded((ImTextureID)(intptr_t)tex, p, ImVec2(p.x + size, p.y + size),
                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, size * 0.5f);

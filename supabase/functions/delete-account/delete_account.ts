@@ -52,6 +52,7 @@ export const STEPS: Step[] = [
   // rows an admin/moderator created stay for the people they concern; only the link to the issuer goes
   { id: "ac_bans.banned_by", kind: "anonymise", table: "ac_bans", filter: eq("banned_by"), patch: { banned_by: null } },
   { id: "ac_report_servers.added_by", kind: "anonymise", table: "ac_report_servers", filter: eq("added_by"), patch: { added_by: null } },
+  { id: "chat_word_filter.added_by", kind: "anonymise", table: "chat_word_filter", filter: eq("added_by"), patch: { added_by: null } },
   { id: "forum_section_bans.banned_by", kind: "anonymise", table: "forum_section_bans", filter: eq("banned_by"), patch: { banned_by: null } },
   // a ban outlives the moderator's account: keep the row, drop the link to who issued it
   { id: "community_bans.banned_by", kind: "anonymise", table: "community_bans", filter: eq("banned_by"), patch: { banned_by: null } },
@@ -82,6 +83,8 @@ export const STEPS: Step[] = [
   { id: "blocks.blocker", kind: "delete", table: "blocks", filter: eq("blocker") },
   { id: "blocks.blocked", kind: "delete", table: "blocks", filter: eq("blocked") },
   { id: "privacy_settings", kind: "delete", table: "privacy_settings", filter: eq("user_id") },
+  // an admin's authenticator secret (docs/sql/admin.sql): never kept after the account goes
+  { id: "admin_totp_secrets", kind: "delete", table: "admin_totp_secrets", filter: eq("user_id") },
   { id: "message_pins", kind: "delete", table: "message_pins", filter: eq("pinned_by") },
   { id: "game_invites.sender", kind: "delete", table: "game_invites", filter: eq("sender") },
   { id: "game_invites.recipient", kind: "delete", table: "game_invites", filter: eq("recipient") },

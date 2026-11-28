@@ -1,6 +1,6 @@
 #pragma once
 // Editor frame-time maths and settings (feature map 15.11): the logic behind View > Rendering & Performance and the
-// frame-time overlay. No ImGui, no SDL and no globals here, so it is tested headless (tests/test_editor_perf.cpp).
+// frame-time overlay. No UI and no globals here, so it is tested headless (tests/test_editor_perf.cpp).
 //
 // Written from the plain definitions: frame rate is 1000 / milliseconds, a percentile is read off a sorted list, and
 // a frame limiter sleeps out the rest of a frame budget. It reads okay::Profiler::Frame (the editor's own profiler)
@@ -34,7 +34,7 @@ enum class Section {
     Panels,           // every other panel: Hierarchy, Inspector, Project, Console, the window menus ...
     EditorUpdate,     // the editor's own per-frame work outside the panels: input handling, the scene tick, services, autosave
     ImGuiDraw,        // Dear ImGui turning the frame into draw lists and submitting them
-    Present,          // SDL_RenderPresent: the swap, the GPU wait and the vsync wait
+    Present,          // Painter::Present: the swap, the GPU wait and the vsync wait
     Play,             // the game running in Play mode: scripts, physics, animation, audio, game rendering
     Sleep,            // the frame limiter / idle throttle sleeping on purpose
     Untimed,          // what no scope covers: reading events, window work, waits between scopes

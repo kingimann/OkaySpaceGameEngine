@@ -1,0 +1,3 @@
+2
+/tmp/okay_vs_stale/Assets/CGraph.okayvs
+/tmp/okay_vs_stale/Assets/move.okayvs

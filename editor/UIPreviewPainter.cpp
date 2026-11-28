@@ -11,7 +11,7 @@ namespace oked {
 
 using namespace okay::ui2d;
 
-UIPreviewPainter::UIPreviewPainter(ImDrawList* dl, ImVec2 origin, SDL_Renderer* renderer, TextureLoader loader)
+UIPreviewPainter::UIPreviewPainter(ImDrawList* dl, ImVec2 origin, okay::pb::Renderer* renderer, TextureLoader loader)
     : m_dl(dl), m_origin(origin), m_renderer(renderer), m_loader(loader) {}
 
 UIPreviewPainter::~UIPreviewPainter() {
@@ -79,11 +79,11 @@ Tex UIPreviewPainter::FontAtlas(okay::TtfFont* font) {
     return (Tex)PreviewFontAtlas(m_renderer, font);
 }
 
-SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
+okay::ui2d::Tex PreviewFontAtlas(okay::pb::Renderer* r, okay::TtfFont* f) {
     if (!r || !f || !f->Valid()) return nullptr;
-    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+    struct Up { okay::ui2d::Tex tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
     static std::unordered_map<okay::TtfFont*, Up> cache;
-    static std::vector<std::pair<SDL_Texture*, int>> retired;   // texture, the frame it was replaced in
+    static std::vector<std::pair<okay::ui2d::Tex, int>> retired;   // texture, the frame it was replaced in
     const int frame = ImGui::GetFrameCount();
     for (std::size_t i = 0; i < retired.size();) {
         if (frame - retired[i].second < 2) { ++i; continue; }
@@ -108,7 +108,7 @@ SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
 
 void UIPreviewPainter::QueryTexture(Tex t, int* w, int* h) {
     int tw = 0, th = 0;
-    if (t) okay::pb::QueryTexture(m_renderer, (SDL_Texture*)t, &tw, &th);
+    if (t) okay::pb::QueryTexture(m_renderer, (okay::ui2d::Tex)t, &tw, &th);
     if (w) *w = tw;
     if (h) *h = th;
 }

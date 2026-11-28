@@ -1,5 +1,5 @@
 #pragma once
-// What every editor source file includes: the engine, Dear ImGui, SDL, the
+// What every editor source file includes: the engine, the UI (OkayUI in Dear ImGui's names), the
 // standard library and the platform headers. Heavier headers that define data
 // or code (fonts, the node editor, the theme) are included only by the files
 // that use them.
@@ -47,10 +47,7 @@
 #include <unordered_set>
 #include <vector>
 
-#ifndef SDL_MAIN_HANDLED
-#define SDL_MAIN_HANDLED
-#endif
-#include <SDL.h>
+#include "PainterBridge.hpp"   // okay::pb::Renderer, okay::ui2d::Tex (the editor's painter and textures)
 #include "imgui.h"
 #include "imgui_internal.h"
 

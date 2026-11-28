@@ -54,7 +54,7 @@ int main() {
     const char* path = "/tmp/okay_test_hooks_script.txt";
     if (FILE* f = std::fopen(path, "w")) { std::fputs("0 click 3 4\n0 type hi\n60000 quit\n0 shot /tmp/s.png\n0 exit 5\n", f); std::fclose(f); }
     setenv("OKAY_TEST_SCRIPT", path, 1);
-    Backend* b = Get(IsCompiledIn(BackendKind::Own) ? BackendKind::Own : BackendKind::Sdl2);
+    Backend* b = Get(BackendKind::Own);
     CHECK(b != nullptr);
     if (b) {
         InitFlags fl; fl.video = false; fl.audio = false; fl.gamepad = false;

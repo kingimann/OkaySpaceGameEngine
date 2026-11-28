@@ -319,7 +319,7 @@ bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int wind
 /// By numeric id (a GetID value): the same child as the one named "##<id>".
 bool BeginChild(unsigned id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
 /// Dear ImGui's ImageButton: a size vector, uv corners, a background and a tint (uv, background and tint are ignored; the picture fills the button).
-bool ImageButton(const char* id, SDL_Texture* tex, Vec2 size, Vec2 uv0 = Vec2{0, 0}, Vec2 uv1 = Vec2{1, 1}, Vec4 bg = Vec4{}, Vec4 tint = Vec4{1, 1, 1, 1});
+bool ImageButton(const char* id, Tex tex, Vec2 size, Vec2 uv0 = Vec2{0, 0}, Vec2 uv1 = Vec2{1, 1}, Vec4 bg = Vec4{}, Vec4 tint = Vec4{1, 1, 1, 1});
 /// PushClipRect with corners (min, max) and the intersect flag (always intersects).
 void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent);
 /// Finish the frame's drawing calls (Dear ImGui's Render): EndFrameData() without an output size. GetDrawData() then converts to an ImDrawData.
@@ -330,7 +330,7 @@ void Render();
 
 /// A packed colour from a float colour (what GetColorU32(ImVec4) does in Dear ImGui); components are clamped to 0..1.
 Color32 GetColorU32(Vec4 color);
-/// A texture handle as ported code spells it: the SDL texture pointer AddImage takes.
+/// A texture handle as ported code spells it: the painter texture AddImage takes.
 
 /// An id (what GetID returns).
 typedef unsigned ImGuiID;

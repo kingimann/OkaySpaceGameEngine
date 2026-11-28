@@ -2,7 +2,7 @@
 
 # Code index: engine-UI
 
-Back to the [code index](../code_index.md). 16 headers, 78 names.
+Back to the [code index](../code_index.md). 15 headers, 71 names.
 
 ## `engine/include/okay/UI/FocusGraph.hpp`
 
@@ -79,25 +79,15 @@ Back to the [code index](../code_index.md). 16 headers, 78 names.
 
 ## `engine/include/okay/UI/UIPainter.hpp`
 
-- `Rect` struct, line 19
-- `FRect` struct, line 20
-- `Point` struct, line 21
-- `FPoint` struct, line 22
-- `RGBA` struct, line 23
-- `Vertex` struct, line 25: Same layout as SDL_Vertex.
-- `IntersectRect` function, line 38: True and the overlap in 'out' when the rects overlap; false and an empty (0x0)
-- `ColoredRect` struct, line 50: A float rectangle with its own colour, for Painter::FillRectsF.
-- `Painter` class, line 52
-
-## `engine/include/okay/UI/UIPainterSDL.hpp`
-
-- `SDLAtlasUp` struct, line 46: The uploaded glyph atlases: one per (renderer, font), so a second renderer in the same process (a test, a second window) gets its own texture
-- `SDLAtlasCache` function, line 47
-- `SDLAtlasKey` function, line 48
-- `SDLForgetRenderer` function, line 49
-- `SDLFontAtlas` function, line 57: Upload a TTF glyph atlas as an SDL texture (cached per renderer and font; the player has one renderer for the process). Uploaded again when the
-- `SDLPainter` class, line 76
-- `FromSDL` function, line 169
+- `Rect` struct, line 17
+- `FRect` struct, line 18
+- `Point` struct, line 19
+- `FPoint` struct, line 20
+- `RGBA` struct, line 21
+- `Vertex` struct, line 23: Same layout as SDL_Vertex.
+- `IntersectRect` function, line 36: True and the overlap in 'out' when the rects overlap; false and an empty (0x0)
+- `ColoredRect` struct, line 48: A float rectangle with its own colour, for Painter::FillRectsF.
+- `Painter` class, line 50
 
 ## `engine/include/okay/UI/UIRenderer.hpp`
 

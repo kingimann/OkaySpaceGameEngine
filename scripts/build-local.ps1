@@ -3,17 +3,17 @@
   Builds the OkaySpace programs on your own Windows PC (editor, launcher, player, sandbox, tests).
 .DESCRIPTION
   UNVERIFIED: written on a Linux machine; it has not been run on Windows. It only calls CMake the way the
-  CMake options in CMakeLists.txt describe, so a failure here is most likely a missing tool (see -Sdl2Dir).
+  CMake options in CMakeLists.txt describe, so a failure here is most likely a missing tool.
   scripts\build.bat already builds the small sandbox demo; this script adds the editor, launcher and player
   and lets you pick one.
 
-  You need: CMake 3.20+, a C++17 compiler (Visual Studio 2022 Build Tools, or MinGW with Ninja), and for the
-  editor, launcher and player the SDL2 development files (pass the folder with -Sdl2Dir).
+  You need: CMake 3.20+ and a C++17 compiler (Visual Studio 2022 Build Tools, or MinGW with Ninja). No third-party
+  library: the window, input and audio are our own (okay::platform).
 
   Programs end up in <BuildDir>\bin (OkayEngine.exe = editor, OkaySpace.exe = launcher, OkaySpacePlayer.exe = player).
 
   The same recipe is in C++ as `okay engine build` (tools/okay-cli/Engine.cpp), which needs no PowerShell and finds
-  the tools and SDL2 itself. This script stays to build okay itself on a PC that has no okay yet. The two must build
+  the tools itself. This script stays to build okay itself on a PC that has no okay yet. The two must build
   the same way: tests/test_okay_cli.cpp checks that this file still has the CMake options and targets okay uses, so
   change both together.
 .PARAMETER Target
@@ -22,8 +22,6 @@
   Release (default) or Debug.
 .PARAMETER BuildDir
   Where the build files and programs go. Default: build-local (inside the repository, git-ignored by build*).
-.PARAMETER Sdl2Dir
-  Folder that holds the SDL2 development files (the one with lib\cmake\SDL2), added to CMAKE_PREFIX_PATH.
 .PARAMETER Generator
   Auto (default: Ninja if it is on PATH, else Visual Studio), or any CMake generator name.
 .PARAMETER Jobs
@@ -33,7 +31,7 @@
 .PARAMETER Run
   Start the editor (Editor target) or launcher (Launcher target) when the build finishes.
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1 -Target Editor -Sdl2Dir C:\libs\SDL2
+  powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1 -Target Editor
 #>
 [CmdletBinding()]
 param(
@@ -42,7 +40,6 @@ param(
     [ValidateSet('Release', 'Debug')]
     [string]$Config = 'Release',
     [string]$BuildDir = 'build-local',
-    [string]$Sdl2Dir = '',
     [string]$Generator = 'Auto',
     [int]$Jobs = 0,
     [switch]$Clean,
@@ -94,14 +91,10 @@ if ($Generator -eq 'Auto') {
     $useNinja = ($Generator -like 'Ninja*')
 }
 if ($useNinja -or $Generator -like 'Unix*') { $cfgArgs += "-DCMAKE_BUILD_TYPE=$Config" }
-if ($Sdl2Dir) {
-    if (-not (Test-Path $Sdl2Dir)) { Fail "Sdl2Dir does not exist: $Sdl2Dir" }
-    $cfgArgs += "-DCMAKE_PREFIX_PATH=$Sdl2Dir"
-}
 
 Write-Host "Configuring ($Target, $Config) in $buildPath"
 & cmake @cfgArgs
-if ($LASTEXITCODE -ne 0) { Fail 'CMake configure failed. If it says SDL2 is missing, pass -Sdl2Dir <folder with lib\cmake\SDL2>.' }
+if ($LASTEXITCODE -ne 0) { Fail 'CMake configure failed. The first error above is the one to read.' }
 
 $build = @('--build', $buildPath, '--config', $Config, '--parallel', "$Jobs")
 $targets = @()

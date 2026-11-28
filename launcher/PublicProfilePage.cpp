@@ -622,7 +622,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         ImVec2 ac(hp.x + 26.0f + A * 0.5f, hp.y + bannerH - 6.0f);
         dl->AddCircleFilled(ac, A * 0.5f + 7.0f, cRaised, 64);
         dl->AddCircle(ac, A * 0.5f + 3.0f, presCol, 64, 3.0f);
-        if (SDL_Texture* tex = AvatarTexture(p.avatar)) {
+        if (okay::ui2d::Tex tex = AvatarTexture(p.avatar)) {
             dl->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f), ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f),
                                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
         } else {

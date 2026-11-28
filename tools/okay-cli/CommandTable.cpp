@@ -42,7 +42,7 @@ const std::vector<CommandHelp>& Commands() {
         {"engine", "okay engine <build|doctor> ...", "Build the engine's own editor, launcher and player from an engine checkout.",
          "okay engine build [editor|launcher|player|all] [--debug] [--jobs N] [--clean] [--run] [--dir BUILD]\n"
          "  builds OkayEngine.exe, OkaySpace.exe and OkaySpacePlayer.exe with CMake (as scripts/build-local.ps1 does).\n"
-         "okay engine doctor  says what is missing (CMake, a compiler, Ninja, SDL2) and where to get it."},
+         "okay engine doctor  says what is missing (CMake, a compiler, Ninja) and where to get it."},
         {"completion", "okay completion <bash|powershell>", "Print a script that completes okay's commands when you press Tab.",
          "bash:        okay completion bash > ~/.okay-completion.sh, then add  source ~/.okay-completion.sh  to ~/.bashrc\n"
          "PowerShell:  okay completion powershell | Out-String | Invoke-Expression  (add that line to your $PROFILE)"},

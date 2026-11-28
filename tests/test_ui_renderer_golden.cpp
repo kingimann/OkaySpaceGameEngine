@@ -1,20 +1,21 @@
 // Golden-image test for the engine UI renderer (okay::ui2d::RenderSceneUI).
 //
-// Each scene in ui_golden_scenes.hpp is drawn through the SDL painter onto SDL's
-// software renderer and compared pixel for pixel with tests/golden/ui/<scene>.png.
+// Each scene in ui_golden_scenes.hpp is drawn onto the software painter (okayui/soft, ui_soft_render.hpp) and compared
+// pixel for pixel with tests/golden/ui/<scene>.png. The PNGs were made again on our painter on 2026-11-27, when SDL2 left the
+// desktop builds. Against the old pictures (SDL's software renderer) most differing pixels were off by 1 or 2 levels (SDL
+// truncates blends, our painter rounds); the rest were text placed up to one pixel apart and textures inside rounded and round
+// masks sampled smoothly instead of nearest. Checked by eye on side-by-side pictures; nothing was missing or misplaced.
 // Those PNGs were captured from the player's own UI pass (player/main.cpp) before it
 // moved into the engine, so this pins "the engine renderer draws what the player
 // drew". Each scene is also drawn through ui2d::BatchPainter (the player's batched
 // path) and must match up to a few glyph-edge pixels. A later change that alters UI
 // pixels on purpose regenerates them with:
 //   test_ui_renderer_golden --update <dir>     (then review and commit the PNGs)
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include "ui_golden_scenes.hpp"
 #include "okay/UI/UIBatcher.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
-#include <SDL.h>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -23,35 +24,12 @@ using namespace okay;
 
 namespace {
 
-// Render scene `i` into `out` (RGBA). One renderer is shared by every scene, as in
-// the player, because font atlases are cached per process.
-void RenderScene(SDL_Renderer* ren, SDL_Surface* surf, int i, const std::string& tex, Image& out, bool batched = false) {
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_RenderSetClipRect(ren, nullptr);
-    SDL_RenderSetScale(ren, 1.0f, 1.0f);
-    {
-        Scene scene("golden");
-        ui_golden::Build(i, scene, tex);
-        SDL_SetRenderDrawColor(ren, 20, 24, 30, 255);
-        SDL_RenderClear(ren);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        ui2d::SDLPainter painter(ren, &cache, "");
-        if (batched) {   // the player's path: everything through one atlas as triangles
-            ui2d::BatchPainter batch(painter);
-            ui2d::RenderSceneUI(scene, batch, ui_golden::kWidth, ui_golden::kHeight);
-            batch.Flush();
-        } else {
-            ui2d::RenderSceneUI(scene, painter, ui_golden::kWidth, ui_golden::kHeight);
-        }
-        SDL_RenderPresent(ren);
-    }
-    out = Image(ui_golden::kWidth, ui_golden::kHeight);
-    for (int y = 0; y < ui_golden::kHeight; ++y) {
-        const unsigned char* row = (const unsigned char*)surf->pixels + y * surf->pitch;
-        for (int x = 0; x < ui_golden::kWidth; ++x)
-            out.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
-    }
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+// Render scene `i` into `out` (RGBA) on a fresh software painter.
+void RenderScene(int i, const std::string& tex, Image& out, bool batched = false) {
+    Scene scene("golden");
+    ui_golden::Build(i, scene, tex);
+    if (!okaytest::SoftRenderSceneUI(scene, ui_golden::kWidth, ui_golden::kHeight, out, batched, 20, 24, 30))
+        out = Image(ui_golden::kWidth, ui_golden::kHeight);
 }
 
 } // namespace
@@ -64,20 +42,15 @@ int main(int argc, char** argv) {
 
     const std::string tex = std::string(OKAY_TEST_OUTPUT_DIR) + "/ui_golden_texture.png";
     CHECK(ui_golden::WriteTestTexture(tex));
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, ui_golden::kWidth, ui_golden::kHeight, 32,
-                                                       SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    CHECK(ren != nullptr);
-    if (!ren) TEST_MAIN_RESULT();
 
     for (int i = 0; i < ui_golden::SceneCount(); ++i) {
         const std::string name = ui_golden::SceneName(i);
         Image got;
-        RenderScene(ren, surf, i, tex, got);
+        RenderScene(i, tex, got);
         if (!updateDir.empty()) {
             CHECK(got.SavePNG(updateDir + "/" + name + ".png"));
             std::cout << "  wrote " << name << ".png\n";
-            Image scratch; RenderScene(ren, surf, i, tex, scratch, true);   // the check run draws the batched picture after each direct one; so does this, so both start every scene in the same state
+            Image scratch; RenderScene(i, tex, scratch, true);   // the check run draws the batched picture after each direct one; so does this, so both start every scene in the same state
             continue;
         }
         Image want;
@@ -99,7 +72,7 @@ int main(int argc, char** argv) {
         std::cout << "  " << name << ": " << diff << " differing pixels (max channel diff " << maxd
                   << "), " << drawn << " drawn\n";
         if (diff) std::cerr << "    first difference at (" << firstX << ", " << firstY << ")\n";
-        // The extraction must be pixel-identical in structure. The goldens were captured on one machine; another SDL or
+        // The extraction must be pixel-identical in structure. The goldens were captured on one machine; another painter or
         // libm build rounds a few anti-aliased and rounded-corner edge pixels differently (CI saw 123 pixels off by 1 and
         // one pixel off by 111 on a corner), so allow a sliver of the 153,600 pixels to differ, and almost none by much.
         CHECK(diff <= 400);        // under 0.3 percent of the picture
@@ -108,7 +81,7 @@ int main(int argc, char** argv) {
 
         // The batched path draws the same scene as triangles from one atlas.
         Image bat;
-        RenderScene(ren, surf, i, tex, bat, true);
+        RenderScene(i, tex, bat, true);
         if (const char* dump = std::getenv("OKAY_GOLDEN_DUMP")) { got.SavePNG(std::string(dump) + "/" + name + "_direct.png"); bat.SavePNG(std::string(dump) + "/" + name + "_batched.png"); }   // to look at a mismatch
         int bdiff = 0, bmax = 0, bbig = 0;
         const unsigned char* c = bat.Data();
@@ -128,7 +101,5 @@ int main(int argc, char** argv) {
         // little wider than when a large atlas was scaled down.
         CHECK(bbig <= 80);
     }
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     TEST_MAIN_RESULT();
 }

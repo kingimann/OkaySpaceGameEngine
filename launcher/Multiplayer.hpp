@@ -6,7 +6,7 @@
 namespace okl {
 
 // What main.cpp uses from Multiplayer.cpp.
-extern SDL_Window* g_launcherWindow;
+extern okay::platform::Window* g_launcherWindow;
 void PumpMultiplayer();
 void PumpParty();
 void DrawMpDialogs();

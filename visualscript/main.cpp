@@ -10,7 +10,6 @@
 // the folder when none was named). With nothing named, the folder and the tabs that were open last. --frames N: end after N
 // frames (a start-and-quit check with no person at the window). Settings, the tab list, bookmarks and the Add Block list's
 // favourites are kept in the settings folder (okay::platform PrefPath "OkaySpace/VisualScript", visual_script.json).
-#define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
 #include "VisualScriptApp.hpp"

@@ -672,7 +672,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         };
     }
     const S::BrowserViewResult r = S::DrawBrowserView(t, X, viewTop, W, viewH,
-        [&h](const std::string& src) { return (SDL_Texture*)h.ImageFor(src); }, opt);
+        [&h](const std::string& src) { return (OkayUI::Tex)h.ImageFor(src); }, opt);
     cur.pageW = r.page.w;
     const auto& marks = profile().bookmarks.Items();
     if (!off) {

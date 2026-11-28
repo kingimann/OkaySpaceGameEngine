@@ -1,6 +1,6 @@
 #pragma once
 // Operating-system clipboard for the player and for editor Play mode, through okay::platform
-// (the SDL2 backend by default, so the behaviour is the same as the direct SDL calls it replaced).
+// (our own backend).
 #include "okay/Core/Clipboard.hpp"
 #include "okay/Platform/Platform.hpp"
 

@@ -3,6 +3,8 @@
 #include "compile_internal.hpp"
 #include "parser.hpp"
 
+#include <iterator>
+
 namespace okayms {
 namespace compiler {
 bool Parser::parse_init(Node* out) {
@@ -279,6 +281,41 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     return true;
 }
 
+// A condition that made temporaries: its value goes to a hidden local, the temporaries are destroyed (latest first),
+// and *cond becomes the hidden local's name ([class.temporary] 4: they die at the end of the full-expression). The
+// assignment and the destructor calls are appended to stmts.
+bool Parser::keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::vector<Local>* locals, std::vector<Node>* stmts,
+                             std::string* hidden_name) {
+    Local hidden;
+    hidden.name = "__cv" + std::to_string(rv_count++);
+    Type ct;
+    ct.base = 1;
+    if (!static_type(*cond, &ct) || ct.base == 3 || ct.is_array()) {
+        ct = Type{};
+        ct.base = 1;
+    }
+    ct.is_ref = false;
+    hidden.type = ct;
+    place_local(locals, hidden);
+    Node assign;
+    assign.kind = Node::Assign;
+    assign.op = TAssign;
+    assign.kids.push_back(node_name(hidden.name));
+    assign.kids.push_back(std::move(*cond));
+    Node assign_stmt;
+    assign_stmt.kind = Node::ExprStmt;
+    assign_stmt.kids.push_back(std::move(assign));
+    stmts->push_back(std::move(assign_stmt));
+    for (size_t i = temps.size(); i-- > 0;) {
+        Node call;
+        if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+        stmts->push_back(std::move(call));
+    }
+    *cond = node_name(hidden.name);
+    *hidden_name = hidden.name;
+    return true;
+}
+
 bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
     const int stmt_line = cur().line;
     std::vector<Temp> outer = std::move(stmt_temps);
@@ -292,36 +329,12 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
         // The copies made in a condition die once the condition is evaluated: the value is kept
         // in a hidden local, the copies are destroyed, then the branch (or, for a loop, the body
         // or the exit) is chosen. A loop becomes while (1) { c = cond; dtors; if (!c) break; body }.
-        Local hidden;
-        hidden.name = "__cv" + std::to_string(rv_count++);
-        Type ct;
-        ct.base = 1;
-        if (!static_type(out->kids[0], &ct) || ct.base == 3 || ct.is_array()) {
-            ct = Type{};
-            ct.base = 1;
-        }
-        ct.is_ref = false;
-        hidden.type = ct;
-        place_local(locals, hidden);
-        Node assign;
-        assign.kind = Node::Assign;
-        assign.op = TAssign;
-        assign.kids.push_back(node_name(hidden.name));
-        assign.kids.push_back(std::move(out->kids[0]));
-        Node assign_stmt;
-        assign_stmt.kind = Node::ExprStmt;
-        assign_stmt.kids.push_back(std::move(assign));
         Node block;
         block.kind = Node::Block;
         block.line = stmt_line;
-        block.kids.push_back(std::move(assign_stmt));
-        for (size_t i = mine.size(); i-- > 0;) {
-            Node call;
-            if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
-            block.kids.push_back(std::move(call));
-        }
+        std::string hidden_name;
+        if (!keep_cond_value(&out->kids[0], mine, locals, &block.kids, &hidden_name)) return false;
         if (out->kind == Node::If) {
-            out->kids[0] = node_name(hidden.name);
             block.kids.push_back(std::move(*out));
         } else {
             Node inner;
@@ -332,7 +345,7 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
             Node not_c;
             not_c.kind = Node::Unary;
             not_c.op = TNot;
-            not_c.kids.push_back(node_name(hidden.name));
+            not_c.kids.push_back(node_name(hidden_name));
             Node stop;
             stop.kind = Node::If;
             stop.kids.push_back(std::move(not_c));
@@ -499,7 +512,22 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             Node cond;
             Node cond_decl;
             bool cond_scoped = false;
+            // What the condition makes before it (a temporary: `e && !Trim(e).empty()`) goes after the init statement,
+            // inside the scope, and is destroyed once the condition's value is kept, as for a plain if (Round 34,
+            // AntiCheatIntegrity.hpp:333; before, it went before the whole scope: "unknown name __bt...").
+            const size_t cond_pre_from = stmt_pre.size();
+            const size_t cond_temps_from = stmt_temps.size();
             if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+            std::vector<Node> cond_pre(std::make_move_iterator(stmt_pre.begin() + static_cast<std::ptrdiff_t>(cond_pre_from)),
+                                       std::make_move_iterator(stmt_pre.end()));
+            stmt_pre.resize(cond_pre_from);
+            const std::vector<Temp> cond_temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(cond_temps_from),
+                                               stmt_temps.end());
+            stmt_temps.resize(cond_temps_from);
+            if (!cond_temps.empty()) {
+                std::string hidden_name;
+                if (!keep_cond_value(&cond, cond_temps, locals, &cond_pre, &hidden_name)) return false;
+            }
             Node then_s;
             if (!parse_stmt(&then_s, locals)) return false;
             if_s.kind = Node::If;
@@ -515,6 +543,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             out->kind = Node::Block;
             out->text = "scope";
             out->kids.push_back(std::move(init_s));
+            for (Node& n : cond_pre) out->kids.push_back(std::move(n));
             out->kids.push_back(std::move(if_s));
             std::vector<Node> dt;
             if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
@@ -773,7 +802,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             hidden.type = cur_ret;
             place_local(locals, hidden);
             Type ret_list;
-            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(cur_ret.struct_id, &ret_list)) {
+            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && init_list_ctor_at(cur_ret.struct_id, &ret_list)) {
                 // return {a, b, c}; for a class with an initializer-list constructor (a vector): that constructor is
                 // preferred for a list that is not empty ([over.match.list]).
                 Node list;
@@ -801,16 +830,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             } else {
                 Node init;
                 if (!parse_init(&init)) return false;
-                Node assign;
-                assign.kind = Node::Assign;
-                assign.op = TAssign;
-                assign.number = 1;
-                assign.kids.push_back(node_name(hidden.name));
-                assign.kids.push_back(std::move(init));
-                Node stmt;
-                stmt.kind = Node::ExprStmt;
-                stmt.kids.push_back(std::move(assign));
-                stmt_pre.push_back(std::move(stmt));
+                stmt_pre.push_back(make_in_place_stmt(hidden.name, std::move(init)));
             }
             value = node_name(hidden.name);
             braced_ret = true;
@@ -843,7 +863,11 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             const bool by_conversion =
                 !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
                 !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
-                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array());
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array() &&
+                  (value_type.struct_id == cur_ret.struct_id || derives_from(value_type.struct_id, cur_ret.struct_id)));
+            // (An object of another class is converted too, Round 33: `return [a](int k) { ... };` in a function that
+            // returns std::function copied the closure's bytes into the function object: silent wrong code, a call read
+            // whatever was in its holder pointer.)
             // return s; of an object that is not this function's own local and not a temporary (a reference parameter,
             // a member, a global, *p, a[i]): the result is copy-initialized from it ([stmt.return] 2,
             // [class.copy.ctor]) by the copy constructor. Before Round 31 its bytes were copied: the result shared the
@@ -1071,7 +1095,26 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     bool have_ctor_args = false;
     Node paren_init;
     bool have_paren_init = false;
-    if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
+    const bool init_list_copy = !is_typedef && type.pointers == 0 && is_init_list_class(type) && is(TIdent) &&
+                                at + 2 < tokens.size() && tokens[at + 1].kind == TAssign && tokens[at + 2].kind == TLBrace;
+    // static const std::initializer_list<const char*> names = {"long", "short"}; (Round 33, JsLibNumber.cpp): own
+    // simplification, the list and its array are made again each time control passes the declaration (an automatic
+    // object), which reads the same as one static list while the elements are constants; only their addresses differ
+    // from one pass to the next.
+    if (init_list_copy) is_static = false;
+    if (init_list_copy) {
+        // std::initializer_list<T> x = {a, b, c}; ([dcl.init.list] 3.10, [support.initlist]): x refers to an array of
+        // the elements. Before Round 33 the braces were read as the list's own two members (x.size() was 5 for {4, 5,
+        // 6}): the list is made as for an argument and x is copied from it.
+        decl.name = cur().text;
+        decl.type = type;
+        next();
+        next();
+        Node list;
+        if (!init_list_temp(type, &list)) return false;
+        ctor_args.push_back(std::move(list));
+        have_ctor_args = true;
+    } else if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
         (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace)) {
         // C x(args); and C x{args}; the arguments go to a constructor.
         decl.name = cur().text;
@@ -1079,7 +1122,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         next();
         const bool braced_args = is(TLBrace);
         Type list_type;
-        if (braced_args && tokens[at + 1].kind != TRBrace && has_init_list_ctor(type.struct_id, &list_type)) {
+        if (braced_args && tokens[at + 1].kind != TRBrace && init_list_ctor_at(type.struct_id, &list_type)) {
             Node list;
             if (!init_list_temp(list_type, &list)) return false;
             ctor_args.push_back(std::move(list));
@@ -1180,7 +1223,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         } else if (have_paren_init) {
             init = std::move(paren_init);
         } else if (is(TLBrace) && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
-                   tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &list_type_local)) {
+                   tokens[at + 1].kind != TRBrace && init_list_ctor_at(decl.type.struct_id, &list_type_local)) {
             // C x = {a, b}; for a class with an initializer-list constructor.
             Node list;
             if (!init_list_temp(list_type_local, &list)) return false;
@@ -1211,6 +1254,58 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                 init = std::move(sub);
             } else if (!decl.type.is_ref) {
                 class_ptr_convert(&init, decl.type);
+            }
+        }
+        if (has_init && !is_static && decl.type.is_ref && decl.type.base == 3 && decl.type.pointers == 0 &&
+            !decl.type.is_array() && decl.type.struct_id >= 0) {
+            // const T& k = f(); with f returning a T: the temporary lives as long as the reference ([class.temporary] 6;
+            // Round 33, ActionList.cpp's `const std::string& k = Str(c, i);`, before "not an address"). It is a hidden
+            // local of the block, made in place by the call (or moved from the statement's temporary) and destroyed at
+            // the end of the block like a named object; the reference is bound to it.
+            Type from;
+            const bool prvalue_call = init.kind == Node::Call && static_type(init, &from) && from.base == 3 &&
+                                      from.pointers == 0 && !from.is_ref && !from.is_array() && from.struct_id == decl.type.struct_id;
+            const bool stmt_temp = init.kind == Node::Name && init.text.compare(0, 4, "__bt") == 0 && static_type(init, &from) &&
+                                   from.base == 3 && from.pointers == 0 && !from.is_array() && from.struct_id == decl.type.struct_id;
+            if (prvalue_call || stmt_temp) {
+                Local held;
+                held.name = "__lx" + std::to_string(tmp_count++);
+                held.type = decl.type;
+                held.type.is_ref = false;
+                held.type.rref = false;
+                held.type.is_const = false;
+                held.type.pconst = false;
+                place_local(locals, held);
+                if (prvalue_call) {
+                    Node made;
+                    made.kind = Node::Assign;
+                    made.op = TAssign;
+                    made.number = 1;
+                    made.kids.push_back(node_name(held.name));
+                    made.kids.push_back(std::move(init));
+                    Node st;
+                    st.kind = Node::ExprStmt;
+                    st.kids.push_back(std::move(made));
+                    out->kids.push_back(std::move(st));
+                } else {
+                    std::vector<Node> margs;
+                    margs.push_back(std::move(init));
+                    Node call;
+                    if (!special_call(held.type.struct_id, "<ctor>", node_addr(node_name(held.name)), std::move(margs), &call))
+                        return false;
+                    out->kids.push_back(std::move(call));
+                }
+                if (obj_needs_dtor(held.type)) {
+                    std::vector<Node> rec_nodes;
+                    eh_push_object(&rec_nodes, node_addr(node_name(held.name)), held.type.struct_id, 0, locals);
+                    for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
+                    DObj obj;
+                    obj.name = held.name;
+                    obj.sid = held.type.struct_id;
+                    if (dscopes.empty()) dscopes.emplace_back();
+                    dscopes.back().push_back(std::move(obj));
+                }
+                init = node_name(held.name);
             }
         }
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
@@ -1674,7 +1769,14 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         return false;
     }
     const size_t after_range = at;
-    if (!braced_range && !static_type(range, &range_type)) {
+    if (!braced_range && range.kind == Node::StringLit) {
+        // for (char16_t c : u"dgimsuy") ([stmt.ranged], [lex.string] 6; Round 33, JsRegExp.cpp): a string literal is an
+        // array of its code units and the zero after them.
+        range_type = range.type;
+        range_type.pointers = 0;
+        const int unit = range_type.base == 2 ? 1 : range_type.base == 4 ? 2 : 4;
+        range_type.array_len = static_cast<int>((range.text.size() + 1) / static_cast<size_t>(unit));
+    } else if (!braced_range && !static_type(range, &range_type)) {
         error = "a range for needs an array of known length";
         return false;
     }

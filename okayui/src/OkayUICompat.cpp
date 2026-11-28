@@ -62,6 +62,9 @@ namespace OkayUI {
 WindowInfo FindWindowByName(const char* title) {
     WindowInfo w;
     w.found = FindWindowSlot(title, w.pos, w.size, w.focused);
+    if (!w.found && IsWindowDocked(title)) {   // a docked tab never drawn yet (never the chosen one): it exists, as in Dear ImGui
+        if (const WindowRef* r = FindWindowRefByName(title)) { const ImRect rc = r->Rect(); w.found = true; w.pos = rc.Min; w.size = Vec2{rc.Max.x - rc.Min.x, rc.Max.y - rc.Min.y}; }
+    }
     if (w.found) { w.docked = IsWindowDocked(title); std::snprintf(w.Name, sizeof w.Name, "%s", title); w.Pos = w.pos; w.Size = w.size; w.ID = GetID(title); }
     return w;
 }

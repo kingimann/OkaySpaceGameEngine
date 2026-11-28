@@ -2,18 +2,18 @@
 
 How the engine meets the operating system. `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
 clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The window, DPI, focus, file dialog
-and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2) plus `Core/DisplaySettings`,
-`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
+and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, over `okay::platform`) plus `Core/DisplaySettings`,
+`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (`okay::platform` in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
 online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ## 37. Platform & windowing
 
 ### 37.1 Window, fullscreen and display settings
 - **System:** Display Settings
-- **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, and applies the Settings screen's monitor, display mode, resolution, refresh rate, vsync and quality. A shared SDL helper lists monitors and modes for the player and the editor.
+- **What:** The game player creates its window through `okay::platform` (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, and applies the Settings screen's monitor, display mode, resolution, refresh rate, vsync and quality. A shared helper (`shared/PlatformDisplays.cpp`) lists monitors and modes for the player and the editor.
 - **Parts:**
   - 37.1.1 Window creation - `player/main.cpp` - flags, centered position, minimum size, window icon PNG, hidden-then-reveal to avoid a black flash, optional boot splash
-  - 37.1.2 High DPI - `player/main.cpp`, `editor/main.cpp` - `SDL_HINT_WINDOWS_DPI_AWARENESS` per-monitor, `SDL_WINDOW_ALLOW_HIGHDPI`; the editor scales its Game view by `DisplayFramebufferScale`
+  - 37.1.2 High DPI - `player/main.cpp`, `editor/main.cpp` - `Backend::SetPerMonitorDpiAware`, `WindowDesc::highDpi`; the editor scales its Game view by `DisplayFramebufferScale`
   - 37.1.3 Fullscreen, vsync and quality settings - `Core/DisplaySettings` - Prefs-backed window mode, resolution, refresh, monitor, `VSync`, `Quality`; hosts re-apply when `Generation()` moves; the player also toggles on Alt+Enter and F11 when Build Settings allows
   - 37.1.4 Build Settings window options - `editor/main.cpp` - run in background, mute when unfocused, fullscreen toggle, start maximized, minimum size, company and save-to-user-folder, read by the player from its config
   - 37.1.5 Console host loop - `Core/Application` - the terminal game loop (`Application::Run`) with console renderer, frame pacing and quit-on-Q; used by tests and headless demos
@@ -21,13 +21,13 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
   - 37.1.7 Monitors, modes and the confirm clock - `Core/DisplayModes`, `shared/PlatformDisplays.cpp` (through `okay::platform` on either backend; was `shared/SdlDisplays.cpp`) - list, filter and fall back; Apply then "Keep these settings?" for 10 seconds, restored on the next launch if the question was never answered
 - **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/DisplayModes`, `shared/PlatformDisplays.hpp`, `shared/PlatformDisplays.cpp`, `Core/Application`
 - **API:** `DisplaySettings::SetMode`, `SetMonitorName`, `SetResolution`, `SetRefreshHz`, `BeginTrial`, `ResolveSaved`, `sdldisplay::ListMonitors`, `sdldisplay::Apply`, script `set_display_mode`, `set_monitor`, `begin_display_confirm`
-- **Editor:** Build Settings (window and presentation options); the Settings screen in play uses the same SDL helper on the editor window
+- **Editor:** Build Settings (window and presentation options); the Settings screen in play uses the same helper on the editor window
 - **Docs:** `docs/engine/display_settings.md`, `docs/release/packaging.md`, `docs/platform/web_mobile.md`
 - **Tests:** `display_settings`, `display_screen`
-- **Status:** Works for the choice itself (filtering, fallback, the 10-second revert, the Settings screen and the script nodes are tested). The player and the editor apply it through SDL. Each host still creates its own window. The own-code platform backend (`okay::platform`, `docs/platform/platform_layer.md`) is opt-in (`OKAY_PLATFORM_BACKEND=own`, Settings > Experimental "Our own window layer", Linux only): the launcher then runs with no SDL window, renderer or event loop and draws with our own OpenGL painter (`okay::platform::CreateGLPainter`, GLX / WGL; `OKAY_OWN_PAINTER=software` for the CPU painter), checked under Xvfb only (2026-11-22). The editor uses the same OpenGL painter on the own backend since 2026-11-26 (Xvfb only).
-- **Open:** no single window class shared by the player, editor and launcher (each still creates its SDL window by default); the own backend and its OpenGL painter never run on Windows or a real GPU; no Linux or macOS DPI hint (the hint is Windows only)
+- **Status:** Works for the choice itself (filtering, fallback, the 10-second revert, the Settings screen and the script nodes are tested). The player and the editor apply it through `okay::platform`. Each host still creates its own window. Since 2026-11-27 our own platform backend (`okay::platform`, `docs/platform/platform_layer.md`) is the only one on the desktop (X11 on Linux, Win32 on Windows; SDL2 remains only in the web build): the launcher, editor and the OkayUI programs draw with our own OpenGL painter (`okay::platform::CreateGLPainter`, GLX / WGL; `OKAY_OWN_PAINTER=software` for the CPU painter), the player with the software painter. Linux checked under Xvfb; Windows compiled with MinGW only.
+- **Open:** no single window class shared by the player, editor and launcher (each still creates its own); the own backend and its OpenGL painter never run on real Windows or a real GPU; no Linux or macOS DPI hint (the hint is Windows only)
 - **Related:** 7.4, 8.4, 12.8, 12.9, 15.7, 18.1, 2.1
-- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, refresh rate, monitor, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, PlatformDisplays, SdlDisplays, keep these settings, Application
+- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, refresh rate, monitor, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, PlatformDisplays, keep these settings, Application
 - **Seen as:** the game looks blurry on a scaled display; the window flashes black at start; fullscreen does not toggle; the game window has the wrong icon or title; the Settings screen quality button changes nothing; the window cannot be resized
 - **Ask me like:** "make the game window resizable with a minimum size"; "add a fullscreen toggle on F11 to my build"
 
@@ -36,16 +36,16 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard games and scripts use to copy and paste text.
 - **Parts:**
   - 37.2.1 Focus handling - `player/main.cpp` - `runInBackground`, `muteOnFocusLoss` (sets `AudioMixer::focusMuted`), focus loss releases a locked cursor until the next click
-  - 37.2.2 Cursor lock and visibility - `Input/Cursor` - gameplay sets the wish, the player applies it with SDL relative mouse mode (see 8.4)
-  - 37.2.3 Text input - `player/main.cpp`, `Input/Input` - `SDL_StartTextInput` and `Input::FeedText` carry real typed characters (see 8.1)
-  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install an SDL clipboard (SDL directly, not `okay::platform`); tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
-- **Code:** `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
+  - 37.2.2 Cursor lock and visibility - `Input/Cursor` - gameplay sets the wish, the player applies it with `okay::platform` relative mouse mode (see 8.4)
+  - 37.2.3 Text input - `player/main.cpp`, `Input/Input` - `Backend::StartTextInput` and `Input::FeedText` carry real typed characters (see 8.1)
+  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/PlatformClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install the `okay::platform` clipboard; tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
+- **Code:** `Core/Clipboard`, `shared/PlatformClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
 - **API:** `GetClipboardText`, `SetClipboardText`, `get_clipboard_text`, `set_clipboard_text`, `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
 - **Editor:** Build Settings; Play mode uses the same clipboard as a built game; Console panel Copy buttons
 - **Docs:** `docs/ui/in_game_ui.md` (text fields), `docs/scripting/scripting.md`, `docs/audio/audio.md` (mute when unfocused), `docs/engine/input.md`
 - **Tests:** `tests/test_clipboard.cpp` (sanitize, field copy/cut/paste, script and visual-script functions)
-- **Status:** Works - a focused game text field and scripts can copy and paste text; the player and editor Play mode use SDL; tests never write the operating-system clipboard
-- **Open:** the input field has no caret selection, so there is no select-all shortcut; node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
+- **Status:** Works - a focused game text field and scripts can copy and paste text; the player and editor Play mode use `okay::platform`; tests never write the operating-system clipboard
+- **Open:** the input field has no caret selection, so there is no select-all shortcut; node editor copy and paste stays inside each window; IME composition through `okay::platform`'s TextEditing event (own Windows backend; unverified on Windows)
 - **Related:** 7.4, 8.1, 8.4, 12.3
 - **Words:** clipboard, copy, paste, Ctrl+V, focus, alt-tab, background, run in background, mute when unfocused, IME, text input, cursor release, SetClipboardText
 - **Seen as:** the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
@@ -150,9 +150,9 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ### 37.8 Per-user folders
 - **System:** Platform Layer
-- **What:** Where per-user data goes: saves in the user's app folder (via SDL), launcher data under the OS config folder, and achievements in a folder shared by games and the launcher.
+- **What:** Where per-user data goes: saves in the user's app folder (via `okay::platform`), launcher data under the OS config folder, and achievements in a folder shared by games and the launcher.
 - **Parts:**
-  - 37.8.1 Save folder - `player/main.cpp` - `SDL_GetPrefPath(company, app)` when "save to user folder" is on
+  - 37.8.1 Save folder - `player/main.cpp` - `Backend::PrefPath(company, app)` when "save to user folder" is on
   - 37.8.2 Launcher config folder - `Platform/Account/AccountService` - `%APPDATA%/OkaySpace` on Windows, `$XDG_CONFIG_HOME` or `~/.config/OkaySpace` elsewhere; the IPC folder in 37.6 lives under it
   - 37.8.3 Achievements folder - `Platform/Achievements` - `%LOCALAPPDATA%\OkaySpace` on Windows, `~/.okayspace` elsewhere
 - **Code:** `player/main.cpp`, `Platform/Account/AccountService`, `Platform/Achievements`

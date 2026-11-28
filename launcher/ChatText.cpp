@@ -579,7 +579,7 @@ static void DrawLinkPreviewCard(const std::string& url, const LinkPreview& lp, f
     ImGui::PushID(url.c_str());
     float y = p.y + pad;
     int iw = 0, ih = 0;
-    SDL_Texture* tex = lp.image.empty() ? nullptr : ChatImageTexture(lp.image, &iw, &ih);
+    okay::ui2d::Tex tex = lp.image.empty() ? nullptr : ChatImageTexture(lp.image, &iw, &ih);
     float imgH = 0.0f;
     if (tex && iw > 0 && ih > 0) imgH = std::min(140.0f, (w - pad * 2 - 6) * (float)ih / (float)iw);
     // Measure text first so the background can be drawn behind it.

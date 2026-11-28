@@ -12,6 +12,7 @@
 // RunProgram (at the end) is a whole program around one such window: the browser program and the Script Editor program use it.
 #ifdef OKAYUI_HOST_PLATFORM
 #include "OkayUIHost.hpp"
+#include "OwnPainter.hpp"
 #include "okay/Platform/Platform.hpp"
 
 #include <cstdio>
@@ -26,11 +27,14 @@ namespace platform {
 /// nothing kept) when the backend cannot make either.
 inline bool OpenWindow(okay::platform::Backend& backend, const okay::platform::WindowDesc& desc, std::unique_ptr<okay::platform::Window>& window,
                        std::unique_ptr<okay::platform::Painter>& painter, std::string& error) {
-    window = backend.MakeWindow(desc);
+    // A GL pixel format for the OpenGL painter (OwnPainter.hpp), and a plain window for the software painter when GL cannot be had.
+    okay::platform::WindowDesc d = desc;
+    d.opengl = okay::pb::OwnWindowsWantGL(&backend);
+    window = backend.MakeWindow(d);
+    if (!window && d.opengl) { d.opengl = false; window = backend.MakeWindow(d); }
     if (!window) { error = "no window: " + backend.LastError(); return false; }
-    std::string why;
-    painter = okay::platform::CreateSdl2Painter(*window, okay::platform::PainterDesc(), &why);
-    if (!painter) { window.reset(); error = "no painter: " + why; return false; }
+    painter = okay::pb::MakeOwnPainter(*window, okay::platform::PainterDesc());
+    if (!painter) { window.reset(); error = "no painter for the window"; return false; }
     return true;
 }
 

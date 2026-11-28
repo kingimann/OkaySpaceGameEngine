@@ -15,13 +15,18 @@ def sh(cwd, *a):
     subprocess.run(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+# The three-lane table as it was on 2026-11-22 to 2026-11-26. The lane checks are tested against this frozen copy, so
+# the tests keep covering cross-lane rules after the owner closed Claude 2 and Claude 3 (2026-11-27) in docs/lanes.json.
+THREE_LANES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "lanes_three_claudes.json")
+
+
 class Repo:
     """A temp repo whose refs/remotes/origin/* stand in for GitHub branches."""
-    def __init__(self):
+    def __init__(self, lanes_file=None):
         self.d = tempfile.mkdtemp(prefix="collabtest")
         sh(self.d, "init", "-q", "-b", "main")
         os.makedirs(os.path.join(self.d, "docs"))
-        shutil.copy(os.path.join(ROOT, "docs", "lanes.json"), os.path.join(self.d, "docs", "lanes.json"))
+        shutil.copy(lanes_file or os.path.join(ROOT, "docs", "lanes.json"), os.path.join(self.d, "docs", "lanes.json"))
         self.write("engine/src/Components/Foo.cpp", "\n".join(f"line {i}" for i in range(1, 60)) + "\n")
         self.write("tests/CMakeLists.txt", "add_executable(test_foo test_foo.cpp)\nadd_test(NAME foo COMMAND test_foo)\n")
         self.write("docs/feature_map/04-characters-cameras.md", "# Page\n\n## 4. Characters\n\n### 4.5 Vehicles\n- **What:** Arcade car with a seat.\n- **Code:** `Components/VehicleSeat`\n- **Status:** Works\n- **Words:** car\n")
@@ -250,7 +255,8 @@ class Collisions(unittest.TestCase):
 class ThreeLanes(unittest.TestCase):
     """Three Claudes (owner 2026-11-22): coordinator claude/*, Claude 2 claude2/*, Claude 3 claude3/*. Lanes come from docs/lanes.json."""
     def setUp(self):
-        self.lanes = L.load_lanes(ROOT)
+        with open(THREE_LANES, encoding="utf-8") as f:
+            self.lanes = json.load(f)
         self.now = datetime.datetime.now(datetime.timezone.utc)
 
     def claim(self, branch, files, **kw):
@@ -312,7 +318,7 @@ class ThreeLanes(unittest.TestCase):
         self.assertTrue(any("Lane" in p for p in L.check_claim_rules(bad["claude2/x"], self.lanes, [])))
 
     def test_three_way_shared_file(self):
-        r = Repo()
+        r = Repo(THREE_LANES)
         try:
             r.branch("claude/a", {"tests/CMakeLists.txt": "a\n"})
             r.branch("claude2/b", {"tests/CMakeLists.txt": "b\n"})
@@ -330,7 +336,7 @@ class ThreeLanes(unittest.TestCase):
             r.close()
 
     def test_claude3_branch_out_of_lane_and_cross_lane(self):
-        r = Repo()
+        r = Repo(THREE_LANES)
         try:
             r.write("engine/src/Physics/Physics3D.cpp", "x\n"); r.commit("phys"); sh(r.d, "update-ref", "refs/remotes/origin/main", "HEAD")
             r.branch("claude3/a", {"engine/src/Physics/Physics3D.cpp": "y\n"})
@@ -347,8 +353,16 @@ class ThreeLanes(unittest.TestCase):
             r.close()
 
     def test_make_brief_accepts_claude3(self):
-        p = subprocess.run([sys.executable, os.path.join(SCRIPTS, "make_brief.py"), "--lane", "claude3", "--goal", "g", "--root", ROOT],
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        d = tempfile.mkdtemp(prefix="brieftest")
+        try:
+            os.makedirs(os.path.join(d, "docs", "process"))
+            shutil.copy(THREE_LANES, os.path.join(d, "docs", "lanes.json"))
+            shutil.copy(os.path.join(ROOT, "CLAUDE.md"), os.path.join(d, "CLAUDE.md"))
+            shutil.copy(os.path.join(ROOT, "docs", "process", "agent_brief_template.md"), os.path.join(d, "docs", "process"))
+            p = subprocess.run([sys.executable, os.path.join(SCRIPTS, "make_brief.py"), "--lane", "claude3", "--goal", "g", "--root", d],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("Claude 3", p.stdout); self.assertIn("claude3/", p.stdout)
         self.assertIn("engine/src/Physics/**", p.stdout)   # Claude 2's files are off limits for Claude 3
@@ -357,7 +371,7 @@ class ThreeLanes(unittest.TestCase):
         files = subprocess.run(["git", "-C", ROOT, "ls-files"], stdout=subprocess.PIPE, text=True).stdout.splitlines()
         if not files:
             self.skipTest("not a git checkout")
-        dead = [(r["owner"], g) for r in self.lanes["rules"] for g in r["globs"] if not any(L.glob_match(f, g) for f in files)]
+        dead = [(r["owner"], g) for r in L.load_lanes(ROOT)["rules"] for g in r["globs"] if not any(L.glob_match(f, g) for f in files)]
         self.assertEqual(dead, [], "globs that match no file: match a real file or move them to the rule's 'planned' list")
         for r in self.lanes["rules"]:
             self.assertIn(r["owner"], set(L.lane_names(self.lanes)) | {"shared", "open"})

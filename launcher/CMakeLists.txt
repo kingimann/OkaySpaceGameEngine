@@ -1,22 +1,9 @@
 # OkaySpace Launcher (Create / Play / Marketplace / chat ...), drawn by OkayUI, our own UI toolkit (okayui/): the pages are written in
 # Dear ImGui's names and compiled against OkayUI's compatibility layer (okayui/probe first on the include path: "imgui.h" and
-# "ImGuiPainterRenderer.hpp" are OkayUI's). No Dear ImGui is in it. Needs SDL2 dev libraries (the window on Windows). Built when
-# -DOKAY_BUILD_LAUNCHER=ON. docs/ui/own_ui_toolkit.md section 31.
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
-    return()
-endif()
+# "ImGuiPainterRenderer.hpp" are OkayUI's). No Dear ImGui and no SDL in it: the window, input, audio and drawing are our own
+# okay::platform. Built when -DOKAY_BUILD_LAUNCHER=ON. docs/ui/own_ui_toolkit.md section 31.
 if(NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
     message(FATAL_ERROR "okayspace-launcher is drawn by OkayUI: okay_ui, okay_ui_screens and okay_ui_soft (okayui/CMakeLists.txt) must be in the build")
-endif()
-
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
-    set(OKAY_LAUNCHER_SDL SDL2::SDL2-static)
-elseif(TARGET SDL2::SDL2)
-    set(OKAY_LAUNCHER_SDL SDL2::SDL2)
-else()
-    set(OKAY_LAUNCHER_SDL ${SDL2_LIBRARIES})
 endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
@@ -32,7 +19,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     MemberModerationUI.cpp   # kick / ban / unban / admin role for servers and group chats (moved out of main.cpp)
     GroupConversation.cpp    # the open group conversation (moved out of main.cpp)
     Multiplayer.cpp       # joining, inviting, presence, server browser, parties, the Multiplayer page (moved out of main.cpp)
-    VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
+    VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no UI; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable download behind it (NativeFetch: WinHTTP / our own client)
     VersionsUI.cpp        # the page itself
     CommandLine.cpp       # the Command line page's rules: words, Tab completion, history, running okay (no ImGui; tested by launcher_cli)
@@ -60,12 +47,8 @@ add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
-# shared/ for the launcher's AppIcon, and the engine's public headers for the
-# (header-only) account service it shares with the engine. The account core needs only
-# the standard library; the engine library is linked only for the 2D painter the splash
-# screen draws through (okay::platform::WrapSdl2Renderer, whose font and image upload
-# need the engine's TrueType and image code). It is a static library, so the linker takes
-# only the objects the launcher actually uses.
+# The engine library is linked for the 2D painters (okay::platform::Painter: font and image upload need the engine's TrueType
+# and image code). It is a static library, so the linker takes only the objects the launcher actually uses.
 target_include_directories(okayspace-launcher BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's
 # shared/ for the launcher's AppIcon, and the engine's public headers for the (header-only) account service it shares with the engine.
 target_include_directories(okayspace-launcher PRIVATE
@@ -78,8 +61,8 @@ target_include_directories(okayspace-launcher PRIVATE
 # browser as the browser program: shared/BrowserApp.cpp over okay_browser).
 target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)
 target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens okay_ui okay_ui_soft okay_browser)
-# okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
-target_link_libraries(okayspace-launcher PRIVATE ${OKAY_LAUNCHER_SDL} okay::platform)
+# okay::platform: windows, input, timers, audio devices (our own backend).
+target_link_libraries(okayspace-launcher PRIVATE okay::platform)
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()

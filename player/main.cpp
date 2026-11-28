@@ -5,9 +5,6 @@
 // With no argument it loads "game.okayscene" next to the executable. The editor's
 // "Build Game" writes that file and copies this player beside it, so a shipped
 // game is just <Game>.exe + game.okayscene (+ any assets).
-// Some headers still pull in SDL.h (OkayScriptUIBridge.hpp). Without this, SDL renames main() to SDL_main and the
-// Windows build has no entry point (MinGW 13: "undefined reference to WinMain"). Remove once no header includes SDL.h.
-#define SDL_MAIN_HANDLED
 #include <cstdint>
 #include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
@@ -1150,13 +1147,13 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 int main(int argc, char** argv) {
     okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     okay::Log::Info("[okay] modules: ", okay::ModuleRegistry::Get().Summary());   // engine modules in this player (docs/engine/modular_engine.md)
-    // The window, events, input and GL context go through okay::platform (SDL2 is the default
-    // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
+    // The window, events, input and GL context go through okay::platform (our own backend: X11 / Win32 on the desktop,
+    // the browser page on the web; see docs/platform/platform_layer.md).
     okay::platform::Backend* pb = okay::platform::Default();
     if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
-    pb->SetPerMonitorDpiAware();   // Windows only; a hint on SDL >= 2.24, nothing elsewhere
+    pb->SetPerMonitorDpiAware();   // Windows only; nothing elsewhere
     // `--server`: run headless as the game's dedicated server (no window, GPU or
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)
@@ -1304,12 +1301,12 @@ int main(int argc, char** argv) {
     }
     if (dedicatedServer) {
         okay::platform::InitFlags none; none.video = none.audio = none.gamepad = false;   // headless: timers only
-        if (!pb->Init(none)) { std::fprintf(stderr, "SDL_Init failed: %s\n", pb->LastError().c_str()); return 1; }
+        if (!pb->Init(none)) { std::fprintf(stderr, "the window system could not start: %s\n", pb->LastError().c_str()); return 1; }
     } else if (!pb->Init(okay::platform::InitFlags())) {   // video + audio + game controllers
-        pb->Log("SDL_Init failed: " + pb->LastError());
+        pb->Log("the window system could not start: " + pb->LastError());
         return 1;
     }
-    // Games copy and paste through SDL. The memory clipboard stays the default
+    // Games copy and paste through okay::platform. The memory clipboard stays the default
     // everywhere else (tests, a headless run), so this does not turn okay::platform on.
     static okay::PlatformClipboard s_osClipboard;
     okay::InstallGameClipboard(&s_osClipboard);
@@ -1679,7 +1676,7 @@ int main(int argc, char** argv) {
     wd.highDpi = true;
     wd.resizable = cfg.resizable;
 #ifdef __EMSCRIPTEN__
-    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); SDL follows its CSS size only for a resizable window
+    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); the web backend follows its CSS size
 #endif
     wd.fullscreen = cfg.fullscreen;
     wd.borderless = cfg.borderless;
@@ -1721,20 +1718,20 @@ int main(int argc, char** argv) {
         okay::DisplaySettings::ResolveSaved();
     }
     applyDisplay();
-    // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
-    // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
-    // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
-    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform/platform_layer.md).
+    // The 2D drawing goes through okay::platform::Painter: on the desktop the software painter (okayui/soft), which draws
+    // into a frame buffer on the CPU and hands it to the window; on the web the OpenGL painter on the canvas's WebGL 2
+    // context (docs/platform/platform_layer.md).
     std::unique_ptr<okay::platform::Painter> painterOwner;
     if (window) {
         okay::platform::PainterDesc pd;
         pd.vsync = cfg.vsync;
         std::string perr;
-        if (pb->Kind() == okay::platform::BackendKind::Sdl2) painterOwner = okay::platform::CreateSdl2Painter(*window, pd, &perr);
-#ifdef OKAY_HAVE_OKAYUI
-        else painterOwner = OkayUI::soft::CreateWindowPainter(*window, pd, &perr);
+#if defined(__EMSCRIPTEN__)
+        painterOwner = okay::platform::CreateGLPainter(*window, *pb, pd, &perr);
+#elif defined(OKAY_HAVE_OKAYUI)
+        painterOwner = OkayUI::soft::CreateWindowPainter(*window, pd, &perr);
 #else
-        else perr = "this build has no software painter (OkayUI is not part of it)";
+        perr = "this build has no software painter (OkayUI is not part of it)";
 #endif
         if (!painterOwner) {
             pb->Log(std::string("no 2D painter for backend '") + pb->Name() + "': " + perr);
@@ -1946,9 +1943,8 @@ int main(int argc, char** argv) {
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
     g_uiBridge.painter = renderer;    // dialogue portraits as textures
-    // OkayUI's frame on a painter without an SDL_Renderer behind it (the software painter of the own backend).
-    std::unique_ptr<OkayUI::soft::FrameDrawer> uiFrame;
-    if (!renderer->NativeRenderer()) uiFrame.reset(new OkayUI::soft::FrameDrawer(*renderer));
+    // OkayUI's frame through the painter.
+    std::unique_ptr<OkayUI::soft::FrameDrawer> uiFrame(new OkayUI::soft::FrameDrawer(*renderer));
     okay::SetScriptUI(&g_uiBridge);
 #endif
     // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
@@ -2226,14 +2222,13 @@ int main(int argc, char** argv) {
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         Input::FeedMouse(s_virtualMouse, okay::InputMouseMask(mb));   // left, right, middle and the two side buttons
-        // On-screen controls and gestures read the SDL finger events already fed above
-        // (desktop and the web build). This stays on the SDL player path: it does not
-        // switch on the own platform backend.
+        // On-screen controls and gestures read the finger events already fed above (the web build and the Xbox app;
+        // the desktop backends send none yet).
         {
             int ow = 0, oh = 0;
             renderer->OutputSize(&ow, &oh);
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
-            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // sdl2: SDL's touch devices; own: none yet
+            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // desktop: none yet; web: a touch screen the browser reports
             TouchControls::Sample(scene);
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }
@@ -2945,12 +2940,10 @@ int main(int argc, char** argv) {
                 OkayUI::End();
             }
         }
-        if (uiFrame) {
+        {
             int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
             OkayUI::EndFrameData(uw, uh);
             uiFrame->Draw(OkayUI::GetDrawData());
-        } else {
-            OkayUI::EndFrame((SDL_Renderer*)renderer->NativeRenderer());
         }
         pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif

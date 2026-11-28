@@ -379,6 +379,11 @@ struct St {
   bool Undo() { ++calls; r.push_back("Set B"); return true; }
   std::string Name() { ++names; return r.empty() ? std::string("none") : r.back(); }
 };
+struct Tok { int kind; std::string text; };
+struct Sc {
+  int n = 0;
+  Tok Next() { Tok t; t.kind = n < 3 ? 1 : 0; t.text = n < 3 ? std::string("ab") : std::string("end of the words, long enough to be on the heap"); ++n; return t; }
+};
 int entry(void) {
   St s;
   int b = 10;
@@ -394,6 +399,12 @@ int entry(void) {
   CK(5, loops == 2 && s.calls == 4);
   for (int i = 0; i < 2 && s.Name() == "Set B"; ++i) ++loops;
   CK(6, loops == 4);
+  // A for loop whose init and step assign a class result (the implicit operator=; Md5Reader.cpp).
+  Sc sc;
+  Tok t;
+  int words = 0;
+  for (t = sc.Next(); t.kind != 0; t = sc.Next()) words += (int)t.text.size();
+  CK(7, words == 6 && t.text == "end of the words, long enough to be on the heap");
   return 0;
 }
 )OKMS", 0);

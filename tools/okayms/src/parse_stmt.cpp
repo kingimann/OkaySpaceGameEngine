@@ -656,7 +656,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             if (!parse_stmt(&decl_init, locals)) return false;
         } else {
             if (!is(TSemi)) {
+                // The init expression's own statements (`t = sc.Next()` with the implicit operator= of a class result;
+                // Round 37, Md5Reader.cpp) go into it, as the condition's and the step's do.
+                const size_t ipre = stmt_pre.size();
+                const size_t itemps = stmt_temps.size();
                 if (!parse_expr(0, &init)) return false;
+                if (!fold_loop_expr(ipre, itemps, &init)) return false;
             }
             if (!expect(TSemi, "';'")) return false;
         }
@@ -1711,6 +1716,44 @@ bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
     Type vt;
     const bool typed = static_type(*e, &vt);
     Node value = std::move(*e);
+    if (!temps.empty() && typed && vt.base == 3 && vt.pointers == 0 && !vt.is_array() && value.kind == Node::Unary &&
+        value.op == TStar && !value.kids.empty()) {
+        // `t = sc.Next()` as a for loop's step (Round 37, Md5Reader.cpp): the implicit operator= returns the object it
+        // assigned to, an lvalue; its address is kept while the temporaries are destroyed, and the value is read
+        // through it.
+        Node addr = std::move(value.kids[0]);
+        Type pt;
+        if (static_type(addr, &pt) && pt.pointers > 0) {
+            pt.is_ref = false;
+            pt.is_const = false;
+            Local hidden;
+            hidden.name = "__lc" + std::to_string(tmp_count++);
+            hidden.type = pt;
+            place_local(cur_locals, hidden);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(addr));
+            parts.push_back(std::move(assign));
+            for (size_t i = temps.size(); i-- > 0;) {
+                Node call;
+                if (!temp_end_call(temps[i], &call)) return false;
+                if (!flatten_expr_stmts(call, &parts)) {
+                    error = "a temporary with a destructor in a loop condition is not supported here";
+                    return false;
+                }
+            }
+            temps.clear();
+            Node deref;
+            deref.kind = Node::Unary;
+            deref.op = TStar;
+            deref.kids.push_back(node_name(hidden.name));
+            value = std::move(deref);
+        } else {
+            value.kids[0] = std::move(addr);
+        }
+    }
     if (!temps.empty()) {
         if (!typed || vt.base == 3 || vt.is_array() || vt.base >= 5) {
             error = "a temporary with a destructor in a loop condition is not supported here";

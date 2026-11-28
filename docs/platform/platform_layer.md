@@ -748,6 +748,12 @@ code that does not need `SDL_Renderer`.
 * **Audio: ALSA through `dlopen("libasound.so.2")`**, no ALSA headers (only `snd_pcm_open/set_params/writei/readi/recover` are
   declared by hand). One thread per device, queue and callback mode, playback and capture, device listing. PulseAudio is
   not used: ALSA's `default` device is routed to PulseAudio / PipeWire on desktops that run them. `OKAY_ALSA_DEVICE` overrides the device name.
+* **Null audio device, every backend** (`NullAudio.cpp`): `OKAY_AUDIO_DEVICE=null` makes `OpenAudio` on Linux, Windows and
+  the web open a device that needs no sound card (CI runners, servers; it replaces SDL's `SDL_AUDIODRIVER=dummy`). It runs
+  at the spec's real rate on its own timer thread: the callback is called one period every `frames / freq` seconds, queued
+  playback drains at `freq` frames a second, capture delivers silence; it starts paused, Pause stops the clock, closing joins
+  the thread. The device list is then one device, `null`. Tested by `platform_null_audio` (Linux, and Windows in the Windows
+  test job).
 * **Controllers: evdev** (`/dev/input/event*`, kernel header `linux/input.h` only): detection by `BTN_GAMEPAD` + `ABS_X`,
   Xbox-style mapping, normalised axes, triggers from axes or `BTN_TL2/TR2`, d-pad from hat or buttons, force-feedback rumble, hot-plug rescan once a second.
 

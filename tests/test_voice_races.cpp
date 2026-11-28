@@ -11,7 +11,7 @@
 // The voice session's net thread publishes a failure ("the voice server isn't
 // answering") while the launcher reads Error() / StateNow() every frame. Run it
 // under ThreadSanitizer: it reports the race; the checks alone can pass by luck.
-// Uses a sound device that needs no sound card (ALSA's "null" device on our own Linux backend) and a local UDP port
+// Uses a sound device that needs no sound card (OKAY_AUDIO_DEVICE=null, the platform layer's null device) and a local UDP port
 // nobody answers on.
 int main() {
     RUN_SUITE("voice_races");
@@ -44,8 +44,12 @@ int main() {
         okay::voice::ChaCha20Xor(key, nonce, out.data(), out.size());
         CHECK(out == frame);
     }
-#if !defined(_WIN32)
-    setenv("OKAY_ALSA_DEVICE", "null", 1);   // our own Linux backend: ALSA's null device (CI runners have no sound card)
+    // The platform layer's null audio device (engine/src/Platform/NullAudio.cpp), on every backend: CI runners have no
+    // sound card (on the Windows runner WASAPI has no default device, so Start failed with "No audio output device").
+#if defined(_WIN32)
+    _putenv_s("OKAY_AUDIO_DEVICE", "null");
+#else
+    setenv("OKAY_AUDIO_DEVICE", "null", 1);
 #endif
     using okay::voice::Session;
     Session s;

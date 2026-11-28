@@ -1,8 +1,10 @@
 // okay mcp / okay automation: the engine's automation commands (okay/Automation/Automation.hpp) from outside.
-//   okay mcp [--scene S] [--editor | --headless]
-//       An MCP server on stdin / stdout (one JSON-RPC message per line), for an AI agent that starts it. With a running
-//       editor whose View > Automation Link is on, it passes every message to that editor (the agent works on what the
-//       person sees); otherwise, or with --headless, it loads the project with no window and serves it itself.
+//   okay [--project P] mcp [--scene S] [--editor | --headless]
+//       An MCP server on stdin / stdout (one JSON-RPC message per line), for an AI agent that starts it. It finds the
+//       running editor whose View > Automation Link is on by itself (the link file names it and its project) and passes
+//       every message to it (the agent works on what the person sees), so one `okay mcp` entry serves every project.
+//       With no editor open it says so plainly and ends; with --project (and no editor on that project), or with
+//       --headless, it loads the project with no window and serves it itself.
 //   okay automation list [prefix] [--json] | describe <command> | call <command> [JSON] [--scene S] |
 //                   run <file.jsonl | -> [--scene S] | link [--seconds N]
 //       The same commands for scripts and tests: list them, describe one, run one, run a list of them in order, or keep
@@ -19,6 +21,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Platform/Account/AccountDetail.hpp"   // detail::NapMs: a short sleep without <thread> (rule 21a)
 
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -117,6 +120,20 @@ int Bridge(okay::automation::LinkClient& link) {
     return 0;
 }
 
+/// The same folder (both made absolute and normal; case is ignored on Windows).
+bool SameFolder(const std::string& a, const std::string& b) {
+    std::error_code ec;
+    auto norm = [&](const std::string& p) {
+        std::string s = std::filesystem::weakly_canonical(std::filesystem::absolute(std::filesystem::u8path(p), ec), ec).lexically_normal().generic_u8string();
+        while (s.size() > 1 && s.back() == '/') s.pop_back();
+#if defined(_WIN32)
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+#endif
+        return s;
+    };
+    return norm(a) == norm(b);
+}
+
 int CmdMcp(const std::vector<std::string>& args, const std::string& project, const Io& io) {
     okay::CommandLine cl;
     cl.Value("scene", "S", "The scene to open (default: the project's start scene).");
@@ -125,17 +142,33 @@ int CmdMcp(const std::vector<std::string>& args, const std::string& project, con
     if (!detail::ParseArgs(cl, args, "mcp", io)) return 2;
     if (cl.Has("help")) { io.Say(HelpText("mcp")); return 0; }
     if (cl.Has("editor") && cl.Has("headless")) { io.Warn("Choose --editor or --headless, not both."); return 2; }
+    // With no --project, the open editor is found by itself (its link file names it and its project), so one entry in an
+    // agent's settings (okay mcp) serves every project.
+    std::string why;
     if (!cl.Has("headless")) {
         okay::automation::LinkInfo info;
-        std::string why;
         if (okay::automation::ReadLinkInfo(okay::automation::LinkInfoPath(), info, &why)) {
-            okay::automation::LinkClient link;
-            if (link.Connect(info.port, info.token, &why)) {
-                std::cerr << "okay mcp: talking to the running editor" << (info.project.empty() ? std::string() : " (project " + info.project + ")") << ".\n";
-                return Bridge(link);
+            const bool other = !project.empty() && !info.project.empty() && !SameFolder(project, info.project) && !cl.Has("editor");
+            if (other) {
+                std::cerr << "okay mcp: the open editor has another project (" << info.project << "); working on " << project << " without it.\n";
+            } else {
+                okay::automation::LinkClient link;
+                if (link.Connect(info.port, info.token, &why)) {
+                    std::cerr << "okay mcp: talking to the running editor" << (info.project.empty() ? std::string() : " (project " + info.project + ")") << ".\n";
+                    return Bridge(link);
+                }
+                why = "The editor that wrote " + okay::automation::LinkInfoPath() + " does not answer (it may have closed): " + why;
             }
+        } else {
+            why = "No OkaySpace editor is open with its Automation Link on.";
         }
-        if (cl.Has("editor")) { io.Warn("okay mcp --editor: " + why + " Turn on View > Automation Link in the editor."); return 1; }
+        if (cl.Has("editor")) { io.Warn("okay mcp --editor: " + why + " Open the editor and turn on View > Automation Link."); return 1; }
+        if (project.empty()) {
+            // Nothing to work on: say so plainly (an agent shows this to the person).
+            io.Warn("okay mcp: " + why + " Open your project in the OkaySpace editor and turn on View > Automation Link "
+                    "(View > Automation Link > Connect to Claude sets this up), or run okay --project <folder> mcp to work on a project without the editor.");
+            return 1;
+        }
     }
     LogOffConsole quiet;
     Headless h;

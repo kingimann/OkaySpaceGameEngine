@@ -288,7 +288,10 @@ inline void WriteNumber(double n, std::string& out) {
 
 /// Append `v` as compact JSON text (no white space; object keys in their stored order). Parse reads it back to an equal
 /// value. Nesting deeper than Limits::maxDepth is written as null, so a value Parse could not read is never produced.
-inline void Write(const Value& v, std::string& out, int depth = 0) {
+/// With `indent` above 0, each element of an array or object goes on its own line, `indent` spaces deeper than its parent
+/// (for files people read, such as an app's settings file); 0 writes one line.
+inline void Write(const Value& v, std::string& out, int depth = 0, int indent = 0) {
+    auto newline = [&](int level) { if (indent > 0) { out += '\n'; out.append((std::size_t)(level * indent), ' '); } };
     switch (v.type) {
     case Type::Null: out += "null"; return;
     case Type::Bool: out += v.boolean ? "true" : "false"; return;
@@ -302,15 +305,17 @@ inline void Write(const Value& v, std::string& out, int depth = 0) {
         const std::size_t n = obj ? v.object.size() : v.array.size();
         for (std::size_t k = 0; k < n; ++k) {
             if (k) out += ',';
-            if (obj) { Escape(v.object[k].first, out); out += ':'; Write(v.object[k].second, out, depth + 1); }
-            else Write(v.array[k], out, depth + 1);
+            newline(depth + 1);
+            if (obj) { Escape(v.object[k].first, out); out += indent > 0 ? ": " : ":"; Write(v.object[k].second, out, depth + 1, indent); }
+            else Write(v.array[k], out, depth + 1, indent);
         }
+        if (n) newline(depth);
         out += obj ? '}' : ']';
         return;
     }
     }
 }
 
-inline std::string Write(const Value& v) { std::string s; Write(v, s); return s; }
+inline std::string Write(const Value& v, int indent = 0) { std::string s; Write(v, s, 0, indent); return s; }
 
 } // namespace okay::json

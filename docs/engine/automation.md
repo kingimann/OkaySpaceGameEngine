@@ -23,6 +23,40 @@ MCP server ... similar to how Blender exposes its internal functionality through
   uses its own; `okay mcp --headless` and `okay automation` make one with no window. So a command does the same thing
   in both, through the same editor code.
 
+## Ops: every menu item a command (round 2, owner 2026-11-28)
+
+Blender makes every UI action an operator (`bpy.ops`) that Python calls the way the UI does. Here the menus are data
+(`MenuBarModel.hpp` and the models built on it), so `editor/AutomationOps.cpp` reads them and adds one `op.<item id>`
+per Item and Toggle, plus `op.list` and `op.run`. Decisions:
+- Same code as the click: the running editor installs its own menu functions in `Hooks()` (main.cpp's `RunMenuAction`,
+  `HierRowAction`, `HierEmptyAction`, `RunUIMenuItem`, `SceneAddRun`, the toggles' flags and the states that grey items
+  out). The scene actions those share were moved out of main.cpp into `editor/MenuActions.cpp`, which the headless host
+  runs too. Everything else (windows, dialogs, UI builders) answers `unavailable` headless.
+- A greyed-out item is refused with the menu's own reason; nothing is refused for Play by the table (the menu decides).
+- A dialog never waits: its op says so, takes the parameter that does it without one (`path`, `name`, `discard`, by
+  running the matching command) or answers `needs_ui`. `op.file.exit` is refused.
+- An item that only repeats a richer command is an alias of it (`Registry::AddAlias`), not a second handler.
+- The toolbar and the Scene view's tools are drawn by hand, not from a model, so they are not ops yet.
+
+## script.run (round 2)
+
+Like Blender MCP's run-Python: OkayScript, Lua or JavaScript inside the host, on the engine's own runtimes and their own
+sandboxes (nothing is added to them but `automation_call`). Output is what the run logged; the value is Lua's and
+JavaScript's top-level `return` or OkayScript's `result`; errors keep the script's own line numbers (the code added
+around the script starts on its first line and follows its last); a budget stops a runaway (OkayScript's new
+`okayscript::StepBudget` counts every loop turn and call, off for game scripts); one undo step (`EditorHost` opens an
+undo group around a command). Safety: only through the agent-started stdio server and the token-protected editor link;
+the editor writes "Automation ran a script (N lines, language)" in its Console; View > Automation Link's "Allow
+scripts from Automation" is on by default (owner's yes) and remembered with the link setting.
+
+## Connect to Claude (round 2)
+
+`okay mcp` with no `--project` finds the open editor from its link file, so one Claude entry serves every project;
+with none open it says so and ends (with `--project` it works headless). View > Automation Link opens the Connect to
+Claude panel (`editor/AutomationPanel.cpp`): the switches, "Set up Claude Desktop" (`shared/ClaudeConnect.hpp`: adds or
+updates only `mcpServers.okayspace`, keeps the rest, `.bak` first, refuses broken JSON, writes only on the click),
+"Copy Claude Code command" and a status line.
+
 ## Where the commands live (each calls the system that already does the work)
 
 | Group | File | Calls |
@@ -31,6 +65,8 @@ MCP server ... similar to how Blender exposes its internal functionality through
 | scene (new, open, save, state), object, editor.select, prefab, undo, play, model, ui | `editor/AutomationEditor.cpp` | EditorState, SceneSerializer, `easymodel::RunMeshTool`, `modeling::ApplyShapeOp`, `GetUIScreenRect`, PlayTest's input order |
 | vs (node_types, inspect, create, add_node, connect, set_node, remove_node) | `editor/AutomationVs.cpp` | the Visual Script editor's model (`VsEditGraph`, pin types), `vs::ValidateGraphText` |
 | project, scene.list/check, script.check, vs.list/check, asset, build, cli.run | `tools/okay-cli/AutomationCli.cpp` | `okaycli::Main` with `--json` (the okay command line's own code) |
+| op.list, op.run, op.<menu item id> | `editor/AutomationOps.cpp` | the menu models, main.cpp's menu functions (`Hooks()`), `editor/MenuActions.cpp` |
+| script.run | `engine/src/Automation/ScriptRun.cpp` | `CreateScriptVM` (OkayScriptVM, LuaScriptVM, JavaScriptVM), the shared script table |
 
 `component.call`, `component.get/set` and `script.call` reach every bound class and method (the generated script
 bindings, the same table OkayScript, C# and visual scripts use) and every Inspector property, so most of the engine

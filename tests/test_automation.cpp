@@ -6,6 +6,12 @@
 #include "test_framework.hpp"
 
 #include "AutomationEditor.hpp"
+#include "AutomationOps.hpp"
+#include "ClaudeConnect.hpp"
+#include "HierarchyContextModel.hpp"
+#include "MenuBarModel.hpp"
+#include "UIMenuModel.hpp"
+#include "MenuActions.hpp"
 #include "okay/Automation/Automation.hpp"
 #include "okay/Automation/Link.hpp"
 #include "okay/Automation/Mcp.hpp"
@@ -18,6 +24,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okayscript/Runtime.hpp"   // okayscript::StepBudget
 
 #include <chrono>
 #include <cmath>
@@ -564,6 +571,251 @@ void TestLink(Driver& d, const TempDir& tmp) {
     CHECK(!fs::exists(info));
 }
 
+// ---- Ops: every menu item a command -------------------------------------------------------------------------------
+
+/// Every Item and Toggle of `es` (the ops list them; notes and per-project prefab entries are not ops).
+void ItemIds(const std::vector<oked::menubar::Entry>& es, std::vector<std::string>& out) {
+    oked::menubar::Walk(es, [&](const oked::menubar::Entry& e, int) {
+        if ((e.kind != oked::menubar::Kind::Item && e.kind != oked::menubar::Kind::Toggle) || e.id.empty()) return;
+        if (e.id.find(':') != std::string::npos) return;
+        auto ends = [&](const std::string& t) { return e.id.size() > t.size() && e.id.compare(e.id.size() - t.size(), t.size(), t) == 0; };
+        if (ends(".none") || ends(".more")) return;
+        out.push_back(e.id);
+    });
+}
+
+void TestOps(Driver& d) {
+    RUN_SUITE("Ops: every menu item is a command (op.<id>), runs the click's code, refuses greyed-out items, needs_ui for dialogs");
+    automation::Registry& all = automation::Commands();
+    // 1. Every item of every menu model is an op: the menu bar, the Hierarchy's three menus, GameObject > UI, the Scene view's.
+    std::vector<std::string> ids;
+    oked::menubar::State ms; ms.selectedCount = 1; ms.objectCount = 1; ms.canUndo = ms.canRedo = true; ms.clipboardHasObject = true; ms.recentCount = 1; ms.scenePath = "a";
+    for (const oked::menubar::Top& t : oked::menubar::TopMenus()) ItemIds(oked::menubar::BuildMenu(t.id, ms), ids);
+    oked::hiermenu::RowState rs; rs.childCount = 1; rs.hasParent = true; rs.inPrefab = true; rs.modelTools = true; rs.clipboardHasObject = true;
+    ItemIds(oked::hiermenu::RowMenu(rs), ids);
+    oked::hiermenu::EmptyState es; es.objectCount = 1; es.selectedCount = 1; es.clipboardHasObject = true;
+    ItemIds(oked::hiermenu::EmptyMenu(es), ids);
+    ItemIds(oked::hiermenu::CreatePopup(es), ids);
+    ItemIds(oked::uimenu::UIMenuFull(oked::menuactions::UIScreenGroups()), ids);
+    int missing = 0;
+    for (const std::string& id : ids)
+        if (!all.Find(oked::automation::OpCommandName(id))) { std::cout << "  no op for menu item " << id << "\n"; ++missing; }
+    CHECK(missing == 0);
+    CHECK(ids.size() > 250);
+    CHECK(oked::automation::OpCount() > 250);
+    int registered = 0;
+    for (const automation::Command* k : all.List("op.")) if (k->name != "op.list" && k->name != "op.run") ++registered;
+    std::cout << "  ops: " << oked::automation::OpCount() << " menu items, " << registered << " op commands, " << all.Size() << " commands in all\n";
+    CHECK(registered == oked::automation::OpCount());
+    // A plain copy of a richer command is an alias of it (rule 19c), not a second handler.
+    CHECK(all.Find("op.edit.undo") && all.Find("op.edit.undo")->aliasOf == "undo.undo");
+    CHECK(all.Find("op.go.empty") && all.Find("op.go.empty")->aliasOf == "object.create");
+    CHECK(all.Find("op.scene.duplicate") && all.Find("op.scene.duplicate")->aliasOf == "op.h.duplicate");
+
+    // 2. A new entry in a menu model is an op with no other code: it shows in MCP's tools/list and runs.
+    int pinged = 0;
+    oked::automation::AddOpMenu({"test.menu", "a test menu", false, [](okay::editor::EditorState&, GameObject*, bool) {
+        std::vector<oked::menubar::Entry> m;
+        m.push_back(oked::menubar::Sub("test", "Test", {oked::menubar::Item("test.ping", "Ping", "", "A test entry added to a model.")}));
+        return m;
+    }});
+    CHECK(oked::automation::RefreshOps(all) == 1);
+    {
+        automation::McpServer s(all, d.host);
+        const Value v = J(s.Handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})"));
+        bool listed = false;
+        if (const Value* t = v.Get("result") ? v.Get("result")->Get("tools") : nullptr)
+            for (const Value& tool : t->array) if (tool.Get("name")->string == "op_test_ping") listed = tool.Get("description")->string.find("Test > Ping") != std::string::npos;
+        CHECK(listed);
+    }
+    oked::automation::Hooks().run = [&pinged](okay::editor::EditorState&, const std::string& menu, const std::string& id, GameObject*) {
+        if (menu != "test.menu") return false;
+        pinged += id == "test.ping";
+        return true;
+    };
+    CHECK(d.Run("op.test.ping").ok && pinged == 1);
+    oked::automation::Hooks().run = nullptr;
+    CHECK(d.Run("op.run", R"({"id":"test.ping"})").error.code == "unavailable");   // no host runs it now: said plainly
+
+    // 3. Ops run the menus' own code, one undo step each, and undo.
+    CHECK(d.Run("scene.new", R"({"template":"empty","discard":true})").ok);
+    Result r = d.Run("object.create", R"({"kind":"cube","name":"Box","position":{"x":1,"y":2,"z":3}})");
+    CHECK(r.ok);
+    const int depth0 = d.ed.UndoDepth();
+    r = d.Run("op.go.emptychild");   // GameObject > Create Empty Child, on the selected Box
+    CHECK(r.ok);
+    GameObject* box = d.ed.scene().Find("Box");
+    CHECK(box && box->transform->ChildCount() == 1 && d.ed.UndoDepth() == depth0 + 1);
+    CHECK(d.Run("undo.undo").ok);
+    box = d.ed.scene().Find("Box");
+    CHECK(box && box->transform->ChildCount() == 0);
+    r = d.Run("op.h.tf.resetpos", R"({"object":"Box"})");   // the Hierarchy row's Transform > Reset Position
+    box = d.ed.scene().Find("Box");
+    CHECK(r.ok && box && box->transform->localPosition.y == 0.0f && d.ed.UndoDepth() == depth0 + 1);
+    CHECK(d.Run("undo.undo").ok);
+    box = d.ed.scene().Find("Box");
+    CHECK(box && box->transform->localPosition.y == 2.0f);
+    // Greyed out: refused with the menu's own reason.
+    r = d.Run("op.edit.paste");
+    CHECK(!r.ok && r.error.code == "refused" && r.error.message == oked::menubar::kNothingCopied);
+    CHECK(d.Run("op.edit.copy").ok);
+    const std::size_t objs = d.ed.scene().Objects().size();
+    r = d.Run("op.edit.paste");
+    CHECK(r.ok && d.ed.scene().Objects().size() > objs);
+    const std::string pasted = r.ok && !r.data.Get("selection")->array.empty() ? r.data.Get("selection")->array[0].string : std::string();
+    CHECK(d.Run("op.h.delete", "{\"object\":\"" + pasted + "\"}").ok);   // the row's Delete: done at once (no rows are being drawn)
+    CHECK(d.ed.scene().FindGameObjectsWithName("Box").size() == 1);
+    // op.list: the live state, as the menu would show it.
+    r = d.Run("op.list", R"({"prefix":"edit."})");
+    bool redoOff = false;
+    if (r.ok) for (const Value& o : r.data.Get("ops")->array)
+        if (o.Get("id")->string == "edit.selectall") redoOff = o.Get("enabled") && o.Get("enabled")->boolean;
+    CHECK(r.ok && r.data.Get("count")->number >= 10 && redoOff);
+
+    // 4. Dialogs never wait: needs_ui, or the parameter that does it without the dialog.
+    r = d.Run("op.file.open");
+    CHECK(!r.ok && r.error.code == "needs_ui" && r.error.details.Get("param") && r.error.details.Get("param")->string == "path");
+    r = d.Run("op.go.arraydup");
+    CHECK(!r.ok && r.error.code == "needs_ui");
+    CHECK(all.Find("op.go.arraydup")->summary.find("needs a person") != std::string::npos);
+    CHECK(d.Run("op.h.rename", R"({"object":"Box","name":"Crate"})").ok && d.ed.scene().Find("Crate"));
+    CHECK(d.Run("op.file.exit").error.code == "refused");
+    // A window toggle needs the editor's window: the headless host says so.
+    CHECK(d.Run("op.panel.console").error.code == "unavailable");
+    r = d.Run("op.file.new3d");   // unsaved changes: the save prompt would need a person
+    CHECK(!r.ok && r.error.code == "needs_ui");
+    CHECK(d.Run("op.file.new3d", R"({"discard":true})").ok && d.ed.scene().Objects().size() >= 2);
+}
+
+// ---- script.run -------------------------------------------------------------------------------------------------
+
+void TestScriptRun(Driver& d) {
+    RUN_SUITE("script.run: OkayScript, Lua and JavaScript in the host: output, value, errors with lines, a budget, one undo step, automation_call");
+    CHECK(d.Run("scene.new", R"({"template":"empty","discard":true})").ok);
+    auto run = [&](const std::string& lang, const std::string& src, const std::string& extra = "") {
+        Value p = Value::Obj().Set("language", Value::Str(lang)).Set("source", Value::Str(src));
+        if (!extra.empty()) for (auto& kv : J(extra).object) p.Set(kv.first, kv.second);
+        return automation::Commands().Run(d.host, "script.run", p);
+    };
+    auto printed = [](const Result& r, const std::string& what) {
+        const Value* o = r.ok ? r.data.Get("output") : r.error.details.Get("output");
+        if (o) for (const Value& l : o->array) if (l.string.find(what) != std::string::npos) return true;
+        return false;
+    };
+    Result r = run("okayscript", "print(\"hello okay\")\nresult = 1 + 2");
+    CHECK(r.ok && printed(r, "hello okay") && r.data.Get("value")->number == 3);
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    r = run("lua", "print('hello lua')\nreturn 40 + 2");
+    CHECK(r.ok && printed(r, "hello lua") && r.data.Get("value")->number == 42);
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    r = run("javascript", "console.log('hello js');\nreturn 6 * 7;");
+    CHECK(r.ok && printed(r, "hello js") && r.data.Get("value")->number == 42);
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    // Errors with the script's own line.
+    r = run("lua", "local x = 1\nerror('boom')");
+    CHECK(!r.ok && r.error.code == "failed" && r.error.details.Get("line")->number == 2);
+    std::cout << "  lua error: " << r.error.message << "\n";
+    r = run("javascript", "let a = 1;\nlet b = null;\nb.x = 2;");
+    CHECK(!r.ok && r.error.details.Get("line")->number == 3);
+    std::cout << "  js error: " << r.error.message << "\n";
+    r = run("okayscript", "x = 1\ny = (2 +\n");
+    CHECK(!r.ok && r.error.details.Get("line")->number >= 2);
+    std::cout << "  okayscript error: " << r.error.message << "\n";
+    // A runaway script stops at its budget.
+    r = run("lua", "while true do end", R"({"budget":100000})");
+    CHECK(!r.ok && r.error.details.Get("stopped")->boolean);
+    r = run("javascript", "while (true) {}", R"({"budget":100000})");
+    CHECK(!r.ok && r.error.details.Get("stopped")->boolean);
+    r = run("okayscript", "while (true) { for (i = 0; i < 10; i = i + 1) { } }", R"({"budget":100000})");   // nested: the per-loop cap alone would not stop it soon
+    CHECK(!r.ok && r.error.details.Get("stopped")->boolean);
+    std::cout << "  okayscript budget: " << r.error.message << "\n";
+    CHECK(okayscript::StepBudget() == -1);   // game scripts never get a budget from it
+    // automation_call in each language; a script's changes are one undo step.
+    const int depth0 = d.ed.UndoDepth();
+    r = run("lua", "local a = automation_call('object.create', {kind = 'cube', name = 'LuaBox'})\n"
+                   "local b = automation_call('object.create', {kind = 'sphere', name = 'LuaBall'})\n"
+                   "return a.ok and b.ok and a.data.name");
+    CHECK(r.ok && r.data.Get("value")->string == "LuaBox");
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    CHECK(d.ed.scene().Find("LuaBox") && d.ed.scene().Find("LuaBall") && d.ed.UndoDepth() == depth0 + 1);
+    CHECK(d.Run("undo.undo").ok && !d.ed.scene().Find("LuaBox") && !d.ed.scene().Find("LuaBall"));
+    r = run("javascript", "const r = automation_call('object.create', {kind: 'cube', name: 'JsBox'});\nreturn r.data.name;");
+    CHECK(r.ok && r.data.Get("value")->string == "JsBox" && d.ed.scene().Find("JsBox"));
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    r = run("okayscript", "r = automation_call(\"object.create\", {\"kind\": \"cube\", \"name\": \"OkBox\"})\nresult = r.data.name");
+    CHECK(r.ok && d.ed.scene().Find("OkBox"));
+    if (!r.ok) std::cout << "  " << r.error.message << "\n";
+    // The notice the editor shows in its Console.
+    bool notice = false;
+    for (const automation::LogLine& l : automation::LogSince(0, 0, 0)) if (l.text.find("Automation ran a script") != std::string::npos) notice = true;
+    CHECK(notice);
+    // Outside script.run, automation_call is refused; a script cannot start another script.
+    r = d.Run("script.call", R"({"function":"automation_call_json","args":["scene.info","{}"]})");
+    CHECK(!r.ok && r.error.message.find("only in a script run by") != std::string::npos);
+    r = run("lua", "return automation_call('script.run', {source = '1'}).ok");
+    CHECK(!r.ok || (r.data.Get("value") && !r.data.Get("value")->boolean));
+    // "Allow scripts from Automation" off: the running editor refuses.
+    {
+        oked::automation::EditorHost editorHost(d.ed, "editor");
+        oked::automation::ScriptsFlag() = false;
+        r = automation::Commands().Run(editorHost, "script.run", J(R"({"source":"result = 1"})"));
+        CHECK(!r.ok && r.error.code == "refused");
+        oked::automation::ScriptsFlag() = true;
+        CHECK(automation::Commands().Run(editorHost, "script.run", J(R"({"source":"result = 1"})")).ok);
+    }
+}
+
+// ---- Connect to Claude (shared/ClaudeConnect.hpp) ------------------------------------------------------------------
+
+void TestClaudeConnect(const TempDir& tmp) {
+    RUN_SUITE("Connect to Claude: the Claude Desktop config merge, its backup, broken JSON refused, the Claude Code line");
+    namespace cc = okay::claudeconnect;
+    std::string out, err;
+    // Other servers and settings stay; only okayspace is added.
+    const std::string before = R"({"globalShortcut":"Ctrl+Space","mcpServers":{"files":{"command":"npx","args":["-y","fs"]}},"theme":"dark"})";
+    CHECK(cc::MergeDesktopConfig(before, "C:/Program Files/OkaySpace/Tools/okay.exe", out, err));
+    Value v = J(out);
+    CHECK(v.Get("globalShortcut") && v.Get("globalShortcut")->string == "Ctrl+Space" && v.Get("theme")->string == "dark");
+    CHECK(v.Get("mcpServers")->Get("files") && v.Get("mcpServers")->Get("files")->Get("command")->string == "npx");
+    const Value* ours = v.Get("mcpServers")->Get("okayspace");
+    CHECK(ours && ours->Get("command")->string == "C:/Program Files/OkaySpace/Tools/okay.exe" && ours->Get("args")->array[0].string == "mcp");
+    CHECK(v.object.front().first == "globalShortcut");   // the order of keys is kept
+    // Run again with another path: updated, not doubled.
+    CHECK(cc::MergeDesktopConfig(out, "D:/Okay/okay.exe", out, err));
+    v = J(out);
+    CHECK(v.Get("mcpServers")->object.size() == 2 && v.Get("mcpServers")->Get("okayspace")->Get("command")->string == "D:/Okay/okay.exe");
+    // Broken JSON is refused with the reason; a config that is not an object too.
+    CHECK(!cc::MergeDesktopConfig("{\"mcpServers\": {", "okay", out, err) && err.find("not valid JSON") != std::string::npos);
+    CHECK(!cc::MergeDesktopConfig("[1,2]", "okay", out, err));
+    CHECK(!cc::MergeDesktopConfig(R"({"mcpServers":[]})", "okay", out, err));
+    // On disk: a missing file (and folder) is made; an existing one is backed up first; a broken one is left alone.
+    const std::string path = tmp.Sub("Claude/claude_desktop_config.json");
+    cc::SetupResult res = cc::AddToDesktopConfig(path, "/opt/okay space/okay");
+    CHECK(res.ok && res.created && fs::exists(path) && res.backup.empty() && res.message.find(cc::kAfterSetup) != std::string::npos);
+    { std::ofstream f(path, std::ios::trunc); f << before; }
+    res = cc::AddToDesktopConfig(path, "/opt/okay space/okay");
+    CHECK(res.ok && !res.created && fs::exists(path + ".bak"));
+    { std::ifstream b(path + ".bak"); std::string t((std::istreambuf_iterator<char>(b)), {}); CHECK(t == before); }
+    { std::ifstream f(path); std::string t((std::istreambuf_iterator<char>(f)), {}); Value w = J(t); CHECK(w.Get("mcpServers")->Get("files") && w.Get("mcpServers")->Get("okayspace")); }
+    { std::ofstream f(path, std::ios::trunc); f << "{ broken"; }
+    res = cc::AddToDesktopConfig(path, "/opt/okay space/okay");
+    { std::ifstream f(path); std::string t((std::istreambuf_iterator<char>(f)), {}); CHECK(!res.ok && t == "{ broken"); }
+    CHECK(!cc::AddToDesktopConfig(path, "").ok);
+    // The Claude Code line: a path with spaces in quotes.
+    CHECK(cc::ClaudeCodeCommand("C:\\Program Files\\OkaySpace\\Tools\\okay.exe") == "claude mcp add okayspace -- \"C:\\Program Files\\OkaySpace\\Tools\\okay.exe\" mcp");
+    CHECK(cc::ClaudeCodeCommand("/usr/local/bin/okay") == "claude mcp add okayspace -- /usr/local/bin/okay mcp");
+    // okay.exe is found beside the program or in its Tools folder.
+    fs::create_directories(tmp.Sub("install/Tools"));
+#if defined(_WIN32)
+    const char* exe = "okay.exe";
+#else
+    const char* exe = "okay";
+#endif
+    { std::ofstream f(tmp.Sub(std::string("install/Tools/") + exe)); f << "x"; }
+    CHECK(!cc::FindOkayProgram(tmp.Sub("install")).empty() && !cc::FindOkayProgram(tmp.Sub("install/Tools")).empty());
+    CHECK(cc::FindOkayProgram(tmp.Sub("nowhere")).empty());
+}
+
 } // namespace
 
 int main() {
@@ -585,7 +837,10 @@ int main() {
         TestVisualScripts(d, tmp);
         TestMcp(d, tmp);
         TestLink(d, tmp);
+        TestOps(d);
+        TestScriptRun(d);
     }
+    TestClaudeConnect(tmp);
     std::error_code ec;
     fs::remove_all(tmp.root, ec);
     TEST_MAIN_RESULT();

@@ -45,9 +45,10 @@ const std::vector<CommandHelp>& Commands() {
          "okay engine doctor  says what is missing (CMake, a compiler, Ninja) and where to get it."},
         {"mcp", "okay mcp [--scene S] [--editor | --headless]",
          "Let an AI agent run the engine: an MCP server on standard input and output.",
-         "Every automation command (okay automation list) is an MCP tool. With the editor open and View > Automation Link on,\n"
-         "the agent works in that editor (its scene, selection, undo and Play); otherwise the project is loaded with no window.\n"
-         "An agent starts it itself, in the project folder: command okay, arguments mcp."},
+         "Every automation command (okay automation list) is an MCP tool. It finds the open editor by itself (View > Automation\n"
+         "Link on): the agent works in that editor (its scene, selection, undo and Play), whatever project is open, so one entry\n"
+         "(command okay, argument mcp) serves every project. With no editor open it says so and ends; okay --project <folder> mcp\n"
+         "(or --headless) loads that project with no window instead. View > Automation Link > Connect to Claude adds the entry."},
         {"automation", "okay automation <list|describe|call|run|link> ...", "Run the engine's automation commands from scripts.",
          "The same commands okay mcp offers: list them, describe one, call one with JSON parameters, or run a file of them."},
         {"completion", "okay completion <bash|powershell>", "Print a script that completes okay's commands when you press Tab.",

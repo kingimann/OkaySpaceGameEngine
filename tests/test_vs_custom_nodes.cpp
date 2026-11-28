@@ -59,6 +59,11 @@ std::string FlowGraph(const std::string& lib, const std::string& type, const std
     t += "node 3 SetVar result\nexec 1 0 2\nexec 2 0 3\ndata 3 0 2 0\n";
     return t;
 }
+// On Start -> <flow node 2> -> Set Var ran = 1: whether the chain went on past node 2.
+std::string ChainGraph(const std::string& lib, const std::string& type) {
+    return "nodelib \"" + lib + "\"\nnode 1 OnStart\nentry OnStart 1\nnode 2 " + type +
+           "\nnode 3 SetVar ran\ndefault 3 0 1\nexec 1 0 2\nexec 2 0 3\n";
+}
 // On Start -> Set Var result (its value from the pure node 2's output `out`).
 std::string PureGraph(const std::string& lib, const std::string& type, const std::vector<std::string>& defaults, int out = 0) {
     std::string t = "nodelib \"" + lib + "\"\nnode 1 OnStart\nentry OnStart 1\nnode 2 " + type + "\n";
@@ -235,11 +240,11 @@ int main() {
             "node 3 SetVar big\nnode 4 SetVar small\ndefault 3 0 1\ndefault 4 0 1\nexec 1 0 2\nexec 2 0 3\nexec 2 1 4\n";
         Write(graphs / "exits.okayvs", exits);
         Run r4 = RunFile((graphs / "exits.okayvs").generic_string());
-        CHECK(r4.loaded && Var(r4, "small") == "1" && Var(r4, "big").empty());
+        CHECK(r4.loaded && Var(r4, "small") == "1" && Var(r4, "big") != "1");   // an unset variable reads 0
         // A body error: the node stops its chain with a message naming the node, the file and the line; the game goes on.
-        Write(graphs / "broken.okayvs", FlowGraph("Nodes/math.okay", "Custom.broken", {}));
+        Write(graphs / "broken.okayvs", ChainGraph("Nodes/math.okay", "Custom.broken"));
         Run r5 = RunFile((graphs / "broken.okayvs").generic_string());
-        CHECK(r5.loaded && Var(r5, "result").empty());
+        CHECK(r5.loaded && Var(r5, "ran") != "1");   // the chain stopped at the node
         CHECK(r5.lastError.find("custom node 'Broken'") != std::string::npos);
         CHECK(r5.lastError.find("math.okay") != std::string::npos);
         CHECK(r5.lastError.find("it broke") != std::string::npos);
@@ -279,9 +284,9 @@ int main() {
         Write(graphs / "lua2.okayvs", PureGraph("Nodes/more.lua", "Custom.low_high", {"9", "4"}, 1));
         Run r2 = RunFile((graphs / "lua2.okayvs").generic_string());
         CHECK(r2.loaded && Var(r2, "result") == "9");
-        Write(graphs / "lua3.okayvs", FlowGraph("Nodes/more.lua", "Custom.lua_boom", {}));
+        Write(graphs / "lua3.okayvs", ChainGraph("Nodes/more.lua", "Custom.lua_boom"));
         Run r3 = RunFile((graphs / "lua3.okayvs").generic_string());
-        CHECK(r3.loaded && Var(r3, "result").empty());
+        CHECK(r3.loaded && Var(r3, "ran") != "1");
         CHECK(r3.lastError.find("custom node 'Lua Boom'") != std::string::npos && r3.lastError.find("boom") != std::string::npos);
         CHECK(r3.lastError.find(":21:") != std::string::npos);   // the line of error("boom") in the file
         if (r3.lastError.find(":21:") == std::string::npos) std::printf("  lua error: %s\n", r3.lastError.c_str());

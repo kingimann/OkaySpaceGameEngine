@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 76 headers, 1131 names.
+Back to the [code index](../code_index.md). 77 headers, 1138 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -194,6 +194,16 @@ Back to the [code index](../code_index.md). 76 headers, 1131 names.
 ## `shared/BrowserPluginCommands.hpp`
 
 - `OwnerOf` function, line 15
+
+## `shared/ClaudeConnect.hpp`
+
+- `DesktopConfigPath` function, line 40: Claude Desktop's config file for this user ("" when the folder that holds it cannot be found).
+- `FindOkayProgram` function, line 56: The okay program for a program in 'exeDir': beside it, in its Tools folder, or in the Tools folder beside its folder
+- `QuoteArg` function, line 72: A path as one command-line word: in double quotes when it has a space or a shell character in it (a Windows path
+- `ClaudeCodeCommand` function, line 80: The Claude Code line that adds this engine as an MCP server.
+- `MergeDesktopConfig` function, line 86: Merge the okayspace entry into the config text 'text' ("" = a new file). False with 'error' when 'text' is not a JSON
+- `SetupResult` struct, line 115
+- `AddToDesktopConfig` function, line 123: Add or update the okayspace entry in the config file at 'configPath' (DesktopConfigPath()). Writes the backup first.
 
 ## `shared/CommandLinePanel.hpp`
 

@@ -376,7 +376,7 @@ Back to the [code index](../code_index.md). 83 headers, 526 names.
 - `Parse` function, line 232: Read 'text' as one JSON value. False (and 'out' left as Null) with a reason in 'error' for anything RFC 8259 does not
 - `Escape` function, line 249: Append 's' (UTF-8) to 'out' as a JSON string, with its quotes: '"' and '\\' escaped, \n, \r and \t, other control characters
 - `WriteNumber` function, line 270: Append a number as RFC 8259 section 6 writes it: a whole number below 2^53 without a fraction ("3", "-12"), anything
-- `Write` function, line 291: Append 'v' as compact JSON text (no white space; object keys in their stored order). Parse reads it back to an equal
+- `Write` function, line 293: Append 'v' as compact JSON text (no white space; object keys in their stored order). Parse reads it back to an equal
 
 ## `engine/include/okay/Core/LocCheck.hpp`
 

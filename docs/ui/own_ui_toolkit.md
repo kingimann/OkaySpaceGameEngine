@@ -3764,12 +3764,20 @@ Owner, 2026-11-27: "Okay ui needs a ton of more work". The coordinator's round 6
 | Audit: fixed-width buttons cut their label at 150% | a pixel width wins over the label | a button given a width its label does not fit grows to hold it (8 px each side) as far as the row allows | picture at 150% |
 | Audit: the New Project form at 150% | its label column was 84 px, "Location" ran into its field | the widest label and a gap, at least 84 px | picture at 150% |
 
+**Golden pictures.** 91 were made again, each compared with its old picture (old, new and the difference side by side, outside the
+repository): the text is the same words in the same places, drawn sharp (and the draw-list rasteriser the goldens use now samples font
+atlases: text drawn sharp at a size the launcher look does not bake had been left out of those pictures), the launcher's What's New
+dots are round, and the Project panel's Delete, Broken references and Move dialogs wrap their long line inside the dialog instead of
+running past it. `okayui_imcompat` takes its reordered-tab picture after the tabs have slid to their places.
+
 **How it was checked.** Linux, Xvfb, the own platform backend, `-O1`, test hooks on (`scripts/run_app_script.sh`): the editor's Inspector
 with the label column; five files dropped into a project and the Project panel in list view; the Console tab dragged over Project; Tab and
 the arrows in the "Open a project" dialog (the ring on a template row inside the list); the editor at 150% (`OKAY_APPEARANCE_FILE` with
 `uiScale` 1.5); the launcher's Software Update dialog (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`); and every Inspector body: the dev hook
 `OKAY_UI_INSPECTALL=<folder>` makes one object per component type the property registry knows and saves a picture of the editor with
-each selected. Pictures are outside the repository.
+each selected (95 of the 120 types got their picture in the run's time; an earlier run reached all 120 and showed the open-combo bug
+above). Pictures are outside the repository. Tests: every `okayui_*`, `launcher_*` and `editor_*` test (83) and `own_switches`,
+`own_stack`, `imgui_platform_feed` pass.
 
 **Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU (the software painter samples like one), a real
 display at 125% or 150% (the scale was set through the appearance file), and an input method. **Not done:** fields placed after

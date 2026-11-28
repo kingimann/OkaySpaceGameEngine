@@ -71,8 +71,9 @@ const ScriptApiEntry* FindScriptApi(const std::string& okayName) {
     return nullptr;
 }
 
-vs::VsValue CallScriptApiDynamic(const ScriptApiEntry& e, GameObject* self, const std::vector<vs::VsValue>& raw,
-                                 bool* warned, std::string* error) {
+vs::VsValue CallScriptApiChecked(const ScriptApiEntry& e, GameObject* self, const std::vector<vs::VsValue>& raw,
+                                 std::string& error) {
+    error.clear();
     // An OkayScript-only entry from AddScriptApi(name, fn) declares nothing: it gets the arguments as passed.
     const bool typed = !e.typedType.empty();
     try {
@@ -107,11 +108,20 @@ vs::VsValue CallScriptApiDynamic(const ScriptApiEntry& e, GameObject* self, cons
         if (e.ret == ScriptApiType::Bool && e.boolAsNumber) return vs::VsValue(r.AsBool() ? 1.0f : 0.0f);
         return As(e.ret, r);
     } catch (const ScriptApiError& ex) {
-        if (error) { *error = ex.what(); return Empty(e); }
-        if (!warned || !*warned) Log::Warning("[script] ", e.name, ": ", ex.what());
-        if (warned) *warned = true;
+        error = *ex.what() ? ex.what() : "the call failed";
         return Empty(e);
     }
+}
+
+vs::VsValue CallScriptApiDynamic(const ScriptApiEntry& e, GameObject* self, const std::vector<vs::VsValue>& raw,
+                                 bool* warned) {
+    std::string why;
+    vs::VsValue r = CallScriptApiChecked(e, self, raw, why);
+    if (!why.empty()) {
+        if (!warned || !*warned) Log::Warning("[script] ", e.name, ": ", why);
+        if (warned) *warned = true;
+    }
+    return r;
 }
 
 int ScriptApiDuplicateCount() { return g_duplicates.load(); }

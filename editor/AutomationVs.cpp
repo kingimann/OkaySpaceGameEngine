@@ -112,7 +112,11 @@ Result EditGraph(Call& c, EditorState& ed, bool create, const std::function<Resu
 
 } // namespace
 
-void AddVsCommands(Registry& r) {
+void AddVsCommands(Registry& reg) {
+    struct Named {   // every graph edit is the undo step "Edit Visual Script" (it carries only a file edit)
+        Registry& r;
+        bool Add(Command c) { c.undoName = "Edit Visual Script"; return r.Add(std::move(c)); }
+    } r{reg};
     r.Add(EditorCommand("vs.node_types", "List the visual script node types (the Visual Script editor's Add Block table) with their pins.",
               {okay::automation::Arg("filter", ParamType::String, "Only types whose name or title contains this.")},
               "{count, types: [{type, title, execIn, execOut, dataIn, dataOut, arg}]}", 0, [](Call& c, EditorState&) {

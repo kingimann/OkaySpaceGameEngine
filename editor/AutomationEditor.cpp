@@ -375,8 +375,8 @@ void AddPlayCommands(Registry& r) {
                   auto keyList = [&](const char* name, std::vector<char>& out) -> std::string {
                       if (const Value* v = c.Get(name)) for (const Value& k : v->array) {
                           if (!k.IsString()) return std::string(name) + " holds key names (text).";
-                          const char ch = okay::Input::KeyFromName(k.string);
-                          if (!ch) return "'" + k.string + "' is not a key name.";
+                          const char ch = okay::Input::IsKnownKeyName(k.string) ? okay::Input::KeyFromName(k.string) : 0;
+                          if (!ch) return "'" + k.string + "' is not a key name (a-z, 0-9, space, enter, shift, up, f1 ...).";
                           out.push_back(ch);
                       }
                       return {};

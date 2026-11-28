@@ -264,8 +264,12 @@ void TestSceneRoundTrip(Driver& d, const TempDir& tmp) {
     const std::string copy = r.ok ? r.data.Get("id")->string : std::string();
     CHECK(d.Run("object.rename", "{\"object\":\"" + copy + "\",\"name\":\"Box2\"}").ok);
     r = d.Run("scene.hierarchy", R"({"deep":true})");
-    CHECK(r.ok && r.data.Get("objects")->array.size() == 1);   // Holder is the one root
-    CHECK(r.ok && r.data.Get("objects")->array[0].Get("children")->array.size() == 2);
+    int holderKids = -1, roots = 0;
+    if (r.ok) for (const Value& o : r.data.Get("objects")->array) {
+        ++roots;
+        if (o.Get("name")->string == "Holder") holderKids = (int)o.Get("children")->array.size();
+    }
+    CHECK(roots == 2 && holderKids == 2);   // the new scene's Main Camera and Holder; Box and its copy under Holder
     r = d.Run("scene.find", R"({"component":"MeshRenderer"})");
     CHECK(r.ok && r.data.Get("count")->number == 2);
     CHECK(d.Run("object.delete", R"({"objects":["Box2"]})").ok);

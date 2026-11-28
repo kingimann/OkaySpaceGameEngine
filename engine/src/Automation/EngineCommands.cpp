@@ -438,7 +438,7 @@ void AddApi(Registry& r) {
                       args.push_back(std::move(v));
                   }
                   std::string why;
-                  vs::VsValue out = CallScriptApiDynamic(*e, self, args, nullptr, &why);
+                  vs::VsValue out = CallScriptApiChecked(*e, self, args, why);
                   if (!why.empty()) return Result::Fail(code::Failed, e->name + ": " + why);
                   return Result::Ok(Value::Obj().Set("value", ScriptValueToJson(out)));
               }, {code::NotFound, code::Failed}));

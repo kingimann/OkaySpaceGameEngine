@@ -6,6 +6,7 @@
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Core/PathSafety.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
 
@@ -26,55 +27,36 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// ---- small text helpers ------------------------------------------------------------------------------------------------
-std::string Trim(const std::string& s) {
-    std::size_t a = 0, b = s.size();
-    while (a < b && std::isspace((unsigned char)s[a])) ++a;
-    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
-    return s.substr(a, b - a);
-}
-std::string Lower(std::string s) {
-    for (char& c : s) c = (char)std::tolower((unsigned char)c);
-    return s;
-}
+// ---- small text helpers (the shared ones: Core/StringUtil.hpp) --------------------------------------------------------
+using str::LowerAscii;
+using str::Trim;
+std::vector<std::string> CommaList(const std::string& s) { return str::SplitTrimmed(s, ','); }
 bool StartsWith(const std::string& s, const std::string& p) { return s.compare(0, p.size(), p) == 0; }
-std::vector<std::string> SplitList(const std::string& s) {
+std::vector<std::string> TextLines(const std::string& text) {
     std::vector<std::string> out;
-    std::string cur;
-    for (char c : s) {
-        if (c == ',') { out.push_back(Trim(cur)); cur.clear(); }
-        else cur += c;
+    std::istringstream in(text);
+    std::string l;
+    while (std::getline(in, l)) {
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        out.push_back(l);
     }
-    if (!Trim(cur).empty() || !out.empty()) out.push_back(Trim(cur));
-    out.erase(std::remove_if(out.begin(), out.end(), [](const std::string& x) { return x.empty(); }), out.end());
-    return out;
-}
-std::vector<std::string> Lines(const std::string& text) {
-    std::vector<std::string> out;
-    std::string cur;
-    for (char c : text) {
-        if (c == '\n') { if (!cur.empty() && cur.back() == '\r') cur.pop_back(); out.push_back(cur); cur.clear(); }
-        else cur += c;
-    }
-    if (!cur.empty()) out.push_back(cur);
     return out;
 }
 bool IsIdentStart(char c) { return std::isalpha((unsigned char)c) || c == '_'; }
 bool IsIdentChar(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 
-/// A pin type from the word a script uses for it (Number, float, Text, string, Vector3...). False when unknown.
+/// A pin type from the word a script uses for it: the visual-script names (PinTypeFromName: Number, float, Text, string,
+/// Vector3...) and a few more a script writes (double, vector, Transform, array, table, value). False when unknown.
 bool PinTypeFromWord(const std::string& wordIn, PinType& out) {
-    const std::string w = Lower(Trim(wordIn));
-    if (w == "number" || w == "float" || w == "int" || w == "double" || w == "num") { out = PinType::Number; return true; }
-    if (w == "bool" || w == "boolean") { out = PinType::Bool; return true; }
-    if (w == "text" || w == "string" || w == "str") { out = PinType::Text; return true; }
-    if (w == "vector3" || w == "vec3" || w == "vector") { out = PinType::Vec3; return true; }
-    if (w == "object" || w == "gameobject" || w == "transform") { out = PinType::Object; return true; }
-    if (w == "list" || w == "array" || w == "table") { out = PinType::List; return true; }
-    if (w == "map" || w == "dictionary" || w == "dict") { out = PinType::Map; return true; }
-    if (w == "color" || w == "colour") { out = PinType::Color; return true; }
-    if (w == "any" || w == "value" || w.empty()) { out = PinType::Any; return true; }
-    return false;
+    const std::string w = LowerAscii(Trim(wordIn));
+    if (w == "double" || w == "num") { out = PinType::Number; return true; }
+    if (w == "str") { out = PinType::Text; return true; }
+    if (w == "vector") { out = PinType::Vec3; return true; }
+    if (w == "transform") { out = PinType::Object; return true; }
+    if (w == "array" || w == "table") { out = PinType::List; return true; }
+    if (w == "dict") { out = PinType::Map; return true; }
+    if (w == "value") { out = PinType::Any; return true; }
+    return PinTypeFromName(w, out);
 }
 
 /// "Value: Number = 1" -> a pin. False with `why` for a bad one.
@@ -103,10 +85,10 @@ VsValue DefaultValue(const VsPinSpec& p) {
     const std::string& d = p.def;
     switch (p.type) {
         case PinType::Number: { float f = 0; return VsParseFinite(d, f) ? VsValue(f) : VsValue(0.0f); }
-        case PinType::Bool: return VsValue(Lower(d) == "true" || d == "1");
+        case PinType::Bool: return VsValue(LowerAscii(d) == "true" || d == "1");
         case PinType::Text: return VsValue(d);
         case PinType::Vec3: {
-            const std::vector<std::string> parts = SplitList(d);
+            const std::vector<std::string> parts = CommaList(d);
             Vec3 v = Vec3::Zero;
             if (parts.size() != 3 || !VsParseFinite(parts[0], v.x) || !VsParseFinite(parts[1], v.y) || !VsParseFinite(parts[2], v.z))
                 v = Vec3::Zero;
@@ -154,7 +136,7 @@ bool FunctionOnLine(const std::string& lineIn, bool lua, std::string& name, std:
 }
 
 void ParseCommentHeaders(const std::string& text, bool lua, CustomNodeScript& out) {
-    const std::vector<std::string> lines = Lines(text);
+    const std::vector<std::string> lines = TextLines(text);
     const std::string mark = lua ? "--" : "//";
     for (std::size_t i = 0; i < lines.size(); ++i) {
         const std::string t = Trim(lines[i]);
@@ -176,7 +158,7 @@ void ParseCommentHeaders(const std::string& text, bool lua, CustomNodeScript& ou
             }
             std::size_t sp = 1;
             while (sp < body.size() && !std::isspace((unsigned char)body[sp])) ++sp;
-            const std::string tag = Lower(body.substr(1, sp - 1));
+            const std::string tag = LowerAscii(body.substr(1, sp - 1));
             const std::string val = Trim(body.substr(sp));
             lastTag = tag;
             std::string why;
@@ -185,7 +167,7 @@ void ParseCommentHeaders(const std::string& text, bool lua, CustomNodeScript& ou
             else if (tag == "category") d.info.category = val.empty() ? "Custom" : val;
             else if (tag == "help") d.info.help += (d.info.help.empty() ? "" : " ") + val;
             else if (tag == "flow") flow = true;
-            else if (tag == "exits") { d.info.exits = SplitList(val); flow = true; }
+            else if (tag == "exits") { d.info.exits = CommaList(val); flow = true; }
             else if (tag == "in" || tag == "out") {
                 VsPinSpec p;
                 if (!ParsePin(val, p, why)) problem(why);
@@ -231,8 +213,8 @@ std::size_t CloseParen(const std::string& s, std::size_t open) {
     }
     return std::string::npos;
 }
-// Split at top-level commas.
-std::vector<std::string> SplitArgs(const std::string& s) {
+// The pieces between top-level commas.
+std::vector<std::string> TopLevelArgs(const std::string& s) {
     std::vector<std::string> out;
     std::string cur;
     int depth = 0;
@@ -272,7 +254,7 @@ std::string CsLiteral(const std::string& litIn) {
     if (StartsWith(lit, "new Vector3(") && lit.back() == ')') {
         std::string inside = lit.substr(12, lit.size() - 13);
         std::string o;
-        for (const std::string& p : SplitArgs(inside)) { if (!o.empty()) o += ","; o += CsLiteral(p); }
+        for (const std::string& p : TopLevelArgs(inside)) { if (!o.empty()) o += ","; o += CsLiteral(p); }
         return o;
     }
     if (!lit.empty() && (lit.back() == 'f' || lit.back() == 'F') && lit.size() > 1 && std::isdigit((unsigned char)lit[lit.size() - 2])) lit.pop_back();
@@ -307,7 +289,7 @@ void ParseCsAttributes(const std::string& text, CustomNodeScript& out) {
         bool flow = false, bad = false;
         std::vector<std::string> inputLabels;
         std::string outputLabel = "Result";
-        const std::vector<std::string> args = SplitArgs(text.substr(open + 1, close - open - 2));
+        const std::vector<std::string> args = TopLevelArgs(text.substr(open + 1, close - open - 2));
         for (std::size_t k = 0; k < args.size(); ++k) {
             const std::string& a = args[k];
             const std::size_t eq = a.find('=');
@@ -316,13 +298,13 @@ void ParseCsAttributes(const std::string& text, CustomNodeScript& out) {
                 else { problem("only the first value of [Node] can be unnamed (the title)"); bad = true; }
                 continue;
             }
-            const std::string key = Lower(Trim(a.substr(0, eq)));
+            const std::string key = LowerAscii(Trim(a.substr(0, eq)));
             const std::string val = Unquote(a.substr(eq + 1));
             if (key == "category") d.info.category = val.empty() ? "Custom" : val;
             else if (key == "help") d.info.help = val;
-            else if (key == "flow") flow = Lower(val) == "true";
-            else if (key == "exits") { d.info.exits = SplitList(val); flow = true; }
-            else if (key == "inputs") inputLabels = SplitList(val);
+            else if (key == "flow") flow = LowerAscii(val) == "true";
+            else if (key == "exits") { d.info.exits = CommaList(val); flow = true; }
+            else if (key == "inputs") inputLabels = CommaList(val);
             else if (key == "output") outputLabel = val;
             else if (key == "base") {
                 const std::size_t s2 = val.find_first_of(" \t");
@@ -378,7 +360,7 @@ void ParseCsAttributes(const std::string& text, CustomNodeScript& out) {
         }
         const std::string inside = text.substr(pOpen + 1, pClose - pOpen - 2);
         std::size_t index = 0;
-        for (const std::string& p : SplitArgs(inside)) {
+        for (const std::string& p : TopLevelArgs(inside)) {
             std::string decl = p, lit;
             const std::size_t eq = p.find('=');
             if (eq != std::string::npos) { decl = Trim(p.substr(0, eq)); lit = Trim(p.substr(eq + 1)); }
@@ -489,8 +471,8 @@ int ExitOf(const VsNodeInfo& info, const VsValue& v) {
     const int n = (int)info.exits.size();
     if (v.IsBool()) return v.AsBool() ? 0 : (n > 1 ? 1 : 0);
     if (v.IsString()) {
-        const std::string s = Lower(Trim(v.AsString()));
-        for (int k = 0; k < n; ++k) if (Lower(info.exits[(std::size_t)k]) == s) return k;
+        const std::string s = LowerAscii(Trim(v.AsString()));
+        for (int k = 0; k < n; ++k) if (LowerAscii(info.exits[(std::size_t)k]) == s) return k;
         return -1;
     }
     if (v.IsNumber()) {
@@ -712,7 +694,7 @@ std::string CustomNodeLanguageFor(const std::string& path) {
     const std::size_t dot = path.find_last_of('.');
     const std::size_t slash = path.find_last_of("/\\");
     if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return std::string();
-    const std::string e = Lower(path.substr(dot + 1));
+    const std::string e = LowerAscii(path.substr(dot + 1));
     if (e == "okay" || e == "okayscript") return "okayscript";
     if (e == "lua") return "lua";
     if (e == "cs") return "cs";
@@ -879,7 +861,7 @@ int CustomNodesRevision() { return g_libRevision.load(); }
 
 std::vector<std::string> CustomNodeLibsInGraphText(const std::string& graphText) {
     std::vector<std::string> out;
-    for (const std::string& line : Lines(graphText)) {
+    for (const std::string& line : TextLines(graphText)) {
         const std::string t = Trim(line);
         if (!StartsWith(t, "nodelib") || t.size() < 9 || !std::isspace((unsigned char)t[7])) continue;
         // A graph embedded in a scene keeps its lines with the quotes escaped (\"): read both spellings.
@@ -990,7 +972,7 @@ std::string CsString(const std::string& s) {
     return o + "\"";
 }
 // The body expression when the language can do the node's job itself (the same rules the node uses), else "".
-std::string OwnBody(const CustomVersionSpec& s, const std::string& language, const std::vector<std::string>& p) {
+std::string BodyItDoes(const CustomVersionSpec& s, const std::string& language, const std::vector<std::string>& p) {
     const std::string& t = s.baseType;
     const bool lua = language == "lua";
     if (s.ins.size() == 2 && s.outs.size() == 1 && !s.execIn) {
@@ -1056,7 +1038,7 @@ bool MakeCustomVersionScript(const CustomVersionSpec& s, const std::string& lang
     const std::string help = OneLine(s.help.empty() ? "A custom version of " + (s.title.empty() ? s.baseType : s.title) + "." : s.help);
     const std::string category = OneLine(s.category.empty() ? std::string("Custom") : s.category);
     const bool exits = s.execIn && s.exits.size() > 1;
-    std::string own = OwnBody(s, language, p);
+    std::string own = BodyItDoes(s, language, p);
     std::string api = language == "cs" ? CsApiCall(s, p) : std::string();
     const bool base = own.empty() && api.empty();
     const std::string baseLine = s.baseType + (s.baseArg.empty() ? std::string() : " " + OneLine(s.baseArg));

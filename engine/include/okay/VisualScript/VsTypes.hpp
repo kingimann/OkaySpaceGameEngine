@@ -27,6 +27,9 @@ PinType ConstType(const std::string& arg);
 /// The output type of `type`'s pin `pin` given the node's text field (Const).
 PinType OutputType(const std::string& type, int pin, const std::string& arg = "");
 PinType InputType(const std::string& type, int pin);
+/// A pin type from its name as a function signature or a custom node writes it ("Number", "float", "Text", "Vector3",
+/// "Object", "List", "Map", "Color", "Any"; case does not matter). False for an unknown name.
+bool PinTypeFromName(const std::string& name, PinType& out);
 
 /// Pin types that come from declared variables: Get Var / Get Scene Var / Get Global Var
 /// give the variable's declared type, and Set / Add Var take it. Any when `type` isn't one of

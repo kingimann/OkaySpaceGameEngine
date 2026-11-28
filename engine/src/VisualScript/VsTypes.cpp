@@ -843,6 +843,8 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
 }
 } // namespace
 
+bool PinTypeFromName(const std::string& name, PinType& out) { return TypeFromName(name, out); }
+
 std::string FunctionNameOf(const std::string& text) {
     const auto open = text.find('(');
     return Trim(open == std::string::npos ? text : text.substr(0, open));

@@ -3,6 +3,7 @@
 // Add to this file instead of writing another Trim/Lower/Split next to your code. Header-only, std only.
 // Written from scratch for this engine.
 #include <string>
+#include <vector>
 
 namespace okay::str {
 
@@ -43,6 +44,20 @@ inline std::string Trim(const std::string& s) {
     while (b < e && space(s[b])) ++b;
     while (e > b && space(s[e - 1])) --e;
     return s.substr(b, e - b);
+}
+
+// `s` cut at every `sep`, each piece trimmed (Trim), the empty pieces left out: "a, b,,c " -> {"a", "b", "c"}.
+inline std::vector<std::string> SplitTrimmed(const std::string& s, char sep) {
+    std::vector<std::string> out;
+    std::size_t a = 0;
+    while (a <= s.size()) {
+        std::size_t b = s.find(sep, a);
+        if (b == std::string::npos) b = s.size();
+        std::string piece = Trim(s.substr(a, b - a));
+        if (!piece.empty()) out.push_back(std::move(piece));
+        a = b + 1;
+    }
+    return out;
 }
 
 // The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.

@@ -213,12 +213,15 @@ int entry(void) {
 // - `c ? f() : s` with a class prvalue and an lvalue s took s's bytes without its copy constructor ([expr.cond] 7): the
 //   result shared s's buffer [a change to the copy changed s, exit 3];
 // - an `explicit` constructor made implicit conversions ([class.conv.ctor] 1) [the overload taking the class was
-//   chosen for an int, exit 5].
+//   chosen for an int, exit 5]; std::string's string_view members ([string.cons] 4, [string.assign]) are written
+//   out, as `explicit string(string_view)` no longer stands in for them (TextReaderUtil.hpp's `r[n].assign(s, a, len)`).
 static void r35_wrong_code(Tally& tally) {
     std::printf("r35_wrong_code\n");
     okayms_test::run_both(kRun, tally, "wrong_code", std::string(kAlloc) + R"OKMS(
 #include <array>
 #include <string>
+#include <string_view>
+#include <vector>
 static int made = 0;
 static int gone = 0;
 struct Tracked { int v; Tracked() : v(7) { ++made; } ~Tracked() { ++gone; } };
@@ -252,6 +255,16 @@ int entry(void) {
   { std::string a = Name(0); a[0] = 'X'; }
   CK(5, g_name == "Default" && Name(3) == "Layer 3");
   CK(6, Pick(3) == 2 && Pick(Wrapped(3)) == 1);
+  std::string_view sv = "hello world";
+  std::vector<std::string> r;
+  r.emplace_back(sv, 6, 5);
+  std::string b;
+  b.assign(sv, 0, 5);
+  b.insert(0, sv.substr(10, 1));
+  b.replace(1, 1, sv.substr(4, 1));
+  std::string c;
+  c.assign(sv.substr(6));
+  CK(7, r[0] == "world" && b == "doello" && c == "world");
   return 0;
 }
 )OKMS", 0);

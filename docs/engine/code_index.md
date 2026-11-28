@@ -16,7 +16,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Backend | 8 | 39 | [code_index/engine-Backend.md](code_index/engine-Backend.md) |
 | engine-Browser | 15 | 206 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
-| engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
+| engine-Components | 261 | 746 | [code_index/engine-Components.md](code_index/engine-Components.md) |
 | engine-Core | 83 | 526 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 83 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |

@@ -2,7 +2,7 @@
 
 # Code index: engine-Components
 
-Back to the [code index](../code_index.md). 261 headers, 740 names.
+Back to the [code index](../code_index.md). 261 headers, 746 names.
 
 ## `engine/include/okay/Components/ActionList.hpp`
 
@@ -350,9 +350,14 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/EventSystem.hpp`
 
-- `SceneEventSystem` function, line 32: The EventSystem governing a scene's UI. Returns
-- `SceneHasEventSystem` function, line 33
-- `EventSystem` class, line 41: The single place pointer input meets the UI, mirroring EventSystem.
+- `UIIsPointerTarget` function, line 35: True for a widget the player works with the pointer (a button, toggle, slider, text field,
+- `SceneEventSystem` function, line 45: The EventSystem governing a scene's UI. Returns
+- `SceneHasEventSystem` function, line 46
+- `SceneHasSeveralEventSystems` function, line 49: True when the scene has more than one active Event System (only the first one is used).
+- `UIBlocksWorldPointer` function, line 53: Scene::DispatchPointer asks this: true when the pointer is over UI and the scene's Event
+- `UIEvent` struct, line 56: One thing the Event System did this frame, for the Inspector readout, scripts and tests.
+- `UIEventName` function, line 63: "enter", "exit", "down", "up", "click", "drag begin", "drag", "drag end", "select", "submit", "cancel".
+- `EventSystem` class, line 81: The one place game UI input goes through.
 
 ## `engine/include/okay/Components/FirstPersonController.hpp`
 
@@ -1195,7 +1200,8 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 - `UIDrawsAbove` function, line 1057: Is 'a' drawn over 'b'? The same order the renderer uses: owning Canvas sort order, then
 - `UIIsSelfOrAncestor` function, line 1068: Is 'go' an ancestor of (or the same object as) 'child'?
 - `UIPointerBlockedByPanel` function, line 1077: Is the point 'p' covered by a pointer-blocking panel drawn above 'go'? (A panel with
-- `UIClipHitTest` function, line 1095: The host's 'UIWorld().clipContains': clip hover, presses and releases to the
+- `UIEventSystemReaches` function, line 1095: The scene's Event System lets the pointer at 'p' reach 'go': no other interactive widget drawn
+- `UIClipHitTest` function, line 1100: The host's 'UIWorld().clipContains': clip hover, presses and releases to the
 
 ## `engine/include/okay/Components/UIFilePicker.hpp`
 
@@ -1259,13 +1265,13 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/UINavigation.hpp`
 
-- `IsNavFocusable` function, line 26: True when NavigateUI would let focus rest on this object: an enabled, focusable, interactable
-- `UITextFieldHasKeyboard` function, line 43: True while a text field has the keyboard: typing letters, Space and Enter belong to the
-- `BuildFocusGraph` function, line 57: Fill 'graph' (cleared first) with the scene's focusable widgets that are on screen now (visible,
-- `SetWidgetFocused` function, line 74
-- `ScrollWidgetIntoView` function, line 88: Scroll the nearest Scroll View or List View just enough that 'go' is on screen.
-- `SetUIFocus` function, line 123: Move menu focus to 'go', scroll it into view, and show the focus ring.
-- `NavigateUI` function, line 152: Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
+- `IsNavFocusable` function, line 27: True when NavigateUI would let focus rest on this object: an enabled, focusable, interactable
+- `UITextFieldHasKeyboard` function, line 44: True while a text field has the keyboard: typing letters, Space and Enter belong to the
+- `BuildFocusGraph` function, line 58: Fill 'graph' (cleared first) with the scene's focusable widgets that are on screen now (visible,
+- `SetWidgetFocused` function, line 75
+- `ScrollWidgetIntoView` function, line 89: Scroll the nearest Scroll View or List View just enough that 'go' is on screen.
+- `SetUIFocus` function, line 124: Move menu focus to 'go', scroll it into view, and show the focus ring.
+- `NavigateUI` function, line 157: Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
 
 ## `engine/include/okay/Components/UIOwnerData.hpp`
 

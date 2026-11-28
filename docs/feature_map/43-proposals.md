@@ -556,16 +556,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Change game settings (prices, event dates, feature switches) from a server without shipping a new build.
 - **Parts:**
   - 49.4.1 Cvars (merged #571) - `Core/Cvar` - named settings that can be loaded from a file or the command line; no remote source
-  - 49.4.2 Remote fetch - `-` - not built
+  - 49.4.2 Remote source - `shared/ContentLiveConfig.hpp` (Live Updates, 18.11) - a `.okaylive` file in the signed content (key, value, start and end time); `LiveConfig::ApplyTo` sets cvars through `Cvar::Set` (types, ranges, read-only and cheat flags kept); not wired into the player yet
 - **Code:** `Core/Cvar`
 - **API:** `Cvars::Int`, `Cvars::Load`
 - **Editor:** none
 - **Docs:** `docs/engine/core_tools.md`
 - **Tests:** `core_console`
-- **Status:** Planned - cvars exist locally; nothing fetches settings from a server.
-- **Exists today:** Local cvars only.
+- **Status:** Planned - cvars exist locally; the remote source exists and is tested (18.11) but the player does not apply it yet.
+- **Exists today:** Local cvars; `LiveConfig` (signed, scheduled) not wired.
 - **Suggested priority:** Low.
-- **Open:** first step: a signed JSON file fetched at start that sets cvars; falls back to the shipped defaults offline.
+- **Open:** the player loads `LiveConfig` from the verified content and calls `ApplyTo` with the Cvar registry at start-up and at each `NextChange`; offline it keeps the last good content's values.
 - **Related:** 54.3, 49.1
 - **Words:** remote config, feature flags, live ops, server settings, hotfix values
 - **Seen as:** need to tweak a value without an update

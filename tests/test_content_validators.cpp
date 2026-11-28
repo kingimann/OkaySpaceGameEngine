@@ -73,6 +73,10 @@ int main() {
         e.path = "s/bad.okayscript"; CHECK(!ValidateContentFile(e, write("bad.okayscript", badScript)).empty());
         e.path = "s/good.okayscript"; CHECK(ValidateContentFile(e, write("good.okayscript", goodScript)).empty());
         e.path = "s/empty.okayvs";  CHECK(!ValidateContentFile(e, write("empty.okayvs", "")).empty());       // empty is refused
+        e.kind = Kind::Config;      // live config (shared/ContentLiveConfig.hpp): a damaged one is refused whole
+        e.path = "live/good.okaylive"; CHECK(ValidateContentFile(e, write("good.okaylive", "okay-live 1\nset\tspeed\t10\t-\t-\n")).empty());
+        e.path = "live/bad.okaylive";  CHECK(!ValidateContentFile(e, write("bad.okaylive", "okay-live 1\nspeed=10\n")).empty());
+        e.kind = Kind::Script;
         e.path = "s/missing.okayvs"; CHECK(!ValidateContentFile(e, (d / "none").string()).empty());          // unreadable is refused
         e.kind = Kind::Data; e.path = "d/x.okaydata"; CHECK(ValidateContentFile(e, write("x.okaydata", "hp=1\n")).empty());   // data has no code
     }

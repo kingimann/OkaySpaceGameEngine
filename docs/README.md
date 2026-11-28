@@ -183,7 +183,7 @@ Each folder has a `README.md` that lists every page with one line each.
 | [content/](content/README.md) | Getting models in: import, our own model readers, real-file tests. |
 | [release/](release/README.md) | Getting builds to players: build pipeline, packaging, releasing, channels, the updater, installing, downloadable content. |
 | [verification/](verification/README.md) | The owner's test checklists for the Windows release (generated). |
-| [design/](design/modular_gameplay_contracts.md) | The modular engine: [the design](design/modular_gameplay_contracts.md) and [the state of each stage](design/modular_status.md) (no folder README). |
+| [design/](design/modular_gameplay_contracts.md) | The modular engine: [the design](design/modular_gameplay_contracts.md) and [the state of each stage](design/modular_status.md); Live Updates: [the foundations](design/live_updates.md) (no folder README). |
 | [feature_map/](feature_map/README.md) | The hand-written feature map pages, one per area; the source of FEATURE_MAP.md and SYSTEMS.md. |
 | [try_it/](try_it/) | Old "how to try it" entries, the source of try_it.md. |
 

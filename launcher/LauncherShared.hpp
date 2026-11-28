@@ -272,7 +272,11 @@ std::vector<fs::path> FindScenes();
 int FriendsListWorker(void*);
 std::string GameTitleFromPath(const std::string& path);
 std::string InviteMessageBody(const std::string& title, const std::string& link);
-bool IsBuiltGame(const fs::path& scene);
+/// May the launcher play this? Only an exported game (okaylib::IsExportedGame in shared/LibraryScan.hpp, cached here for a few
+/// seconds because it looks in folders). Every way the launcher starts a game asks this (owner, 2026-11-28).
+bool IsExportedGame(const fs::path& scene);
+/// IsExportedGame, and when it is not one says so in a toast ("Export this project from the editor (Build) to play it.").
+bool PlayerMayRun(const std::string& scene);
 std::string LastOnline(long when);
 void PlayChatChime();
 int MyOnlineStatus();   // your status: okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp)

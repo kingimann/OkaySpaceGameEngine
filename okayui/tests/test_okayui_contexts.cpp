@@ -31,7 +31,7 @@ const char* const kShared[] = {
     // fonts: the atlas, the fallback fonts, the loaded font list (a font pointer works in any context)
     "g_fbFonts", "g_nfb", "kAtlasTex", "kFontBold", "kFontDefault", "g_atlas", "g_built", "Build()::bytes",
     "g_atlasRef", "g_fontPool", "g_nFontPool", "g_fontReqs", "g_nFontReqs", "g_userFonts", "g_nUserFonts", "g_b85", "g_nB85", "g_ttfs",
-    "g_nTtfs", "AddFontTtfFile(char const*, float)::keep", "g_boxes",
+    "g_nTtfs", "KeptFontFiles()::keep", "g_boxes",
     // one clipboard for the program; the platform callbacks are the program's
     "g_clip", "GetPlatformIO()::pio",
     // scratch and answers valid until the next call; constant tables

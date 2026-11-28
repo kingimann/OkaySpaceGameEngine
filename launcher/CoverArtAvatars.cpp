@@ -13,6 +13,12 @@ namespace okl {
 // <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
 std::map<std::string, okay::ui2d::Tex> g_coverCaches[2];
+// Covers are drawn 300 x 169 at most (the official game's card); 768 keeps them sharp up to 2.5x display scaling, and a
+// 1920 x 1080 cover takes 1.3 MB instead of 8.3 MB (plus the driver's copy on Windows).
+constexpr int kCoverMaxSide = 768;
+// Avatar URLs also carry chat photos, which the lightbox shows up to the window's size (never larger than the picture): 2048
+// keeps that for any launcher window up to 2048 pixels wide, and a 4000 x 3000 photo takes 12 MB instead of 48 MB.
+constexpr int kChatImageMaxSide = 2048;
 
 okay::ui2d::Tex GameCover(const std::string& gamePath) {
     auto it = g_coverCache.find(gamePath);
@@ -28,7 +34,7 @@ okay::ui2d::Tex GameCover(const std::string& gamePath) {
         for (const auto& c : cands) {
             if (!fs::exists(c, ec)) continue;
             int w = 0, h = 0;
-            unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
+            unsigned char* px = LoadRgbaFile(c.string(), &w, &h, kCoverMaxSide);
             if (!px) continue;
             tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
@@ -90,7 +96,7 @@ okay::ui2d::Tex AvatarTexture(const std::string& url) {
         // Already downloaded: decode + upload here (fast), then cache the texture.
         okay::ui2d::Tex tex = nullptr;
         int w = 0, h = 0;
-        unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
+        unsigned char* px = LoadRgbaFile(cache.string(), &w, &h, kChatImageMaxSide);
         if (px) {
             tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);

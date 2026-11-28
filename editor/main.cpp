@@ -44319,6 +44319,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::StartupMark("[startup] editor", "main() entered");   // OKAY_STARTUP_REPORT: the start-up milestones (okay/Core/Memory.hpp)
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
@@ -44386,6 +44387,12 @@ int main(int argc, char** argv) {
     // The window, input, audio and gamepads are our own okay::platform backend.
     okay::platform::Backend* plat = okay::platform::Default();
     if (!plat) { std::cerr << "no okay::platform backend in this build\n"; return 1; }
+    okay::thr::ThreadFinishedHook() = &okay::platform::WakeMainLoop;   // a finished background job ends the idle wait at once
+    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT (okay/Core/Memory.hpp): the big owners the report lists
+        okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
+        okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
+        okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return OkayUI::UserFontMemoryBytes(); });
+    }
     plat->SetPerMonitorDpiAware();
     if (!plat->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
         std::cerr << "the window system could not start: " << plat->LastError() << "\n";
@@ -44430,6 +44437,7 @@ int main(int argc, char** argv) {
     // The 2D painter: OpenGL on the window, else the software painter (shared/OwnPainter.hpp; OKAY_OWN_PAINTER=software picks it).
     okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);
     okay::pb::Renderer* renderer = okay::pb::CreateRenderer(*winSeam);
+    okay::StartupMark("[startup] editor", "window and painter made");
     if (!renderer) { std::cerr << "CreateRenderer failed: " << plat->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
@@ -44485,7 +44493,7 @@ int main(int argc, char** argv) {
     };
     // One loading frame: begin start-up step `step` (the steps before it count as done) and show it.
     auto splashFrame = [&](const char* step) {
-        if (step) StartSplash().steps.Begin(step);
+        if (step) { StartSplash().steps.Begin(step); okay::StartupMark("[startup] editor", std::string("step: ") + step); }   // OKAY_STARTUP_REPORT
         StartSplash().style = splashStyle();
         const okay::SplashProgress st = StartSplashProgress();
         int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
@@ -44904,6 +44912,7 @@ int main(int argc, char** argv) {
     int testExitCode = 0;
 #endif
     okay::editor::hang::Start(OKAY_ENGINE_VERSION);   // from here a main loop that stops for OKAY_HANG_REPORT_S (5 s) is reported
+    okay::StartupMark("[startup] editor", "main loop starts");
     while (running) {
         std::uint64_t g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
@@ -46436,6 +46445,9 @@ int main(int argc, char** argv) {
 #endif
         DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
+        okay::MemoryReportTick("[memory] editor", (double)okay::platform::TicksMs() / 1000.0);   // OKAY_MEMORY_REPORT: while it runs
+        okay::StartupMark("[startup] editor", "first frame drawn");                              // OKAY_STARTUP_REPORT
+        if (StartSplash().finish.Done()) okay::StartupMark("[startup] editor", "interactive (loading screen gone)");
 
 
         {   // Frame limiter (View > Rendering, off by default) and idle throttle (on by default): sleep out the rest of the frame budget.
@@ -46458,7 +46470,13 @@ int main(int argc, char** argv) {
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((uint32_t)(wait * 1000.0)); }
+                if (wait >= 0.001) {
+                    OKAY_PROFILE("Pacing.Sleep");
+                    // The idle sleep ends at once on a mouse move, a key, a window event or a finished background job
+                    // (okay::thr::ThreadFinishedHook); the frame cap's sleep does not, so the cap holds.
+                    if (okay::editor::perf::SleepEndsOnInput(ps, target)) plat->WaitEvents((uint32_t)(wait * 1000.0));
+                    else okay::platform::DelayMs((uint32_t)(wait * 1000.0));
+                }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).
@@ -46486,10 +46504,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
-    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT=1: the memory at the end of the session, before anything is freed
-        okay::AddMemoryCounter("Fonts: TrueType cache (OkayUI and engine text)", [] { return okay::FontCacheBytes(); });
-        std::fputs(okay::MemoryReportText("[memory] editor").c_str(), stdout); std::fflush(stdout);
-    }
+    if (okay::MemoryReportWanted()) okay::EmitMemoryReport("[memory] editor at exit");   // before anything is freed
     DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window

@@ -213,9 +213,15 @@ constructor that throws gives the slot back.
 **Memory report** (`Memory.hpp` / `src/Core/Memory.cpp`, claude/memory-1). `QueryProcessMemory()` reads the process's resident,
 private and peak memory (Linux `/proc/self/status`: VmRSS, RssAnon, VmHWM; Windows `K32GetProcessMemoryInfo`: WorkingSetSize,
 PrivateUsage, PeakWorkingSetSize, looked up at run time). `AddMemoryCounter(name, fn)` registers a named byte counter (the
-fonts register `FontCacheBytes`), and `MemoryReportText(title)` prints both, biggest counter first. With
-`OKAY_MEMORY_REPORT=1` the editor and the launcher print the report to stdout when their main loop ends. Tested in
-`tests/test_arena_handles.cpp` (the status parser, a 64 MB allocation seen, the counters).
+fonts register `FontCacheBytes`), and `MemoryReportText(title)` prints both, biggest counter first; a counter named
+"of which ..." is a part of another (the cover textures are painter textures) and is listed after the owners, outside the
+sum. With `OKAY_MEMORY_REPORT=1` the editor and the launcher report once 10 s after start and once at exit; with a number of
+seconds (`OKAY_MEMORY_REPORT=60`) every that many seconds too. Each report goes to stdout and is appended to
+`<Paths::LogDir()>/memory_report.txt` (Windows: `%LOCALAPPDATA%\OkaySpace\logs`), since the Windows programs have no console.
+Owners counted: every painter's textures (`okay::platform::PainterTextures`, kept by `CountedTexture` in the GL and software
+painters), the engine font cache, OkayUI's fonts (`OkayUI::UserFontMemoryBytes`), and in the launcher the emoji sheet, cover,
+avatar and chat GIF textures. The share the counters do not explain is the program code, the graphics driver and the heap.
+Tested in `tests/test_arena_handles.cpp` (the status parser, a 64 MB allocation seen, the counters, the parts, the period).
 
 ### Handles: SlotMap
 

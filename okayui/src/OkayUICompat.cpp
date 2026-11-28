@@ -294,6 +294,11 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const c
 // With a wrap width, or line breaks in the text: Dear ImGui's measure of the wrapped lines (the widest line, a text line per line).
 Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float wrapWidth) {
     if (!text) return Vec2{0, 0};
+    // The common call (a whole string, no "##" to hide, no wrap): measured in place. It runs for every label every frame, and the
+    // copy below was a heap allocation for each label longer than 15 bytes.
+    const bool wraps = std::isfinite(wrapWidth) && wrapWidth > 0.0f;
+    if (!wraps && (!textEnd || *textEnd == '\0') && (!hideAfterHash || !std::strstr(text, "##")) && !std::strchr(text, '\n'))
+        return CalcTextSize(text);
     std::string buf(text, textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text));
     if (hideAfterHash) buf.resize((std::size_t)(FindRenderedTextEnd(buf.c_str()) - buf.c_str()));
     if ((std::isfinite(wrapWidth) && wrapWidth > 0.0f) || buf.find('\n') != std::string::npos)
@@ -440,11 +445,20 @@ Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const ch
     u = *FontDefault(); u.ttf = e->font.get(); u.px = px;
     return &u;
 }
+namespace {
+std::vector<std::vector<unsigned char>>& KeptFontFiles() { static std::vector<std::vector<unsigned char>> keep; return keep; }
+}
+std::size_t UserFontMemoryBytes() {
+    std::size_t n = 0;
+    for (int i = 0; i < g_nTtfs; ++i) if (g_ttfs[i].font) n += g_ttfs[i].font->MemoryBytes();
+    for (const auto& f : KeptFontFiles()) n += f.capacity();
+    return n;
+}
 Font* AddFontTtfFile(const char* path, float px) {
     if (!path || !*path) return nullptr;
     FILE* fp = std::fopen(path, "rb");
     if (!fp) return nullptr;
-    static std::vector<std::vector<unsigned char>> keep;   // the bytes of files read here (the font copies them; the key must stay unique per file)
+    auto& keep = KeptFontFiles();   // the bytes of files read here (the font copies them; the key must stay unique per file)
     std::vector<unsigned char> b; unsigned char tmp[4096]; std::size_t n;
     while ((n = std::fread(tmp, 1, sizeof tmp, fp)) > 0 && b.size() < (64u << 20)) b.insert(b.end(), tmp, tmp + n);
     std::fclose(fp);

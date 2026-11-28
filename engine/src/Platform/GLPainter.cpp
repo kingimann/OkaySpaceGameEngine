@@ -122,6 +122,7 @@ inline int CeilC(double v) { return Pin(std::ceil(v - 0.5)); }   // first pixel 
 inline std::uint8_t Mul255(int a, int b) { const int t = a * b + 128; return (std::uint8_t)((t + (t >> 8)) >> 8); }
 
 struct GTex {
+    CountedTexture counted;   // its share of PainterTextures() (the memory report)
     GLuint_ id = 0, fbo = 0;
     int w = 0, h = 0;
     BlendMode blend = BlendMode::Blend;
@@ -323,6 +324,7 @@ public:
             if (!ok) { FreeTex(t); delete t; return nullptr; }
         }
         m_texs.insert(t);
+        t->counted.Count(t->w, t->h);
         return t;
     }
     bool UpdateTexture(ui2d::Tex tex, const ui2d::Rect* r, const void* rgba, int pitch) override {
@@ -332,6 +334,7 @@ public:
         if (r) rc = *r;
         if (rc.x < 0 || rc.y < 0 || rc.w <= 0 || rc.h <= 0 || rc.x + (long long)rc.w > t->w || rc.y + (long long)rc.h > t->h) return false;
         if (pitch < rc.w * 4) return false;
+        NotePainterTextureChange();
         Use(); FlushBatch();
         m_gl.BindTexture(kTexture2D, t->id);
         if (pitch % 4 == 0) {
@@ -423,6 +426,7 @@ public:
     bool SetRenderTarget(ui2d::Tex tex) override {
         GTex* nt = nullptr;
         if (tex) { nt = (GTex*)tex; if (!m_texs.count(nt) || !nt->target) return false; }
+        if (nt) NotePainterTextureChange();   // whatever is drawn next changes that texture's pixels
         if (nt == m_target) return true;
         Use(); FlushBatch();
         if (m_target) {   // back to the window's clip and scale

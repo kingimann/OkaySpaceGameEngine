@@ -572,6 +572,9 @@ void TestMemoryReport() {
         for (std::size_t i = 0; i < big.size(); i += 4096) big[i] = (unsigned char)i;
         const ProcessMemory b = QueryProcessMemory();
         CHECK(b.privateBytes > a.privateBytes + (48u << 20));
+        const std::size_t heapNow = HeapInUseBytes();   // the vector is on the heap
+        CHECK(heapNow >= (64u << 20));
+        CHECK(MemoryReportText("t").find("heap in use") != std::string::npos);
         CHECK(big[4096] == 0);   // (keeps the writes)
     }
 #endif
@@ -587,6 +590,36 @@ void TestMemoryReport() {
     CHECK(r.find("test: fonts") != std::string::npos && r.find("6.0 MB") != std::string::npos);
     CHECK(r.find("test: fonts") < r.find("test: thumbnails"));   // biggest first
     CHECK(r.find("counted owners: 7.0 MB") != std::string::npos);
+    // A part of another owner ("of which ...") is listed after the owners and not added to the sum.
+    AddMemoryCounter("of which test: big fonts", [] { return (std::size_t)(5u << 20); });
+    const std::string r2 = MemoryReportText("[memory] test");
+    CHECK(r2.find("counted owners: 7.0 MB") != std::string::npos);
+    CHECK(r2.find("of which test: big fonts") > r2.find("test: thumbnails"));
+    RemoveMemoryCounter("of which test: big fonts");
+    // How often a running program reports: OKAY_MEMORY_REPORT unset = never, "1" = once after 10 s, "30" = every 30 s.
+#if defined(_WIN32)
+    _putenv_s("OKAY_MEMORY_REPORT", "");
+    CHECK(MemoryReportEverySeconds() == 0.0);
+    _putenv_s("OKAY_MEMORY_REPORT", "1");
+    CHECK(MemoryReportEverySeconds() == 10.0);
+    _putenv_s("OKAY_MEMORY_REPORT", "30");
+    CHECK(MemoryReportEverySeconds() == 30.0);
+    _putenv_s("OKAY_MEMORY_REPORT", "");
+#else
+    unsetenv("OKAY_MEMORY_REPORT");
+    CHECK(MemoryReportEverySeconds() == 0.0);
+    setenv("OKAY_MEMORY_REPORT", "1", 1);
+    CHECK(MemoryReportEverySeconds() == 10.0);
+    setenv("OKAY_MEMORY_REPORT", "2", 1);    // under 5 s: one report, not a flood
+    CHECK(MemoryReportEverySeconds() == 10.0);
+    setenv("OKAY_MEMORY_REPORT", "30", 1);
+    CHECK(MemoryReportEverySeconds() == 30.0);
+    unsetenv("OKAY_MEMORY_REPORT");
+#endif
+#if defined(__linux__) || defined(_WIN32)
+    const double age = ProcessAgeMs();   // this test has run for well under ten minutes
+    CHECK(age >= 0.0 && age < 600000.0);
+#endif
     RemoveMemoryCounter("test: fonts");
     RemoveMemoryCounter("test: thumbnails");
     CHECK(MemoryCounters().empty());

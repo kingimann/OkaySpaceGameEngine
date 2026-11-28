@@ -40,6 +40,7 @@
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Core/Memory.hpp"     // the memory report (OKAY_MEMORY_REPORT=1 prints it at exit)
+#include "okay/Core/FramePacing.hpp"   // SettledPicture, UiFrameRate: the idle frame rate
 #include "okay/Graphics/TtfFont.hpp"  // FontCacheBytes, for the memory report
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #include "okay/Platform/Achievements.hpp"
@@ -10734,6 +10735,39 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; std::uint32_t id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+
+// ---- The memory report's owners (OKAY_MEMORY_REPORT, okay/Core/Memory.hpp) ----
+// Each texture cache keeps one copy per render slot (0 = the launcher window, 1 = the chat window): the bytes of the textures
+// it holds, asked of the painter that made them.
+static std::size_t TextureMapBytes(const std::map<std::string, okay::ui2d::Tex>* slots) {
+    std::size_t n = 0;
+    for (int s = 0; s < 2; ++s) {
+        okay::pb::Renderer* ren = s == 0 ? g_renderer : g_chatHost.ren;
+        if (!ren) continue;
+        for (const auto& kv : slots[s]) {
+            int w = 0, h = 0;
+            if (kv.second) okay::pb::QueryTexture(ren, kv.second, &w, &h);
+            n += (std::size_t)w * (std::size_t)h * 4;
+        }
+    }
+    return n;
+}
+static void AddLauncherMemoryCounters() {
+    okay::AddMemoryCounter("Textures: every painter (w x h x 4)", [] { return okay::platform::PainterTextures().bytes; });
+    okay::AddMemoryCounter("Fonts: engine TrueType cache", [] { return okay::FontCacheBytes(); });
+    okay::AddMemoryCounter("Fonts: OkayUI fonts (files and glyph atlases)", [] { return OkayUI::UserFontMemoryBytes(); });
+    okay::AddMemoryCounter("Chat: emoji sheet pixels (kept for the chat window)", [] {
+        return g_emojiPixels ? (std::size_t)g_emojiPxW * (std::size_t)g_emojiPxH * 4 : 0;
+    });
+    okay::AddMemoryCounter("of which textures: game covers", [] { return TextureMapBytes(g_coverCaches); });
+    okay::AddMemoryCounter("of which textures: avatars and chat photos", [] { return TextureMapBytes(g_avatarCaches); });
+    okay::AddMemoryCounter("of which textures: chat GIF frames", [] {
+        std::size_t n = 0;
+        for (const auto& slot : g_animImagesS)
+            for (const auto& kv : slot) n += (std::size_t)kv.second.w * (std::size_t)kv.second.h * 4 * kv.second.frames.size();
+        return n;
+    });
+}
 // The UI's input: our own okay::platform feed.
 // (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
 static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
@@ -13310,6 +13344,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    okay::StartupMark("[startup] launcher", "main() entered");   // OKAY_STARTUP_REPORT: the start-up milestones (okay/Core/Memory.hpp)
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
@@ -13329,6 +13364,7 @@ int main(int argc, char** argv) {
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE the window system starts so
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched. Our own okay::platform backend.
     okay::platform::Backend* plat = okay::platform::Default();
+    okay::thr::ThreadFinishedHook() = &okay::platform::WakeMainLoop;   // a finished background job ends the idle wait at once
     if (!plat) return 1;
     plat->SetPerMonitorDpiAware();
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
@@ -13402,6 +13438,8 @@ int main(int argc, char** argv) {
     okay::pb::Renderer* renderer = okay::pb::CreateRenderer(*mainWinOwner, true);   // accelerated with vsync, else any; its painter owns it
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
+    okay::StartupMark("[startup] launcher", "window and painter made");
+    if (okay::MemoryReportWanted()) AddLauncherMemoryCounters();
     // Paint a loading frame into the back buffer, reveal the window, then present
     // again so the reveal lands on the splash (not a black frame), whatever the
     // platform's show-vs-present ordering.
@@ -13434,6 +13472,7 @@ int main(int argc, char** argv) {
     lw::Show(window);        // reveal with the splash already composited
     lw::Raise(window);
     firstSplash();                 // present once more so the shown frame is the splash
+    okay::StartupMark("[startup] launcher", "first frame drawn (loading screen)");   // OKAY_STARTUP_REPORT
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -13449,6 +13488,7 @@ int main(int argc, char** argv) {
         // JetBrains Mono (same as the editor's script editor) for `code` in chat.
         g_fontMono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
+    okay::StartupMark("[startup] launcher", "fonts loaded");
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     // The UI's input is our own okay::platform feed on every backend (no gamepad navigation; keys, text, mouse, wheel, focus,
     // clipboard and the cursor shape work); the UI is OkayUI, drawn through the window's okay::platform::Painter.
@@ -13462,6 +13502,7 @@ int main(int argc, char** argv) {
     std::string editor = FindExe(EDITOR_EXE_NAMES);
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
+    okay::StartupMark("[startup] launcher", "games found");
     bool rescannedAfterUpdate = false;
 
     // `tmpl` is the editor's New Project template title (passed via --template).
@@ -13625,6 +13666,9 @@ int main(int argc, char** argv) {
         }
         if (fx.quit) quitLauncher();
     };
+    std::uint64_t lastEventCounter = okay::platform::PerfCounter();   // when the last event of any kind arrived
+    okay::SettledPicture settledPicture;                               // has the launcher's picture stopped changing?
+    okay::StartupMark("[startup] launcher", "main loop starts");
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         std::uint64_t frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
@@ -13650,6 +13694,7 @@ int main(int argc, char** argv) {
         okay::platform::Event e;
         while (plat->PollEvent(e)) {
             using EvT = okay::platform::EventType;
+            lastEventCounter = okay::platform::PerfCounter();   // (the idle frame rate below: any event is input)
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             FeedImGuiEvent(g_imguiFeed, e);
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
@@ -13995,6 +14040,8 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        const std::uint64_t tUi = okay::platform::PerfCounter();   // (OKAY_PERF_DUMP: where the frame goes)
+        okay::StartupMark("[startup] launcher", "first page starts");
         g_imguiFeed.NewFrame(ImGui::GetIO());
         if (OkayUI::design::Poll(ImGui::GetTime()) || s_designRevision != OkayUI::design::Revision()) DarkTheme();   // another program, or Settings, changed the design
         ImGui::NewFrame();
@@ -22367,14 +22414,35 @@ int main(int argc, char** argv) {
 
         OkayUI::PopStyleVar(2);
         ImGui::Render();
+        const std::uint64_t tDraw = okay::platform::PerfCounter();
+        okay::StartupMark("[startup] launcher", "first page built");
         okay::pb::SetDrawColor(renderer, 30, 30, 32, 255);
         okay::pb::Clear(renderer);
         okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
+        // The picture's fingerprint: what OkayUI drew and whether any texture's pixels changed since the last frame.
+        settledPicture.Frame(OkayUI::DrawDataHash(OkayUI::GetDrawData()) ^ (okay::platform::PainterTextureChanges() * 0x9E3779B97F4A7C15ull));
 #ifdef OKAY_ENABLE_TEST_HOOKS
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
 #endif
+        const std::uint64_t tPresent = okay::platform::PerfCounter();
+        okay::StartupMark("[startup] launcher", "first page painted (before its present)");
         okay::pb::Present(renderer);
+        {   // OKAY_PERF_DUMP: every 120 frames, the average ms of each part of the frame (the editor prints the same with its profiler)
+            static const bool dump = std::getenv("OKAY_PERF_DUMP") != nullptr;
+            static double acc[4] = {0, 0, 0, 0}; static int n = 0;
+            if (dump) {
+                const std::uint64_t tEnd = okay::platform::PerfCounter();
+                const double f = 1000.0 / (double)okay::platform::PerfFrequency();
+                acc[0] += (double)(tUi - frameStart) * f; acc[1] += (double)(tDraw - tUi) * f;
+                acc[2] += (double)(tPresent - tDraw) * f; acc[3] += (double)(tEnd - tPresent) * f;
+                if (++n == 120) {
+                    std::printf("[perf] launcher, ms per frame: before the UI %.2f, UI %.2f, draw %.2f, present %.2f\n", acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n);
+                    std::fflush(stdout); acc[0] = acc[1] = acc[2] = acc[3] = 0; n = 0;
+                }
+            }
+        }
+        okay::StartupMark("[startup] launcher", "interactive (first page drawn)");
         ChatHostFrame(account);
 
         // Cap the frame rate so the launcher never spins the GPU/CPU at full tilt
@@ -22382,19 +22450,28 @@ int main(int argc, char** argv) {
         // fell back to a non-VSync mode. ~60 fps while focused, ~20 fps when the
         // window is in the background. With real VSync the present already took a
         // frame, so the extra delay is ~0 when focused.
+        // While nothing is put in for 0.75 s and the picture has not changed for two frames (no spinner, caret, progress bar,
+        // toast or new message moving), the launcher draws at its background rate (20 fps) even when focused, and that wait ends
+        // at once on any event or finished background job (Backend::WaitEvents, okay::thr::ThreadFinishedHook). A live voice
+        // call or the chat's own window keep the full rate (their audio and frames ride on this loop).
         {
             bool focused = okay::platform::IsActiveForFrameRate(lw::HasInputFocus(window), lw::HasMouseFocus(window), ChatHostFocused());
-            double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
+            const double activeFps = focused ? 60.0 : 20.0;
+            const double sinceEvent = (double)(okay::platform::PerfCounter() - lastEventCounter) / (double)okay::platform::PerfFrequency();
+            const bool mayIdle = !g_voice.Active() && !g_chatHost.shown;
+            const double fps = okay::UiFrameRate(activeFps, 20.0, sinceEvent, mayIdle && settledPicture.Settled());
+            const double targetMs = 1000.0 / fps;
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
-            if (elapsed < targetMs) okay::platform::DelayMs((std::uint32_t)(targetMs - elapsed));
+            if (elapsed < targetMs) {
+                if (fps < activeFps) plat->WaitEvents((std::uint32_t)(targetMs - elapsed));   // idle: input ends the wait
+                else okay::platform::DelayMs((std::uint32_t)(targetMs - elapsed));
+            }
         }
+        okay::MemoryReportTick("[memory] launcher", (double)okay::platform::TicksMs() / 1000.0);   // OKAY_MEMORY_REPORT: while it runs
     }
 
-    if (okay::MemoryReportWanted()) {   // OKAY_MEMORY_REPORT=1: the memory at the end of the session, before anything is freed
-        okay::AddMemoryCounter("Fonts: TrueType cache (OkayUI and engine text)", [] { return okay::FontCacheBytes(); });
-        std::fputs(okay::MemoryReportText("[memory] launcher").c_str(), stdout); std::fflush(stdout);
-    }
+    if (okay::MemoryReportWanted()) okay::EmitMemoryReport("[memory] launcher at exit");   // before anything is freed
     if (!g_staySignedIn) accountPtr->Logout();   // "Stay signed in" was unticked: the next start asks again
     // Remember the window size for next launch.
     ChatHostSaveGeometry();

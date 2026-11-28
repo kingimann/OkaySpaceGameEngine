@@ -448,6 +448,9 @@ struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, F
 /// Draw data: the glyph atlas is a fallback-font texture (FallbackFontOf(texture)), uploaded by the backend like the launcher look's fallback fonts.
 Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name = nullptr);
 Font* AddFontTtfFile(const char* path, float px);
+/// The memory the fonts above hold (their file bytes and glyph atlases, okay::TtfFont::MemoryBytes, and the file bytes
+/// AddFontTtfFile keeps), for the memory report.
+std::size_t UserFontMemoryBytes();
 /// Dear ImGui hosts load the editor's two faces from base-85 compressed arrays. OkayUI has no decoder for that format (the engine dropped it on purpose;
 /// the same fonts ship as our own OKF1 data, decoded by okay::EmbeddedUIFontData). A host maps each array to the decoded TTF bytes once, and
 /// AddFontFromMemoryCompressedBase85TTF(array, px) then registers that font. An array that was not mapped gives the default font (and is recorded).

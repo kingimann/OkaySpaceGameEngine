@@ -1613,6 +1613,37 @@ int buildCmds() {
 
 int DroppedGeometry() { return g_dropped; }
 
+// Eight bytes at a time: multiply and rotate (a plain 64-bit mixing hash written for this; not a published function's constants
+// beyond the 64-bit golden-ratio odd number). Not for security: only "did the picture change".
+static std::uint64_t MixBytes(std::uint64_t h, const void* data, std::size_t n) {
+    const unsigned char* p = static_cast<const unsigned char*>(data);
+    const std::uint64_t k = 0x9E3779B97F4A7C15ull;
+    for (; n >= 8; n -= 8, p += 8) {
+        std::uint64_t w; std::memcpy(&w, p, 8);
+        h = ((h ^ w) * k); h ^= h >> 29;
+    }
+    std::uint64_t tail = 0;
+    for (std::size_t i = 0; i < n; ++i) tail |= (std::uint64_t)p[i] << (8 * i);
+    h = ((h ^ tail ^ ((std::uint64_t)n << 56)) * k); h ^= h >> 29;
+    return h;
+}
+std::uint64_t DrawDataHash(const DrawData& d) {
+    std::uint64_t h = 0x243F6A8885A308D3ull;
+    const int counts[3] = {d.vertexCount, d.indexCount, d.cmdCount};
+    h = MixBytes(h, counts, sizeof counts);
+    if (d.vertices && d.vertexCount > 0) h = MixBytes(h, d.vertices, (std::size_t)d.vertexCount * (std::size_t)(d.vertexStride > 0 ? d.vertexStride : (int)sizeof(DrawVertex)));
+    if (d.indices && d.indexCount > 0) h = MixBytes(h, d.indices, (std::size_t)d.indexCount * sizeof(int));
+    for (int i = 0; d.cmds && i < d.cmdCount; ++i) {
+        const DrawCmd& c = d.cmds[i];
+        const std::int64_t f[7] = {c.idxOffset, c.idxCount, c.clipOn ? 1 : 0, c.clipX, c.clipY, c.clipW, c.clipH};
+        h = MixBytes(h, f, sizeof f);
+        const std::uintptr_t t = (std::uintptr_t)c.texture;
+        h = MixBytes(h, &t, sizeof t);
+    }
+    const std::uintptr_t atlas[2] = {(std::uintptr_t)d.atlasTexture, (std::uintptr_t)d.atlasRgba};
+    return MixBytes(h, atlas, sizeof atlas);
+}
+
 DrawData GetDrawData() {
     DrawData d;
     d.vertices = g_verts; d.vertexCount = g_nv;

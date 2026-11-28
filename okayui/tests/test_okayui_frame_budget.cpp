@@ -12,6 +12,7 @@
 #include "OkayUIScreens.hpp"
 #include "OkayUIHost.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // CalcTextSize with Dear ImGui's arguments
 
 #include <cstdio>
 #include <cstdlib>
@@ -144,6 +145,21 @@ int main() {
         int owned = 0;
         for (int i = 0; i < sections; ++i) owned += region.Owns(100, (float)i * 30 + 10) ? 1 : 0;
         CHECK(owned == sections);
+    }
+
+    // ---- text measurement allocates nothing for a whole label (the compatibility CalcTextSize copied every label first) ------------
+    {
+        const char* label = "Directional Light (main sun) - Shadows";   // longer than a short-string buffer
+        const UI::Vec2 a = UI::CalcTextSize(label);
+        const long long a0 = allochook::count;
+        UI::Vec2 b{};
+        for (int i = 0; i < 1000; ++i) b = UI::CalcTextSize(label, nullptr, true, -1.0f);
+        CHECK(allochook::count - a0 == 0);
+        CHECK(b.x == a.x && b.y == a.y);   // the same size as before
+        const UI::Vec2 hidden = UI::CalcTextSize("Name##inspector-row", nullptr, true, -1.0f);   // "##" still hides the id
+        CHECK(hidden.x == UI::CalcTextSize("Name").x);
+        const char text[] = "Shadows and more";
+        CHECK(UI::CalcTextSize(text, text + 7, false, -1.0f).x == UI::CalcTextSize("Shadows").x);   // an end before the zero still counts
     }
 
     UI::UseLauncherLook(false);

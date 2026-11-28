@@ -40,6 +40,27 @@ struct TextureDesc {
     bool target = false;
 };
 
+/// What every painter's textures hold now (width * height * 4 bytes each), for the memory report (okay/Core/Memory.hpp). The
+/// software painter keeps these bytes in RAM; an OpenGL driver keeps them on the GPU and often a copy in system memory as well.
+struct TextureTally { std::size_t bytes = 0; int count = 0; };
+TextureTally PainterTextures();
+/// Goes up whenever any painter makes, frees or uploads into a texture: with OkayUI::DrawDataHash it tells a host whether the
+/// picture can have changed since the last frame (the painters call NotePainterTextureChange from UpdateTexture).
+std::uint64_t PainterTextureChanges();
+void NotePainterTextureChange();
+/// One texture's share of PainterTextures(), held inside the backend's texture record: Count() once the texture exists, and the
+/// destructor takes it off again.
+class CountedTexture {
+public:
+    CountedTexture() = default;
+    CountedTexture(const CountedTexture&) = delete;
+    CountedTexture& operator=(const CountedTexture&) = delete;
+    ~CountedTexture() { Count(0, 0); }
+    void Count(int w, int h);
+private:
+    std::size_t m_bytes = 0;
+};
+
 class Painter : public ui2d::Painter {
 public:
     ~Painter() override = default;

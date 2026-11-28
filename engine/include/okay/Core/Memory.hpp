@@ -490,6 +490,11 @@ struct ProcessMemory {
 /// Reads the numbers above (Linux /proc/self/status; Windows K32GetProcessMemoryInfo, looked up at run time).
 ProcessMemory QueryProcessMemory();
 
+/// The bytes the C library's heap hands out now (malloc / new): glibc mallinfo2 on Linux, a HeapWalk of every process heap on
+/// Windows. 0 when unknown. The report shows it next to the private bytes, so what lies outside the heap (the graphics
+/// driver, system libraries, stacks) is visible too.
+std::size_t HeapInUseBytes();
+
 /// Parses the text of a /proc/<pid>/status file (the Linux branch of QueryProcessMemory; tested on its own).
 ProcessMemory ParseProcStatus(std::string_view text);
 
@@ -507,5 +512,25 @@ std::string MemoryReportText(const std::string& title);
 /// True when OKAY_MEMORY_REPORT is set to something other than "" or "0": the editor and the launcher then print
 /// MemoryReportText to stdout when their main loop ends (before anything is freed).
 bool MemoryReportWanted();
+
+/// How often a running program reports, from OKAY_MEMORY_REPORT: a number of seconds of at least 5 ("60") = every that many
+/// seconds; any other wanted value ("1") = once, 10 s after start. 0 = not wanted. Every program also reports at exit.
+double MemoryReportEverySeconds();
+/// The programs' report: MemoryReportText(title) printed to stdout and appended, with the time, to
+/// <Paths::LogDir()>/memory_report.txt (the Windows editor and launcher have no console to print to).
+void EmitMemoryReport(const std::string& title);
+/// Call once per frame from a main loop: emits the report when MemoryReportEverySeconds says one is due. `seconds` = time since
+/// the program started.
+void MemoryReportTick(const std::string& title, double seconds);
+
+// ---------------------------------------------------------------- start-up milestones (the same report files)
+
+/// Milliseconds since this process started, as the operating system recorded the start (Linux: /proc/self/stat starttime
+/// against /proc/uptime, 10 ms steps; Windows: GetProcessTimes creation time). Negative when unknown.
+double ProcessAgeMs();
+/// A start-up milestone ("first frame drawn", "interactive"): with OKAY_STARTUP_REPORT=1 the line "<title>: <what> at N ms (heap M MB)"
+/// is printed and appended to <Paths::LogDir()>/startup_report.txt. Each `what` is reported once per process; without the
+/// variable it costs one getenv the first time. Main thread only.
+void StartupMark(const std::string& title, const std::string& what);
 
 } // namespace okay

@@ -3741,3 +3741,15 @@ whose text is wider than the whole display is capped at the display and the text
 
 **Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU, 125% / 150% scale, the list column widths coming
 back in a picture after a restart (the file is written and read; the test project lives in a temporary folder).
+
+### Performance helpers (claude/memory-1, 2026-11-28)
+
+- `OkayUI::DrawDataHash(DrawData)`: a 64-bit fingerprint of the frame's vertices, indices, draw ranges, clips and textures.
+  With `okay::platform::PainterTextureChanges()` (bumped by every painter on texture create, free, upload and render-target
+  use) a host can tell that the picture has not changed; the launcher drops to 20 fps then (`okay::SettledPicture`,
+  `okay::UiFrameRate` in `okay/Core/FramePacing.hpp`; test `frame_pacing`).
+- The compatibility `CalcTextSize(text, textEnd, hideAfterHash, wrap)` measures a whole label in place instead of copying it
+  into a `std::string` first (one heap allocation per label over 15 bytes, every frame). `okayui_frame_budget` checks that
+  1000 calls allocate nothing and measure the same.
+- `OkayUI::UserFontMemoryBytes()`: the memory the AddFontTtf fonts hold, for the memory report.
+

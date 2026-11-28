@@ -45,5 +45,7 @@ void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f);   // a messag
 float MeasureChatBodyWidth(const std::string& bodyIn, float maxW);
 void IconTile(const std::string& name, float size);              // a coloured tile with the name's initial
 void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b);
-unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h);   // RGBA8, free with std::free; nullptr on failure
+// RGBA8, free with std::free; nullptr on failure. `maxSide` > 0: a picture with a longer side than that is filtered down to fit,
+// keeping its shape (covers and avatars are drawn at a few hundred pixels at most; a full-size photo held 8 to 30 MB as a texture).
+unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h, int maxSide = 0);
 } // namespace okl

@@ -5,6 +5,7 @@
 #include "NetGuard.hpp"                 // okay::netguard: size and host checks for link previews
 #include "okay/Backend/SupabaseRoutes.hpp"   // the stored-file route (a link to one is not a page)
 #include "okay/Core/ImageDecode.hpp"   // LoadRgbaFile
+#include "okay/Core/ThumbnailCache.hpp"   // BoxDownscale: LoadRgbaFile's fit
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client
 #include "OkayTheme.hpp"   // the theme palette's colours
 
@@ -799,9 +800,21 @@ void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2
 // theme-allow-end
 
 // Decodes an image file to a malloc'd RGBA8 buffer (free with std::free); nullptr on failure.
-unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {
+unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h, int maxSide) {
     okay::DecodedImage img;
     if (!okay::DecodeImageFile(path, img) || img.rgba.empty()) return nullptr;
+    const int longest = std::max(img.width, img.height);
+    if (maxSide > 0 && longest > maxSide && img.rgba.size() == (std::size_t)img.width * (std::size_t)img.height * 4) {
+        okay::Image src;
+        src.Set(img.width, img.height, std::move(img.rgba));
+        const okay::Image fitted = okay::BoxDownscale(src, maxSide);   // area average, longest side = maxSide, shape kept
+        const std::size_t n = (std::size_t)fitted.Width() * (std::size_t)fitted.Height() * 4;
+        unsigned char* px = n ? static_cast<unsigned char*>(std::malloc(n)) : nullptr;
+        if (!px) return nullptr;
+        std::memcpy(px, fitted.Data(), n);
+        *w = fitted.Width(); *h = fitted.Height();
+        return px;
+    }
     unsigned char* px = static_cast<unsigned char*>(std::malloc(img.rgba.size()));
     if (!px) return nullptr;
     std::memcpy(px, img.rgba.data(), img.rgba.size());

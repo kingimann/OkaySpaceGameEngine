@@ -99,8 +99,25 @@ void TestLimiterReal() {
 
 } // namespace
 
+// The launcher's idle frame rate: settled only after two identical pictures, unsettled by any change, and the idle rate only
+// after 0.75 s without input.
+static void TestSettledPicture() {
+    okay::SettledPicture p;
+    CHECK(!p.Frame(1));          // the first frame has nothing to compare with
+    CHECK(!p.Frame(1));          // one repeat
+    CHECK(p.Frame(1));           // two repeats: settled
+    CHECK(!p.Frame(2));          // a change (a spinner, a caret, a new line) unsettles at once
+    CHECK(!p.Frame(2) && p.Frame(2));
+    CHECK(okay::UiFrameRate(60.0, 20.0, 5.0, true) == 20.0);    // quiet and settled: the idle rate
+    CHECK(okay::UiFrameRate(60.0, 20.0, 0.2, true) == 60.0);    // input 0.2 s ago: full rate
+    CHECK(okay::UiFrameRate(60.0, 20.0, 5.0, false) == 60.0);   // something moves: full rate
+    CHECK(okay::UiFrameRate(10.0, 20.0, 5.0, true) == 10.0);    // never faster than the active rate
+    CHECK(okay::UiFrameRate(60.0, 20.0, std::numeric_limits<double>::quiet_NaN(), true) == 60.0);
+}
+
 int main() {
     RUN_SUITE("frame_pacing");
+    TestSettledPicture();
     TestClamp();
     TestTimer();
     TestLimiterPlan();

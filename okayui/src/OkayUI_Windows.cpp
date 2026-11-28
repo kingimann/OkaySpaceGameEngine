@@ -369,6 +369,7 @@ void SetNextWindowPos(Vec2 pos, Cond cond, Vec2 pivot) {
     g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond, px, py};
 }
 void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, size.x, size.y, (int)cond}; }
+void ui_core::clearNextWindowData() { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; }
 
 // A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
 static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
@@ -384,17 +385,17 @@ bool Begin(const char* title, bool* p_open, int flags) {
         if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }   // SetNextWindowFocus on a docked window: its tab is chosen first
         g_dockRouted = true; return DockBegin(title, p_open, flags);
     }
-    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
+    if (!title) { clearNextWindowData(); return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { created = true; ws.used = true; ws.id = id; ws.x = 60.0f; ws.y = 60.0f; ws.w = 320.0f; ws.h = 240.0f; ws.sized = true; slot = &ws; break; }
     NextWin np = g_nextWinPos, ns = g_nextWinSize;
     g_nextWinPos.set = g_nextWinSize.set = false;
-    if (np.set && (np.pivX != 0.0f || np.pivY != 0.0f)) {   // SetNextWindowPos with a pivot: move the point of the window that sits at the position
-        const float pw = ns.set ? ns.x : (slot && slot->sized ? slot->w : 320.0f), ph = ns.set ? ns.y : (slot && slot->sized ? slot->h : 240.0f);
-        np.x -= np.pivX * pw; np.y -= np.pivY * ph;
-    }
+    // SetNextWindowPos with a pivot: the point at (pivX, pivY) of the window's size sits at the position. With a slot the size is the one
+    // the window is drawn at this frame, worked out below once it is known; without one, the asked size.
+    const bool pivot = np.set && (np.pivX != 0.0f || np.pivY != 0.0f);
+    if (pivot && !slot) { np.x -= np.pivX * (ns.set ? ns.x : 320.0f); np.y -= np.pivY * (ns.set ? ns.y : 240.0f); }
     bool pin = false;
     if (slot) {
         const bool appearing = (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);      // not drawn on the frame before
@@ -404,7 +405,8 @@ bool Begin(const char* title, bool* p_open, int flags) {
             if (take) init = true;
             return take;
         };
-        if (apply(np, slot->posInit)) { slot->x = np.x; slot->y = np.y; pin = (np.cond == Cond_Always); }
+        const bool posTaken = apply(np, slot->posInit);
+        if (posTaken) { slot->x = np.x; slot->y = np.y; pin = (np.cond == Cond_Always); }
         if (apply(ns, slot->sizeInit)) {
             slot->w = ns.x; slot->h = ns.y; slot->sized = true;
             // Dear ImGui's documented rule: an axis of 0 asks for an auto-fit on that axis. The window is measured once (its first frame
@@ -429,6 +431,20 @@ bool Begin(const char* title, bool* p_open, int flags) {
         if (created) slot->posInit = slot->sizeInit = true;            // a window that exists has had its first use (FirstUseEver / Once are spent)
         if (flags & Window_NoMove) pin = true;
         if (!slot->sized) { slot->w = 320.0f; slot->h = 240.0f; slot->sized = true; }
+        // The pivot with the size the window is drawn at: an auto-resizing window that was measured takes its content's size in the core
+        // Begin (slot->w / h still hold last frame's, or a SetNextWindowSize that auto-resize overrides). One still to be measured is not
+        // shown this frame; a position kept only once (Once, FirstUseEver, Appearing) is placed again when the measured size is known.
+        const bool autoRes = (flags & Window_AlwaysAutoResize) != 0;
+        const bool measuring = (autoRes && !slot->measured) || slot->fitAxes != 0;
+        const float drawW = autoRes && slot->measured ? slot->autoW : slot->w, drawH = autoRes && slot->measured ? slot->autoH : slot->h;
+        if (posTaken && pivot) {
+            slot->x = np.x - np.pivX * drawW; slot->y = np.y - np.pivY * drawH;
+            slot->pivPending = measuring; slot->pivAtX = np.x; slot->pivAtY = np.y; slot->pivX = np.pivX; slot->pivY = np.pivY;
+        } else if (posTaken) slot->pivPending = false;
+        else if (slot->pivPending && !measuring) {
+            slot->x = slot->pivAtX - slot->pivX * drawW; slot->y = slot->pivAtY - slot->pivY * drawH;
+            slot->pivPending = false;
+        }
     }
     const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
     const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);

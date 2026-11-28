@@ -321,6 +321,80 @@ void TestAutoResize() {
     CHECK(size.x < 200 && size.y < 100);
 }
 
+// A corner toast as the launcher draws one: SetNextWindowPos(bottom-right of the display, Always, pivot (1, 1)) on an auto-resizing
+// window with no decoration. Every frame it is shown, its bottom-right corner is that point: on its first shown frame, when its text
+// changes size, and when it comes back after being gone (owner report: the "You're up to date" toast sat in the middle of the launcher).
+void TestPivotCornerAutoResize() {
+    RUN_SUITE("windows: pivot (1, 1) at the corner of an auto-resizing window");
+    Reset();
+    const float W = 1600, H = 1135, M = 18;
+    Sim sim(W, H);
+    std::string msg = "You're up to date";
+    bool show = true, closedModal = false;
+    UI::Vec2 pos{0, 0}, size{0, 0};
+    auto ui = [&] {
+        if (closedModal) {   // the launcher's Create page: its New Project modal is set up every frame but is not open
+            UI::SetNextWindowPos(V(W * 0.5f, H * 0.5f), UI::Cond_Always, V(0.5f, 0.5f)); UI::SetNextWindowSize(V(820, 680), UI::Cond_Always);
+            bool open = false;
+            if (UI::BeginPopupModal("New Project", &open, UI::Window_NoResize)) UI::EndPopup();
+        }
+        if (!show) return;
+        const UI::Viewport vp = UI::GetMainViewport();
+        UI::SetNextWindowPos(V(vp.WorkPos.x + vp.WorkSize.x - M, vp.WorkPos.y + vp.WorkSize.y - M), UI::Cond_Always, V(1, 1));
+        UI::SetNextWindowBgAlpha(0.92f);
+        UI::PushStyleVar(UI::StyleVar_WindowPadding, V(16, 12));
+        if (UI::Begin("##toast", nullptr, UI::Window_NoDecoration | UI::Window_NoInputs | UI::Window_NoFocusOnAppearing | UI::Window_NoNav | UI::Window_AlwaysAutoResize)) {
+            UI::Dummy(V(10, UI::GetTextLineHeight())); UI::SameLine(0, 6); UI::TextUnformatted(msg.c_str());
+        }
+        pos = UI::GetWindowPos(); size = UI::GetWindowSize();
+        UI::End();
+        UI::PopStyleVar(1);
+    };
+    int bad = 0, shown = 0;
+    auto check = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            sim.Frame(ui);
+            const Bitmap b = sim.Draw(21, 23, 29);
+            const int lit = CountNot(b, 0, 0, (int)W, (int)H, Rgba(21, 23, 29));
+            if (lit == 0) continue;   // the measuring frame is not shown
+            ++shown;
+            // whatever is drawn lies in the bottom-right corner (with its shadow), and the window's corner is the asked point
+            const int outside = lit - CountNot(b, (int)(W - M - size.x - 24), (int)(H - M - size.y - 24), (int)W, (int)H, Rgba(21, 23, 29));   // (room for its shadow)
+            const bool ok = outside == 0 && std::fabs(pos.x + size.x - (W - M)) < 0.5f && std::fabs(pos.y + size.y - (H - M)) < 0.5f;
+            if (!ok) { ++bad; std::printf("  toast frame %d: pos (%.1f, %.1f) size (%.1f, %.1f), %d pixels outside its corner\n", sim.frames, pos.x, pos.y, size.x, size.y, outside); }
+        }
+    };
+    check(4);
+    msg = "A much longer message that makes the toast wider than before"; check(3);
+    msg = "Short"; check(3);
+    show = false; check(5);
+    show = true; msg = "Back again, a different width"; check(3);
+    closedModal = true; msg = "You're up to date"; check(4);   // (owner report: it sat at 761..918, 436..485 of a 1600 x 1135 launcher)
+    CHECK(shown >= 14);
+    CHECK(bad == 0);
+}
+
+// A pivot position kept once (Cond_Appearing) on an auto-resizing window: its first frame is only measured, so the pivot is applied
+// with the measured size when it is first shown, not with the 320 x 240 a new window starts from.
+void TestPivotAppearingAutoResize() {
+    RUN_SUITE("windows: a Cond_Appearing pivot on an auto-resizing window uses the measured size");
+    Reset();
+    Sim sim(800, 600);
+    UI::Vec2 pos{0, 0}, size{0, 0};
+    auto ui = [&] {
+        UI::SetNextWindowPos(V(400, 300), UI::Cond_Appearing, V(0.5f, 0.5f));
+        if (UI::Begin("centred", nullptr, UI::Window_NoDecoration | UI::Window_AlwaysAutoResize)) UI::Button("a small button");
+        pos = UI::GetWindowPos(); size = UI::GetWindowSize();
+        UI::End();
+    };
+    for (int i = 0; i < 4; ++i) {
+        sim.Frame(ui);
+        if (i == 0) continue;   // the measuring frame
+        CHECK(std::fabs(pos.x + size.x * 0.5f - 400.0f) < 0.5f && std::fabs(pos.y + size.y * 0.5f - 300.0f) < 0.5f);
+    }
+    CHECK(size.x < 320.0f && size.y < 240.0f);
+}
+
 void TestFocusFlags() {
     RUN_SUITE("windows: NoFocusOnAppearing, NoBringToFront, hover through windows");
     Reset();
@@ -993,6 +1067,8 @@ int main() {
     TestNoBackground();
     TestScroll();
     TestAutoResize();
+    TestPivotCornerAutoResize();
+    TestPivotAppearingAutoResize();
     TestFocusFlags();
     TestDockedBelowFloating();
     TestWindowDragThrough();

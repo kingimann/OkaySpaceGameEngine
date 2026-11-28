@@ -429,6 +429,7 @@ struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0,
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
                  int fitAxes = 0; float fitW = 0, fitH = 0;  // SetNextWindowSize with a 0 axis: 1 = fit the width, 2 = the height, to the content once (the other axis is fitW / fitH)
+                 bool pivPending = false; float pivAtX = 0, pivAtY = 0, pivX = 0, pivY = 0;   // a pivot position kept once, taken while the window was still being measured: placed again with the measured size
                };
 extern WinSlot g_wins[64];
 struct NextCollapse { bool set = false; bool value = false; int cond = 0; };
@@ -534,6 +535,10 @@ extern WinEnd g_we;
 constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
 struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; float pivX = 0, pivY = 0; };
 extern NextWin g_nextWinPos, g_nextWinSize;
+// Drops what the SetNextWindow* calls left for the next window (position, size, focus, collapse, background alpha). Called by a Begin
+// that does not open a window this frame (a popup or modal that is not open, a null title), as Dear ImGui documents: what was set
+// before it is used up there and must not move or size the window begun after it.
+void clearNextWindowData();
 extern int g_wflagsNext;
 extern int g_focusWin;
 extern bool g_pinNext, g_bareNext, g_noTitleNext, g_resizeNext;

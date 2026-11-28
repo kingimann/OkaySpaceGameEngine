@@ -577,6 +577,7 @@ void CloseCurrentPopup() {
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
 // drawing the background using last frame's measured height. Returns true if open.
 bool ui_core::beginPopupBody(int id) {
+    clearNextWindowData();   // a popup uses up what SetNextWindow* set before it, open or not: it must not move or size the next window
     // Depth guard first: past the popup-stack capacity the parent layout cannot
     // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
     // state that was never saved and stomp another popup's measured height.
@@ -701,7 +702,7 @@ bool BeginPopupModal(const char* name, bool* open) {
     if (!name) return false;   // (outside any window too: a modal is a top-level window in Dear ImGui, begun wherever the code is)
     const int id = hashLabel(name);
     PopupSlot* p = popupSlot(id, false);
-    if (!p || !p->open) { if (open) *open = false; return false; }
+    if (!p || !p->open) { clearNextWindowData(); if (open) *open = false; return false; }   // not open: what SetNextWindow* set for it is used up here
     p->modal = true;
     if (!p->name[0]) std::snprintf(p->name, sizeof p->name, "%s", name);
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre

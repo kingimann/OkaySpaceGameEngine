@@ -3396,30 +3396,27 @@ static bool dragCells_ed(const char* label, float* fv, int* iv, int n, float spe
             if (e == 1) continue;
         }
         float delta; int nav = 0; dragBox(id, cx, y, cw, h, inside, delta, &nav);
-        if (nav != 0 && iv) {   // Left / Right: one whole step
-            long long nv = (long long)iv[i] + nav;
-            if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
-            if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
-            if (nv != iv[i]) { iv[i] = (int)nv; changed = true; }
-        }
         float perPx = speed;   // the value change per pixel dragged (a Left / Right step counts as one pixel of its own size)
         if (nav != 0 && fv) { delta = (float)nav; perPx = navDragStep(speed, -1); }
-        if (delta != 0.0f && std::isfinite(delta) && std::isfinite(perPx)) {
-            if (fv) {
+        if (fv) {
+            if (delta != 0.0f && std::isfinite(delta) && std::isfinite(perPx)) {
                 float nv = fv[i] + delta * perPx;
                 if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                 if (range && n == 2) { if (i == 0 && nv > fv[1]) nv = fv[1]; if (i == 1 && nv < fv[0]) nv = fv[0]; }
                 if (std::isfinite(nv) && nv != fv[i]) { fv[i] = nv; changed = true; }
-            } else {
+            }
+        } else {
+            int step = nav;   // Left / Right: one whole step; a drag: its accumulated whole steps
+            if (step == 0 && delta != 0.0f && std::isfinite(delta) && std::isfinite(speed)) {
                 g_dragAccum += delta * speed;
-                const int step = (int)g_dragAccum;
-                if (step != 0) {
-                    g_dragAccum -= (float)step;
-                    int nv = iv[i] + step;
-                    if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
-                    if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
-                    if (nv != iv[i]) { iv[i] = nv; changed = true; }
-                }
+                step = (int)g_dragAccum;
+                g_dragAccum -= (float)step;
+            }
+            if (step != 0) {
+                long long nv = (long long)iv[i] + step;
+                if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
+                if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
+                if (nv != iv[i]) { iv[i] = (int)nv; changed = true; }
             }
         }
         char buf[64];

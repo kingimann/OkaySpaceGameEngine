@@ -638,9 +638,8 @@ void TestOps(Driver& d) {
     CHECK(d.Run("op.run", R"({"id":"test.ping"})").error.code == "unavailable");   // no host runs it now: said plainly
 
     // 3. Ops run the menus' own code, one undo step each, and undo.
-    CHECK(d.Run("scene.new", R"({"template":"empty","discard":true})").ok);
-    Result r = d.Run("object.create", R"({"kind":"cube","name":"Box","position":{"x":1,"y":2,"z":3}})");
-    CHECK(r.ok);
+    Result r = d.Run("scene.new", R"({"template":"empty","discard":true})");
+    CHECK(r.ok && d.Run("object.create", R"({"name":"Box","kind":"cube","position":[0,2,0]})").ok);
     const int depth0 = d.ed.UndoDepth();
     r = d.Run("op.go.emptychild");   // GameObject > Create Empty Child, on the selected Box
     CHECK(r.ok);

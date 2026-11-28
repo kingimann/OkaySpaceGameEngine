@@ -34,49 +34,21 @@ std::string& HeadlessClipboard() { static std::string s; return s; }
 GameObject*& HeadlessIsolate() { static GameObject* g = nullptr; return g; }
 
 mb::State DefaultMenuState(EditorState& ed) {
-    mb::State s;
-    s.playing = ed.isPlaying();
-    s.inPrefabMode = ed.InPrefabMode();
-    s.scenePath = ed.path();
-    s.selectedCount = (int)ed.MultiSelection().size();
-    if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
-    s.objectCount = (int)ed.scene().Objects().size();
-    s.canUndo = ed.CanUndo();
-    s.canRedo = ed.CanRedo();
-    s.undoName = ed.UndoName();
-    s.redoName = ed.RedoName();
+    mb::State s = menuactions::MenuStateFromEditor(ed);
     s.clipboardHasObject = !HeadlessClipboard().empty();
     s.isolating = HeadlessIsolate() != nullptr;
     return s;
 }
 
 hiermenu::RowState DefaultRowState(EditorState& ed, GameObject* node) {
-    hiermenu::RowState r;
-    r.selectedCount = (int)menuactions::RowTargets(ed, node).size();
-    r.active = node->active;
-    r.locked = node->editorLocked;
-    r.childCount = node->transform ? node->transform->ChildCount() : 0;
-    okay::Transform* par = node->transform ? node->transform->Parent() : nullptr;
-    r.hasParent = par != nullptr;
-    int index = 0, count = 0;
-    if (par) {
-        for (okay::Transform* c : par->Children()) { if (c == node->transform) index = count; ++count; }
-    } else {
-        for (const auto& up : ed.scene().Objects())
-            if (up->transform && !up->transform->Parent()) { if (up.get() == node) index = count; ++count; }
-    }
-    r.siblingIndex = index;
-    r.siblingCount = count > 0 ? count : 1;
+    hiermenu::RowState r = menuactions::RowStateFromEditor(ed, node);
     r.clipboardHasObject = !HeadlessClipboard().empty();
     r.isolated = HeadlessIsolate() == node;
     return r;
 }
 
 hiermenu::EmptyState DefaultEmptyState(EditorState& ed) {
-    hiermenu::EmptyState e;
-    e.objectCount = (int)ed.scene().Objects().size();
-    e.selectedCount = (int)ed.MultiSelection().size();
-    if (e.selectedCount == 0 && ed.selected()) e.selectedCount = 1;
+    hiermenu::EmptyState e = menuactions::EmptyStateFromEditor(ed);
     e.clipboardHasObject = !HeadlessClipboard().empty();
     return e;
 }

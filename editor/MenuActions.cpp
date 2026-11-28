@@ -129,6 +129,49 @@ Outcome RunRow(EditorState& ed, const std::string& id, GameObject* node, Env& en
 }
 }  // namespace
 
+oked::menubar::State MenuStateFromEditor(EditorState& ed) {
+    oked::menubar::State s;
+    s.playing = ed.isPlaying();
+    s.inPrefabMode = ed.InPrefabMode();
+    s.scenePath = ed.path();
+    s.selectedCount = (int)ed.MultiSelection().size();
+    if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
+    s.objectCount = (int)ed.scene().Objects().size();
+    s.canUndo = ed.CanUndo();
+    s.canRedo = ed.CanRedo();
+    s.undoName = ed.UndoName();
+    s.redoName = ed.RedoName();
+    return s;
+}
+
+oked::hiermenu::RowState RowStateFromEditor(EditorState& ed, GameObject* node) {
+    oked::hiermenu::RowState r;
+    r.selectedCount = (int)RowTargets(ed, node).size();
+    r.active = node->active;
+    r.locked = node->editorLocked;
+    r.childCount = node->transform->ChildCount();
+    Transform* par = node->transform->Parent();
+    r.hasParent = par != nullptr;
+    int index = 0, count = 0;
+    if (par) {
+        for (Transform* c : par->Children()) { if (c == node->transform) index = count; ++count; }
+    } else {
+        for (const auto& up : ed.scene().Objects())
+            if (up->transform && !up->transform->Parent()) { if (up.get() == node) index = count; ++count; }
+    }
+    r.siblingIndex = index;
+    r.siblingCount = count > 0 ? count : 1;
+    return r;
+}
+
+oked::hiermenu::EmptyState EmptyStateFromEditor(EditorState& ed) {
+    oked::hiermenu::EmptyState e;
+    e.objectCount = (int)ed.scene().Objects().size();
+    e.selectedCount = (int)ed.MultiSelection().size();
+    if (e.selectedCount == 0 && ed.selected()) e.selectedCount = 1;
+    return e;
+}
+
 const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
     static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
         std::vector<oked::uimenu::ScreenGroup> v;

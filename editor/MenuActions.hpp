@@ -7,6 +7,7 @@
 // ImGui-free, so the headless host and tests/test_automation.cpp run it. Moved from main.cpp's RunMenuAction,
 // HierEmptyAction and HierRowAction, which call it; our own code.
 #include "EditorState.hpp"
+#include "HierarchyContextModel.hpp"
 #include "UIMenuModel.hpp"
 
 #include <functional>
@@ -47,6 +48,11 @@ void CreateEmptyParentOf(okay::editor::EditorState& ed, okay::GameObject* node);
 void SelectMany(okay::editor::EditorState& ed, const std::vector<okay::GameObject*>& objs);
 /// The objects a Hierarchy row action affects: the whole multi-selection when the row is part of it, else the row.
 std::vector<okay::GameObject*> RowTargets(okay::editor::EditorState& ed, okay::GameObject* node);
+/// The menus' state as far as the editor state alone says it (the scene, the selection, the undo history); the editor adds
+/// what only its window knows (the clipboard, the Modeling window's mesh history, recent files, Isolate, the theme).
+oked::menubar::State MenuStateFromEditor(okay::editor::EditorState& ed);
+oked::hiermenu::RowState RowStateFromEditor(okay::editor::EditorState& ed, okay::GameObject* node);
+oked::hiermenu::EmptyState EmptyStateFromEditor(okay::editor::EditorState& ed);
 /// GameObject > UI's ready-made screens: the screen registry's sections (okay/Scene/UIScreens.hpp), as the menu lists them.
 const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups();
 /// Lock or unlock an object and everything below it against click-selecting in the Scene view.

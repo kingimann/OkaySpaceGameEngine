@@ -5977,18 +5977,12 @@ static bool* MenuFlag(const std::string& id) {
 
 // What the menus need to know about the editor, read once per frame a menu is open.
 static oked::menubar::State MenuBarState(EditorState& ed) {
-    oked::menubar::State s;
-    s.playing = ed.isPlaying();
-    s.inPrefabMode = ed.InPrefabMode();
-    s.scenePath = ed.path();
-    s.selectedCount = (int)ed.MultiSelection().size();
-    if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
-    s.objectCount = (int)ed.scene().Objects().size();
-    const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();
-    s.canUndo = meshU || ed.CanUndo();
-    s.canRedo = meshR || ed.CanRedo();
-    s.undoName = meshU ? std::string("Mesh Edit") : ed.UndoName();
-    s.redoName = meshR ? std::string("Mesh Edit") : ed.RedoName();
+    oked::menubar::State s = oked::menuactions::MenuStateFromEditor(ed);   // the scene, selection and history (MenuActions.cpp)
+    const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();   // the Modeling window's mesh steps come first
+    s.canUndo = meshU || s.canUndo;
+    s.canRedo = meshR || s.canRedo;
+    if (meshU) s.undoName = "Mesh Edit";
+    if (meshR) s.redoName = "Mesh Edit";
     s.clipboardHasObject = !g_clipboard.empty();
     s.recentCount = (int)g_recent.size();
     s.isolating = g_isolate != nullptr;
@@ -13731,22 +13725,7 @@ static const char* HierKindName(GameObject* go) {
 
 // The right-clicked row, as plain values for the model. `recount`: count the other objects of its kind (once, when the menu opens).
 static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, bool recount) {
-    oked::hiermenu::RowState r;
-    r.selectedCount = (int)oked::menuactions::RowTargets(ed, node).size();
-    r.active = node->active;
-    r.locked = node->editorLocked;
-    r.childCount = node->transform->ChildCount();
-    Transform* par = node->transform->Parent();
-    r.hasParent = par != nullptr;
-    int index = 0, count = 0;
-    if (par) {
-        for (Transform* c : par->Children()) { if (c == node->transform) index = count; ++count; }
-    } else {
-        for (const auto& up : ed.scene().Objects())
-            if (up->transform && !up->transform->Parent()) { if (up.get() == node) index = count; ++count; }
-    }
-    r.siblingIndex = index;
-    r.siblingCount = count > 0 ? count : 1;
+    oked::hiermenu::RowState r = oked::menuactions::RowStateFromEditor(ed, node);   // selection, flags, place (MenuActions.cpp)
     r.clipboardHasObject = !g_clipboard.empty();
     r.isolated = g_isolate == node;
     if (GameObject* proot = PrefabTools::NearestPrefabRoot(*node); proot && !proot->prefabSource.empty()) {
@@ -13772,10 +13751,7 @@ static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, 
 }
 
 static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
-    oked::hiermenu::EmptyState e;
-    e.objectCount = (int)ed.scene().Objects().size();
-    e.selectedCount = (int)ed.MultiSelection().size();
-    if (e.selectedCount == 0 && ed.selected()) e.selectedCount = 1;
+    oked::hiermenu::EmptyState e = oked::menuactions::EmptyStateFromEditor(ed);
     e.clipboardHasObject = !g_clipboard.empty();
     e.sortAZ = g_hierSort;
     return e;

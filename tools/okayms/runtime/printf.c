@@ -44,6 +44,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             int wide;
             int upper;
             char *s;
+            char *src;
             double fval;
             int fwhole;
             int fi;
@@ -58,6 +59,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             has_prec = 0;
             wide = 0;
             upper = 0;
+            src = tmp;
             fmt = fmt + 1;
             if (fmt[0] == '%') {
                 if (n + 1 < cap) {
@@ -125,13 +127,11 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                     tmp[0] = v;
                     tn = 1;
                 } else if (spec == 's') {
+                    /* The text is written from where it is, at any length (Round 35; before, it went through the
+                       64-byte tmp and was cut at 60 characters). */
                     s = va_arg(ap, char *);
-                    i = 0;
-                    while (s[i] != 0 && tn < 60 && (has_prec == 0 || i < prec)) {
-                        tmp[tn] = s[i];
-                        tn = tn + 1;
-                        i = i + 1;
-                    }
+                    src = s;
+                    while (s[tn] != 0 && (has_prec == 0 || tn < prec)) tn = tn + 1;
                 } else if (spec == 'f') {
                     fval = va_arg(ap, double);
                     if (fval < 0) {
@@ -206,7 +206,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                 }
                 i = 0;
                 while (i < tn && n + 1 < cap) {
-                    buf[n] = tmp[i];
+                    buf[n] = src[i];
                     n = n + 1;
                     i = i + 1;
                 }
@@ -226,12 +226,12 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
 }
 
 int printf(char *fmt, ...) {
-    char out[128];
+    char out[1024];
     unsigned int wrote;
     int count;
     va_list ap;
     va_start(ap, fmt);
-    count = format_out(out, 128, fmt, ap);
+    count = format_out(out, 1024, fmt, ap);
     va_end(ap);
     WriteFile(GetStdHandle(0xFFFFFFF5), out, count, &wrote, 0);
     return count;
@@ -247,3 +247,54 @@ int snprintf(char *buf, unsigned int cap, char *fmt, ...) {
 }
 
 int puts(char *s) { return printf("%s\n", s); }
+
+/* The C runtime's three standard streams (Round 36), for programs that write to stderr or stdout through a FILE:
+ * __acrt_iob_func(i) gives stream i (0 stdin, 1 stdout, 2 stderr; the UCRT entry point <cstdio> names), and fprintf,
+ * fputs, fputc, fwrite and fflush write to stdout and stderr through WriteFile on the process's standard handles
+ * (STD_OUTPUT_HANDLE -11, STD_ERROR_HANDLE -12, Microsoft's GetStdHandle documentation). Own minimal version: these
+ * streams only, no buffering (fflush does nothing), and nothing is read from stdin. Written from ISO/IEC 9899 7.21.
+ */
+unsigned int strlen(char *s);
+static int okay_streams[3] = {0, 1, 2};
+
+void *__acrt_iob_func(unsigned int index) { return index < 3 ? (void *)&okay_streams[index] : 0; }
+
+static void *okay_stream_handle(void *stream) {
+    int which = stream ? *(int *)stream : 1;
+    return GetStdHandle(which == 2 ? 0xFFFFFFF4 : 0xFFFFFFF5);
+}
+
+int fprintf(void *stream, char *fmt, ...) {
+    char out[1024];
+    unsigned int wrote;
+    int count;
+    va_list ap;
+    va_start(ap, fmt);
+    count = format_out(out, 1024, fmt, ap);
+    va_end(ap);
+    WriteFile(okay_stream_handle(stream), out, count, &wrote, 0);
+    return count;
+}
+
+unsigned long long fwrite(void *data, unsigned long long size, unsigned long long count, void *stream) {
+    unsigned int wrote = 0;
+    if (size == 0 || count == 0) return 0;
+    WriteFile(okay_stream_handle(stream), data, (unsigned int)(size * count), &wrote, 0);
+    return wrote / size;
+}
+
+int fputs(char *s, void *stream) {
+    unsigned int wrote;
+    WriteFile(okay_stream_handle(stream), s, strlen(s), &wrote, 0);
+    return 0;
+}
+
+int fputc(int c, void *stream) {
+    char one = (char)c;
+    unsigned int wrote;
+    WriteFile(okay_stream_handle(stream), &one, 1, &wrote, 0);
+    return c & 255;
+}
+
+int fflush(void *stream) { return 0; }
+

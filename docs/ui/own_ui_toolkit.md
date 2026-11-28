@@ -3742,7 +3742,60 @@ whose text is wider than the whole display is capped at the display and the text
 **Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU, 125% / 150% scale, the list column widths coming
 back in a picture after a restart (the file is written and read; the test project lives in a temporary folder).
 
-### Performance helpers (claude/memory-1, 2026-11-28)
+## 36. Round 6: sharp text at every scale, the keyboard on every control, a label column, one Inspector body (2026-11-28)
+
+Owner, 2026-11-27: "Okay ui needs a ton of more work". The coordinator's round 6 list in its order, then our own audit.
+
+| Item | What was wrong | Change | Test |
+|---|---|---|---|
+| Round 5 audit: import help lines "cut on the left" | not a bug: round 5's picture had the Delete dialog open, and its right edge (x 880) covered the first letter of the lines beside it | none; a picture without the dialog shows whole lines | run in the editor |
+| Round 5 audit: the next tab's icon over the dragged tab | the editor draws panel icons after the strip, every icon on top | `DockTabInfo::held` names the dragged tab; the editor draws its icon last and a neighbour's icon only beside it | run in the editor (Console dragged over Project: no Project icon on it) |
+| Round 5 audit: the .fbx row in the list view had no picture | its model picture is opaque but drawn on the dark row it could not be seen | a row's picture sits on a light chip; a picture with nothing drawn in it is no picture (the icon shows) | run in the editor; the .fbx's own picture is still a plain grey square (why its render is that plain is not found) |
+| Round 5 audit: text wider than the whole display ran past a capped dialog | an auto-sized modal stops at the display less 16 px, its text was not wrapped | a modal at that cap wraps a text line longer than it, and keeps its width (no flicker) | `okayui_windows` (failed first) |
+| Text soft at 125% and 150% (and at 100% in the editor) | a user font (the editor's Roboto, `AddFontTtf`) was its 48-pixel bake scaled to every size, not placed on pixels; the launcher look drew sizes between its baked ones (24 px at 150%) with the next baked size scaled | text is drawn from a face baked at the size drawn (`okay::TtfFont::ForDeviceSize`, quarter-pixel steps up to 16 px, half-pixel to 32), the baseline on a whole pixel, each glyph's left edge on a whole pixel with the copy rendered for the pen's quarter pixel (`GlyphForPhase`): one atlas pixel to one screen pixel. Fonts for other scripts (possibly megabytes) keep their single bake. Up to 32 font textures a frame (was 8) | `okayui_fonts` sharp-text case, measured: every glyph quad 1:1 and on the pixel grid, and the mean difference from the font's own rasterisation at that size, 0 of 255 at 16, 20 and 24 px (18.8, 18.3, 10.8 and the launcher look's 15.8 before) |
+| Tab focus only on buttons, check boxes, combos, text fields | none for the rest | sliders and drags (Left / Right step them: a hundredth of a slider's range or one whole number, a drag's speed but at least the step its format shows; Shift: ten steps), selectable rows, popup menu rows, tree rows and collapsing headers. A run of rows is one Tab stop; Up / Down walk the window's rows (scrolled into view); Right / Left open and close a tree row; in an open popup Down / Up go to its first / last row, and when it closes the focus goes back to what opened it; Space / Enter act. A row's ring is drawn inside it (rows touch). `ResetState` clears the focus | `okayui_windows` `TestNavRows` in both looks (written with the code: 16 failures with the arrow keys switched off) |
+| Reorderable tab bars jumped | only the dock's strips slid | `BeginTabItem` on a `TabBar_Reorderable` bar: the dragged tab follows the pointer, the others ease to their places, a tab drawn after the dragged one is clipped to beside it; the easing and the held position are one pair of functions (`tabSlideX`, `tabHeldX`) used by both | `okayui_windows` `TestTabBarSlides` (failed with the slide off); `okayui_dock` 381 / 0 |
+| The library's Inspector views had no caller | since round 5 the editor's one body draws every component | deleted (rule 19d): about 2,000 lines of `OkayUIEditorPanels.cpp`, `shared/InspectorFieldsModel.hpp`, most of `shared/InspectorPanelModel.hpp`, the test `okayui_inspector` with its fixtures and 41 pictures. Chosen over making them the body because it leaves far less code and changes nothing the person sees (making them the body meant rewriting about 120 bodies) | `okayui_frame_budget` measures a window of framed widgets instead |
+| Labels on the right of Inspector fields | each widget draws its label after its box (Dear ImGui's way) | `StyleVar_LabelColumn` (OkayUI's own): a labelled drag, slider, check box, combo, text or colour field that starts a line has its label in a column at the left (cut with "..." to it) and its box after it; the item rectangle covers the label (tooltips on labels still show). `LabelColumnWidth()` for rows a host builds itself (the editor's `oked::LeadLabel`: the Transform's three cells, the generic card's fields). The editor's Inspector pushes it with the label width its layout already worked out | `okayui_windows` `TestLabelColumn` (failed with the column off); every Inspector body seen in the running editor (below) |
+| Audit: labels above their fields' text | `AlignTextToFramePadding` did nothing | in Dear ImGui's text rows the next text is a frame tall, its line centred (the New Project form's Name and Location) | `okayui_windows` `TestTextAlignment` (failed first) |
+| Audit: the launcher's What's New dots sat below their lines | `Bullet` was a square in a whole row's height | a round dot, the item one text line tall in Dear ImGui's text rows | the same test; picture of the launcher's update dialog |
+| Audit: every combo of an Inspector drew its list open after many components had been shown | the open / closed states had 128 slots and then one shared fallback; once a header opened with `SetNextItemOpen` had set the fallback, every later combo and tree node read it as open | 1,024 slots; when full, the one used longest ago (not this frame) is reused; the last resort is this call's own default | `okayui_windows` `TestManyOpenStates` (failed with the old table); the Inspector pass below |
+| Audit: the generic component card's fields ran past the panel with their labels cut | the card draws a field, then its label after it with SameLine; the field took the whole row | with the label column the card draws its label first (`oked::LeadLabel`, shared with the Transform rows) and the field in the rest of the row | the Inspector pass below |
+| Audit: fixed-width buttons cut their label at 150% | a pixel width wins over the label | a button given a width its label does not fit grows to hold it (8 px each side) as far as the row allows | picture at 150% |
+| Audit: the New Project form at 150% | its label column was 84 px, "Location" ran into its field | the widest label and a gap, at least 84 px | picture at 150% |
+
+**Owner's Inspector notes (2026-11-28, a Windows test build's Event System and the bottom of the Inspector).** (1) Body text flush at
+the panel's edge: with the label column every body's labels and plain lines start at the same x, the Event System's lines included
+(seen in the running editor). (2) A "Remove" button inside 187 component bodies (in `editor/main.cpp`, `NavigationWindow.cpp`,
+`WindTools.cpp`, `VolumeTools.cpp`, `BehaviorTreeWindow.cpp`) duplicated the header's "..." menu: deleted, Remove Component is in the
+header menu only (the inline buttons that remove an item of a list, not the component, stay). (3) "Delete GameObject" was a full-width
+bright red bar under a 260-pixel Add Component (owner: "the delete gameobject is bigger then the add compinent"): Add Component is now
+the main button, the full width of the panel's content and 32 pixels tall; Delete GameObject is quiet red text on a clear button, 18
+pixels below it, and asks first ("Delete ... and its children? Ctrl+Z brings it back." with Delete and Cancel; it had no question
+before, only undo). (4) A gap, a divider and a gap end the component list before the buttons. Pictures before and after are outside
+the repository.
+
+**Golden pictures.** 91 were made again, each compared with its old picture (old, new and the difference side by side, outside the
+repository): the text is the same words in the same places, drawn sharp (and the draw-list rasteriser the goldens use now samples font
+atlases: text drawn sharp at a size the launcher look does not bake had been left out of those pictures), the launcher's What's New
+dots are round, and the Project panel's Delete, Broken references and Move dialogs wrap their long line inside the dialog instead of
+running past it. `okayui_imcompat` takes its reordered-tab picture after the tabs have slid to their places.
+
+**How it was checked.** Linux, Xvfb, the own platform backend, `-O1`, test hooks on (`scripts/run_app_script.sh`): the editor's Inspector
+with the label column; five files dropped into a project and the Project panel in list view; the Console tab dragged over Project; Tab and
+the arrows in the "Open a project" dialog (the ring on a template row inside the list); the editor at 150% (`OKAY_APPEARANCE_FILE` with
+`uiScale` 1.5); the launcher's Software Update dialog (`OKAY_UI_DEMO_UPDATE_VIEW=uptodate`); and every Inspector body: the dev hook
+`OKAY_UI_INSPECTALL=<folder>` makes one object per component type the property registry knows and saves a picture of the editor with
+each selected (95 of the 120 types got their picture in the run's time; an earlier run reached all 120 and showed the open-combo bug
+above). Pictures are outside the repository. Tests: every `okayui_*`, `launcher_*` and `editor_*` test and `own_switches`, `own_stack`,
+`imgui_platform_feed` (87) pass, run again after the branch was moved onto `origin/main` (with SDL2 removed).
+
+**Unverified:** Windows (nothing here was built with MinGW or run there), a real GPU (the software painter samples like one), a real
+display at 125% or 150% (the scale was set through the appearance file), and an input method. **Not done:** fields placed after
+SameLine keep the plain layout (Cast Shadows / Receive Shadows on one line, the header card's Static and Lock); the Transform's custom
+rows were moved to the column by hand, other custom rows that draw their own label after their fields were not all found.
+
+## 37. Performance helpers (claude/memory-1, 2026-11-28)
 
 - `OkayUI::DrawDataHash(DrawData)`: a 64-bit fingerprint of the frame's vertices, indices, draw ranges, clips and textures.
   With `okay::platform::PainterTextureChanges()` (bumped by every painter on texture create, free, upload and render-target

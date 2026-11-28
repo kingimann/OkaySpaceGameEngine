@@ -108,6 +108,21 @@ template <typename It> It min_element(It first, It last) {
         if (*first < *best) best = first;
     return best;
 }
+// With a comparison ([alg.min.max]; Round 36, NetworkManagerServer.cpp's oldest pending join).
+template <typename It, typename Less> It min_element(It first, It last, Less less) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (less(*first, *best)) best = first;
+    return best;
+}
+template <typename It, typename Less> It max_element(It first, It last, Less less) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (less(*best, *first)) best = first;
+    return best;
+}
 template <typename It> It max_element(It first, It last) {
     It best = first;
     if (first == last) return last;

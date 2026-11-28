@@ -176,7 +176,12 @@ bool IsReservedDeviceName(const std::string& name);
 /// Read a whole file, refusing one bigger than `maxBytes` (error says why).
 inline bool ReadFileCapped(const std::string& path, std::size_t maxBytes, std::string& out, std::string* error = nullptr) {
     out.clear();
-    std::ifstream f(path, std::ios::binary);
+    // Through std::filesystem::path, like AtomicWriteChecked: on Windows the text is read as UTF-8 and the file opened by
+    // its wide name, so a folder with non-ASCII letters works. A plain std::ifstream(path) used the ANSI code page there and
+    // could not open what AtomicWrite had just written (doc_recovery on the Windows runner, 2026-11-27).
+    std::ifstream f;
+    try { f.open(std::filesystem::path(path), std::ios::binary); }
+    catch (const std::exception&) { f.open(path, std::ios::binary); }   // not UTF-8 (Windows refuses to convert): as given
     if (!f) { if (error) *error = "can't open " + path; return false; }
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();

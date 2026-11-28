@@ -621,12 +621,15 @@ public:
     // Audio: WASAPI shared mode (OwnWin32Audio.cpp).
     std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* device, AudioSpec* got) override {
         std::string err;
-        auto d = own::OpenWasapi(want, capture, device, got, err);
+        auto d = NullAudioRequested() ? OpenNullAudio(want, capture, got, err) : own::OpenWasapi(want, capture, device, got, err);
         if (!d) m_err = err;
         return d;
     }
-    int AudioDeviceCount(bool capture) override { return own::WasapiDeviceCount(capture); }
-    std::string AudioDeviceName(int index, bool capture) override { return own::WasapiDeviceName(index, capture); }
+    int AudioDeviceCount(bool capture) override { return NullAudioRequested() ? 1 : own::WasapiDeviceCount(capture); }
+    std::string AudioDeviceName(int index, bool capture) override {
+        if (NullAudioRequested()) return index == 0 ? "null" : "";
+        return own::WasapiDeviceName(index, capture);
+    }
 
     // Controllers: XInput, four slots, loaded on first use.
     // Indices: the connected XInput slots first, then the other HID pads found through Raw Input.

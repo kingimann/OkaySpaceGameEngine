@@ -575,7 +575,7 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/NPCController.hpp`
 
-- `NPCController` class, line 43: A steering + perception NPC brain for 3D games — wildlife, enemies, guards,
+- `NPCController` class, line 44: A steering + perception NPC brain for 3D games — wildlife, enemies, guards,
 
 ## `engine/include/okay/Components/NativeUIActions.hpp`
 
@@ -867,7 +867,7 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/Spawner.hpp`
 
-- `Spawner` class, line 34: Spawns copies of a template object over time — enemy waves, loot, pickups.
+- `Spawner` class, line 35: Spawns copies of a template object over time — enemy waves, loot, pickups.
 
 ## `engine/include/okay/Components/Spinner.hpp`
 
@@ -1004,7 +1004,7 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/TilemapCollider2D.hpp`
 
-- `TilemapCollider2D` class, line 14: Generates static collision from a sibling Tilemap: every non-empty tile
+- `TilemapCollider2D` class, line 17: Generates static collision from a sibling Tilemap: every non-empty tile
 
 ## `engine/include/okay/Components/TopDownController.hpp`
 

@@ -136,19 +136,56 @@ std::vector<std::string> TerminalArgv();
 /// False with a plain reason.
 bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::string& error);
 
+// ---- git for a project (the Projects page's Clone, Pull, Commit and push, Publish and new-project Git buttons) --------
+
+/// One git step: the words after `git -C <folder>`. Each word is one argument to git: a commit message, URL or folder
+/// with quotes, `$(...)`, `;` or `&` in it stays text, because no shell ever sees it (#888 F50: the buttons used to build
+/// a shell line with hand-made quotes, so a commit message could run a command).
+using GitStep = std::vector<std::string>;
+/// The argument list of one step: { git, "-C", folder, step... }.
+std::vector<std::string> GitArgv(const std::string& git, const std::string& folder, const GitStep& step);
+/// Run `steps` one after another (okaycli::Run, output captured, no console window, no shell). Every step runs, as
+/// before; the last one's exit code is the result (-1 when git could not start). `git` "" means "git" from PATH.
+int RunGitSteps(const std::string& folder, const std::vector<GitStep>& steps, const std::string& git = std::string());
+/// git can be started (`git --version` exits 0).
+bool GitWorks(const std::string& git = std::string());
+
 // ---- the programs of their own -------------------------------------------------------------------------------------
 
+/// What a program opens when it is given one argument (its own main.cpp): the browser takes an address
+/// (browser/main.cpp: ADDRESS ...), the Script Editor and Visual Script a project folder (FOLDER | FILE ...).
+enum class ToolTarget { Folder, Address };
 /// A program the page offers to start in a window of its own (owner, 2026-11-26: the browser, the command line, the Script
 /// Editor and Visual Script are programs of their own too). Found by its file name; not offered when no file is there.
 struct ToolProgram {
     std::string label, tip;
     std::vector<std::string> files;   ///< the file names it may have (the Windows release name first)
+    ToolTarget target = ToolTarget::Folder;
 };
-/// Every such program the launcher knows: Browser now; Script Editor and Visual Script once they ship.
+/// Every such program the launcher knows: Browser, Script Editor and Visual Script.
 const std::vector<ToolProgram>& ToolPrograms();
-struct FoundProgram { std::string label, tip, path; };
+struct FoundProgram {
+    std::string label, tip, path;
+    ToolTarget target = ToolTarget::Folder;
+};
 /// The ToolPrograms() that exist in one of `dirs` (the launcher's folder, then its Tools folder), in the table's order.
 std::vector<FoundProgram> FindPrograms(const std::vector<std::string>& dirs);
+/// Where FindPrograms looks for the launcher's programs: the launcher's own folder, then its Tools folder.
+std::vector<std::string> ProgramDirs(const std::string& launcherDir);
+
+/// The argument list that starts `p` on `target` (owner, 2026-11-28: the Script Editor, Visual Script and the browser start
+/// from the launcher's Create and Browser pages): { p.path } alone when `target` is "" or not something `p` opens, else
+/// { p.path, target } as one argument (no shell sees it). A folder is made absolute, so it never reads as an option. An
+/// address must be http or https; anything else (our own about: pages, a file, an option such as --play) is left out, so
+/// the browser is only ever started to browse: these are editing and browsing tools, nothing is played from here.
+std::vector<std::string> ToolProgramArgv(const FoundProgram& p, const std::string& target);
+/// The plain sentence shown when the program called `label` is not installed (an older install): it names the program and
+/// the file the launcher looked for, and says how to get it.
+std::string MissingProgramMessage(const std::string& label);
+/// Start the program called `label` from `found` (FindPrograms) on `target` (ToolProgramArgv), in a window of its own and without
+/// waiting for it (okaycli::StartDetached, no shell). It runs in the project folder, or the program's own folder. False when
+/// it is missing, the folder is gone or it could not start; `message` is what to show the person either way.
+bool StartTool(const std::vector<FoundProgram>& found, const std::string& label, const std::string& target, std::string& message);
 
 // ---- the page's layout --------------------------------------------------------------------------------------------
 

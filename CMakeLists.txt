@@ -367,15 +367,21 @@ if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
     add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/CommandTable.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
                 tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp
                 tools/okay-cli/CommandInput.cpp tools/okay-cli/CommandJob.cpp   # typed lines (shared with the launcher's page) and okay run inside a window
+                tools/okay-cli/AutomationCli.cpp   # the automation commands that are okay commands (project, assets, checks, build)
                 editor/ProjectBrowser.cpp editor/ProjectUpgrade.cpp)   # the editor's own import and project upgrade, no copy
     target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli
                                PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(okay_cli_lib PUBLIC okay::engine)
     target_compile_definitions(okay_cli_lib PRIVATE ${OKAY_VERSION_DEFINE})
-    add_executable(okay_cli tools/okay-cli/main.cpp)
+    # okay mcp / okay automation (tools/okay-cli/Automation.cpp) run the automation commands on the editor's own state with
+    # no window, so the program also builds the editor's EditorState and its automation commands (the editor links them itself).
+    add_executable(okay_cli tools/okay-cli/main.cpp tools/okay-cli/Automation.cpp
+                   editor/AutomationEditor.cpp editor/AutomationVs.cpp editor/AutomationOps.cpp editor/MenuActions.cpp
+                   editor/InspectorModel.cpp editor/EditorState.cpp shared/FileDialog.cpp)
+    target_include_directories(okay_cli PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(okay_cli PRIVATE okay_cli_lib)
     if(WIN32)
-        target_link_libraries(okay_cli PRIVATE shell32)
+        target_link_libraries(okay_cli PRIVATE shell32 comdlg32 ole32 user32)   # shared/FileDialog.cpp, as the editor links it
         okay_win_version(okay_cli "OkaySpace command line" "okay.exe")
     endif()
     set_target_properties(okay_cli PROPERTIES OUTPUT_NAME "okay")

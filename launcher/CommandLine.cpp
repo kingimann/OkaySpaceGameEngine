@@ -24,6 +24,28 @@
 namespace okaylcli {
 namespace fs = std::filesystem;
 
+// ---- git for a project --------------------------------------------------------------------------------------------
+
+std::vector<std::string> GitArgv(const std::string& git, const std::string& folder, const GitStep& step) {
+    std::vector<std::string> argv = {git.empty() ? std::string("git") : git, "-C", folder};
+    argv.insert(argv.end(), step.begin(), step.end());
+    return argv;
+}
+
+int RunGitSteps(const std::string& folder, const std::vector<GitStep>& steps, const std::string& git) {
+    int rc = -1;
+    for (const GitStep& step : steps) {
+        const okaycli::RunResult r = okaycli::Run(GitArgv(git, folder, step), std::string(), true);
+        rc = r.started ? r.exitCode : -1;
+    }
+    return rc;
+}
+
+bool GitWorks(const std::string& git) {
+    const okaycli::RunResult r = okaycli::Run({git.empty() ? std::string("git") : git, "--version"}, std::string(), true);
+    return r.started && r.exitCode == 0;
+}
+
 // ---- words and arguments ------------------------------------------------------------------------------------------
 // SplitWords, Classify, Complete, History and the output lines: tools/okay-cli/CommandInput.cpp (shared with the editor).
 
@@ -84,11 +106,11 @@ void Session::Stop() {
 const std::vector<ToolProgram>& ToolPrograms() {
     static const std::vector<ToolProgram> k = {
         {"Browser", "The OkaySpace browser in a window of its own (the same browser as the Browser page).",
-         {"OkaySpaceBrowser.exe", "okay-browser.exe", "okay-browser"}},
+         {"OkaySpaceBrowser.exe", "okay-browser.exe", "okay-browser"}, ToolTarget::Address},
         {"Script Editor", "The Script Editor in a window of its own.",
-         {"OkaySpaceScriptEditor.exe", "okay-script-editor.exe", "okay-script-editor"}},
+         {"OkaySpaceScriptEditor.exe", "okay-script-editor.exe", "okay-script-editor"}, ToolTarget::Folder},
         {"Visual Script", "The Visual Script editor in a window of its own.",
-         {"OkaySpaceVisualScript.exe", "okay-visual-script.exe", "okay-visual-script"}},
+         {"OkaySpaceVisualScript.exe", "okay-visual-script.exe", "okay-visual-script"}, ToolTarget::Folder},
     };
     return k;
 }
@@ -106,9 +128,60 @@ std::vector<FoundProgram> FindPrograms(const std::vector<std::string>& dirs) {
             }
             if (!path.empty()) break;
         }
-        if (!path.empty()) found.push_back({p.label, p.tip, path});
+        if (!path.empty()) found.push_back({p.label, p.tip, path, p.target});
     }
     return found;
+}
+
+std::vector<std::string> ProgramDirs(const std::string& launcherDir) {
+    if (launcherDir.empty()) return {};
+    return {launcherDir, (fs::u8path(launcherDir) / "Tools").u8string()};
+}
+
+std::vector<std::string> ToolProgramArgv(const FoundProgram& p, const std::string& target) {
+    std::vector<std::string> argv = {p.path};
+    if (target.empty()) return argv;
+    if (p.target == ToolTarget::Address) {
+        // Only a web address: "about:" pages, files and options (--play) are never handed to the browser from here.
+        const auto starts = [&](const char* s) { return target.compare(0, std::char_traits<char>::length(s), s) == 0; };
+        if (starts("https://") || starts("http://")) argv.push_back(target);
+        return argv;
+    }
+    std::error_code ec;
+    fs::path folder = fs::absolute(fs::u8path(target), ec);
+    if (ec || folder.empty()) return argv;
+    argv.push_back(folder.lexically_normal().u8string());
+    return argv;
+}
+
+std::string MissingProgramMessage(const std::string& label) {
+    for (const ToolProgram& p : ToolPrograms())
+        if (p.label == label)
+            return label + " is not installed: the launcher's Tools folder has no " + p.files[0] +
+                   ". Update or reinstall OkaySpace to get it.";
+    return "The launcher does not know a program called \"" + label + "\".";
+}
+
+bool StartTool(const std::vector<FoundProgram>& found, const std::string& label, const std::string& target, std::string& message) {
+    const FoundProgram* p = nullptr;
+    for (const FoundProgram& f : found)
+        if (f.label == label) { p = &f; break; }
+    if (!p) { message = MissingProgramMessage(label); return false; }
+    const std::vector<std::string> argv = ToolProgramArgv(*p, target);
+    std::string cwd = fs::u8path(p->path).parent_path().u8string();
+    if (p->target == ToolTarget::Folder && argv.size() > 1) {
+        std::error_code ec;
+        if (!fs::is_directory(fs::u8path(argv[1]), ec)) { message = "The project folder was not found: " + argv[1]; return false; }
+        cwd = argv[1];
+    }
+    if (!okaycli::StartDetached(argv, cwd)) { message = "Could not start " + label + " (" + p->path + ")."; return false; }
+    message = label + " opened.";
+    if (p->target == ToolTarget::Folder && argv.size() > 1) {   // "Script Editor opened on My Game."
+        fs::path folder = fs::u8path(argv[1]);
+        if (folder.filename().empty()) folder = folder.parent_path();   // a folder written with a trailing slash
+        message = label + " opened on " + folder.filename().u8string() + ".";
+    }
+    return true;
 }
 
 // ---- shells -------------------------------------------------------------------------------------------------------

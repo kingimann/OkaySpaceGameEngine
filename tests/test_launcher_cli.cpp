@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -224,8 +225,53 @@ int main() {
         fs::create_directories(top / "okay-visual-script");        // a folder with the name is not a program
         CHECK(FindPrograms(dirs).size() == 2);
         CHECK(FindPrograms({}).empty() && FindPrograms({""}).empty());
+        CHECK(ProgramDirs(top.string()) == dirs);   // the launcher's folder, then Tools
+        CHECK(ProgramDirs("").empty());
         std::error_code ec;
         fs::remove_all(top, ec);
+    }
+
+    {   // ---- starting them from the Create page and the Browser page: the arguments, and the missing-program message ----
+        CHECK(ToolPrograms()[0].target == ToolTarget::Address);   // the browser takes addresses (browser/main.cpp)
+        CHECK(ToolPrograms()[1].target == ToolTarget::Folder);    // the Script Editor and Visual Script take a project folder
+        CHECK(ToolPrograms()[2].target == ToolTarget::Folder);
+        const FoundProgram ed{"Script Editor", "", "/opt/okay/Tools/okay-script-editor", ToolTarget::Folder};
+        const FoundProgram web{"Browser", "", "/opt/okay/Tools/okay-browser", ToolTarget::Address};
+        CHECK(ToolProgramArgv(ed, "") == (std::vector<std::string>{ed.path}));   // no project: the program alone
+        const fs::path proj = fs::temp_directory_path() / "My Game";
+        CHECK(ToolProgramArgv(ed, proj.string()) == (std::vector<std::string>{ed.path, proj.string()}));   // one argument, spaces and all
+        const std::vector<std::string> rel = ToolProgramArgv(ed, "-rf");   // a folder never reads as an option: made absolute
+        CHECK(rel.size() == 2 && fs::path(rel[1]).is_absolute() && rel[1][0] != '-');
+        CHECK(ToolProgramArgv(web, "https://okayspace.example/a b") == (std::vector<std::string>{web.path, "https://okayspace.example/a b"}));
+        CHECK(ToolProgramArgv(web, "http://x.example/") == (std::vector<std::string>{web.path, "http://x.example/"}));
+        CHECK(ToolProgramArgv(web, "about:newtab") == (std::vector<std::string>{web.path}));   // our own page: the browser's home page
+        CHECK(ToolProgramArgv(web, "--play") == (std::vector<std::string>{web.path}));         // never an option: nothing is played
+        CHECK(ToolProgramArgv(web, "file:///etc/passwd") == (std::vector<std::string>{web.path}));
+        CHECK(ToolProgramArgv(web, "/home/me") == (std::vector<std::string>{web.path}));       // a folder is not an address
+
+        // A program that is not installed (an older install): a plain sentence that names it, nothing is started.
+        const std::string miss = MissingProgramMessage("Visual Script");
+        CHECK(miss.find("Visual Script") != std::string::npos && miss.find("not installed") != std::string::npos);
+        CHECK(miss.find("OkaySpaceVisualScript.exe") != std::string::npos);   // the file it looked for
+        std::string msg;
+        CHECK(!StartTool({}, "Visual Script", "", msg));
+        CHECK(msg == miss);
+        CHECK(!StartTool({web}, "Script Editor", proj.string(), msg) && msg == MissingProgramMessage("Script Editor"));
+        CHECK(!StartTool({}, "Nonsense", "", msg) && msg.find("Nonsense") != std::string::npos);
+#if !defined(_WIN32)
+        // A project folder that is gone: said plainly, nothing started.
+        const FoundProgram tru{"Script Editor", "", "/bin/true", ToolTarget::Folder};
+        CHECK(!StartTool({tru}, "Script Editor", (proj / "gone_folder_xyz").string(), msg));
+        CHECK(msg.find("not found") != std::string::npos);
+        // A real start does not wait for the program (it is detached): /bin/true stands in for the editor.
+        const fs::path here = fs::temp_directory_path();
+        CHECK(StartTool({tru}, "Script Editor", here.string(), msg));
+        CHECK(msg.find("Script Editor") != std::string::npos);
+        CHECK(StartTool({tru}, "Script Editor", (proj.parent_path() / "").string(), msg));   // a trailing slash: still its name
+        CHECK(msg == "Script Editor opened on " + proj.parent_path().filename().string() + ".");
+        const FoundProgram truWeb{"Browser", "", "/bin/true", ToolTarget::Address};
+        CHECK(StartTool({truWeb}, "Browser", "https://x.example/", msg));
+#endif
     }
 
 #if !defined(_WIN32)
@@ -320,6 +366,34 @@ int main() {
         CHECK(s.Lines().size() == 5);
         CHECK(s.Lines().back().text == "Done.");
         CHECK(s.Text().find("[a]") == std::string::npos);
+    }
+    {   // The Projects page's Git buttons (#888 F50): every word reaches git as one argument, nothing goes through a shell.
+        // Before, the launcher built `git -C "<folder>" commit -m "<message>"` and ran it with the shell, so a message
+        // like the one below ran `touch INJECTED`.
+        const fs::path gitLog = dir / "git_args.txt";
+        const fs::path fakeGit = dir / "git";
+        {
+            std::ofstream f(fakeGit);
+            f << "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\" >> '" << gitLog.string() << "'; done\n"
+                 "[ \"$3\" = fail ] && exit 4\nexit 0\n";
+        }
+        ::chmod(fakeGit.c_str(), 0755);
+        const std::string folder = (dir / "My Project").string();
+        const std::string msg = "fix\"; touch INJECTED; echo \"$(touch INJECTED2)`touch INJECTED3` & 'x'";
+        const std::string url = "https://example.invalid/a b.git;touch INJECTED4";
+        CHECK(GitArgv("", folder, {"commit", "-m", msg}) == (std::vector<std::string>{"git", "-C", folder, "commit", "-m", msg}));
+        CHECK(RunGitSteps(folder, {{"add", "-A"}, {"commit", "-m", msg}, {"remote", "add", "--", "origin", url}}, fakeGit.string()) == 0);
+        std::ifstream in(gitLog);
+        const std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(got == "[-C]\n[" + folder + "]\n[add]\n[-A]\n[-C]\n[" + folder + "]\n[commit]\n[-m]\n[" + msg + "]\n"
+                     "[-C]\n[" + folder + "]\n[remote]\n[add]\n[--]\n[origin]\n[" + url + "]\n");
+        for (const char* f : {"INJECTED", "INJECTED2", "INJECTED3", "INJECTED4"})
+            CHECK(!fs::exists(dir / "My Project" / f) && !fs::exists(dir / f) && !fs::exists(fs::path(f)));
+        // The last step decides; a git that cannot start is -1.
+        CHECK(RunGitSteps(folder, {{"pull"}, {"fail"}}, fakeGit.string()) == 4);
+        CHECK(RunGitSteps(folder, {{"fail"}, {"pull"}}, fakeGit.string()) == 0);
+        CHECK(RunGitSteps(folder, {{"pull"}}, (dir / "no-git-here").string()) == -1);
+        CHECK(GitWorks(fakeGit.string()) && !GitWorks((dir / "no-git-here").string()));
     }
     {   // Opening a terminal refuses a folder that is not there (the window itself is not opened in a test)
         std::string err;

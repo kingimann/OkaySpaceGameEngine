@@ -22,8 +22,8 @@ Back to the [code index](../code_index.md). 7 headers, 89 names.
 - `AddScriptApi` function, line 75: Add an OkayScript-only function (the form engine modules use).
 - `ScriptApis` function, line 79: Every shared function, in registration order (the engine's own come first).
 - `FindScriptApi` function, line 81: The entry with this OkayScript name or alias, or null.
-- `ScriptApiDuplicateCount` function, line 92: How many times a language tried to define a function the shared table already has (a second copy).
-- `NoteScriptApiDuplicate` function, line 93
+- `ScriptApiDuplicateCount` function, line 96: How many times a language tried to define a function the shared table already has (a second copy).
+- `NoteScriptApiDuplicate` function, line 97
 
 ## `engine/include/okay/Scripting/ScriptBindings.hpp`
 

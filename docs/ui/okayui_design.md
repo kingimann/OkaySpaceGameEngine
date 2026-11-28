@@ -93,8 +93,12 @@ info. Tooltip bg and text. Radii: small (check boxes, chips, row highlights), me
   leaves a dimmed place, follows the pointer as a raised chip, and the area it would fill is shown before release (guide tiles: five over
   the leaf, four at the dock area's edges).
 
+- Keyboard focus (rounds 5 and 6): the focus ring goes round the focused button, check box, combo, slider or drag cell, 2 px outside;
+  on a list, menu or tree row it is drawn inside the row (rows touch). A list is one Tab stop; the arrows walk its rows.
+- Label column (round 6, `StyleVar_LabelColumn`, used by the editor's Inspector): labels on the left in one column, every field's box
+  starting at the same x; a label longer than the column ends in "...".
+- Text (round 6): every size is rasterised at the size it is drawn and placed on whole pixels, so 125% and 150% are as sharp as 100%.
+
 ## Left
 
-Sticky table headers, CodeEdit chrome, Tab-key keyboard navigation so the focus ring shows on every control (OkayUI has keyboard focus
-only for text fields today), labels on the left of Inspector fields (Dear ImGui puts them after the field), a design editor for custom
-designs.
+CodeEdit chrome, a design editor for custom designs.

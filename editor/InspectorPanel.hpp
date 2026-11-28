@@ -20,6 +20,12 @@ namespace oked {
 /// Call once per frame, before the Hierarchy and Inspector are drawn.
 void WatchEditUndo(okay::editor::EditorState& ed);
 
+/// The Inspector's label column (OkayUI's StyleVar_LabelColumn, round 6) for a field that draws its own label: when the column is on
+/// here, draws `label` in it (cut with "..." to fit, `tooltip` on hover), moves to where the field goes and pushes the field's width (the
+/// rest of the row); true then, and the caller calls ImGui::PopItemWidth() after its field and draws no label after it. False: the plain
+/// layout (the field, then its label).
+bool LeadLabel(const char* label, const char* tooltip = nullptr);
+
 /// A file field: shows the file name, takes a drop from the Project panel (only files of `kind`: "image",
 /// "audio", "model", "font", "prefab", ... or "" for any), has a picker listing the project's files of that
 /// kind, and a clear button. `value` is the path as the Project panel drags it. True when it changed.

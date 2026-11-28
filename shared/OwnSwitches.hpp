@@ -63,9 +63,8 @@ struct Context {
 #if defined(_WIN32)
         c.windows = true;
 #endif
-#if defined(OKAY_HAVE_OKAYUI)
-        c.okayUi = true;
-#endif
+        c.okayUi = true;   // every program draws with OkayUI now (Dear ImGui left with #1375, which also removed OKAY_HAVE_OKAYUI
+                           // from the launcher and the editor: keying this on that macro turned the Browser off everywhere)
         return c;
     }
 };

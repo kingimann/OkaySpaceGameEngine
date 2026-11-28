@@ -1980,7 +1980,9 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Prefer the file (it may have been edited since the scene was saved).
                     // A path written next to the scene ("movement.okayvs") is opened from
                     // the scene's folder when it is not already an absolute file.
-                    std::string p = ReadQuoted(in);
+                    // The component opens the found file; the scene keeps the text it had (#888 F42), see ScenePath.
+                    const std::string written = ReadQuoted(in);
+                    std::string p = written;
                     {
                         const std::filesystem::path pp(p);
                         if (!pp.is_absolute() && !g_loadingSceneDir.empty()) {
@@ -1991,7 +1993,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     auto graphs = go->GetComponents<VisualScriptComponent>();
                     if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
-                        vsc->SetPath(p);
+                        vsc->SetPathFromScene(written, p);
                         std::ifstream probe(FilePath(p));
                         if (probe) vsc->Reload();
                     }

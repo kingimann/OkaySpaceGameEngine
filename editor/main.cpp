@@ -777,6 +777,7 @@ int main(int argc, char** argv) {
 #include "imgui.h"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
+#include "okay/UI/OkayUIDock.hpp"   // GetDockTabs: which docked tab is being dragged (its icon is drawn over its neighbours')
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "SignInGate.hpp"   // the OkaySpace sign-in the editor needs before a project opens
 #include "ModalGuard.hpp"   // one question at a time; undrawn or hidden modals closed or named; clicks that land nowhere logged
@@ -1007,6 +1008,9 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectList.hpp"        // okayproj::Normalized / IsSameOrInside / RootOfScene / SceneIn: the launcher's project rules (includes ProjectDelete.hpp)
 #include "WebRun.hpp"             // Build Settings > Web: the web build's size and the local Run in browser server
+#include "AutomationEditor.hpp"   // View > Automation Link: the automation commands for okay mcp, on this editor's state
+#include "AutomationOps.hpp"      // every menu item as an automation op (op.<id>), run here through the code below
+#include "MenuActions.hpp"        // the menus' scene actions (Edit, GameObject, the Hierarchy menus), shared with the ops
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
@@ -2376,6 +2380,9 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
     if (activated) *activated = false;
     ImGuiStyle& st = ImGui::GetStyle();
     ImGui::PushID(label);
+    // The Inspector's label column (OkayUI's StyleVar_LabelColumn): the label first, in the column, the three cells after it filling the
+    // row; without the column, Dear ImGui's way: the cells, then the label.
+    const bool labelCol = oked::LeadLabel(label);
     ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
     for (int i = 0; i < 3; ++i) {
         ImGui::PushID(i);
@@ -2403,8 +2410,11 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
         ImGui::PopID();
         ImGui::PopItemWidth();
     }
-    ImGui::SameLine(0, st.ItemInnerSpacing.x);
-    ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));   // hide the ##id suffix
+    if (labelCol) ImGui::PopItemWidth();
+    else {
+        ImGui::SameLine(0, st.ItemInnerSpacing.x);
+        ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));   // hide the ##id suffix
+    }
     ImGui::PopID();
     return changed;
 }
@@ -5052,6 +5062,36 @@ static void DrawPanelTabMenu() {
     ImGui::EndPopup();
 }
 
+// OKAY_UI_INSPECTALL=<folder> (a dev hook, round 6: every Inspector body checked in the running editor): once a project is open, one
+// object per component type the property registry knows ("Inspect <Type>", the type added the way Add Component adds it); each is
+// selected in turn and a picture of the editor is saved for it (<folder>/insp_NNN_<Type>.png), one every 8 frames
+// (OKAY_UI_INSPECTALL_ONLY="EventSystem,Light": only those types). The console says
+// "Inspect all: done" after the last one.
+static void InspectAllDevHook(EditorState& ed) {
+    const char* dir = std::getenv("OKAY_UI_INSPECTALL");
+    if (!dir || !*dir || ed.projectDir().empty()) return;
+    static std::vector<std::pair<std::string, std::string>> s_objs;   // (object name, type name)
+    static int s_frame = -1, s_next = 0;
+    if (s_frame < 0) {
+        s_frame = 0;
+        const char* only = std::getenv("OKAY_UI_INSPECTALL_ONLY");   // optional: a comma-separated list of type names to show
+        for (const auto& info : okay::PropertyRegistry::All()) {
+            if (!info || !info->add) continue;
+            if (only && *only && ("," + std::string(only) + ",").find("," + info->name + ",") == std::string::npos) continue;
+            GameObject* g = ed.scene().CreateGameObject("Inspect " + info->name);
+            if (!g || !info->add(*g)) continue;
+            s_objs.push_back({g->name, info->name});
+        }
+        ConsoleLog("Inspect all: " + std::to_string(s_objs.size()) + " component types");
+    }
+    if (++s_frame < 20 || s_next >= (int)s_objs.size() || (s_frame - 20) % 8 != 0) return;
+    const auto& o = s_objs[(size_t)s_next];
+    for (const auto& up : ed.scene().Objects()) if (up->name == o.first) { ed.Select(up.get()); break; }
+    char name[64]; std::snprintf(name, sizeof name, "insp_%03d_", s_next);
+    oked::RequestEditorShot((std::filesystem::path(dir) / (std::string(name) + o.second + ".png")).string(), 6);
+    if (++s_next == (int)s_objs.size()) ConsoleLog("Inspect all: done");
+}
+
 // Panel icons on docked tabs: drawn over each tab, in the room TabPaddingScope
 // leaves before the name. The active tab's icon takes the accent colour.
 static void DrawPanelTabIcons() {
@@ -5061,15 +5101,27 @@ static void DrawPanelTabIcons() {
     const ImU32 accent = ImGui::GetColorU32(AccentCol(1.0f));
     const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text, 0.85f);
     const ImU32 dim    = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    // A tab dragged along its strip is drawn over its neighbours: its icon is drawn last, and a neighbour's icon only beside it (the
+    // neighbour's icon used to show on top of the dragged tab).
+    std::string heldName; ImRect held;
+    for (const OkayUI::DockTabInfo& t : OkayUI::GetDockTabs())
+        if (t.held) { heldName = t.window; held = ImRect(t.shown.x, t.shown.y, t.shown.x + t.shown.w, t.shown.y + t.shown.h); }
+    for (int pass = 0; pass < 2; ++pass)
     for (ImGuiWindow* w : g.Windows) {
         ImGuiDockNode* node = w->DockNode;
         if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
         if (node->IsHiddenTabBar() || node->IsNoTabBar()) continue;   // every tab of a strip has its icon, chosen or not (the hidden ones had none)
+        const bool isHeld = !heldName.empty() && heldName == w->Name;
+        if (isHeld != (pass == 1)) continue;
         ImRect r = w->DC.DockTabItemRect;
         if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
         ImRect clip = r;
         clip.ClipWith(node->TabBar->BarRect);
-        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view
+        if (!isHeld && !heldName.empty() && clip.Min.y < held.Max.y && held.Min.y < clip.Max.y) {   // under the held tab: only the part beside it
+            const float lw = std::max(0.0f, std::min(clip.Max.x, held.Min.x) - clip.Min.x), rw = std::max(0.0f, clip.Max.x - std::max(clip.Min.x, held.Max.x));
+            if (lw >= rw) clip.Max.x = clip.Min.x + lw; else clip.Min.x = clip.Max.x - rw;
+        }
+        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view (or under the held tab)
         ImGuiTabBar* tb = node->TabBar;
         const bool sel = tb->VisibleTabId == w->TabId;
         const bool focused = (tb->Flags & ImGuiTabBarFlags_IsFocused) != 0;
@@ -5780,22 +5832,8 @@ bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& la
 }
 
 // The ready-made screens, grouped by the registry's sections, for the menu model.
-const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
-    static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
-        std::vector<oked::uimenu::ScreenGroup> v;
-        for (const okay::UIScreens::Section& sec : okay::UIScreens::Sections()) {
-            oked::uimenu::ScreenGroup g; g.name = sec.name; g.tip = sec.tip;
-            for (const okay::UIScreens::Def& d : okay::UIScreens::Screens())
-                if (d.section == sec.id) g.items.push_back({d.id, d.name, d.desc});
-            if (!g.items.empty()) v.push_back(std::move(g));
-        }
-        return v;
-    }();
-    return groups;
-}
-
 void DrawUIWidgetItems(EditorState& ed, bool& created) {
-    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(UIScreenGroups());
+    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(oked::menuactions::UIScreenGroups());
     std::function<void(const std::vector<oked::menubar::Entry>&)> draw = [&](const std::vector<oked::menubar::Entry>& es) {
         for (const auto& e : es) {
             using oked::menubar::Kind;
@@ -5944,20 +5982,27 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
 // MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor/editor_menus.md. The code below draws the parts
 // the model leaves to the editor (lists that depend on live data, and the object creators) and runs the item ids.
 // ============================================================================================================================
-static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
 static void FocusSelected(EditorState& ed);                                          // (the Scene view section, below)
 static bool g_openAddComponentFromHierarchy = false;   // Hierarchy > Add Component...: the Inspector opens its Add Component browser (read in the Inspector)
 
-// Wrap one object in a new empty parent that sits where the object is (Hierarchy > Create Parent, GameObject > Create Empty Parent).
-static void CreateEmptyParentOf(EditorState& ed, GameObject* node) {
-    if (!node || !node->transform) return;
-    ed.PushUndo();
-    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
-    parent->transform->SetPosition(node->transform->Position());
-    if (Transform* op = node->transform->Parent())
-        parent->transform->SetParent(op, true);
-    node->transform->SetParent(parent->transform, true);  // keep world pose
-    ed.Select(parent); ed.dirty = true;
+// What the menus' shared actions (MenuActions.hpp) use of this editor: the Console, the clipboard, the Modeling window's
+// mesh history, the snap size, Isolate and the save prompt.
+static oked::menuactions::Env& MenuEnv() {
+    static oked::menuactions::Env env = [] {
+        oked::menuactions::Env e;
+        e.log = [](const std::string& text, int level) { ConsoleLog(text, level); };
+        e.clipboard = &g_clipboard;
+        e.meshHas = [](bool redo) { return redo ? !g_meshRedo.empty() : !g_meshUndo.empty(); };
+        e.meshUndo = [](bool redo) { return MeshUndo(redo); };
+        e.isolate = &g_isolate;
+        e.afterSavePrompt = [](EditorState& ed, const char* what, std::function<void()> then) {
+            RunAfterSavePrompt(ed, what, std::move(then));
+            return true;
+        };
+        return e;
+    }();
+    env.snapSize = g_snapSize;
+    return env;
 }
 
 // The panel and tool windows the Window menu lists: its toggle ids (MenuBarModel.hpp) -> the live "is it open" flags.
@@ -5975,6 +6020,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
+        {"view.automation", &oked::automation::PanelFlag()},   // View > Automation Link: the Connect to Claude panel (AutomationPanel.cpp)
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
     return nullptr;
@@ -5982,18 +6028,12 @@ static bool* MenuFlag(const std::string& id) {
 
 // What the menus need to know about the editor, read once per frame a menu is open.
 static oked::menubar::State MenuBarState(EditorState& ed) {
-    oked::menubar::State s;
-    s.playing = ed.isPlaying();
-    s.inPrefabMode = ed.InPrefabMode();
-    s.scenePath = ed.path();
-    s.selectedCount = (int)ed.MultiSelection().size();
-    if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
-    s.objectCount = (int)ed.scene().Objects().size();
-    const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();
-    s.canUndo = meshU || ed.CanUndo();
-    s.canRedo = meshR || ed.CanRedo();
-    s.undoName = meshU ? std::string("Mesh Edit") : ed.UndoName();
-    s.redoName = meshR ? std::string("Mesh Edit") : ed.RedoName();
+    oked::menubar::State s = oked::menuactions::MenuStateFromEditor(ed);   // the scene, selection and history (MenuActions.cpp)
+    const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();   // the Modeling window's mesh steps come first
+    s.canUndo = meshU || s.canUndo;
+    s.canRedo = meshR || s.canRedo;
+    if (meshU) s.undoName = "Mesh Edit";
+    if (meshR) s.redoName = "Mesh Edit";
     s.clipboardHasObject = !g_clipboard.empty();
     s.recentCount = (int)g_recent.size();
     s.isolating = g_isolate != nullptr;
@@ -6668,10 +6708,10 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
 
 // An item of the menu bar was clicked: do it.
 static void RunMenuAction(EditorState& ed, const std::string& id) {
+    oked::menuactions::After after;
+    if (oked::menuactions::Run(ed, id, nullptr, MenuEnv(), after) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
     // File
-    if (id == "file.new2d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
-    else if (id == "file.new3d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
-    else if (id == "file.open") g_showOpen = true;
+    if (id == "file.open") g_showOpen = true;
     else if (id == "file.save") SaveSceneCmd(ed);
     else if (id == "file.saveas") SaveSceneAsCmd(ed);
     else if (id == "file.saveproject") SaveProject(ed, true);
@@ -6687,75 +6727,18 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     }
     else if (id == "file.build") g_showBuildGame = true;
     else if (id == "file.exit") g_quitRequested = true;
-    // Edit
-    else if (id == "edit.undo" || id == "edit.redo") {
-        const bool redo = id == "edit.redo";
-        const bool mesh = redo ? !g_meshRedo.empty() : !g_meshUndo.empty();
-        const std::string nm = mesh ? std::string("Mesh Edit") : (redo ? ed.RedoName() : ed.UndoName());
-        const std::string verb = redo ? "Redo " : "Undo ";
-        if (MeshUndo(redo)) { ed.dirty = true; ConsoleLog(verb + nm); }
-        else if (redo ? ed.Redo() : ed.Undo()) ConsoleLog(verb + nm);
-        else ConsoleLog("Can't " + std::string(redo ? "redo " : "undo ") + nm + ": " + ed.UndoError(), 1);
-    }
-    else if (id == "edit.cut" && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Cut " + ed.selected()->name + " (Ctrl+V to paste)");
-        ed.DeleteSelected();
-    }
-    else if (id == "edit.copy" && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Copied " + ed.selected()->name);
-    }
-    else if (id == "edit.paste" && !g_clipboard.empty()) {
-        ed.PushUndo();
-        if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-            go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f};
-            ed.Select(go); ed.dirty = true; ConsoleLog("Pasted " + go->name);
-        }
-    }
-    else if (id == "edit.duplicate" && ed.selected()) { ed.DuplicateSelected(); ConsoleLog("Duplicated selection"); }
-    else if (id == "edit.delete" && ed.selected()) { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
-    else if (id == "edit.selectall") {
-        std::vector<GameObject*> all;
-        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
-        HierSelectMany(ed, all);
-    }
-    else if (id == "edit.deselect") ed.Select(nullptr);
+    // Edit (undo, redo, the clipboard, duplicate, delete and select are MenuActions.cpp's)
     else if (id == "edit.darkmode" || id == "edit.lightmode") {   // the design's dark or light scheme (Edit > Appearance has the rest)
         OkayUI::design::Options o = OkayUI::design::Current();
         o.scheme = id == "edit.darkmode" ? OkayUI::design::Scheme::Dark : OkayUI::design::Scheme::Light;
         okayappearance::Commit(o); ApplyTheme(); SaveSettings();
     }
     else if (id == "edit.projectsettings") g_showProjectSettings = true;
-    // GameObject
-    else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
-    else if (id == "go.emptychild" && ed.selected()) {
-        GameObject* parent = ed.selected();
-        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
-        child->transform->SetParent(parent->transform, false);
-        ed.Select(child); ed.dirty = true;
-        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
-    }
-    else if (id == "go.emptyparent" && ed.selected()) {
-        if (ed.MultiSelection().size() > 1) ed.GroupSelected();
-        else CreateEmptyParentOf(ed, ed.selected());
-        ConsoleLog("Created an empty parent");
-    }
+    // GameObject (create empty, child, parent and snap are MenuActions.cpp's)
     else if (id == "go.instantiate") g_showInstPrefab = true;
     else if (id == "go.arraydup") g_showArrayDup = true;
-    else if (id == "go.snap" && ed.selected()) {
-        ed.PushUndo();
-        float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
-        Vec3& p = ed.selected()->transform->localPosition;
-        p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
-        ed.dirty = true; ConsoleLog("Snapped to grid");
-    }
     // View
     else if (id == "view.frame") FocusSelected(ed);
-    else if (id == "view.isolate") {
-        g_isolate = g_isolate ? nullptr : ed.selected();
-        ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)" : "Isolation off");
-    }
     // Help
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
@@ -8399,6 +8382,12 @@ static okay::ui2d::Tex ProjectThumb(const std::string& abs) {
     auto it = g_thumbTex.find(r.key);
     if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
     if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
+    {   // a picture with nothing drawn in it (a model that rendered empty: the .fbx of round 5's list view) is no picture: the icon shows
+        const std::vector<std::uint8_t>& px = r.image->Pixels();
+        bool any = false;
+        for (std::size_t i = 3; i < px.size() && !any; i += 4) any = px[i] > 8;
+        if (!any) { g_thumbTex[r.key] = {nullptr, g_thumbFrame}; return nullptr; }
+    }
     okay::ui2d::Tex tex = okay::pb::CreateTexture(g_sdlRenderer, r.image->Width(), r.image->Height(), okay::pb::Access::Static, true, true,
                                                (const std::uint8_t*)r.image->Pixels().data());
     g_thumbTex[r.key] = {tex, g_thumbFrame};
@@ -9750,7 +9739,10 @@ void DrawProject(EditorState& ed) {
             // materials their albedo ball; everything else keeps its icon chip.
             okay::ui2d::Tex rowThumb = isDir ? nullptr : ProjectThumb(full);
             ImVec4 rowMat;
-            if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
+            if (rowThumb) {   // on a light chip: a dark model (the black cube of an .fbx) or a dark picture was invisible on the dark row
+                dl->AddRectFilled(c0, c1, IM_COL32(118, 122, 134, 255), 3.0f);
+                dl->AddImage((ImTextureID)rowThumb, c0, c1);
+            }
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
                 DrawMaterialBall(dl, c0, c1, rowMat);
             else DrawAssetIcon(dl, c0, c1, k);
@@ -12915,7 +12907,8 @@ static std::string FitPathEnd(const std::string& where, float maxW) {
 }
 // Draw the form. True on the frame "Create project" is pressed with a usable plan (f.plan, and the template in f.tpl).
 static bool DrawNewProjectForm(NewProjectForm& f) {
-    const float labelW = 84.0f;
+    // the label column: 84 pixels, or the widest label and a gap when the text is bigger (at 150% "Location" ran into its field)
+    const float labelW = std::max(84.0f, std::max(ImGui::CalcTextSize("Location").x, ImGui::CalcTextSize("Creates").x) + ImGui::GetStyle().ItemSpacing.x * 2.0f);
     const ImVec4 red(0.96f, 0.55f, 0.50f, 1.0f), amber(0.95f, 0.80f, 0.35f, 1.0f), green(0.45f, 0.82f, 0.56f, 1.0f);
     if (!f.loc[0]) std::snprintf(f.loc, sizeof(f.loc), "%s", DefaultProjectsLocation().c_str());
     const okayproj::Plan& plan0 = NewProjectPlan(f);
@@ -13626,11 +13619,6 @@ static bool g_hierDropOpenSeen = false;
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
 static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
 // Select a set of objects in the Hierarchy (the first becomes the active one).
-static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs) {
-    if (objs.empty()) return;
-    ed.Select(objs.back());   // ToggleSelect makes each added object active, so go back to front
-    for (std::size_t i = objs.size() - 1; i-- > 0;) if (!ed.IsSelected(objs[i])) ed.ToggleSelect(objs[i]);
-}
 // Hierarchy path of an object ("Canvas/Lobby/Title"), for Copy Path.
 static std::string HierPath(GameObject* g) {
     std::string path = g->name;
@@ -13698,20 +13686,7 @@ static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowM
 }
 
 // Lock/unlock an object and its whole subtree.
-static void SetLockedRecursive(GameObject* go, bool on) {
-    if (!go) return;
-    go->editorLocked = on;
-    if (go->transform)
-        for (Transform* c : go->transform->Children())
-            if (c) SetLockedRecursive(c->gameObject, on);
-}
-
-// The objects a Hierarchy action should affect: the whole multi-selection when the
-// clicked node is part of it, otherwise just that node.
-static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
-    if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) return ed.MultiSelection();
-    return {node};
-}
+using oked::menuactions::SetLockedRecursive;   // MenuActions.cpp (the Hierarchy's Lock, and the Inspector's)
 
 // A small mark on the corner of a row's icon: this object is (part of) a prefab instance. Blue square: an instance root;
 // violet: an instance of a variant; a square with an inner square: a prefab nested inside a bigger one; faint blue: a part of
@@ -13811,22 +13786,7 @@ static const char* HierKindName(GameObject* go) {
 
 // The right-clicked row, as plain values for the model. `recount`: count the other objects of its kind (once, when the menu opens).
 static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, bool recount) {
-    oked::hiermenu::RowState r;
-    r.selectedCount = (int)HierTargets(ed, node).size();
-    r.active = node->active;
-    r.locked = node->editorLocked;
-    r.childCount = node->transform->ChildCount();
-    Transform* par = node->transform->Parent();
-    r.hasParent = par != nullptr;
-    int index = 0, count = 0;
-    if (par) {
-        for (Transform* c : par->Children()) { if (c == node->transform) index = count; ++count; }
-    } else {
-        for (const auto& up : ed.scene().Objects())
-            if (up->transform && !up->transform->Parent()) { if (up.get() == node) index = count; ++count; }
-    }
-    r.siblingIndex = index;
-    r.siblingCount = count > 0 ? count : 1;
+    oked::hiermenu::RowState r = oked::menuactions::RowStateFromEditor(ed, node);   // selection, flags, place (MenuActions.cpp)
     r.clipboardHasObject = !g_clipboard.empty();
     r.isolated = g_isolate == node;
     if (GameObject* proot = PrefabTools::NearestPrefabRoot(*node); proot && !proot->prefabSource.empty()) {
@@ -13852,17 +13812,14 @@ static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, 
 }
 
 static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
-    oked::hiermenu::EmptyState e;
-    e.objectCount = (int)ed.scene().Objects().size();
-    e.selectedCount = (int)ed.MultiSelection().size();
-    if (e.selectedCount == 0 && ed.selected()) e.selectedCount = 1;
+    oked::hiermenu::EmptyState e = oked::menuactions::EmptyStateFromEditor(ed);
     e.clipboardHasObject = !g_clipboard.empty();
     e.sortAZ = g_hierSort;
     return e;
 }
 
 // What a row menu asks the panel to do after the tree is drawn (the rows below are still being walked).
-struct HierRowResult { bool cut = false, deleteSelection = false, deleteChildren = false, revealSelection = false; };
+using HierRowResult = oked::menuactions::After;
 
 // Parent To >: every object that is not inside this one (so no cycle), world pose kept.
 static void HierParentToSlot(EditorState& ed, GameObject* node) {
@@ -13927,87 +13884,21 @@ static void HierModelToolsSlot(EditorState& ed, GameObject* node) {
 
 // An item of a row's right-click menu was clicked: do it. The menu has already selected the row (unless it was part of a multi-selection).
 static void HierRowAction(EditorState& ed, GameObject* node, const std::string& id, HierRowResult& out) {
-    if (id == "h.copy") g_clipboard = SceneSerializer::SerializeObject(*node);
-    else if (id == "h.cut") { g_clipboard = SceneSerializer::SerializeObject(*node); out.cut = true; }   // deleted after the tree is drawn
-    else if (id == "h.paste" || id == "h.pastechild") {
-        ed.PushUndo();
-        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-            if (id == "h.pastechild") p->transform->SetParent(node->transform, false);
-            else if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
-            ed.Select(p); ed.dirty = true;
-        }
-    }
-    else if (id == "h.rename") {
+    if (oked::menuactions::Run(ed, id, node, MenuEnv(), out) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
+    if (id == "h.rename") {
         g_hierRename.Set(node); g_hierRenameOpen = true;
         std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
         g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
-    else if (id == "h.duplicate") { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-    else if (id == "h.delete") out.deleteSelection = true;   // deleted after the tree is drawn: the rows below still use this object this frame
-    else if (id == "h.deletechildren") out.deleteChildren = true;   // empties a container, keeps the object
-    else if (id == "h.emptychild") {
-        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
-        child->transform->SetParent(node->transform, false);
-        ed.Select(child); ed.dirty = true;
-    }
-    else if (id == "h.createparent") {   // one object: wrap it, keeping its on-screen transform; several: group them
-        if (HierTargets(ed, node).size() > 1) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
-        else CreateEmptyParentOf(ed, node);
-    }
-    else if (id == "h.unparent") {
-        ed.PushUndo();
-        node->transform->SetParent(nullptr, true);   // keep world pose
-        ed.dirty = true;
-    }
-    else if (id == "h.moveup")     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
-    else if (id == "h.movedown")   { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
-    else if (id == "h.movetop")    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
-    else if (id == "h.movebottom") { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
-    else if (id.rfind("h.sel.", 0) == 0) {
+    else if (id == "h.sel.sametype") {
         std::vector<GameObject*> pick;
-        Transform* par = node->transform->Parent();
-        if (id == "h.sel.children") { for (Transform* c : node->transform->Children()) pick.push_back(c->gameObject); }
-        else if (id == "h.sel.below") {
-            for (const auto& up : ed.scene().Objects())
-                if (up.get() != node && up->IsSelfOrDescendantOf(node)) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.parent") { if (par) pick.push_back(par->gameObject); }
-        else if (id == "h.sel.siblings") {
-            for (const auto& up : ed.scene().Objects()) if (up->transform->Parent() == par) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.samename") {
-            for (const auto& up : ed.scene().Objects()) if (up->name == node->name) pick.push_back(up.get());
-        }
-        else if (id == "h.sel.sametype") {
-            const std::string kind = HierKindName(node);
-            for (const auto& up : ed.scene().Objects()) if (kind == HierKindName(up.get())) pick.push_back(up.get());
-        }
-        if (!pick.empty()) { HierSelectMany(ed, pick); out.revealSelection = true; }   // open their parents so they show
+        const std::string kind = HierKindName(node);
+        for (const auto& up : ed.scene().Objects()) if (kind == HierKindName(up.get())) pick.push_back(up.get());
+        if (!pick.empty()) { oked::menuactions::SelectMany(ed, pick); out.revealSelection = true; }   // open their parents so they show
     }
     else if (id == "h.expandbelow")   { g_hierExpandRoot = node; g_hierExpandRootVal = 1; }
     else if (id == "h.collapsebelow") { g_hierExpandRoot = node; g_hierExpandRootVal = 0; }
-    else if (id == "h.active") {
-        ed.PushUndo();
-        const bool on = !node->active;
-        for (GameObject* g : HierTargets(ed, node)) oked::SetObjectActive(g, on);   // the whole selection; children follow their parent
-        ed.dirty = true;
-    }
-    else if (id == "h.lock") {
-        ed.PushUndo();
-        const bool on = !node->editorLocked;
-        for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
-        ed.dirty = true;
-    }
     else if (id == "h.focus") FocusSelected(ed);
-    else if (id == "h.isolate") g_isolate = (g_isolate == node) ? nullptr : node;
-    else if (id.rfind("h.tf.", 0) == 0) {
-        auto each = [&](auto fn) { ed.PushUndo(); for (GameObject* g : HierTargets(ed, node)) fn(g->transform); ed.dirty = true; };
-        if (id == "h.tf.resetpos") each([](Transform* t) { t->localPosition = Vec3::Zero; });
-        else if (id == "h.tf.resetrot") each([](Transform* t) { t->localRotation = Quat::Identity; });
-        else if (id == "h.tf.resetscale") each([](Transform* t) { t->localScale = Vec3::One; });
-        else if (id == "h.tf.resetall") each([](Transform* t) { t->localPosition = Vec3::Zero; t->localRotation = Quat::Identity; t->localScale = Vec3::One; });
-        else if (id == "h.tf.movetoview") each([&](Transform* t) { t->SetPosition(ed.camTarget); });
-    }
     else if (id == "h.addcomponent") {   // the Inspector's own browser: select this object, show the Inspector, open the browser there
         ed.Select(node);
         g_showInspector = true;
@@ -14037,26 +13928,9 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
 
 // An item of the empty-space menu or of the [+] popup was clicked: do it.
 static void HierEmptyAction(EditorState& ed, const std::string& id) {
-    if (id == "h.createempty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
-    else if (id == "h.emptychild" && ed.selected()) {
-        GameObject* parent = ed.selected();
-        GameObject* child = ed.CreateEmpty("Child");
-        child->transform->SetParent(parent->transform, false);
-        ed.Select(child); ed.dirty = true;
-        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
-    }
-    else if (id == "h.groupselected") { if (ed.GroupSelected()) ConsoleLog("Grouped selection under an empty parent"); }
-    else if (id == "h.paste" && !g_clipboard.empty()) {
-        ed.PushUndo();
-        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
-    }
-    else if (id == "h.selectall") {
-        std::vector<GameObject*> all;
-        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
-        HierSelectMany(ed, all);
-    }
-    else if (id == "h.deselect") ed.Select(nullptr);
-    else if (id == "h.expandall") g_hierExpand = 1;
+    oked::menuactions::After after;
+    if (oked::menuactions::Run(ed, id, nullptr, MenuEnv(), after) != oked::menuactions::Outcome::NotHandled) return;   // MenuActions.cpp
+    if (id == "h.expandall") g_hierExpand = 1;
     else if (id == "h.collapseall") g_hierExpand = 2;
 }
 
@@ -14500,11 +14374,10 @@ void DrawHierarchy(EditorState& ed) {
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
     if (g_hierDropOpenSeen) { g_hierDropOpen.Clear(); g_hierDropOpenSeen = false; }
-    if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
-    else if (deletePending) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
-    if (deleteKidsPending) {
-        const int n = ed.DeleteChildrenOfSelected();
-        ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");
+    {
+        oked::menuactions::After pending;
+        pending.cut = cutPending; pending.deleteSelection = deletePending; pending.deleteChildren = deleteKidsPending;
+        oked::menuactions::ApplyAfter(ed, pending, MenuEnv());
     }
     oked::RunPrefabRequests(ed);   // Prefab menu of a row: Revert All / Apply All / Unpack / Update All
     // Shift+click: select the whole range between the active object and the
@@ -23357,10 +23230,14 @@ void DrawInspector(EditorState& ed) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(im.framePadding.x, im.framePadding.y));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(im.innerSpacing.x, im.innerSpacing.y));
         g_inspSectionGap = im.sectionGap;
-        if (!im.stacked) {   // the value column's width (the label goes right of it); Begin() set the 65% default
+        if (!im.stacked) {   // the value column's width; Begin() set the 65% default
             ImGuiWindow* iw = ImGui::GetCurrentWindow();
             iw->DC.ItemWidthDefault = im.valueWidth; iw->DC.ItemWidth = im.valueWidth;
         }
+        // The labels on the left, in one column (OkayUI's label column): every field that starts a row has its label at the left edge and
+        // its box where the value column starts, so the boxes line up (round 6). A panel too narrow for both side by side keeps the
+        // plain layout (0: off).
+        OkayUI::PushStyleVar(OkayUI::StyleVar_LabelColumn, im.stacked ? 0.0f : im.labelWidth + im.innerSpacing.x);
     }
     oked::DrawPlayModeNote(ed);   // "Changes made here are not saved" while playing
 
@@ -23397,7 +23274,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Separator();
             if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ProjectForgetThumb(s_seenAsset); }
             else ImGui::TextDisabled("This file has no import settings.");
-            ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+            ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
             ImGui::End();
             return;
         }
@@ -23416,14 +23293,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::SetCursorPosX(x0 + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
             if (ImGui::Button("Unlock Inspector")) s_lock.Unlock();
         }
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;
     }
     if (!go) {
         EmptyState("\xE2\x97\x88", "Nothing selected",
                    "Select an object in the Hierarchy or Scene to edit it.");
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;
     }
@@ -23643,7 +23520,7 @@ void DrawInspector(EditorState& ed) {
     oked::DrawPrefabHeader(ed, go);
     oked::DrawPrefabChanges(ed, go);
     if (oked::RunPrefabRequests(ed)) {   // a revert rebuilt the instance: this object is gone
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f; ImGui::End();
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f; ImGui::End();
         return;
     }
     oked::BeginInspectorFrame();
@@ -24005,7 +23882,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Filter##sprite", &sfi, sfilters, 2)) { sr->texFilter = (SpriteRenderer::TexFilter)sfi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth = bilinear (photos/hi-res). Pixel = nearest-neighbour (crisp pixel-art, no blur).");
             ImGui::TextDisabled("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order");
-            if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }
     if (auto* ps = dynamic_cast<ParticleSystem*>(curComp)) {
@@ -24240,7 +24116,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Seed##ps", &seedI, 1.0f, 0, 2000000000)) { ps->seed = (std::uint64_t)seedI; ed.dirty = true; }
             oked::FieldTip("Seed##ps");
 
-            if (ImGui::SmallButton("Remove##ps")) toRemove = ps;
         }
     }
     if (auto* mr = dynamic_cast<MeshRenderer*>(curComp)) {
@@ -24493,8 +24368,6 @@ void DrawInspector(EditorState& ed) {
             ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Ground, true, "##mesh");
             ImGui::SameLine();
             ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Fit1u, true, "##mesh");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
             // Material presets: save the current look as a reusable .okaymat, or
             // load one (also accepts a .okaymat dropped from the Project).
             SectionHeader("Material preset");
@@ -24688,7 +24561,6 @@ void DrawInspector(EditorState& ed) {
             oked::DrawTerrainLayersUI(ed, *tr);
             oked::DrawTerrainScatterUI(ed, *tr);
 
-            if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
     }
     if (auto* td = dynamic_cast<TerrainDigger*>(curComp)) {
@@ -24727,7 +24599,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Raise Button##tdg", &rbi, rbtns, 4)) { td->raiseButton = (rbi == 3) ? -1 : rbi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold this to RAISE terrain (build it up). Default right mouse, so the same digger both digs and raises.");
             ImGui::TextDisabled("Heightmap: carves holes/hills, not caves/overhangs.");
-            if (ImGui::SmallButton("Remove##tdg")) toRemove = td;
         }
     }
     if (auto* v = dynamic_cast<VoxelTerrain*>(curComp)) {
@@ -24860,7 +24731,6 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
                 if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
             }
-            if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }
     if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
@@ -24953,7 +24823,6 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
             }
-            if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
     if (auto* w = dynamic_cast<Water*>(curComp)) {
@@ -25048,7 +24917,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Bubbles##wat", &w->bubbles)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bubbles rise around the camera when it is under the water.");
             }
-            if (ImGui::SmallButton("Remove##wat")) toRemove = w;
         }
     }
     if (auto* fl = dynamic_cast<Flashlight*>(curComp)) {
@@ -25069,7 +24937,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit3("Color##fl", c)) { fl->color = {c[0],c[1],c[2],1.0f}; ed.dirty = true; }
             oked::FieldTip("Color##fl");
             ImGui::TextDisabled("Mount on the player or its camera; the beam aims where you look.");
-            if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
     }
     if (auto* vsc = dynamic_cast<VisualScriptComponent*>(curComp)) {
@@ -25440,7 +25307,6 @@ void DrawInspector(EditorState& ed) {
                                    "This model has NO animation clips - it will hold its pose.");
                 ImGui::TextDisabled("Mixamo: pick an animation and download WITH skin.\nOr right-click the model > Rig Model (Humanoid) to use built-in animations.");
             }
-            if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
     // A player has two animator machines on purpose: the walk / jump graph (layer 0) and a small upper-body layer that
@@ -25694,13 +25560,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Elbow##fh", &fh->armElbow, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forearm bend: hand closeness / height.");
             if (ImGui::SmallButton("Reset arm pose##fh")) { fh->armRaise = -96.0f; fh->armElbow = 16.0f; ed.dirty = true; }
-            if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
     if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
         if (CompHeader("First Person Hands", fhs, &toRemove)) {
             DrawFpHandsBody(ed, fhs);
-            if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
         }
     }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
@@ -25723,7 +25587,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable)
                 ImGui::TextDisabled("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
-            if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
     if (auto* ps = dynamic_cast<NetworkPlayerSpawner*>(curComp)) {
@@ -25743,7 +25606,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stagger remote players so they don't spawn on top of each other.");
             if (ImGui::Checkbox("Spawn local player##nps", &ps->spawnLocalPlayer)) ed.dirty = true;
             oked::FieldTip("Spawn local player##nps");
-            if (ImGui::SmallButton("Remove##nps")) toRemove = ps;
         }
     }
     if (auto* ac = dynamic_cast<AntiCheatConfig*>(curComp)) {
@@ -25885,7 +25747,6 @@ void DrawInspector(EditorState& ed) {
                 if (!textErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", textErr.c_str()); }
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
         }
     }
     if (auto* nv = dynamic_cast<NetValidator*>(curComp)) {
@@ -25908,7 +25769,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Budget regained per second (0 = only a top-up refills it).");
             if (ImGui::Checkbox("Clients may send##nv", &nv->clientsMaySend)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = only the host may call this RPC.");
-            if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
         }
     }
     if (auto* sv = dynamic_cast<Saveable*>(curComp)) {
@@ -25963,7 +25823,6 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::EndCombo();
             }
-            if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
         }
     }
     if (auto* ss = dynamic_cast<SaveConfig*>(curComp)) {
@@ -25975,7 +25834,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One autosave on entering this scene (not while a load is putting a save back).");
             if (ImGui::DragInt("Autosave slots##ss", &ss->autosaveSlots, 0.2f, 1, 20)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("autosave_1 ... autosave_N; the oldest is replaced first. Continue loads the newest save of any kind.");
-            if (ImGui::SmallButton("Remove##ss")) toRemove = ss;
         }
     }
     if (auto* lpi = dynamic_cast<LocalPlayerInput*>(curComp)) {
@@ -25996,7 +25854,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Action maps on at start##lpi", mb, sizeof(mb))) { lpi->startMaps = mb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Comma list, for example Gameplay. Maps not listed start off. Empty = as the asset says.");
             if (ed.isPlaying()) ImGui::TextDisabled("Playing: player index %d (use it with the ia_* calls)", lpi->GetPlayerIndex());
-            if (ImGui::SmallButton("Remove##lpi")) toRemove = lpi;
         }
     }
     if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
@@ -26013,7 +25870,6 @@ void DrawInspector(EditorState& ed) {
             char lbuf[128]; std::snprintf(lbuf, sizeof(lbuf), "%s", as->label.c_str());
             if (ImGui::InputText("Label##as", lbuf, sizeof(lbuf))) { as->label = lbuf; ed.dirty = true; }
             oked::FieldTip("Label##as");
-            if (ImGui::SmallButton("Remove##as")) toRemove = as;
         }
     }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
@@ -26048,7 +25904,6 @@ void DrawInspector(EditorState& ed) {
             float pc[4] = {pm->panelColor.r, pm->panelColor.g, pm->panelColor.b, pm->panelColor.a};
             if (ImGui::ColorEdit4("Panel##pm", pc)) { pm->panelColor = {pc[0],pc[1],pc[2],pc[3]}; ed.dirty = true; }
             oked::FieldTip("Panel##pm");
-            if (ImGui::SmallButton("Remove##pm")) toRemove = pm;
         }
     }
     if (auto* ws = dynamic_cast<WorldStreamer*>(curComp)) {
@@ -26077,7 +25932,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Only re-check on cell change##ws", &ws->onlyOnCellChange);
             ImGui::TextDisabled("Cells: %s%s_<x>_<z>%s  |  resident: %d",
                                 ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
-            if (ImGui::SmallButton("Remove##ws")) toRemove = ws;
         }
     }
     if (auto* de = dynamic_cast<Destructible*>(curComp)) {
@@ -26119,7 +25973,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Reach##de", &de->reach, 0.5f, 1.0f, 200.0f)) ed.dirty = true;
                 oked::FieldTip("Reach##de");
             }
-            if (ImGui::SmallButton("Remove##de")) toRemove = de;
         }
     }
     if (auto* ch = dynamic_cast<Character*>(curComp)) {
@@ -26656,7 +26509,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled(li->type == Light::Type::Point ? "Radiates from this object's position out to Range."
                 : li->type == Light::Type::Area ? "Soft broad fill from this position out to Range (wrap-lit)."
                 : "Rotate this object to aim the light (its +Z is the direction).");
-            if (ImGui::SmallButton("Remove##light")) toRemove = li;
         }
     }
     if (auto* cam = dynamic_cast<Camera*>(curComp)) {
@@ -26867,7 +26719,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("A second camera in the corner, drawn after this one.\n"
                                   "Move it, set its culling mask, or switch Clear Flags to Solid Color.");
-            if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
     if (auto* lod = dynamic_cast<LODGroup*>(curComp)) {
@@ -26915,7 +26766,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Four levels: 100%%, 50%%, 25%% and 10%% of the triangles,\n"
                                   "with distances taken from how much the shape changes.");
-            if (ImGui::SmallButton("Remove##lod")) toRemove = lod;
         }
     }
     if (auto* occ = dynamic_cast<Occluder*>(curComp)) {
@@ -26925,7 +26775,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("On: the real triangles hide what's behind them.\n"
                                   "Off: the bounding box does (only for a solid wall).");
             ImGui::TextDisabled("Objects behind this one can be skipped when Occlusion is on (Stats).");
-            if (ImGui::SmallButton("Remove##occ")) toRemove = occ;
         }
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
@@ -26950,7 +26799,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
             ImGui::DragFloat("Rolling Resistance##rb", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
-            if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
         if (CompHeader("Box Collider 2D", bc, &toRemove)) {
@@ -26970,7 +26818,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##bc", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
             oked::FieldTip("Auto Fit##bc");
             if (bc->autoFit) FitColliders(go, true);   // keep matched while editing
-            if (ImGui::SmallButton("Remove##bc")) toRemove = bc;
         }
     }
     if (auto* cc = dynamic_cast<CircleCollider2D*>(curComp)) {
@@ -26989,7 +26836,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##cc", &cc->autoFit)) { if (cc->autoFit) FitColliders(go); ed.dirty = true; }
             oked::FieldTip("Auto Fit##cc");
             if (cc->autoFit) FitColliders(go, true);
-            if (ImGui::SmallButton("Remove##cc")) toRemove = cc;
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider2D*>(curComp)) {
@@ -27014,7 +26860,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##cap2", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
             oked::FieldTip("Auto Fit##cap2");
             if (cap->autoFit) FitColliders(go, true);
-            if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
     }
     if (auto* ec = dynamic_cast<EdgeCollider2D*>(curComp)) {
@@ -27050,7 +26895,6 @@ void DrawInspector(EditorState& ed) {
                 Vec2 last = ec->points.empty() ? Vec2{0, 0} : ec->points.back();
                 ec->points.push_back({last.x + 1.0f, last.y}); ed.dirty = true;
             }
-            if (ImGui::SmallButton("Remove##ec2")) toRemove = ec;
         }
     }
     if (auto* pc = dynamic_cast<PolygonCollider2D*>(curComp)) {
@@ -27079,7 +26923,6 @@ void DrawInspector(EditorState& ed) {
                 Vec2 last = pc->points.empty() ? Vec2{0, 0} : pc->points.back();
                 pc->points.push_back({last.x, last.y + 0.5f}); ed.dirty = true;
             }
-            if (ImGui::SmallButton("Remove##pc2")) toRemove = pc;
         }
     }
     if (auto* rb3 = dynamic_cast<Rigidbody3D*>(curComp))
@@ -27117,7 +26960,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
             else
                 ImGui::TextDisabled("Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
-            if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
             }   // the Dear ImGui body
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -27180,7 +27022,6 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
             if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
-            if (ImGui::SmallButton("Remove##jt")) toRemove = jt;
         }
     }
     if (auto* jt = dynamic_cast<Joint2D*>(curComp)) {
@@ -27221,7 +27062,6 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::Checkbox("Breakable##jt2", &jt->breakable);
             if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt2", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
-            if (ImGui::SmallButton("Remove##jt2")) toRemove = jt;
         }
     }
     if (auto* a = dynamic_cast<AimIK*>(curComp)) {
@@ -27264,7 +27104,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Max Angle##aim", &a->maxAngle, 1.0f, 0.0f, 180.0f);
             ImGui::DragFloat("Smoothing##aim", &a->smoothing, 0.5f, 0.0f, 40.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease speed toward a moved target (per second). 0 = exact/instant (turrets).");
-            if (ImGui::SmallButton("Remove##aim")) toRemove = a;
         }
     }
     if (auto* ikt = dynamic_cast<IKTarget*>(curComp)) {
@@ -27281,7 +27120,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Weight##ikt", &ikt->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Blend time##ikt", &ikt->blendTime, 0.01f, 0.0f, 2.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease the limb onto this object.");
-            if (ImGui::SmallButton("Remove##ikt")) toRemove = ikt;
         }
     }
     if (auto* ao = dynamic_cast<AimOffset*>(curComp)) {
@@ -27302,7 +27140,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Recoil kick##ao", &ao->kick, 0.1f, 0.0f, 45.0f);
             ImGui::DragFloat("Recoil recovery##ao", &ao->recovery, 0.1f, 0.0f, 40.0f);
             if (ImGui::SmallButton("Recoil##ao")) ao->Recoil(1.0f);
-            if (ImGui::SmallButton("Remove##ao")) toRemove = ao;
         }
     }
     if (auto* pc = dynamic_cast<PoseCapture*>(curComp)) {
@@ -27328,7 +27165,6 @@ void DrawInspector(EditorState& ed) {
             }
             if (pc->IsRecording()) ImGui::Text("Recording %.2fs", pc->RecordedTime());
             if (!pc->LastFile().empty()) ImGui::TextDisabled("%s", pc->LastFile().c_str());
-            if (ImGui::SmallButton("Remove##pc")) toRemove = pc;
         }
     }
     if (auto* l = dynamic_cast<LookAtIK*>(curComp)) {
@@ -27451,7 +27287,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Eye Weight##look", &l->eyeWeight, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
                 oked::FieldTip("Eye Weight##look");
             }
-            if (ImGui::SmallButton("Remove##look")) toRemove = l;
         }
     }
     {
@@ -27509,7 +27344,6 @@ void DrawInspector(EditorState& ed) {
                 if (IKJointLimitUI("Knee limit##fik", f->kneeLimit)) ed.dirty = true;
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
-                if (ImGui::SmallButton("Remove##fik")) toRemove = f;
             }
         }
         if (auto* hr = dynamic_cast<HumanoidRetarget*>(curComp)) {
@@ -27547,7 +27381,6 @@ void DrawInspector(EditorState& ed) {
                                     " — needs a child model with Mixamo-style bone names", 1);
                 }
                 ImGui::TextDisabled("Needs an enabled Character on this object;\nthe model's own clips still play via play_clip_once.");
-                if (ImGui::SmallButton("Remove##hrt")) toRemove = hr;
             }
         }
         if (auto* lb = dynamic_cast<LimbIK*>(curComp)) {
@@ -27621,7 +27454,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("IK Active##lik", &lb->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##lik", &lb->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend IK in/out when IK Active changes (scripts: ik_enable).");
-                if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
         }
         if (auto* ci = dynamic_cast<ChainIK*>(curComp)) {
@@ -27704,7 +27536,6 @@ void DrawInspector(EditorState& ed) {
                     }
                     ImGui::TreePop();
                 }
-                if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
             }
         }
         if (auto* fb = dynamic_cast<FullBodyIK*>(curComp)) {
@@ -27810,7 +27641,6 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TreePop();
                 }
                 ImGui::TextDisabled("Scripts: ik_hand(\"left\", x, y, z), ik_foot(...), ik_look(x, y, z),\nik_reached(\"left_hand\"), ik_release()");
-                if (ImGui::SmallButton("Remove##fbik")) toRemove = fb;
             }
         }
         if (auto* ph = dynamic_cast<ProceduralObjectHolding*>(curComp)) {
@@ -27855,7 +27685,6 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
                 }
                 else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
-                if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
         }
         if (auto* hp = dynamic_cast<HoldPrompt*>(curComp)) {
@@ -27871,7 +27700,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::InputText("Prompt Object##hp", pn, sizeof(pn))) { hp->promptObject = pn; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
                 LocalizedSwitch(ed, hp);   // the prompts from the hold.* keys
-                if (ImGui::SmallButton("Remove##hp")) toRemove = hp;
             }
         }
         if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
@@ -27932,7 +27760,6 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::TextDisabled("Grip rotation 0 = palm down, the hand points along -Z.");
                 if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
-                if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
             }
         }
         if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
@@ -27943,7 +27770,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Combo("Mode##rm", &rm->mode, modes, 3);
                 ImGui::Checkbox("Lock Height##rm", &rm->lockHeight);
                 ImGui::Checkbox("Apply To Rigidbody##rm", &rm->applyToRigidbody);
-                if (ImGui::SmallButton("Remove##rm")) toRemove = rm;
             }
         }
     }
@@ -27978,8 +27804,6 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::SmallButton("Rebuild##mc3")) { mcol->Invalidate(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove##mc3")) toRemove = mcol;
             }   // the Dear ImGui body
         }
     }
@@ -28012,7 +27836,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("Show draggable face handles in the Scene view so you can\n"
                                   "pull each side of the box to match the model. Turn off when done.");
             if (g_colliderEdit) ImGui::TextDisabled("Drag the colored dots on each face in the Scene view.");
-            if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
             }   // the Dear ImGui body
         }
     }
@@ -28034,7 +27857,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##sc3", &sc->autoFit)) { if (sc->autoFit) FitColliders(go); ed.dirty = true; }
             oked::FieldTip("Auto Fit##sc3");
             if (sc->autoFit) FitColliders(go, true);
-            if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
             }   // the Dear ImGui body
         }
     }
@@ -28060,7 +27882,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##cap3", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
             oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
-            if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
             }   // the Dear ImGui body
         }
     }
@@ -28097,7 +27918,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##cone3", &co->autoFit)) { if (co->autoFit) FitColliders(go); ed.dirty = true; }
             if (co->autoFit) FitColliders(go, true);
             colliderEditButton("cone3", "Drag the dots in the Scene view: the tip and base change the height, the rim changes the width.");
-            if (ImGui::SmallButton("Remove##cone3")) toRemove = co;
         }
     }
     if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
@@ -28111,7 +27931,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Reset to a box##hull3")) { hc->points.clear(); ed.dirty = true; }
             char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", hc->points.c_str());
             if (ImGui::InputTextMultiline("Points (x y z; x y z; ...)##hull3", pb, sizeof(pb), ImVec2(0, 60))) { hc->points = pb; ed.dirty = true; }
-            if (ImGui::SmallButton("Remove##hull3")) toRemove = hc;
         }
     }
     if (auto* cp = dynamic_cast<CompoundCollider3D*>(curComp)) {
@@ -28126,14 +27945,12 @@ void DrawInspector(EditorState& ed) {
             char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cp->parts.c_str());
             if (ImGui::InputTextMultiline("Parts##comp3", pb, sizeof(pb), ImVec2(0, 90))) { cp->parts = pb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':  kind px py pz rx ry rz a b c axis\nbox: a b c = size. sphere: a = radius. capsule / cylinder / cone: a = radius, b = height, axis 0 X / 1 Y / 2 Z.\nPosition in local units, rotation in degrees.");
-            if (ImGui::SmallButton("Remove##comp3")) toRemove = cp;
         }
     }
     if (auto* pl = dynamic_cast<PlaneCollider3D*>(curComp)) {
         if (CompHeader("Plane Collider 3D", pl, &toRemove)) {
             ImGui::TextDisabled("Endless flat ground. Everything below the plane is solid. Turn the object to tilt it.");
             colliderCommon3D(pl, "plane3");
-            if (ImGui::SmallButton("Remove##plane3")) toRemove = pl;
         }
     }
     if (auto* hf = dynamic_cast<HeightfieldCollider3D*>(curComp)) {
@@ -28154,7 +27971,6 @@ void DrawInspector(EditorState& ed) {
             colliderCommon3D(hf, "hf3");
             if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }
             if (ImGui::SmallButton("Make flat##hf3")) { hf->SetHeights(hf->columns, hf->rows, std::vector<float>((std::size_t)hf->columns * (std::size_t)hf->rows, 0.0f)); ed.dirty = true; }
-            if (ImGui::SmallButton("Remove##hf3")) toRemove = hf;
         }
     }
     if (auto* cmp2 = dynamic_cast<CompositeCollider2D*>(curComp)) {
@@ -28173,7 +27989,6 @@ void DrawInspector(EditorState& ed) {
             char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cmp2->parts.c_str());
             if (ImGui::InputTextMultiline("Parts##cmp2", pb, sizeof(pb), ImVec2(0, 90))) { cmp2->parts = pb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':\ncircle x y radius\nbox x y width height angle\ncapsule x y radius length angle\npolygon x y x y x y ...");
-            if (ImGui::SmallButton("Remove##cmp2")) toRemove = cmp2;
         }
     }
     // A GameObject may carry several scripts.
@@ -28391,7 +28206,6 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             ImGui::TextDisabled("WASD / arrows / stick. Uses a Rigidbody2D if present.");
-            if (ImGui::SmallButton("Remove##cc2")) toRemove = cc;
         }
     }
     if (auto* cc = dynamic_cast<CharacterController3D*>(curComp)) {
@@ -28406,7 +28220,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Jump Force##cc3");
             }
             ImGui::TextDisabled("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
-            if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
         }
     }
     if (auto* v = dynamic_cast<VehicleController*>(curComp)) {
@@ -28468,7 +28281,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::Separator();
             ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
             ImGui::TextDisabled("Space = handbrake. Needs a Rigidbody3D + collider.");
-            if (ImGui::SmallButton("Remove##veh")) toRemove = v;
         }
     }
     if (auto* v2 = dynamic_cast<VehicleController2D*>(curComp)) {
@@ -28494,7 +28306,6 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
                                              : "W/S gas, A/D steer, Space handbrake (drift).");
-            if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
         }
     }
     if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
@@ -28525,7 +28336,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
             if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
-            if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }
     if (auto* sb = dynamic_cast<StructureBuilder*>(curComp)) {
@@ -28579,7 +28389,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
             oked::FieldTip("Crosshair##sb");
-            if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
         }
     }
     if (auto* bm = dynamic_cast<BuilderMode*>(curComp)) {
@@ -28636,7 +28445,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##bm", &bm->showCrosshair)) ed.dirty = true;
             oked::FieldTip("Crosshair##bm");
-            if (ImGui::SmallButton("Remove##bm")) toRemove = bm;
         }
     }
     if (auto* bp = dynamic_cast<BuildPiece*>(curComp)) {
@@ -28655,7 +28463,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Material##bp");
             if (ImGui::DragInt("Cost##bp", &bp->cost, 0.2f, 0, 9999)) ed.dirty = true;
             oked::FieldTip("Cost##bp");
-            if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
         }
     }
     // ---- In-game build mode + logic links ----
@@ -28767,7 +28574,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Wheel cycles##bmdk");
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##bmd")) toRemove = bm;
         }
     }
     if (auto* bl = dynamic_cast<Buildable*>(curComp)) {
@@ -28781,7 +28587,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("New id##bl")) { bl->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Logic links and saved creations find objects by this id.");
             if (bl->placed) ImGui::TextDisabled("Placed by a player (saved with creations)");
-            if (ImGui::SmallButton("Remove##bl")) toRemove = bl;
         }
     }
     if (auto* ls = dynamic_cast<LogicSource*>(curComp)) {
@@ -28909,7 +28714,6 @@ void DrawInspector(EditorState& ed) {
                 ls->ioLinks.push_back(nl); ed.dirty = true;
             }
             if (!ioMsg.empty()) ImGui::TextWrapped("Test: %s", ioMsg.c_str());
-            if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }
     if (auto* lt = dynamic_cast<LogicTarget*>(curComp)) {
@@ -28953,7 +28757,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputTextWithHint(lt->kind == LogicTarget::Kind::Event ? "Event Name##lt" : "Signal Name##lt",
                                          "object name", eb, sizeof(eb))) { lt->eventName = eb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The name On Logic Signal reports (an Event target also sends it\nas a custom event: On Custom Event / OnEvent_<name>).");
-            if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
     if (auto* ls = dynamic_cast<LoadingScreen*>(curComp)) {
@@ -29117,7 +28920,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Y##lsspin");
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }
     if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
@@ -29273,7 +29075,6 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
         }
     }
     if (auto* gi = dynamic_cast<GridInventory*>(curComp)) {
@@ -29348,7 +29149,6 @@ void DrawInspector(EditorState& ed) {
                 for (const auto& it : gi->overflow) ImGui::BulletText("%s  %dx%d  x%d", it.name.c_str(), it.w, it.h, it.count);
                 ImGui::TextDisabled("Make the grid bigger to put them back.");
             }
-            if (ImGui::SmallButton("Remove##gi")) toRemove = gi;
         }
     }
     if (auto* gu = dynamic_cast<GridInventoryUI*>(curComp)) {
@@ -29461,7 +29261,6 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
         }
     }
     if (auto* cs = dynamic_cast<CraftingStation*>(curComp)) {
@@ -29533,7 +29332,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("+ Add recipe##cs")) { cs->recipes.push_back({}); ed.dirty = true; }
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
         }
     }
     if (auto* eq = dynamic_cast<Equipment*>(curComp)) {
@@ -29655,7 +29453,6 @@ void DrawInspector(EditorState& ed) {
             cc("Panel", ch->panelColor, "chc0"); cc("Title Bar", ch->titleBar, "chc1");
             cc("Slot", ch->slotColor, "chc2"); cc("Border", ch->slotBorder, "chc3");
             cc("Text", ch->textColor, "chc4");
-            if (ImGui::SmallButton("Remove##ch")) toRemove = ch;
         }
     }
     if (auto* ni = dynamic_cast<NetInventory*>(curComp)) {
@@ -29674,7 +29471,6 @@ void DrawInspector(EditorState& ed) {
             char sd[256]; std::snprintf(sd, sizeof(sd), "%s", ni->saveDir.c_str());
             if (ImGui::InputText("Host save folder##ni", sd, sizeof(sd))) { ni->saveDir = sd; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional folder for the host's copy of a signed-in player's bag. Empty = memory only, until the host quits.");
-            if (ImGui::SmallButton("Remove##ni")) toRemove = ni;
         }
     }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
@@ -29772,7 +29568,6 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("Methods: Eat/Drink/Heal/Breathe/Warm/Damage,");
             ImGui::TextDisabled("SetSprinting/SetSubmerged/SetCold, Revive.");
-            if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
         }
     }
     // Individual native stat components. A small lambda renders the shared output
@@ -29849,7 +29644,6 @@ void DrawInspector(EditorState& ed) {
             }
             statOutputs(c, "sth");
             ImGui::TextDisabled("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.");
-            if (ImGui::SmallButton("Remove##sth")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<Seat*>(curComp)) {
@@ -29874,7 +29668,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Prompt##seat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
             oked::FieldTip("Prompt##seat");
             if (c->occupied) ImGui::TextDisabled("Occupied");
-            if (ImGui::SmallButton("Remove##seat")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<VehicleSeat*>(curComp)) {
@@ -29895,7 +29688,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Enter / Exit Key##vseat", kb, sizeof(kb)) && kb[0]) { c->enterKey = kb[0]; ed.dirty = true; }
             if (!c->Vehicle()) ImGui::TextDisabled("Needs a Vehicle Controller on this object or a parent.");
             if (c->occupied) ImGui::TextDisabled("Occupied");
-            if (ImGui::SmallButton("Remove##vseat")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<HungerStat*>(curComp)) {
@@ -29921,7 +29713,6 @@ void DrawInspector(EditorState& ed) {
             }
             statOutputs(c, "sthu");
             ImGui::TextDisabled("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().");
-            if (ImGui::SmallButton("Remove##sthu")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<ThirstStat*>(curComp)) {
@@ -29944,7 +29735,6 @@ void DrawInspector(EditorState& ed) {
             if (c->slowWhenDehydrated) if (ImGui::SliderFloat("Min Speed##stt", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stt");
             ImGui::TextDisabled("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().");
-            if (ImGui::SmallButton("Remove##stt")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<StaminaStat*>(curComp)) {
@@ -29971,7 +29761,6 @@ void DrawInspector(EditorState& ed) {
             if (c->slowWhenExhausted) if (ImGui::SliderFloat("Min Speed##sts", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "sts");
             ImGui::TextDisabled("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().");
-            if (ImGui::SmallButton("Remove##sts")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<OxygenStat*>(curComp)) {
@@ -29989,7 +29778,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while out of air (0 = off).");
             statOutputs(c, "sto");
             ImGui::TextDisabled("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.");
-            if (ImGui::SmallButton("Remove##sto")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<TemperatureStat*>(curComp)) {
@@ -30007,7 +29795,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while frozen (0 = off).");
             statOutputs(c, "stmp");
             ImGui::TextDisabled("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.");
-            if (ImGui::SmallButton("Remove##stmp")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<SleepStat*>(curComp)) {
@@ -30028,7 +29815,6 @@ void DrawInspector(EditorState& ed) {
             if (c->slowWhenTired) if (ImGui::SliderFloat("Min Speed##stsl", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stsl");
             ImGui::TextDisabled("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().");
-            if (ImGui::SmallButton("Remove##stsl")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<SanityStat*>(curComp)) {
@@ -30046,7 +29832,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while insane (0 = off).");
             statOutputs(c, "stsn");
             ImGui::TextDisabled("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.");
-            if (ImGui::SmallButton("Remove##stsn")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<RadiationStat*>(curComp)) {
@@ -30065,7 +29850,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Damage / s##strd");
             statOutputs(c, "strd");
             ImGui::TextDisabled("Methods: AddRadiation, TakeAntiRad, SetInRadiation.");
-            if (ImGui::SmallButton("Remove##strd")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<BleedingStat*>(curComp)) {
@@ -30080,7 +29864,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Clot / s##stbl");
             statOutputs(c, "stbl");
             ImGui::TextDisabled("Methods: Wound, Bandage, Heal.");
-            if (ImGui::SmallButton("Remove##stbl")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<PoisonStat*>(curComp)) {
@@ -30095,7 +29878,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Decay / s##stpo");
             statOutputs(c, "stpo");
             ImGui::TextDisabled("Methods: Poison, Cure, CureAll.");
-            if (ImGui::SmallButton("Remove##stpo")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<WetnessStat*>(curComp)) {
@@ -30114,7 +29896,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Soaked Threshold##stwe");
             statOutputs(c, "stwe");
             ImGui::TextDisabled("Methods: AddWetness, DryOff, SetInWater.");
-            if (ImGui::SmallButton("Remove##stwe")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<CarryWeightStat*>(curComp)) {
@@ -30129,7 +29910,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Movement multiplier when heavily overloaded. Read SpeedFactor() from a controller.");
             statOutputs(c, "stcw");
             ImGui::TextDisabled("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.");
-            if (ImGui::SmallButton("Remove##stcw")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<StatusEffectStat*>(curComp)) {
@@ -30140,7 +29920,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("<name> on apply, <name>_expired on end -> ActionList OnMessage.");
             ImGui::Text("Active now: %d", c->ActiveCount());
             ImGui::TextDisabled("Methods: Apply, Remove, Clear, Has, Remaining.");
-            if (ImGui::SmallButton("Remove##stse")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<SurvivalSave*>(curComp)) {
@@ -30159,7 +29938,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Load Now##svsv")) c->Load();
             }
             ImGui::TextDisabled("Methods: Save, Load (On Click-callable).");
-            if (ImGui::SmallButton("Remove##svsv")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<SurvivalZone*>(curComp)) {
@@ -30185,7 +29963,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Duration##svz");
             }
             ImGui::TextDisabled("Needs a trigger Collider (isTrigger). Toggle effects clear on exit.");
-            if (ImGui::SmallButton("Remove##svz")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<Consumables*>(curComp)) {
@@ -30222,7 +29999,6 @@ void DrawInspector(EditorState& ed) {
             if (removeAt >= 0) { c->recipes.erase(c->recipes.begin() + removeAt); ed.dirty = true; }
             if (ImGui::SmallButton("+ Recipe##cons")) { c->AddRecipe("item", "Eat", 25.0f); ed.dirty = true; }
             ImGui::TextDisabled("Use(item) from a hotbar/script, or drop a matching item here.");
-            if (ImGui::SmallButton("Remove##cons")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<DayNightCycle*>(curComp)) {
@@ -30263,7 +30039,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Night Sky##dnc");
             }
             ImGui::TextDisabled("Drives the Sun light + main camera sky. Bind UI text with {hour}.");
-            if (ImGui::SmallButton("Remove##dnc")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<NPCController*>(curComp)) {
@@ -30443,7 +30218,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
             oked::FieldTip("Invulnerable##npc");
             ImGui::TextDisabled("Moves a sibling Rigidbody3D (or the Transform).");
-            if (ImGui::SmallButton("Remove##npc")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<Crafting*>(curComp)) {
@@ -30495,7 +30269,6 @@ void DrawInspector(EditorState& ed) {
             if (!go->GetComponent<Inventory>())
                 ImGui::TextDisabled("Add an Inventory component for crafting to draw from.");
             ImGui::TextDisabled("Craft(name)/CraftIndex from a menu button (On Click 'Craft', Amount=index).");
-            if (ImGui::SmallButton("Remove##craft")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<CraftingMenu*>(curComp)) {
@@ -30517,7 +30290,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Spacing##cmenu");
             if (!go->GetComponent<Crafting>())
                 ImGui::TextDisabled("Add a Crafting component for it to build buttons from.");
-            if (ImGui::SmallButton("Remove##cmenu")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<MeleeAttacker*>(curComp)) {
@@ -30551,7 +30323,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Attack key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that starts a swing.");
             if (ImGui::Checkbox("Also use the left mouse button##melee", &c->useMouse)) ed.dirty = true;
-            if (ImGui::SmallButton("Remove##melee")) toRemove = c;
         }
     }
     if (auto* gun = dynamic_cast<RangedWeapon*>(curComp)) {
@@ -30588,7 +30359,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%d rounds in the gun, %s spare%s", gun->Rounds(),
                     gun->Spare() < 0 ? "unlimited" : std::to_string(gun->Spare()).c_str(),
                     gun->IsReloading() ? ", reloading" : "");
-            if (ImGui::SmallButton("Remove##gun")) toRemove = gun;
         }
     }
     if (auto* c = dynamic_cast<Spawner*>(curComp)) {
@@ -30668,7 +30438,6 @@ void DrawInspector(EditorState& ed) {
             if (ed.isPlaying() && c->Pool())
                 ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
                                     c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
-            if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
     if (auto* fp = dynamic_cast<FirstPersonController*>(curComp); fp && !PlayerController::Of(go)) {
@@ -30930,7 +30699,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Full Body IK looks with camera##fp");
 
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
-            if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
     if (auto* tp = kOldControllerPanels ? dynamic_cast<ThirdPersonController*>(curComp) : nullptr) {
@@ -31232,7 +31000,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Full Body IK looks with camera##tp");
 
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
-            if (!owned && ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
     // grok/view-toggle: one player, first person or third, switched at play.
@@ -31325,7 +31092,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("While playing, keys 1-5 apply Classic / Modern / Arcade / Realistic / Shooter feel to this player, to compare. Off by default.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
             ImGui::TextDisabled("V eases between the eyes and the orbit.");
-            if (!owned && ImGui::SmallButton("Remove##pv")) toRemove = pv;
         }
     }
     // grok/ui-theme: a saved skin. Apply bakes it; existing widgets stay put until then.
@@ -31419,7 +31185,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Focus Pulse##uitheme", &th->focusPulse)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The ring brightens and dims. Reduce motion and reduce flashing hold it still.");
             ImGui::TextDisabled("Bakes onto panels, buttons, sliders, toggles, bars, dropdowns, fields and screen text under this object.");
-            if (ImGui::SmallButton("Remove##uitheme")) toRemove = th;
         }
     }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
@@ -31458,7 +31223,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Damping##td", &td->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
             oked::FieldTip("Damping##td");
             ImGui::TextDisabled("Twin-stick / ARPG: WASD + a fixed high follow camera.");
-            if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
@@ -31585,7 +31349,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Fire Shake##tds", &sh->fireShake, 0.005f, 0.0f, 0.5f, "%.3f")) ed.dirty = true;
             oked::FieldTip("Fire Shake##tds");
             ImGui::TextDisabled("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.");
-            if (ImGui::SmallButton("Remove##tds")) toRemove = sh;
         }
     }
     if (auto* pc = dynamic_cast<Platformer25DController*>(curComp)) {
@@ -31744,7 +31507,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Camera Follows Layer##p25", &pc->cameraFollowsLayer)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the camera stays centred on the layers, like LittleBigPlanet.");
             ImGui::TextDisabled("Script events: on_jump, on_land, on_layer, on_grab, on_release, on_climb.");
-            if (ImGui::SmallButton("Remove##p25")) toRemove = pc;
         }
     }
     if (auto* pj = dynamic_cast<Projectile3D*>(curComp)) {
@@ -31765,7 +31527,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Bounce Off Walls##pj");
             if (pj->bounce) if (ImGui::DragInt("Bounces##pj", &pj->maxBounces, 0.05f, 1, 20)) ed.dirty = true;
             ImGui::TextDisabled("Damages the Health it hits; calls on_hit on its script.");
-            if (ImGui::SmallButton("Remove##pj")) toRemove = pj;
         }
     }
     if (auto* t2 = dynamic_cast<TopDownController2D*>(curComp)) {
@@ -31843,7 +31604,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Knockback Time##t2", &t2->knockbackTime, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Input lockout after a hit. Call Knockback(dir, force) from a script/hazard.");
             ImGui::TextDisabled("2D sprite top-down: move, sprint, dash, face, shoot, get knocked back.");
-            if (ImGui::SmallButton("Remove##t2")) toRemove = t2;
         }
     }
     if (auto* fr = dynamic_cast<FreeRoamController*>(curComp)) {
@@ -31872,7 +31632,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Max Pitch##fr", &fr->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
             oked::FieldTip("Max Pitch##fr");
             ImGui::TextDisabled("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
-            if (ImGui::SmallButton("Remove##fr")) toRemove = fr;
         }
     }
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
@@ -31961,7 +31720,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Lock Cursor##tps", &ts->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor while playing");
             ImGui::TextDisabled("Over-the-shoulder aim. Body faces the camera; RMB aims, LMB fires.");
-            if (ImGui::SmallButton("Remove##tps")) toRemove = ts;
         }
     }
     if (auto* cm = dynamic_cast<ClickToMoveController*>(curComp)) {
@@ -32031,7 +31789,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Middle-drag rotates, wheel zooms.");
             }
             ImGui::TextDisabled("Click the ground to walk there (RuneScape-style). Needs the main Camera.");
-            if (ImGui::SmallButton("Remove##ctm")) toRemove = cm;
         }
     }
     if (auto* ft = dynamic_cast<FollowTarget2D*>(curComp)) {
@@ -32045,7 +31802,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Stop Distance##ft", &ft->stopDistance, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
             oked::FieldTip("Stop Distance##ft");
             ImGui::TextDisabled("Chases the named object (enemy AI / homing).");
-            if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
         }
     }
     if (auto* gp = dynamic_cast<GridPathAgent2D*>(curComp)) {
@@ -32067,7 +31823,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Plan again every (seconds)##gp", &gp->repathInterval, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How often to plan again. A new obstacle on the route plans again at once.");
             ImGui::TextDisabled("Walks empty tiles. Walls are any other tile until costs are on.");
-            if (ImGui::SmallButton("Remove##gp")) toRemove = gp;
         }
     }
     if (auto* gc = dynamic_cast<GridCostLayer*>(curComp)) {
@@ -32081,7 +31836,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Mud cost (higher is slower)##gc", &gc->mudCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
             ImGui::TextDisabled("The agent pays these only when Pay for mud and roads is on.");
-            if (ImGui::SmallButton("Remove##gc")) toRemove = gc;
         }
     }
     if (auto* go2 = dynamic_cast<GridObstacle2D*>(curComp)) {
@@ -32097,7 +31851,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Block the path##gob", &go2->blocks)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
             ImGui::TextDisabled("Move this object to slide the blocked cells.");
-            if (ImGui::SmallButton("Remove##gob")) toRemove = go2;
         }
     }
     if (auto* al = dynamic_cast<ActionList*>(curComp)) {
@@ -32236,7 +31989,6 @@ void DrawInspector(EditorState& ed) {
                                           "stays brighter than a straight line.");
                 }
             }
-            if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
     }
     if (auto* mp = dynamic_cast<MusicPlayer*>(curComp)) {
@@ -32296,7 +32048,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Velocity##mv");
             ImGui::TextDisabled("units / second");
-            if (ImGui::SmallButton("Remove##mv")) toRemove = mv;
         }
     }
     if (auto* sp = dynamic_cast<Spinner*>(curComp)) {
@@ -32305,7 +32056,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Angular Vel##sp");
             ImGui::TextDisabled("degrees / second (X, Y, Z)");
-            if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
         }
     }
     if (auto* lt = dynamic_cast<Lifetime*>(curComp)) {
@@ -32313,7 +32063,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             oked::FieldTip("Seconds##lt");
             ImGui::TextDisabled("destroys this object after N seconds of play");
-            if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
     // ---- No-code mechanics --------------------------------------------------
@@ -32344,7 +32093,6 @@ void DrawInspector(EditorState& ed) {
             strField("Collector Tag##co", co->collectorTag, "coCT");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who can collect it: a tag or name text. Empty = anyone.");
             warnNoCollider(co->gameObject);
-            if (ImGui::SmallButton("Remove##co")) toRemove = co;
         }
     }
     if (auto* dt = dynamic_cast<DamageOnTouch*>(curComp)) {
@@ -32362,7 +32110,6 @@ void DrawInspector(EditorState& ed) {
             strField("Target Tag##dot", dt->targetTag, "dotTT");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who takes damage: a tag or name text. Empty = anyone.");
             warnNoCollider(dt->gameObject);
-            if (ImGui::SmallButton("Remove##dot")) toRemove = dt;
         }
     }
     if (auto* jp = dynamic_cast<JumpPad*>(curComp)) {
@@ -32379,7 +32126,6 @@ void DrawInspector(EditorState& ed) {
             { char tb[48]; std::snprintf(tb, sizeof(tb), "%s", jp->triggerTag.c_str());
               if (ImGui::InputText("Who##jp", tb, sizeof(tb))) { jp->triggerTag = tb; ed.dirty = true; }
               if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tag or name of who launches; empty = anyone."); }
-            if (ImGui::SmallButton("Remove##jp")) toRemove = jp;
         }
     }
     if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
@@ -32394,7 +32140,6 @@ void DrawInspector(EditorState& ed) {
             strField("Trigger Tag##tp", tp->triggerTag, "tpTT");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who teleports: a tag or name text. Empty = anyone.");
             warnNoCollider(tp->gameObject);
-            if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
     if (auto* tz = dynamic_cast<TriggerZone*>(curComp)) {
@@ -32419,7 +32164,6 @@ void DrawInspector(EditorState& ed) {
             strField("Trigger Tag##tz", tz->triggerTag, "tzTT");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who fires it: a tag or name text. Empty = anyone.");
             warnNoCollider(tz->gameObject);
-            if (ImGui::SmallButton("Remove##tz")) toRemove = tz;
         }
     }
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
@@ -32454,7 +32198,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Agility##st", &st->agility, 0.1f, 0, 999)) ed.dirty = true;
             oked::FieldTip("Agility##st");
             ImGui::TextDisabled("scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
-            if (ImGui::SmallButton("Remove##st")) toRemove = st;
         }
     }
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
@@ -32524,7 +32267,6 @@ void DrawInspector(EditorState& ed) {
             }
             if (eraseS >= 0) { ed.PushUndo(); inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
             if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { ed.PushUndo(); inv->slots.push_back({"Item", 1}); ed.dirty = true; }
-            if (ImGui::SmallButton("Remove##inv")) toRemove = inv;
         }
     }
     if (auto* tm = dynamic_cast<TurnManager*>(curComp)) {
@@ -32553,7 +32295,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::SmallButton("End Turn (preview)##tm")) tm->EndTurn();
             ImGui::TextDisabled("calls on_turn_start on each unit; on_round_start here");
-            if (ImGui::SmallButton("Remove##tm")) toRemove = tm;
         }
     }
     if (auto* cf = dynamic_cast<CameraFollow*>(curComp)) {
@@ -32568,7 +32309,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Smoothing##cf", &cf->smoothing, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Smoothing##cf");
             ImGui::TextDisabled("follows the named GameObject (0 = instant snap)");
-            if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
     }
     if (auto* vc = dynamic_cast<VirtualCamera*>(curComp)) {
@@ -32783,7 +32523,6 @@ void DrawInspector(EditorState& ed) {
             }
             if (vc->follow.empty() && vc->lookAt.empty() && vc->groupTargets.empty())
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Nothing to follow yet: type an object's name in Follow or Look At.");
-            if (ImGui::SmallButton("Remove##vc")) toRemove = vc;
         }
     }
     if (auto* cb = dynamic_cast<CinemachineBrain*>(curComp)) {
@@ -32823,7 +32562,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
             else
                 ImGui::TextDisabled("Drives this Camera from virtual cameras.");
-            if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
         }
     }
     if (auto* cz = dynamic_cast<CameraZone*>(curComp)) {
@@ -32848,7 +32586,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Only this shot##cz", zb, sizeof(zb))) { cz->shot = zb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type a camera rig's object name to affect only that shot. Blank = every shot.");
             ImGui::TextDisabled("Shown as a cyan box in the Scene view.");
-            if (ImGui::SmallButton("Remove##cz")) toRemove = cz;
         }
     }
     if (auto* rm = dynamic_cast<CameraRoom*>(curComp)) {
@@ -32857,7 +32594,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size##cr", sz, 0.1f, 0.1f, 5000.0f)) { rm->size = {sz[0], sz[1]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width and height of the room in world units. The room is centred on this object.\nA 2D Camera Rig with 'Use rooms' on stays inside the room the player is in.");
             ImGui::TextDisabled("Shown as a yellow box in the Scene view.");
-            if (ImGui::SmallButton("Remove##cr")) toRemove = rm;
         }
     }
     if (auto* dp = dynamic_cast<DollyPath*>(curComp)) {
@@ -32878,7 +32614,6 @@ void DrawInspector(EditorState& ed) {
                 Vec3 last = dp->waypoints.empty() ? Vec3{0, 0, 0} : dp->waypoints.back();
                 dp->waypoints.push_back(last + Vec3{0, 0, 5}); ed.dirty = true;
             }
-            if (ImGui::SmallButton("Remove##dp")) toRemove = dp;
         }
     }
     if (auto* dc = dynamic_cast<DollyCart*>(curComp)) {
@@ -32899,7 +32634,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On an open path, turn round at each end instead of stopping");
             if (ImGui::Checkbox("Face Along Path##dc", &dc->orientToPath)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the object to face the way it travels along the rail");
-            if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
     if (auto* tr = dynamic_cast<TextRenderer*>(curComp)) {
@@ -33030,7 +32764,6 @@ void DrawInspector(EditorState& ed) {
             if (tr->fontPath.empty())            ImGui::TextDisabled("Built-in 8x8 bitmap font.");
             else if (okay::GetFont(tr->fontPath)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
             else                                 ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
-            if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
     if (auto* w3 = dynamic_cast<WorldSpaceUI*>(curComp)) {
@@ -33049,7 +32782,6 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("This UI widget renders in the 3D world at this object's");
             ImGui::TextDisabled("position. Move it with the transform gizmo.");
-            if (ImGui::SmallButton("Remove##w3")) toRemove = w3;
         }
     }
     if (auto* cv = dynamic_cast<Canvas*>(curComp)) {
@@ -33157,7 +32889,6 @@ void DrawInspector(EditorState& ed) {
             float liveScale = cv->ScaleFactor(UICanvas::Width(), UICanvas::Height());
             ImGui::TextDisabled("Current scale: %.2fx  (canvas %.0f x %.0f)",
                                 liveScale, UICanvas::Width(), UICanvas::Height());
-            if (ImGui::SmallButton("Remove##cv")) toRemove = cv;
         }
     }
     if (auto* es = dynamic_cast<EventSystem*>(curComp)) {
@@ -33167,7 +32898,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
             GameObject* s = es->Selected();
             ImGui::Text("Selected: %s", s ? s->name.c_str() : "(none)");
-            if (ImGui::SmallButton("Remove##es")) toRemove = es;
         }
     }
     if (auto* nm = dynamic_cast<NetworkManager*>(curComp)) {
@@ -33256,7 +32986,6 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
-            if (ImGui::SmallButton("Remove##nm")) toRemove = nm;
         }
     }
     if (auto* doc = dynamic_cast<UIDocument*>(curComp)) {
@@ -33307,7 +33036,6 @@ void DrawInspector(EditorState& ed) {
                 for (const auto& d : diag)
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "  %s", d.c_str());
             }
-            if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }
     if (auto* wu = dynamic_cast<WorldUI*>(curComp)) {
@@ -33338,7 +33066,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Bar Color##wu");
             }
             ImGui::TextDisabled("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
-            if (ImGui::SmallButton("Remove##wu")) toRemove = wu;
         }
     }
     if (auto* btn = dynamic_cast<UIButton*>(curComp)) {
@@ -33526,7 +33253,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Repeat Rate##uib", &btn->repeatInterval, 0.01f, 0.01f, 1.0f)) ed.dirty = true;
                 oked::FieldTip("Repeat Rate##uib");
             }
-            if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
     if (auto* pn = dynamic_cast<UIPanel*>(curComp)) {
@@ -33595,7 +33321,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Shadow Blur##uip", &pn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp; higher = a soft penumbra (premium card look)");
             }
-            if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
     }
     if (auto* in = dynamic_cast<UIInputField*>(curComp)) {
@@ -33639,7 +33364,6 @@ void DrawInspector(EditorState& ed) {
             // grok/ui-controls
             if (ImGui::Checkbox("Multiline##uif", &in->multiline)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enter inserts a newline instead of submitting.");
-            if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
     }
     if (auto* dd = dynamic_cast<UIDropdown*>(curComp)) {
@@ -33721,7 +33445,6 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
             }
-            if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
     if (auto* ta = dynamic_cast<TweenAnimation*>(curComp)) {
@@ -33956,7 +33679,6 @@ void DrawInspector(EditorState& ed) {
             float off[2] = {tt->offset.x, tt->offset.y};
             if (ImGui::DragFloat2("Offset##utt", off, 0.5f, -200.0f, 200.0f)) { tt->offset = {off[0], off[1]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels from the cursor. 14, 14 is the usual spot. The box follows the pointer.");
-            if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
         }
     }
     if (auto* dg = dynamic_cast<UIDraggable*>(curComp)) {
@@ -33981,7 +33703,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Keep on screen##udg");
             ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
             ImGui::TextDisabled("on_receive() on the target.");
-            if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
         }
     }
     if (auto* dt = dynamic_cast<UIDropTarget*>(curComp)) {
@@ -34028,7 +33749,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::BulletText("on_remove   — an item is dragged out of this slot");
             ImGui::BulletText("on_drag_enter / on_drag_exit — item hovers/leaves");
             ImGui::TextDisabled("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.");
-            if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
         }
     }
     if (auto* dg = dynamic_cast<Draggable*>(curComp)) {
@@ -34055,7 +33775,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Drag the sprite at runtime; dropping on a Drop Zone");
             ImGui::TextDisabled("fires on_drop() here + on_receive() on the zone.");
             ImGui::TextDisabled("Zones also get on_hover_enter/exit() during a drag.");
-            if (ImGui::SmallButton("Remove##dg")) toRemove = dg;
         }
     }
     if (auto* dz = dynamic_cast<DropZone*>(curComp)) {
@@ -34064,7 +33783,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
             ImGui::TextDisabled("Sprites dropped here call this object's on_receive().");
-            if (ImGui::SmallButton("Remove##dz")) toRemove = dz;
         }
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
@@ -34090,7 +33808,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
             ImGui::SameLine();
             ImGui::TextDisabled("content: %.0f px", lg->ContentSize());
-            if (ImGui::SmallButton("Remove##lg")) toRemove = lg;
         }
     }
     if (auto* sv = dynamic_cast<UIScrollView*>(curComp)) {
@@ -34124,7 +33841,6 @@ void DrawInspector(EditorState& ed) {
             int bs = sv->barStyle; if (bs < 0) bs = 0; if (bs > 2) bs = 2;
             if (ImGui::Combo("Bar##usv", &bs, bars, 3)) { sv->barStyle = bs; ed.dirty = true; }
             oked::FieldTip("Bar##usv");
-            if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
@@ -34202,7 +33918,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::InputText("Text Format##upb", fmt, sizeof(fmt))) { pb->textFormat = fmt; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("{n} = percent, {v} = 0..1. Empty keeps the percent readout.");
             }
-            if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
     if (auto* rp = dynamic_cast<UIRadialProgress*>(curComp)) {
@@ -34238,7 +33953,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
             oked::FieldTip("Show Percent##urp");
             ImGui::TextDisabled("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
-            if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
     if (auto* tb = dynamic_cast<UITextBind*>(curComp)) {
@@ -34258,7 +33972,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
             if (const GameObject* ow = uiowner::Find(tb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
             else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
-            if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
         }
     }
     if (auto* bb = dynamic_cast<UIBarBind*>(curComp)) {
@@ -34281,7 +33994,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Under a character: owner.healthFrac is that character's health (0 to 1).");
             if (const GameObject* ow = uiowner::Find(bb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
             else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
-            if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
         }
     }
     if (auto* mm = dynamic_cast<Minimap*>(curComp)) {
@@ -34535,7 +34247,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear WP##umm")) { mm->hasUserWaypoint = false; ed.dirty = true; }
             }
             ImGui::TextDisabled("add a Minimap Blip to objects to plot them");
-            if (ImGui::SmallButton("Remove##umm")) toRemove = mm;
         }
     }
     if (auto* bl = dynamic_cast<MinimapBlip*>(curComp)) {
@@ -34567,7 +34278,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Label##umb", lb, sizeof(lb))) { bl->label = lb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name shown next to the blip when the Minimap's labels are on.");
             ImGui::TextDisabled("appears on every Minimap");
-            if (ImGui::SmallButton("Remove##umb")) toRemove = bl;
         }
     }
     if (auto* cr = dynamic_cast<Crosshair*>(curComp)) {
@@ -34634,7 +34344,6 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Outline Color##uch");
             }
             AnchorCombo("Anchor##uch", cr->anchor, ed);
-            if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
         }
     }
     if (auto* cp = dynamic_cast<UIColorPicker*>(curComp)) { // grok/ui-color
@@ -34673,7 +34382,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PopID();
             }
             ImGui::TextDisabled("script: set_swatch(\"name\", i)   event: on_change");
-            if (ImGui::SmallButton("Remove##ucp")) toRemove = cp;
         }
     }
     if (auto* sg = dynamic_cast<UISlotGrid*>(curComp)) { // grok/ui-hud
@@ -34713,7 +34421,6 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PopID();
             }
             ImGui::TextDisabled("script: set_slot(\"name\", i)   event: on_change");
-            if (ImGui::SmallButton("Remove##usg")) toRemove = sg;
         }
     }
     if (auto* sa = dynamic_cast<UISafeArea*>(curComp)) {
@@ -34841,7 +34548,6 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Shadow Blur##uim", &im->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
                 oked::FieldTip("Shadow Blur##uim");
             }
-            if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
     if (auto* sl = dynamic_cast<UISlider*>(curComp)) {
@@ -34929,7 +34635,6 @@ void DrawInspector(EditorState& ed) {
                     ed.dirty = true;
                 }
             }
-            if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
     if (auto* st = dynamic_cast<UIStepper*>(curComp)) {
@@ -34971,7 +34676,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
             oked::FieldTip("Interactable##ust");
             ImGui::TextDisabled("[-] value [+] ; calls script on_change()");
-            if (ImGui::SmallButton("Remove##ust")) toRemove = st;
         }
     }
     if (auto* rt = dynamic_cast<UIRating*>(curComp)) {
@@ -34999,7 +34703,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Empty##urt");
             AnchorCombo("Anchor##urt", rt->anchor, ed);
             ImGui::TextDisabled("click a star to rate; calls script on_change()");
-            if (ImGui::SmallButton("Remove##urt")) toRemove = rt;
         }
     }
     if (auto* tg = dynamic_cast<UIToggle*>(curComp)) {
@@ -35049,7 +34752,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Knob glide / check fade speed (0 = snap).");
             if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             oked::FieldTip("Interactable##utg");
-            if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
     if (auto* tb = dynamic_cast<UITabs*>(curComp)) {
@@ -35271,7 +34973,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Selected tab shows its Page object (and everything under");
             ImGui::TextDisabled("it); others hide. Long names are shortened with \"...\".");
             ImGui::TextDisabled("on_change() still fires on a sibling script.");
-            if (ImGui::SmallButton("Remove##utb")) toRemove = tb;
         }
     }
     if (auto* an = dynamic_cast<SpriteAnimator*>(curComp)) {
@@ -35345,8 +35046,6 @@ void DrawInspector(EditorState& ed) {
                 SpriteClip cl; cl.name = "clip" + std::to_string(an->clips.size()); cl.fps = an->fps;
                 an->clips.push_back(cl); ed.dirty = true;
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove##anim")) toRemove = an;
         }
     }
     if (auto* anm = dynamic_cast<Animator*>(curComp)) {
@@ -35461,7 +35160,6 @@ void DrawInspector(EditorState& ed) {
                 } else if (ImGui::SmallButton("Play##sp")) sp->Play();
             }
             ImGui::TextDisabled("Scripts: play_sequence(\"name\") / Sequence.Play(\"name\"). Plays on each client.");
-            if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
         }
     }
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
@@ -35490,7 +35188,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
     if (oked::RunPrefabRequests(ed)) {           // Revert / Apply Property or Component from a right-click menu
-        ImGui::PopItemWidth(); ImGui::PopStyleVar(3); ImGui::End();
+        ImGui::PopItemWidth(); ImGui::PopStyleVar(4); ImGui::End();
         return;
     }
     // Apply a queued component removal (undoable).
@@ -35507,9 +35205,10 @@ void DrawInspector(EditorState& ed) {
     sCompForceOpen = sCompForceRequest;
     sCompForceRequest = -1;
 
-    ImGui::Spacing();
+    // The end of the component list: a clear gap and a divider before the buttons (they sat right under the last component's body).
+    ImGui::Dummy(ImVec2(0, 6));
     ImGui::Separator();
-    ImGui::Spacing();
+    ImGui::Dummy(ImVec2(0, 6));
     static char acFilter[64] = "";
     // Prominent, accent-tinted primary action — centre a wide
     // "Add Component" button under the component list.
@@ -35524,11 +35223,9 @@ void DrawInspector(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
-        float acW = ImGui::GetContentRegionAvail().x;
-        float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
-        if (acPad > 0.0f) ImGui::Indent(acPad);
-        acClicked = ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30));
-        if (acPad > 0.0f) ImGui::Unindent(acPad);
+        // The Inspector's main action: the full width of the panel's content (round 6; it was a 260-pixel button over a full-width red
+        // Delete bar, the owner: "the delete gameobject is bigger then the add component").
+        acClicked = ImGui::Button("+  Add Component", ImVec2(-1, 32));
         ImGui::PopStyleColor(4);
     }
     if (acClicked) {
@@ -36132,9 +35829,34 @@ void DrawInspector(EditorState& ed) {
         ImGui::EndPopup();
     }
 
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
-    if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
-    ImGui::PopStyleColor();
+    // Delete GameObject: a dangerous action, so a quiet one, well apart from Add Component: red text on an outline, the same width and a
+    // normal height, and it asks first (Ctrl+Z also brings the object back).
+    ImGui::Dummy(ImVec2(0, 18));
+    {
+        const ImVec4 red(0.93f, 0.42f, 0.40f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.93f, 0.42f, 0.40f, 0.14f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.93f, 0.42f, 0.40f, 0.24f));
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.93f, 0.42f, 0.40f, 0.55f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ImGui::OpenPopup("##deletego");
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(5);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this object and its children (asks first; Ctrl+Z brings it back).");
+        if (ImGui::BeginPopup("##deletego")) {
+            const int n = (int)std::max<std::size_t>(1, ed.MultiSelection().size());
+            if (n > 1) ImGui::Text("Delete %d objects and their children?", n);
+            else ImGui::Text("Delete \"%s\" and its children?", go ? go->name.c_str() : "");
+            ImGui::TextDisabled("Ctrl+Z brings it back.");
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.20f, 0.20f, 1.0f));
+            if (ImGui::Button("Delete", ImVec2(110, 0))) { ImGui::CloseCurrentPopup(); ed.DeleteSelected(); }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
 
     // Whole-Inspector drop target for scripts and materials (images keep going to
     // their own texture fields). Drop a .okay anywhere here to attach a Script.
@@ -36158,7 +35880,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     ImGui::PopItemWidth();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);   // (the three spacings and the label column)
     ImGui::End();
 }
 
@@ -44314,6 +44036,33 @@ static void DrawStartSplashOverlay(okay::platform::Painter* painter) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+// The automation ops (AutomationOps.hpp): an agent's op.<id> runs the very functions these menus' clicks run, with the
+// state they grey items out by.
+static void InstallAutomationOpHooks() {
+    oked::automation::OpHooks& h = oked::automation::Hooks();
+    h.menuState = [](EditorState& ed) { return MenuBarState(ed); };
+    h.rowState = [](EditorState& ed, GameObject* g) { return HierRowState(ed, g, true); };
+    h.emptyState = [](EditorState& ed) { return HierEmptyState(ed); };
+    h.flag = [](const std::string& menu, const std::string& id) -> bool* {
+        (void)menu;
+        if (id == "h.sortaz") return &g_hierSort;
+        return MenuFlag(id);
+    };
+    h.run = [](EditorState& ed, const std::string& menu, const std::string& id, GameObject* row) {
+        if (menu == "menubar") { RunMenuAction(ed, id); return true; }
+        if (menu == "hierarchy.row" && row) {
+            HierRowResult after;
+            HierRowAction(ed, row, id, after);
+            oked::menuactions::ApplyAfter(ed, after, MenuEnv());   // between frames: no rows are being drawn
+            return true;
+        }
+        if (menu == "hierarchy.empty" || menu == "hierarchy.create") { HierEmptyAction(ed, id); return true; }
+        if (menu == "gameobject.ui") { bool created = false; RunUIMenuItem(ed, id, id, created); return true; }
+        if (menu == "scene.add") { SceneAddRun(ed, id, id); return true; }
+        return false;
+    };
+}
+
 const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
@@ -45623,6 +45372,9 @@ int main(int argc, char** argv) {
             okay::textures::Pump();
         }
         oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
+        static const bool s_opHooks = (InstallAutomationOpHooks(), true);
+        (void)s_opHooks;
+        oked::automation::LinkFrame(ed);   // View > Automation Link: answer okay mcp between frames (never waits; off by default)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design
@@ -45755,6 +45507,7 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            InspectAllDevHook(ed);    // OKAY_UI_INSPECTALL
             if (std::getenv("OKAY_UI_TIMERS")) {
                 g_showTimers = true;
                 if (s_focusFrames == 40) {
@@ -46309,6 +46062,7 @@ int main(int argc, char** argv) {
         okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
+        oked::automation::DrawConnectPanel(ed, OkayExeDir());   // View > Automation Link: Connect to Claude
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying(), [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); });
         okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());

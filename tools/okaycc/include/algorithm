@@ -2,19 +2,11 @@
 // Function templates of one name are told apart by their number of parameters only, so sort and
 // stable_sort take an optional comparison but min and max take none.
 #pragma once
+#include <__okay_heap>
+#include <__okay_minmax>
 #include <initializer_list>
 #include <utility>
 namespace std {
-template <typename T>
-const T &min(const T &a, const T &b) {
-    if (b < a) return b;
-    return a;
-}
-template <typename T>
-const T &max(const T &a, const T &b) {
-    if (a < b) return b;
-    return a;
-}
 template <typename It, typename V>
 It find(It first, It last, const V &value) {
     for (; first != last; ++first)
@@ -151,6 +143,23 @@ It unique(It first, It last, Pred pred) {
     ++out;
     return out;
 }
+// [alg.adjacent.find]: the first of two neighbours that are equal (or for which pred holds).
+template <typename It>
+It adjacent_find(It first, It last) {
+    if (first == last) return last;
+    It next = first;
+    for (++next; next != last; ++first, ++next)
+        if (*first == *next) return first;
+    return last;
+}
+template <typename It, typename Pred>
+It adjacent_find(It first, It last, Pred pred) {
+    if (first == last) return last;
+    It next = first;
+    for (++next; next != last; ++first, ++next)
+        if (pred(*first, *next)) return first;
+    return last;
+}
 template <typename In, typename Out>
 Out copy(In first, In last, Out out) {
     for (; first != last; ++first, ++out) *out = *first;
@@ -244,20 +253,6 @@ const T &clamp(const T &v, const T &lo, const T &hi) {
 // Round 28 ([alg.min.max], [alg.replace], [alg.rotate], [alg.transform], [alg.partitions],
 // [alg.nth.element], [alg.partial.sort], [alg.equal], [binary.search], [set.union],
 // [set.intersection]).
-template <typename T>
-T min(initializer_list<T> l) {
-    const T *m = l.begin();
-    for (const T *p = l.begin(); p != l.end(); ++p)
-        if (*p < *m) m = p;
-    return *m;
-}
-template <typename T>
-T max(initializer_list<T> l) {
-    const T *m = l.begin();
-    for (const T *p = l.begin(); p != l.end(); ++p)
-        if (*m < *p) m = p;
-    return *m;
-}
 template <typename T>
 pair<T, T> minmax(const T &a, const T &b) {
     if (b < a) return pair<T, T>(b, a);

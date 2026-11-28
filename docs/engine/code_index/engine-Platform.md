@@ -35,7 +35,7 @@ Back to the [code index](../code_index.md). 31 headers, 268 names.
 - `Provider` enum, line 109: Which backend signs players in.
 - `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
 - `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1010: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `DefaultConfigDir` function, line 1011: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -361,6 +361,6 @@ Back to the [code index](../code_index.md). 31 headers, 268 names.
 
 ## `engine/include/okay/Platform/Workshop.hpp`
 
-- `WorkshopItem` struct, line 26
-- `WorkshopReview` struct, line 43
-- `Workshop` class, line 51
+- `WorkshopItem` struct, line 29
+- `WorkshopReview` struct, line 46
+- `Workshop` class, line 54

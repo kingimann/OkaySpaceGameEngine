@@ -32,8 +32,10 @@
 #include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
-#include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
+#include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once; IsExportedGame (only exported games play)
+#include "okay/Core/BuildPipeline.hpp"   // ManifestVersionNear: an exported game's version (Play page details)
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "CommandLine.hpp"    // the Projects page's Git buttons: git with an argument list, no shell (RunGitSteps)
 #include "BrowserPage.hpp"   // the Browser page (sidebar > Browser): the browser program's browser inside the launcher
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
@@ -564,26 +566,17 @@ bool        g_gitWantRescan = false;  // re-list projects after a clone/pull
 
 static bool GitAvailable() {
     static int cached = -1;
-    if (cached < 0)
-        cached = (RunCmd(
-#if defined(_WIN32)
-            "git --version >nul 2>&1"
-#else
-            "git --version >/dev/null 2>&1"
-#endif
-            , true) == 0) ? 1 : 0;
+    if (cached < 0) cached = okaylcli::GitWorks() ? 1 : 0;
     return cached == 1;
 }
 
-struct GitJob { std::vector<std::string> cmds; std::string okMsg, failMsg; bool rescan = false; };
+// git runs with an argument list (launcher/CommandLine.hpp RunGitSteps, okaycli::Run): no shell, so a commit message,
+// URL or folder name is never read as a command (#888 F50).
+struct GitJob { std::string folder; std::vector<okaylcli::GitStep> steps; std::string okMsg, failMsg; bool rescan = false; };
 
 static int GitWorker(void* data) {
     GitJob* job = (GitJob*)data;
-    int rc = 0;
-    for (std::size_t i = 0; i < job->cmds.size(); ++i) {
-        int c = RunCmd(job->cmds[i], true);
-        if (i + 1 == job->cmds.size()) rc = c;   // the last command decides success
-    }
+    const int rc = okaylcli::RunGitSteps(job->folder, job->steps);   // the last step decides success
     okay::thr::LockMutex(g_gitMutex);
     g_gitBusy = false;
     g_gitResultReady = true;
@@ -606,8 +599,6 @@ static bool StartGit(GitJob* job) {
     if (t) okay::thr::DetachThread(t); else { okay::thr::LockMutex(g_gitMutex); g_gitBusy = false; okay::thr::UnlockMutex(g_gitMutex); delete job; return false; }
     return true;
 }
-static std::string GitQ(const std::string& s) { return "\"" + s + "\""; }
-static std::string GitC(const std::string& dir) { return "git -C " + GitQ(dir) + " "; }
 
 // Extract a .zip into destDir, best-effort, using whatever's on the system.
 bool ExtractZip(const std::string& zip, const std::string& destDir) {
@@ -1656,8 +1647,12 @@ std::string GameTitleFromPath(const std::string& path) {
     fs::path p(path);
     std::string stem = p.stem().string(), low = stem;
     for (auto& c : low) c = (char)std::tolower((unsigned char)c);
-    if ((low == "main" || low == "scene" || low == "game" || low == "index" || low == "start") && p.has_parent_path())
+    if ((low == "main" || low == "scene" || low == "game" || low == "index" || low == "start") && p.has_parent_path()) {
         stem = p.parent_path().filename().string();
+        // An exported game keeps its scene in Data/ or <Game>_Data/ (editor/BuildGame.cpp): the game is the folder above.
+        if (stem == "Data" && p.parent_path().has_parent_path()) stem = p.parent_path().parent_path().filename().string();
+        else if (stem.size() > 5 && stem.compare(stem.size() - 5, 5, "_Data") == 0) stem.resize(stem.size() - 5);
+    }
     return stem.empty() ? std::string("Game") : stem;
 }
 
@@ -1702,13 +1697,16 @@ bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
 
 // Launch an executable (detached), optionally with one argument. Launching a
 // game (the player with a scene) is tracked for playtime.
-void Launch(const std::string& exe, const std::string& arg = "") {
-    if (exe.empty()) return;
-    if (exe != g_selfPath && UpdateBlocksLaunch()) return;   // an update is being installed
-    if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
+// False when it did not start: an update is installing, the game is not an exported one (PlayerMayRun), or anti-cheat
+// refused it.
+bool Launch(const std::string& exe, const std::string& arg = "") {
+    if (exe.empty()) return false;
+    if (exe != g_selfPath && UpdateBlocksLaunch()) return false;   // an update is being installed
+    if (!arg.empty() && exe != g_selfPath && !PlayerMayRun(arg)) return false;   // only exported games play (owner, 2026-11-28)
+    if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return false;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
-        if (SpawnTracked(exe, "\"" + arg + "\"", "game:" + title, title)) return;
+        if (SpawnTracked(exe, "\"" + arg + "\"", "game:" + title, title)) return true;
     }
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + exe + "\"";
@@ -1719,6 +1717,7 @@ void Launch(const std::string& exe, const std::string& arg = "") {
     cmd += " >/dev/null 2>&1 &";
 #endif
     RunCmd(cmd, false);
+    return true;
 }
 
 // This launcher's process id (handed to the editor so it can verify the launcher
@@ -1896,7 +1895,8 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
     }
     if (gitInit && GitAvailable()) {
         GitJob* j = new GitJob();
-        j->cmds = { GitC(root.string()) + "init" };
+        j->folder = root.string();
+        j->steps = { {"init"} };
         j->okMsg = "Started a Git repository in " + finalName;
         j->failMsg = "Couldn't start a Git repository in " + finalName;
         if (!StartGit(j)) Toast("Git is busy — the project was created without a repository", 2);
@@ -2008,15 +2008,59 @@ std::vector<fs::path> FindWebGames() {
     return out;
 }
 
-// A scene is a *built game* (vs a raw dev scene) when File > Build Game exported
-// it — that writes a game.okayconfig next to the scene. The Play tab shows only
-// built games; loose .okayscene dev files are hidden there.
-bool IsBuiltGame(const fs::path& scene) {
+// ---- Exported games: the only things the launcher plays (owner, 2026-11-28) -------------------------------------
+// The rule is okaylib::IsExportedGame (shared/LibraryScan.hpp: what the editor's Build writes, tested in
+// tests/test_library_scan.cpp). It looks in folders, so the answer is kept per path for a few seconds, together with what
+// the Play page shows about the game: its title (title= in game.okayconfig), its folder, version and size on disk.
+struct ExportInfo {
+    bool exported = false;
+    fs::path root;                    // the export's folder (the program's)
+    std::string title, version;       // "" = not known
+    unsigned long long bytes = 0; bool sized = false;
+    std::uint32_t checkedAt = 0;
+};
+static std::map<std::string, ExportInfo> g_exportInfo;
+static void ForgetExportInfo() { g_exportInfo.clear(); }   // Refresh, a drop, a removal
+static ExportInfo& ExportInfoOf(const fs::path& scene) {
+    ExportInfo& e = g_exportInfo[scene.string()];
+    const std::uint32_t now = okay::platform::TicksMs32();
+    if (e.checkedAt != 0 && now - e.checkedAt < 10000) return e;
+    e.checkedAt = now ? now : 1;
+    e.root = okaylib::ExportedGameRoot(scene);
+    e.exported = !e.root.empty();
+    e.title.clear();
+    if (e.exported) {
+        std::ifstream cf(scene.parent_path() / "game.okayconfig", std::ios::binary);   // a packed (encrypted) config just has no title= line
+        std::string line;
+        for (int n = 0; n < 200 && std::getline(cf, line); ++n)
+            if (line.rfind("title=", 0) == 0) { e.title = line.substr(6); while (!e.title.empty() && (e.title.back() == '\r' || e.title.back() == ' ')) e.title.pop_back(); break; }
+        if (e.title.empty()) e.title = e.root.filename().string();
+        if (e.version.empty()) e.version = okay::buildpipe::ManifestVersionNear("", scene.string());
+    }
+    return e;
+}
+bool IsExportedGame(const fs::path& scene) { return ExportInfoOf(scene).exported; }
+bool PlayerMayRun(const std::string& scene) {
+    if (IsExportedGame(fs::u8path(scene))) return true;
+    std::fprintf(stderr, "[play] refused, not an exported game: %s\n", scene.c_str());
+    Toast(okaylib::NotExportedMessage(), 2);
+    return false;
+}
+// The size of an exported game's folder, walked once (at most 20000 files) and kept until Refresh.
+static unsigned long long ExportBytes(const fs::path& scene) {
+    ExportInfo& e = ExportInfoOf(scene);
+    if (e.sized || !e.exported) return e.bytes;
     std::error_code ec;
-    return fs::exists(scene.parent_path() / "game.okayconfig", ec);
+    int n = 0;
+    for (auto f = fs::recursive_directory_iterator(e.root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n) {
+        std::error_code fe;
+        if (f->is_regular_file(fe)) e.bytes += f->file_size(fe);
+    }
+    e.sized = true;
+    return e.bytes;
 }
 
-// How many playable games the library holds: built games + web games. Editor
+// How many playable games the library holds: exported games + web games. Editor
 // projects / loose dev scenes don't count. Cached (re-checked every 2s or when
 // the scene list changes) so the sidebar badge doesn't hit the disk every frame.
 int g_webGameCount = -1;   // set by the Play tab's web-game scan (-1 = not scanned yet)
@@ -2026,7 +2070,7 @@ int LibraryGameCount(const std::vector<fs::path>& scenes) {
     if (g_webGameCount < 0) g_webGameCount = (int)FindWebGames().size();
     std::uint32_t now = okay::platform::TicksMs32();
     if (scenes.size() != lastN || now - lastAt > 2000) {
-        cached = (int)std::count_if(scenes.begin(), scenes.end(), IsBuiltGame);
+        cached = (int)std::count_if(scenes.begin(), scenes.end(), [](const fs::path& p) { return IsExportedGame(p); });
         lastN = scenes.size(); lastAt = now;
     }
     return cached + g_webGameCount;
@@ -2186,6 +2230,7 @@ std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played, 3 Most played
 int g_playView = 0;               // 0 List rows, 1 Grid tiles
+int g_playShelf = 0;              // okay::launcherlayout::PlayShelf: 0 All, 1 Favourites, 2 Recently played, 3 Installed, 4 Your games, 5 Web
 std::string g_wizardTemplateRequest;   // a Templates-page card asks the Create page's New Project wizard to open on this template title (never creates anything)
 int g_lastTab = 0;                // section shown when the launcher was last closed
 
@@ -3528,6 +3573,7 @@ void LoadPrefs() {
         else if (k == "share_presence") g_sharePresence = (v != "0");
         else if (k == "party_follow") g_partyFollow = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
+        else if (k == "play_shelf") { try { g_playShelf = std::clamp(std::stoi(v), 0, (int)okay::launcherlayout::PlayShelf::Count - 1); } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "news_seen") g_newsSeen = v;
         else if (k == "projects_dir") g_projectsDir = v;
@@ -3655,6 +3701,7 @@ void SavePrefs() {
     f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
     f << "party_follow=" << (g_partyFollow ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
+    f << "play_shelf=" << g_playShelf << "\n";
     f << "tab=" << g_lastTab << "\n";
     if (!g_newsSeen.empty()) f << "news_seen=" << g_newsSeen << "\n";
     if (!g_projectsDir.empty()) f << "projects_dir=" << g_projectsDir << "\n";
@@ -10171,8 +10218,8 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
-    const long exp = account.TokenExpiresAt();
-    if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
+    const long long exp = account.TokenExpiresAt();
+    if (exp <= 0 || exp - (long long)std::time(nullptr) > 600) return;
     g_tokRefreshBusy = true;
     if (okay::thr::Thread* t = okay::thr::CreateThread(TokenRefreshWorker, "okay-token", nullptr)) okay::thr::DetachThread(t);
     else g_tokRefreshBusy = false;
@@ -11537,13 +11584,7 @@ static void DrawOfficialCard() {
     const std::string coverPath = OfficialCoverPath();
     okay::ui2d::Tex tex = coverPath.empty() ? nullptr : GameCover(coverPath);
     if (tex) {
-        int tw = 0, th = 0;
-        okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
-        const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
-        ImVec2 uv0(0, 0), uv1(1, 1);
-        if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
-        else         { uv0.y = (1.0f - ta / ba) * 0.5f; uv1.y = 1.0f - uv0.y; }
-        dl->AddImageRounded((ImTextureID)(intptr_t)tex, ca, cb, uv0, uv1, IM_COL32_WHITE, 8.0f);
+        DrawCoverFill(dl, tex, ca, cb, 8.0f);
     } else {
         dl->AddRectFilled(ca, cb, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
         const ImVec2 cc((ca.x + cb.x) * 0.5f, (ca.y + cb.y) * 0.5f);
@@ -12035,13 +12076,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         okay::ui2d::Tex tex = pf.image.empty() ? nullptr : GameCover((fs::u8path(scannedDir) / fs::u8path(pf.image)).string());
         if (tex) {
-            int tw = 0, th = 0;
-            okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
-            const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
-            ImVec2 uv0(0, 0), uv1(1, 1);
-            if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
-            else         { uv0.y = (1.0f - ta / ba) * 0.5f; uv1.y = 1.0f - uv0.y; }
-            dl->AddImageRounded((ImTextureID)(intptr_t)tex, cp, ImVec2(cp.x + coverW, cp.y + coverH), uv0, uv1, IM_COL32_WHITE, 8.0f);
+            DrawCoverFill(dl, tex, cp, ImVec2(cp.x + coverW, cp.y + coverH), 8.0f);
         } else {
             dl->AddRectFilled(cp, ImVec2(cp.x + coverW, cp.y + coverH), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
             const char* t = "No cover.png";
@@ -12347,7 +12382,7 @@ static const okaylcli::Host& CommandLineHost() {
         builtAt = now;
         h.okayExe = FindExe({"okay.exe", "okay"});
         h.toolsDir = h.okayExe.empty() ? std::string() : fs::path(h.okayExe).parent_path().string();
-        h.programs = okaylcli::FindPrograms({g_exeDir, (fs::path(g_exeDir) / "Tools").string()});   // browser, Script Editor, Visual Script
+        h.programs = okaylcli::FindPrograms(okaylcli::ProgramDirs(g_exeDir));   // browser, Script Editor, Visual Script
         h.projects.clear();
         const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);
         for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects))
@@ -12522,7 +12557,7 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     {
         static int pick = 0;
         std::vector<std::string> names;
-        for (const auto& sp : scenes) if (IsBuiltGame(sp) || sp.extension() == ".okayscene") names.push_back(sp.stem().string());
+        for (const auto& sp : scenes) if (sp.extension() == ".okayscene") names.push_back(sp.stem().string());
         const ImVec2 bp = ImGui::GetCursorScreenPos();
         const float shareW = FitButtonW("Share", UiPx(100.0f)), btnH = ImGui::GetFrameHeight() + UiPx(8.0f);
         const char* kTitle = "Showcase your game or level";
@@ -13742,10 +13777,12 @@ int main(int argc, char** argv) {
                     Toast("Opening web game in your browser", 1);
                     tab = 1;
                 } else if (ext == ".okayscene" && !isDir && !player.empty()) {
-                    Launch(player, dropped);
-                    RecordPlayed(dropped); SavePrefs();
-                    Toast("Playing dropped game");
-                    tab = 1;
+                    // Only an exported game's scene plays; a project's scene is refused with the way to export it.
+                    if (Launch(player, dropped)) {
+                        RecordPlayed(dropped); SavePrefs();
+                        Toast("Playing dropped game");
+                        tab = 1;
+                    }
                 } else if (isDir || ext == ".okay" || ext == ".okayvs" || ext == ".obj" ||
                            ext == ".png" || ext == ".jpg" || ext == ".okayscene") {
                     std::string out = InstallToCommunity(dropped);
@@ -13754,8 +13791,10 @@ int main(int argc, char** argv) {
                         // If the installed folder is a web game, jump to Play so it's visible.
                         std::error_code wec;
                         bool web = fs::exists(fs::path(out) / "index.html", wec) || fs::exists(fs::path(out) / "index.htm", wec);
-                        Toast(web ? "Added a web game \xE2\x80\x94 see Play" : "Added to your community library", 1);
-                        tab = web ? 1 : 2;
+                        ForgetExportInfo();
+                        const bool game = okaylib::IsExportedGame(fs::u8path(out));   // an exported game joins Play; anything else the Community library
+                        Toast(web ? "Added a web game \xE2\x80\x94 see Play" : game ? "Added the game to your library \xE2\x80\x94 see Play" : "Added to your community library", 1);
+                        tab = web || game ? 1 : 2;
                     }
                     else Toast("Couldn't install that item", 2);
                 } else {
@@ -14877,7 +14916,8 @@ int main(int argc, char** argv) {
         const ImVec4 kTitle = okaytheme::kText;
         // Page header: a large title with a short accent underline bar (tab-style),
         // an optional subtitle, and a faint full-width divider below it.
-        auto sectionHeader = [&](const char* title, const char* subtitle) {
+        // `count`: a small pill after the title ("12 games"), nullptr for none.
+        auto sectionHeader = [&](const char* title, const char* subtitle, const char* count = nullptr) {
             ImGui::Dummy(ImVec2(0, 2));
             ImVec2 tp = ImGui::GetCursorScreenPos();
             ImGui::SetWindowFontScale(1.34f);
@@ -14889,6 +14929,12 @@ int main(int argc, char** argv) {
             float uy = tp.y + tsz.y + 5.0f;
             hdl->AddRectFilled(ImVec2(tp.x, uy), ImVec2(tp.x + tsz.x, uy + 2.5f),
                                ImGui::GetColorU32(kAccent), 1.5f);
+            if (count && *count) {
+                const ImVec2 cs = ImGui::CalcTextSize(count);
+                const float ph = cs.y + UiPx(6.0f), px = tp.x + tsz.x + UiPx(12.0f), py = tp.y + (tsz.y - ph) * 0.5f;
+                hdl->AddRectFilled(ImVec2(px, py), ImVec2(px + cs.x + UiPx(18.0f), py + ph), okaytheme::Ink(16), ph * 0.5f);
+                hdl->AddText(ImVec2(px + UiPx(9.0f), py + UiPx(3.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), count);
+            }
             ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 11 : 13));
             if (subtitle && *subtitle) {
                 ImGui::TextDisabled("%s", subtitle);
@@ -14898,6 +14944,36 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 8));
+        };
+        // Confirm before deleting a community game's folder from disk (Community > Your creations, and Play's Remove).
+        auto removeFromLibraryPopup = [&](const std::function<void()>& onRemoved) {
+            if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
+                ImGui::OpenPopup("Remove from library?");
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Remove from library?", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
+                ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
+                bool doRemove = ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0));
+                ImGui::PopStyleColor(2);
+                if (doRemove) {
+                    std::error_code rec; fs::remove_all(commRemovePath, rec);
+                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
+                    onRemoved();
+                    commRemovePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) {
+                    commRemovePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
         };
         // Login gate for online-only tabs: returns true when signed in, else
         // renders a centered "sign in" card and returns false.
@@ -14965,6 +15041,11 @@ int main(int argc, char** argv) {
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
             struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
+            auto projectFolder = [](const CrProj& pr) {   // the folder that holds Assets (the command line and the tools start there)
+                fs::path root = fs::path(pr.scene).parent_path();
+                if (root.filename() == "Assets") root = root.parent_path();
+                return root;
+            };
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string { return okayproj::SceneIn(root); };
             if (s_projScanned != std::string(npLoc) || g_projectsNeedRescan) {
@@ -15023,11 +15104,6 @@ int main(int argc, char** argv) {
                 if (it != s_projects.end() && it->ready && !editor.empty()) openProject(*it);
                 else Toast("That project can't be opened from here", 2);
             }
-            auto playProject = [&](const CrProj& pr) {
-                if (player.empty() || !pr.ready) return;
-                Launch(player, pr.scene); RecordPlayed(pr.scene); SavePrefs();
-                Toast("Playing " + pr.name);
-            };
             // Open a project folder from anywhere: find its scene, remember it, open it.
             auto openFolder = [&]() {
                 // The built-in browser answers on a later frame: the callback keeps values and statics only.
@@ -15140,6 +15216,48 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("New Project asks for a template and a name before anything is created.");
             ImGui::PopTextWrapPos();
 
+            // ---- Tools: the Script Editor, Visual Script and the browser, each a program of its own (owner, 2026-11-28) ----
+            {
+                ImGui::Dummy(ImVec2(0, 8));
+                const okaylcli::Host& ch = CommandLineHost();
+                {   // the label, centred on the buttons' height
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    const float bh = okl::UiPx(32.0f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x, at.y + (bh - ImGui::GetTextLineHeight()) * 0.5f),
+                                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), "Tools");
+                    ImGui::Dummy(ImVec2(ImGui::CalcTextSize("Tools").x, bh));
+                }
+                for (const okaylcli::ToolProgram& tp : okaylcli::ToolPrograms()) {
+                    const bool have = std::any_of(ch.programs.begin(), ch.programs.end(), [&](const okaylcli::FoundProgram& f) { return f.label == tp.label; });
+                    ImGui::SameLine(0, 10);
+                    ImGui::PushID(tp.label.c_str());
+                    if (ImGui::Button(tp.label.c_str(), ImVec2(okl::FitButtonW(tp.label.c_str(), okl::UiPx(96.0f)), okl::UiPx(32.0f)))) {
+                        if (!have || tp.target == okaylcli::ToolTarget::Address) okaylcli::OpenTool(ch, tp.label, "");   // missing: the plain message
+                        else ImGui::OpenPopup("##toolpick");
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", have ? (tp.tip + (tp.target == okaylcli::ToolTarget::Folder ? " Pick a project, or none." : "")).c_str()
+                                                     : okaylcli::MissingProgramMessage(tp.label).c_str());
+                    if (ImGui::BeginPopup("##toolpick")) {
+                        if (ImGui::MenuItem("Without a project")) okaylcli::OpenTool(ch, tp.label, "");
+                        if (ImGui::MenuItem("Pick a project folder\xE2\x80\xA6")) {
+                            const std::string label = tp.label;   // the dialog answers on a later frame: values only
+                            okay::filedialog::FolderOne("Open a project folder in " + label, npLoc, [label](const std::string& picked) {
+                                if (!picked.empty()) okaylcli::OpenTool(CommandLineHost(), label, picked);
+                            });
+                        }
+                        int shown = 0;
+                        for (const CrProj& pr : s_projects) {
+                            if (pr.missing || shown >= 8) continue;
+                            if (shown++ == 0) { ImGui::Separator(); ImGui::TextDisabled("Recent projects"); }
+                            if (ImGui::MenuItem(pr.name.c_str())) okaylcli::OpenTool(ch, tp.label, projectFolder(pr).string());
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
+                }
+            }
+
             // ---- Your projects ----
             ImGui::Dummy(ImVec2(0, 22));
             static char projQ[64] = "";
@@ -15203,7 +15321,8 @@ int main(int argc, char** argv) {
                         if (nm.empty()) nm = "ClonedProject";
                         std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
                         GitJob* j = new GitJob();
-                        j->cmds   = { GitC(npLoc) + "clone " + GitQ(url) + " " + GitQ(nm) };
+                        j->folder = npLoc;
+                        j->steps  = { {"clone", "--", url, nm} };
                         j->okMsg  = "Cloned " + nm + " with Git";
                         j->failMsg= "Clone failed — check the URL and your Git sign-in";
                         j->rescan = true;
@@ -15270,7 +15389,8 @@ int main(int argc, char** argv) {
                 int maxCols = availW >= 980.0f ? 3 : availW >= 620.0f ? 2 : 1;
                 int cols = (int)projList.size() < maxCols ? std::max(1, (int)projList.size()) : maxCols;
                 const float cardW = (availW - gap * (cols - 1)) / cols;
-                const bool stackBtns = cardW < 520.0f;
+                const float btnsW = 368.0f;   // Open, Remove, More and three round buttons (command line, Script Editor, Visual Script)
+                const bool stackBtns = cardW < btnsW + 232.0f;
                 const float cardH = stackBtns ? 148.0f : 112.0f;
                 int idx = 0;
                 for (const CrProj* prp : projList) {
@@ -15286,8 +15406,7 @@ int main(int argc, char** argv) {
                     const ImVec2 wp = ImGui::GetWindowPos();
                     ImGui::SetCursorPos(ImVec2(16, 18));
                     DrawGameIcon(pr.scene, pr.name, 64.0f);
-                    fs::path root = fs::path(pr.scene).parent_path();
-                    if (root.filename() == "Assets") root = root.parent_path();
+                    const fs::path root = projectFolder(pr);
                     std::string when;
                     if (s_openedAt.count(pr.scene)) when = "Opened just now";
                     else if (pr.missing) when = "Folder not found";
@@ -15301,7 +15420,7 @@ int main(int argc, char** argv) {
                     if (pr.ready) when += "  \xC2\xB7  " + (pr.ver.empty() ? std::string("version unknown") : badge.version);
                     if (pr.extra) when += "  \xC2\xB7  elsewhere";
                     const float tx = wp.x + 16 + 64 + 14;
-                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 292.0f);
+                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : btnsW + 4.0f);
                     {
                         const float nameFs = ImGui::GetFontSize() * 1.08f;
                         float pillW = 0.0f;
@@ -15320,7 +15439,7 @@ int main(int argc, char** argv) {
                     dl->AddText(ImVec2(tx, wp.y + 40), crDim, FitText(root.string(), textRight - tx).c_str());
                     dl->AddText(ImVec2(tx, wp.y + 62), crDim, FitText(when, textRight - tx).c_str());
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
-                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - 288, (cardH - 34) * 0.5f));
+                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - btnsW, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
                     if (PrimaryButton("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(78.0f)), okl::UiPx(34.0f)))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
@@ -15333,6 +15452,12 @@ int main(int argc, char** argv) {
                     if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText,
                                         "Open command line: a terminal in this project's folder where okay works"))
                         okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
+                    ImGui::SameLine(0, 6);   // the Script Editor and Visual Script on this project (programs of their own; a plain message when missing)
+                    if (RoundIconButton("##projscript", kIcoCode, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText, "Script Editor: this project's scripts, in a window of its own"))
+                        okaylcli::OpenTool(CommandLineHost(), "Script Editor", root.string());
+                    ImGui::SameLine(0, 6);
+                    if (RoundIconButton("##projvs", kIcoNodes, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText, "Visual Script: this project's graphs, in a window of its own"))
+                        okaylcli::OpenTool(CommandLineHost(), "Visual Script", root.string());
                     ImGui::EndDisabled();
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
                         if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
@@ -15351,10 +15476,14 @@ int main(int argc, char** argv) {
                                 ImGui::EndMenu();
                             }
                         }
-                        if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
+                        // Projects are not played from the launcher (owner, 2026-11-28): Open it, then File > Build Game; the export shows on Play.
+                        ImGui::MenuItem("Play: export it first (Build)", nullptr, false, false);
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", okaylib::NotExportedMessage());
                         ImGui::Separator();
                         if (ImGui::MenuItem("Open command line", nullptr, false, !pr.missing)) okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
                         if (ImGui::MenuItem("Command line in the launcher", nullptr, false, !pr.missing)) { okaylcli::SetProject(root.string(), pr.name); tab = 17; g_lastTab = 17; }
+                        if (ImGui::MenuItem("Open in Script Editor", nullptr, false, !pr.missing)) okaylcli::OpenTool(CommandLineHost(), "Script Editor", root.string());
+                        if (ImGui::MenuItem("Open in Visual Script", nullptr, false, !pr.missing)) okaylcli::OpenTool(CommandLineHost(), "Visual Script", root.string());
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
                             OpenExternal(fs::path(pr.scene).parent_path().parent_path().string());
                         if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(pr.scene.c_str());
@@ -15367,7 +15496,8 @@ int main(int argc, char** argv) {
                             if (hasGit) {
                                 if (ImGui::MenuItem("Git: Pull", nullptr, false, !g_gitBusy)) {
                                     GitJob* j = new GitJob();
-                                    j->cmds = { GitC(root) + "pull" };
+                                    j->folder = root;
+                                    j->steps = { {"pull"} };
                                     j->okMsg = "Pulled latest for " + pr.name;
                                     j->failMsg = "Pull failed for " + pr.name;
                                     j->rescan = true; StartGit(j);
@@ -15701,9 +15831,8 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
                 if (ImGui::Button("Commit & Push", ImVec2(okl::FitButtonW("Commit & Push", okl::UiPx(150.0f)), 0)) && gitCommitMsg[0]) {
                     GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitCommitRoot) + "add -A",
-                                GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
-                                GitC(gitCommitRoot) + "push" };
+                    j->folder = gitCommitRoot;
+                    j->steps = { {"add", "-A"}, {"commit", "-m", gitCommitMsg}, {"push"} };
                     j->okMsg = "Pushed " + gitCommitName + " to its Git server";
                     j->failMsg = "Push failed — is a Git remote set up?";
                     StartGit(j);
@@ -15722,12 +15851,9 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##purl", "https://example.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
                 if (ImGui::Button("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0)) && gitPublishUrl[0]) {
                     GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitPublishRoot) + "init",
-                                GitC(gitPublishRoot) + "add -A",
-                                GitC(gitPublishRoot) + "commit -m " + GitQ("Initial commit"),
-                                GitC(gitPublishRoot) + "branch -M main",
-                                GitC(gitPublishRoot) + "remote add origin " + GitQ(gitPublishUrl),
-                                GitC(gitPublishRoot) + "push -u origin main" };
+                    j->folder = gitPublishRoot;
+                    j->steps = { {"init"}, {"add", "-A"}, {"commit", "-m", "Initial commit"}, {"branch", "-M", "main"},
+                                 {"remote", "add", "--", "origin", gitPublishUrl}, {"push", "-u", "origin", "main"} };
                     j->okMsg = "Published " + gitPublishName + " to its Git server";
                     j->failMsg = "Publish failed — check the URL and your Git sign-in";
                     StartGit(j);
@@ -15817,502 +15943,685 @@ int main(int argc, char** argv) {
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
             HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
         } else if (tab == 1) {                            // ---- Play ----
-            sectionHeader("Play a game", nullptr);
-            DrawOfficialCard();   // the official game, front and centre (hidden until one is published)
+            // The game library (owner 2026-11-28: "revamp and improve the play menu", and "i dont want users to be able to
+            // play anything that wasnt exported"). Only exported games (IsExportedGame) and HTML games are listed; old
+            // favourites, recent entries and stats of anything else stay saved but are not shown. Where things go:
+            // launcher/PageLayout.hpp, "The Play page" (tests/test_launcher_page_layout.cpp).
+            namespace PL = okay::launcherlayout;
+            const float lh = ImGui::GetTextLineHeight();
+            const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            const ImU32 cAcc = ImGui::GetColorU32(kAccent);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
+            const char* kDash = "\xE2\x80\x94";
+            const char* kDot = "  \xC2\xB7  ";
 
-            // ---- Web games (HTML / JavaScript) -------------------------------
-            // Any folder with an index.html (e.g. a web export) or a loose .html
-            // in the games/community/webgames folders plays in the default browser.
+            // Web games (HTML / JavaScript): a folder with an index.html or a loose .html plays in the default browser.
             static std::vector<fs::path> s_webGames; static bool s_webScanned = false;
             if (!s_webScanned || g_webNeedRescan) { s_webGames = FindWebGames(); s_webScanned = true; g_webNeedRescan = false; g_webGameCount = (int)s_webGames.size(); }
-            if (!s_webGames.empty()) {
-                ImGui::SeparatorText("Web games (HTML / JavaScript)");
-                for (const auto& wg : s_webGames) {
-                    std::string nm = wg.parent_path().filename().string();
-                    if (nm.empty() || nm == "community" || nm == "games" || nm == "webgames")
-                        nm = wg.stem().string();
-                    ImGui::PushID(wg.string().c_str());
-                    ImGui::BeginChild("##wg", ImVec2(0, 48), true, ImGuiWindowFlags_NoScrollbar);
-                    if (ImGui::IsWindowHovered()) {
-                        ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
-                        ImGui::GetWindowDrawList()->AddRectFilled(
-                            wp, ImVec2(wp.x + ws.x, wp.y + ws.y), okaytheme::Ink(10), 3.0f);
-                    }
-                    // A small "JS" tile badge.
-                    ImGui::SetCursorPos(ImVec2(10, 8));
-                    ImVec2 tp = ImGui::GetCursorScreenPos();
-                    ImDrawList* wdl = ImGui::GetWindowDrawList();
-                    wdl->AddRectFilled(tp, ImVec2(tp.x + 32, tp.y + 32),
-                                       okaytheme::WarningFillU32(), 5.0f);           // JS yellow
-                    wdl->AddText(ImVec2(tp.x + 7, tp.y + 8), okaytheme::U32(okaytheme::kDeep), "JS");
-                    ImGui::SetCursorPos(ImVec2(52, 7));
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted(nm.c_str());
-                    ImGui::TextDisabled("HTML game \xE2\x80\x94 opens in your browser");
-                    ImGui::EndGroup();
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 88);
-                    ImGui::SetCursorPosY(7);
-                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(84.0f)), okl::UiPx(34.0f)))) {
-                        OpenExternal(wg.string());
-                        Toast("Opening " + nm + " in your browser", 1);
-                    }
-                    if (ImGui::BeginPopupContextWindow("##wgctx", ImGuiPopupFlags_MouseButtonRight)) {
-                        if (ImGui::MenuItem("Play in browser")) { OpenExternal(wg.string()); }
-                        if (ImGui::MenuItem("Show in Explorer")) OpenExternal(wg.parent_path().string());
-                        if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(wg.string().c_str());
-                        ImGui::EndPopup();
-                    }
-                    ImGui::EndChild();
-                    ImGui::PopID();
-                }
-                ImGui::SameLine(); if (ImGui::SmallButton("Rescan web games")) s_webScanned = false;
-                ImGui::Dummy(ImVec2(0, 10));
-            }
-            if (player.empty()) {   // the player program is missing: say so plainly, with the way to get it back
-                EmptyState(kIcoAlert, "The game player is missing", "Games run in OkaySpacePlayer, which should sit next to the launcher. Reinstall this version from Versions to get it back.", UiPx(40.0f));
-                const float bw = FitButtonW("Open Versions", UiPx(160.0f));
-                ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
-                if (PrimaryButton("Open Versions", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(10.0f)))) { tab = 15; g_lastTab = 15; SavePrefs(); }
-            }
-            else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
-                // No *built* games (dev scenes don't count): a friendly card that says
-                // how games get here, with the next step (the editor opens via a project).
-                ImGui::Dummy(ImVec2(0, 18));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 22));
-                ImGui::BeginChild("noGames", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                                  ImGuiWindowFlags_NoScrollbar);
-                {
-                    const float cw = ImGui::GetContentRegionAvail().x;
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    const ImVec2 c0 = ImGui::GetCursorScreenPos();
-                    const ImVec2 ic(c0.x + cw * 0.5f, c0.y + 24);
-                    dl->AddCircleFilled(ic, 24, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.16f)), 32);
-                    DrawNavIcon(dl, 1, ic, ImGui::GetColorU32(kAccent));
-                    ImGui::Dummy(ImVec2(cw, 56));
-                    auto centered = [&](const char* t, bool dim) {
-                        const float tw = ImGui::CalcTextSize(t).x;
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (cw - tw) * 0.5f));
-                        if (dim) ImGui::TextDisabled("%s", t); else ImGui::TextUnformatted(t);
-                    };
-                    ImGui::SetWindowFontScale(1.15f);
-                    centered("No games in your library yet", false);
-                    ImGui::SetWindowFontScale(1.0f);
-                    ImGui::Dummy(ImVec2(0, 2));
-                    centered("Make one on the Create page and export it with File > Build Game,", true);
-                    centered("or drop a built game (or an .html web game) into the games folder.", true);
-                    ImGui::Dummy(ImVec2(0, 10));
-                    const float b1 = FitButtonW("Create a game", UiPx(150.0f)), b2 = FitButtonW("Open games folder"), b3 = FitButtonW("Refresh", UiPx(90.0f));
-                    const float bh = ImGui::GetFrameHeight() + UiPx(10.0f), bg = UiPx(8.0f);
-                    const bool oneRow = b1 + b2 + b3 + 2 * bg <= cw;   // a narrow card stacks them
-                    const float row = oneRow ? b1 + b2 + b3 + 2 * bg : b1;
-                    const float x0 = ImGui::GetCursorPosX();
-                    ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - row) * 0.5f));
-                    if (PrimaryButton("Create a game", ImVec2(b1, bh))) tab = 0;
-                    if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b2) * 0.5f));
-                    if (ImGui::Button("Open games folder", ImVec2(b2, bh))) OpenExternal(g_exeDir);
-                    if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b3) * 0.5f));
-                    if (ImGui::Button("Refresh", ImVec2(b3, bh))) { scenes = FindScenes(); s_webScanned = false; }
-                }
-                ImGui::EndChild();
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor();
-            } else {
-                auto lower = [](std::string s) {
-                    for (char& c : s) c = (char)std::tolower((unsigned char)c);
-                    return s;
-                };
-                // Toolbar: search + sort + view toggle + folder, all on one row
-                // (the search field flexes to fill whatever is left).
-                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-                {
-                    const float sortW = 156.0f, viewW = 100.0f, foldW = 92.0f, refW = 84.0f;
-                    float sp = ImGui::GetStyle().ItemSpacing.x;
-                    float searchW = ImGui::GetContentRegionAvail().x - sortW - viewW - foldW - refW - sp * 4.0f;
-                    if (searchW < 150.0f) searchW = 150.0f;
-                    ImGui::SetNextItemWidth(searchW);
-                }
-                ImGui::InputTextWithHint("##playFilter", "Search games...  (Ctrl+F)", playFilter, sizeof(playFilter));
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(156);
-                if (SlateCombo("##playsort", &g_playSort,
-                                 "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0Most played\0")) SavePrefs();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sort order");
-                ImGui::SameLine();
-                // List / Grid view toggle (persisted).
-                auto viewBtn = [&](const char* lbl, int v) {
-                    bool on = g_playView == v;
-                    if (on) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                    if (ImGui::Button(lbl, ImVec2(49, 0))) { g_playView = v; SavePrefs(); }
-                    if (on) ImGui::PopStyleColor();
-                };
-                viewBtn("List", 0);
-                ImGui::SameLine(0, 2);
-                viewBtn("Grid", 1);
-                ImGui::SameLine();
-                if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(92.0f)), 0))) OpenExternal(g_exeDir);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
-                ImGui::SameLine();
-                if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(84.0f)), 0))) scenes = FindScenes();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan for games");
-                ImGui::Dummy(ImVec2(0, 6));
+            static std::map<std::string, bool> s_playInstalled;   // path -> in the community folder (Marketplace, Downloads, a drop)
+            auto refreshPlay = [&]() { scenes = FindScenes(); s_webScanned = false; s_playInstalled.clear(); ForgetExportInfo(); };
 
-                // Collection chips (Steam-style library categories). "All" plus one
-                // per collection; the active one filters the list below.
-                {
-                    auto chip = [&](const char* label, bool active) {
-                        if (active) { ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                                      ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor); }
-                        bool c = ImGui::Button(label);
-                        if (active) ImGui::PopStyleColor(2);
-                        return c;
-                    };
-                    if (chip("All", g_collFilter.empty())) g_collFilter.clear();
+            // ---- The library: exported games and web games, with what the launcher keeps about each ----
+            LoadPlaytime();
+            std::map<std::string, long> secsByKey;
+            for (const auto& e : g_playtime) secsByKey[e.key] = e.seconds;
+            std::vector<PL::PlayGame> games;
+            auto fillStats = [&](PL::PlayGame& g) {
+                g.favorite = IsFavorite(g.path);
+                const std::size_t rr = RecentRank(g.path);
+                g.recentRank = rr < g_recent.size() ? rr : PL::kPlayNotRecent;
+                g.plays = PlayCount(g.path);
+                g.lastPlayed = LastPlayed(g.path);
+                auto it = secsByKey.find(PlaytimeLabel("game:" + GameTitleFromPath(g.path)));   // SpawnTracked's key
+                g.seconds = it == secsByKey.end() ? 0 : it->second;
+                g.inCollection = g_collFilter.empty() || InCollection(g_collFilter, g.path);
+            };
+            for (const fs::path& sc : scenes) {
+                const ExportInfo& ei = ExportInfoOf(sc);
+                if (!ei.exported) continue;   // a project or a loose scene: not playable here
+                PL::PlayGame g;
+                g.path = sc.string();
+                g.name = ei.title.empty() ? GameTitleFromPath(g.path) : ei.title;
+                auto ins = s_playInstalled.find(g.path);
+                if (ins == s_playInstalled.end()) ins = s_playInstalled.emplace(g.path, !CommunityItemRoot(sc).empty()).first;
+                g.installed = ins->second;
+                g.bytes = ei.sized ? ei.bytes : 0;
+                fillStats(g);
+                games.push_back(g);
+            }
+            for (const fs::path& wg : s_webGames) {
+                PL::PlayGame g;
+                g.path = wg.string(); g.web = true;
+                g.name = wg.parent_path().filename().string();
+                if (g.name.empty() || g.name == "community" || g.name == "games" || g.name == "webgames") g.name = wg.stem().string();
+                fillStats(g);
+                games.push_back(g);
+            }
+            const PL::PlayShelf shelf = (PL::PlayShelf)std::clamp(g_playShelf, 0, (int)PL::PlayShelf::Count - 1);
+            const std::string needle = okay::str::LowerAscii(playFilter);
+            const std::vector<std::size_t> order = PL::PlayOrder(games, g_playSort, shelf, needle);
+
+            // The selected game (by path; the details sheet shows it). Dropped when it leaves the library.
+            static std::string s_playSel;
+            static bool s_playScrollTo = false, s_playDetailsReq = false;
+            static int s_playCols = 1;
+            int sel = -1;
+            for (std::size_t i = 0; i < games.size(); ++i) if (games[i].path == s_playSel) { sel = (int)i; break; }
+            if (sel < 0) s_playSel.clear();
+
+            auto playGame = [&](const PL::PlayGame& g) {
+                if (g.web) { OpenExternal(g.path); RecordPlayed(g.path); SavePrefs(); Toast("Opening " + g.name + " in your browser", 1); return; }
+                if (player.empty()) { Toast("The game player is missing: reinstall this version from Versions.", 2); return; }
+                if (Launch(player, g.path)) { RecordPlayed(g.path); SavePrefs(); Toast("Playing " + g.name); }
+            };
+            auto gameFolder = [&](const PL::PlayGame& g) { const fs::path gp(g.path); return g.web ? gp.parent_path() : ExportInfoOf(gp).root; };
+            auto select = [&](const PL::PlayGame& g) { s_playSel = g.path; };
+            // The game's menu: right-click on a tile, a row or the banner, and "..." in the details.
+            auto gameMenu = [&](const PL::PlayGame& g) {
+                if (ImGui::MenuItem(g.web ? "Play in browser" : "Play", "Enter", false, g.web || !player.empty())) playGame(g);
+                if (ImGui::MenuItem(g.favorite ? "Remove from favourites" : "Add to favourites")) { ToggleFavorite(g.path); SavePrefs(); }
+                if (ImGui::MenuItem("Details")) { s_playSel = g.path; s_playDetailsReq = true; }
+                if (ImGui::BeginMenu("Collections")) {
                     for (auto& kv : g_collections) {
-                        ImGui::SameLine();
-                        char lbl[80]; std::snprintf(lbl, sizeof(lbl), "%s (%d)", kv.first.c_str(), (int)kv.second.size());
-                        if (chip(lbl, g_collFilter == kv.first))
-                            g_collFilter = (g_collFilter == kv.first) ? std::string() : kv.first;
+                        const bool in = InCollection(kv.first, g.path);
+                        if (ImGui::MenuItem(kv.first.c_str(), nullptr, in)) { ToggleInCollection(kv.first, g.path); SavePrefs(); }
                     }
+                    if (!g_collections.empty()) ImGui::Separator();
+                    static char nbuf[48] = "";
+                    ImGui::TextDisabled("New collection");
+                    ImGui::SetNextItemWidth(UiPx(160.0f));
+                    const bool mk = ImGui::InputTextWithHint("##mkcoll", "Name...", nbuf, sizeof(nbuf), ImGuiInputTextFlags_EnterReturnsTrue);
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("+ New collection")) ImGui::OpenPopup("##newcoll");
+                    if ((ImGui::SmallButton("Add") || mk) && nbuf[0]) {
+                        std::string nm = nbuf; for (char& ch : nm) if (ch == '|') ch = '-';   // '|' is the save delimiter
+                        g_collections[nm].push_back(g.path); SavePrefs();
+                        nbuf[0] = '\0';
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Open folder")) OpenExternal(gameFolder(g).string());
+                if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(g.path.c_str());
+                if (!g.web && ImGui::MenuItem("Publish to Marketplace...")) { g_pendingPublishTitle = g.name; tab = 7; }   // the Market tab prefills its form
+                if ((g.plays > 0 || g.recentRank != PL::kPlayNotRecent) && ImGui::MenuItem("Forget play history")) {
+                    g_recent.erase(std::remove(g_recent.begin(), g_recent.end(), g.path), g_recent.end());
+                    g_stats.erase(g.path); SavePrefs();
+                    Toast("Forgot the play history of " + g.name, 1);
+                }
+                if (g.installed) {
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
+                    if (ImGui::MenuItem("Remove from library...")) { commRemovePath = CommunityItemRoot(fs::path(g.path)).string(); commRemoveName = g.name; }
+                    ImGui::PopStyleColor();
+                }
+            };
+            // Smooth hover: each game eases toward lit (hovered or selected) and back, about 0.1 s.
+            static std::map<std::string, float> s_playHover;
+            auto ease = [&](const std::string& key, bool lit) {
+                float& t = s_playHover[key];
+                t += ((lit ? 1.0f : 0.0f) - t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 14.0f);
+                if (std::fabs(t - (lit ? 1.0f : 0.0f)) < 0.01f) t = lit ? 1.0f : 0.0f;
+                return t;
+            };
+            // A five-point star (the UI font has no star glyph): filled gold for a favourite, an outline otherwise.
+            auto star = [](ImDrawList* d, ImVec2 c, float R, bool filled, ImU32 col) {
+                ImVec2 pts[10];
+                for (int k = 0; k < 10; ++k) {
+                    const float ang = -1.5707963f + k * 0.62831853f, rr = (k % 2 == 0) ? R : R * 0.45f;
+                    pts[k] = ImVec2(c.x + std::cos(ang) * rr, c.y + std::sin(ang) * rr);
+                }
+                if (filled) d->AddConcavePolyFilled(pts, 10, okaytheme::WarningFillU32());
+                else d->AddPolyline(pts, 10, col, ImDrawFlags_Closed, 1.6f);
+            };
+            // A round favourite button `d` wide at p; true when clicked.
+            auto starButton = [&](const char* id, ImVec2 p, float d, bool fav, float alpha, bool onArt) {
+                ImGui::SetCursorScreenPos(p);
+                const bool clicked = ImGui::InvisibleButton(id, ImVec2(d, d));
+                const bool h = ImGui::IsItemHovered();
+                ImDrawList* d0 = ImGui::GetWindowDrawList();
+                const ImVec2 c(p.x + d * 0.5f, p.y + d * 0.5f);
+                if (onArt) d0->AddCircleFilled(c, d * 0.5f, okaytheme::Shade((int)((h ? 200 : 150) * alpha)), 24);
+                else d0->AddCircleFilled(c, d * 0.5f, h ? okaytheme::Ink(30) : okaytheme::Ink(12), 24);
+                star(d0, c, d * (h ? 0.30f : 0.27f), fav, onArt ? okaytheme::OnColorU32(0.9f * alpha) : okaytheme::TextDimU32());
+                if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites"); }
+                return clicked;
+            };
+            // Bring the selected item into view after an arrow key (a..b on screen, in the current child).
+            auto scrollIntoView = [&](ImVec2 a, ImVec2 b) {
+                if (!s_playScrollTo) return;
+                s_playScrollTo = false;
+                const float wy = ImGui::GetWindowPos().y, wh = ImGui::GetWindowSize().y, m = UiPx(12.0f);
+                if (a.y < wy + m) ImGui::SetScrollY(std::max(0.0f, ImGui::GetScrollY() - (wy + m - a.y)));
+                else if (b.y > wy + wh - m) ImGui::SetScrollY(ImGui::GetScrollY() + (b.y - (wy + wh - m)));
+            };
+            auto metaLine = [&](const PL::PlayGame& g) {
+                if (g.web) return std::string("Web game") + kDot + "opens in your browser";
+                std::string m = g.lastPlayed > 0 ? "Played " + AgoText(g.lastPlayed) : std::string("Never played");
+                const std::string pt = PL::PlaytimeText(g.seconds);
+                if (!pt.empty()) m += kDot + pt;
+                return m;
+            };
+
+            // ---- Keyboard: arrows move the selection, Enter plays it, Escape lets it go ----
+            if (!order.empty() && !ImGui::GetIO().WantTextInput && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+                int pos = -1;
+                for (std::size_t k = 0; k < order.size(); ++k) if ((int)order[k] == sel) { pos = (int)k; break; }
+                int dx = 0, dy = 0;
+                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) dx = -1;
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) dx = 1;
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) dy = -1;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) dy = 1;
+                if (dx || dy) {
+                    const int np = PL::PlayKeyMove(pos, (int)order.size(), g_playView == 1 ? s_playCols : 1, dx, dy);
+                    if (np >= 0) { sel = (int)order[(std::size_t)np]; s_playSel = games[(std::size_t)sel].path; s_playScrollTo = true; }
+                }
+                if (sel >= 0 && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) playGame(games[(std::size_t)sel]);
+                if (sel >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { s_playSel.clear(); sel = -1; }
+            }
+
+            // ---- Header: the title and how many games; search, sort, view, folder, refresh ----
+            int nExported = 0;
+            for (const PL::PlayGame& g : games) if (!g.web) ++nExported;
+            {
+                char cnt[48];
+                std::snprintf(cnt, sizeof(cnt), "%d game%s", (int)games.size(), games.size() == 1 ? "" : "s");
+                sectionHeader("Play", nullptr, games.empty() ? nullptr : cnt);
+            }
+            DrawOfficialCard();   // the official game, front and centre (hidden until one is published)
+            const float TW = ImGui::GetContentRegionAvail().x;
+            const float actH = ImGui::GetFrameHeight() + UiPx(4.0f), gap = UiPx(8.0f);
+            if (!games.empty()) {
+                const char* sortItems = "Favourites first\0Name A\xE2\x80\x93Z\0Recently played\0Most played\0";
+                const float sortW = ImGui::CalcTextSize("Recently played").x + UiPx(58.0f);
+                const float segW = std::ceil(std::max(ImGui::CalcTextSize("List").x, ImGui::CalcTextSize("Grid").x) + UiPx(46.0f));
+                const std::vector<float> bw{sortW, 2 * segW, FitButtonW("Folder"), FitButtonW("Refresh")};
+                const PL::Toolbar tb = PL::LayoutToolbar(TW, UiPx(220.0f), UiPx(560.0f), bw, actH, gap);
+                const ImVec2 o = ImGui::GetCursorScreenPos();
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.search.x, o.y + tb.search.y));
+                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+                SearchPill("##playFilter", "Search your games  (Ctrl+F)", playFilter, sizeof(playFilter), tb.search.w, 0, actH);
+                const float fh = ImGui::GetFrameHeight();
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[0].x, o.y + tb.buttons[0].y + (actH - fh) * 0.5f));
+                ImGui::SetNextItemWidth(tb.buttons[0].w);
+                if (SlateCombo("##playsort", &g_playSort, sortItems)) SavePrefs();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sort order");
+                {   // List | Grid: one rounded control, the active half lit
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    const ImVec2 a(o.x + tb.buttons[1].x, o.y + tb.buttons[1].y), b(a.x + tb.buttons[1].w, a.y + actH);
+                    dl->AddRectFilled(a, b, okaytheme::Ink(12), actH * 0.5f);
+                    for (int v = 0; v < 2; ++v) {
+                        const ImVec2 sa(a.x + v * segW, a.y), sb(sa.x + segW, b.y);
+                        ImGui::SetCursorScreenPos(sa);
+                        ImGui::PushID(v);
+                        if (ImGui::InvisibleButton("##view", ImVec2(segW, actH)) && g_playView != v) { g_playView = v; SavePrefs(); }
+                        const bool h = ImGui::IsItemHovered(), on = g_playView == v;
+                        ImGui::PopID();
+                        if (on) dl->AddRectFilled(ImVec2(sa.x + 2, sa.y + 2), ImVec2(sb.x - 2, sb.y - 2), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), actH * 0.5f - 2);
+                        else if (h) dl->AddRectFilled(ImVec2(sa.x + 2, sa.y + 2), ImVec2(sb.x - 2, sb.y - 2), okaytheme::Ink(16), actH * 0.5f - 2);
+                        const ImU32 col = on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim);
+                        const float gx = sa.x + UiPx(14.0f), gy = sa.y + actH * 0.5f, s = UiPx(5.0f);
+                        if (v == 0) for (int k = -1; k <= 1; ++k) dl->AddRectFilled(ImVec2(gx - s, gy + k * s * 0.9f - 0.8f), ImVec2(gx + s, gy + k * s * 0.9f + 0.8f), col);   // three lines
+                        else for (int k = 0; k < 4; ++k) {                                                                                                                       // four squares
+                            const float qx = gx - s + (k % 2) * (s + 1.0f), qy = gy - s + (k / 2) * (s + 1.0f);
+                            dl->AddRectFilled(ImVec2(qx, qy), ImVec2(qx + s - 1.0f, qy + s - 1.0f), col, 1.0f);
+                        }
+                        dl->AddText(ImVec2(gx + s + UiPx(7.0f), gy - lh * 0.5f), col, v == 0 ? "List" : "Grid");
+                        if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(v == 0 ? "List view: name, last played, play time, size" : "Grid view: covers"); }
+                    }
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[2].x, o.y + tb.buttons[2].y));
+                if (ImGui::Button("Folder", ImVec2(tb.buttons[2].w, actH))) OpenExternal(g_exeDir);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[3].x, o.y + tb.buttons[3].y));
+                if (ImGui::Button("Refresh", ImVec2(tb.buttons[3].w, actH))) { refreshPlay(); Toast("Library refreshed", 1); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Look for new games");
+                ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + tb.height + UiPx(12.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
+
+                // Shelves, with how many games each holds.
+                std::vector<Chip> chips((std::size_t)PL::PlayShelf::Count);
+                for (int i = 0; i < (int)PL::PlayShelf::Count; ++i) {
+                    chips[(std::size_t)i].label = PL::PlayShelfName((PL::PlayShelf)i);
+                    chips[(std::size_t)i].count = PL::PlayShelfCount(games, (PL::PlayShelf)i);
+                }
+                if (s_webGames.empty() && shelf != PL::PlayShelf::Web) chips.pop_back();   // no web games: no Web chip
+                const int hit = ChipRow("##playshelves", chips, (int)shelf, TW);
+                if (hit >= 0 && hit != g_playShelf) { g_playShelf = hit; SavePrefs(); }
+                // Collections (Steam-style): All, one chip per collection, + New collection, Delete for the active one.
+                ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                {
+                    std::vector<Chip> cc;
+                    cc.push_back(Chip{"All collections"});
+                    int on = 0, k = 1;
+                    for (auto& kv : g_collections) {
+                        Chip c; c.label = kv.first; c.count = (int)kv.second.size(); c.dot = ImGui::GetColorU32(NameColor(kv.first));
+                        if (g_collFilter == kv.first) on = k;
+                        cc.push_back(c); ++k;
+                    }
+                    cc.push_back(Chip{"+ New collection"});
+                    if (!g_collFilter.empty()) cc.push_back(Chip{"Delete this collection"});
+                    const int ch = ChipRow("##playcolls", cc, g_collections.empty() ? -1 : on, TW);
+                    const int newAt = (int)g_collections.size() + 1;
+                    if (ch == 0) g_collFilter.clear();
+                    else if (ch > 0 && ch < newAt) { auto it = g_collections.begin(); std::advance(it, ch - 1); g_collFilter = g_collFilter == it->first ? std::string() : it->first; }
+                    else if (ch == newAt) ImGui::OpenPopup("##newcoll");
+                    else if (ch == newAt + 1) { g_collections.erase(g_collFilter); g_collFilter.clear(); SavePrefs(); Toast("Collection deleted", 1); }
                     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
                     if (ImGui::BeginPopup("##newcoll")) {
                         static char cbuf[48] = "";
                         ImGui::TextDisabled("New collection");
-                        ImGui::SetNextItemWidth(220);
-                        bool ok = ImGui::InputTextWithHint("##cn", "Name...", cbuf, sizeof(cbuf),
-                                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SetNextItemWidth(UiPx(220.0f));
+                        const bool ok = ImGui::InputTextWithHint("##cn", "Name...", cbuf, sizeof(cbuf), ImGuiInputTextFlags_EnterReturnsTrue);
                         ImGui::SameLine();
                         if ((ImGui::Button("Create") || ok) && cbuf[0]) {
                             std::string nm = cbuf;
-                            for (char& ch : nm) if (ch == '|') ch = '-';   // '|' is the save delimiter
+                            for (char& c2 : nm) if (c2 == '|') c2 = '-';   // '|' is the save delimiter
                             g_collections[nm]; g_collFilter = nm; SavePrefs();
                             cbuf[0] = '\0'; ImGui::CloseCurrentPopup();
                         }
                         ImGui::EndPopup();
                     }
-                    // Manage the active collection: rename-free, but allow delete.
-                    if (!g_collFilter.empty()) {
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Delete collection")) {
-                            g_collections.erase(g_collFilter); g_collFilter.clear(); SavePrefs();
-                            Toast("Collection deleted", 1);
-                        }
-                    }
-                    ImGui::Dummy(ImVec2(0, 6));
                 }
-
-                // "Jump back in": a hero card for the most-recently-played game
-                // that still exists on disk (hidden while searching).
-                if (playFilter[0] == '\0' && !player.empty()) {
-                    std::string resume;
-                    for (const auto& rp : g_recent)
-                        if (std::find_if(scenes.begin(), scenes.end(),
-                                [&](const fs::path& s){ return s.string() == rp; }) != scenes.end()) { resume = rp; break; }
-                    if (!resume.empty()) {
-                        fs::path rpath(resume);
-                        std::string rname = rpath.filename().string();
-                        ImGui::BeginChild("resume", ImVec2(0, 66), true, ImGuiWindowFlags_NoScrollbar);
-                        ImGui::SetCursorPos(ImVec2(10, 11));
-                        DrawGameIcon(resume, rname, 44.0f);
-                        ImGui::SameLine();
-                        ImGui::BeginGroup();
-                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                        ImGui::TextDisabled("JUMP BACK IN");
-                        ImGui::Text("%s", rname.c_str());
-                        ImGui::EndGroup();
-                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
-                        ImGui::SetCursorPosY(13.0f);
-                        if (PrimaryButton("Resume", ImVec2(okl::FitButtonW("Resume", okl::UiPx(96.0f)), okl::UiPx(40.0f)))) {
-                            Launch(player, resume); RecordPlayed(resume); SavePrefs();
-                            Toast(std::string("Playing ") + rname);
-                        }
-                        ImGui::EndChild();
-                        ImGui::Dummy(ImVec2(0, 6));
-                    }
-                }
-
-                // Display order: optional favorites-first, then name A–Z.
-                std::vector<std::size_t> order(scenes.size());
-                for (std::size_t i = 0; i < scenes.size(); ++i) order[i] = i;
-                std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-                    if (g_playSort == 0) {
-                        bool fa = IsFavorite(scenes[a].string()), fb = IsFavorite(scenes[b].string());
-                        if (fa != fb) return fa;
-                    } else if (g_playSort == 2) {
-                        std::size_t ra = RecentRank(scenes[a].string()), rb = RecentRank(scenes[b].string());
-                        if (ra != rb) return ra < rb;
-                    } else if (g_playSort == 3) {
-                        int ca = PlayCount(scenes[a].string()), cb = PlayCount(scenes[b].string());
-                        if (ca != cb) return ca > cb;
-                    }
-                    return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
-                });
-                // Play shows only *built* games (exported with File > Build Game),
-                // never loose dev scenes.
-                order.erase(std::remove_if(order.begin(), order.end(),
-                    [&](std::size_t idx){ return !IsBuiltGame(scenes[idx]); }), order.end());
-                // Collection filter: keep only games in the active collection.
-                if (!g_collFilter.empty())
-                    order.erase(std::remove_if(order.begin(), order.end(),
-                        [&](std::size_t idx){ return !InCollection(g_collFilter, scenes[idx].string()); }),
-                        order.end());
-
-                std::string needle = lower(playFilter);
-                int shown = 0;
-                // ---- Grid view: big tiles, double-click to play ----
-                if (g_playView == 1) {
-                    const float tileW = 112.0f, tileH = 128.0f;
-                    int cols = (int)(ImGui::GetContentRegionAvail().x / (tileW + 8.0f));
-                    if (cols < 2) cols = 2;
-                    int col = 0;
-                    for (std::size_t oi = 0; oi < order.size(); ++oi) {
-                        std::size_t i = order[oi];
-                        std::string name = scenes[i].filename().string();
-                        if (!needle.empty() && lower(name).find(needle) == std::string::npos)
-                            continue;
-                        ++shown;
-                        std::string path = scenes[i].string();
-                        bool fav = IsFavorite(path);
-                        if (col) ImGui::SameLine();
-                        ImGui::PushID((int)i);
-                        ImGui::BeginChild("gtile", ImVec2(tileW, tileH), true, ImGuiWindowFlags_NoScrollbar);
-                        HoverRing();
-                        ImGui::SetCursorPos(ImVec2((tileW - 64.0f) * 0.5f, 12.0f));
-                        DrawGameIcon(path, name, 64.0f);
-                        std::string nm = name;
-                        if (nm.size() > 13) nm = nm.substr(0, 12) + "..";
-                        ImVec2 nts = ImGui::CalcTextSize(nm.c_str());
-                        ImGui::SetCursorPos(ImVec2((tileW - nts.x) * 0.5f, 88.0f));
-                        ImGui::TextUnformatted(nm.c_str());
-                        ImGui::SetCursorPos(ImVec2((tileW - ImGui::CalcTextSize("2 d ago").x) * 0.5f, 104.0f));
-                        std::string gago = ModifiedAgo(scenes[i]);
-                        if (!gago.empty()) ImGui::TextDisabled("%s", gago.c_str());
-                        bool tileHov = ImGui::IsWindowHovered();
-                        bool overStar = false, overPlay = false;
-                        ImVec2 wmn = ImGui::GetWindowPos();
-                        // Play-count badge, top-left, for games that have been played.
-                        int gpc = PlayCount(path);
-                        if (gpc > 0) {
-                            char cb[16]; std::snprintf(cb, sizeof(cb), "%d\xC3\x97", gpc);
-                            ImVec2 cs = ImGui::CalcTextSize(cb);
-                            ImVec2 bp(wmn.x + 8, wmn.y + 8);
-                            ImDrawList* cdl = ImGui::GetWindowDrawList();
-                            cdl->AddRectFilled(bp, ImVec2(bp.x + cs.x + 10, bp.y + cs.y + 4),
-                                               ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 7.0f);
-                            cdl->AddText(ImVec2(bp.x + 5, bp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), cb);
-                        }
-                        if (fav || tileHov) {
-                            // Gold star badge, top-right: filled when favorited, a gray
-                            // outline on hover — and clickable either way to toggle.
-                            ImVec2 fc(wmn.x + tileW - 14.0f, wmn.y + 14.0f);
-                            ImVec2 m = ImGui::GetIO().MousePos;
-                            overStar = (m.x - fc.x) * (m.x - fc.x) + (m.y - fc.y) * (m.y - fc.y) < 10.0f * 10.0f;
-                            float R = overStar ? 7.5f : 6.0f;
-                            ImVec2 pts[10];
-                            for (int k2 = 0; k2 < 10; ++k2) {
-                                float ang = -1.5707963f + k2 * 0.62831853f;
-                                float rr = (k2 % 2 == 0) ? R : R * 0.45f;
-                                pts[k2] = ImVec2(fc.x + std::cos(ang) * rr, fc.y + std::sin(ang) * rr);
-                            }
-                            ImDrawList* sdl = ImGui::GetWindowDrawList();
-                            if (fav)
-                                sdl->AddConcavePolyFilled(pts, 10, okaytheme::WarningFillU32());
-                            else
-                                sdl->AddPolyline(pts, 10, okaytheme::TextDimU32(0.863f), ImDrawFlags_Closed, 1.6f);
-                        }
-                        if (tileHov) {
-                            // Hover play overlay on the icon: dark disc + accent triangle.
-                            // A single click on it plays right away (double-click elsewhere
-                            // on the tile still works).
-                            ImVec2 cc(wmn.x + tileW * 0.5f, wmn.y + 44.0f);
-                            ImVec2 m = ImGui::GetIO().MousePos;
-                            overPlay = (m.x - cc.x) * (m.x - cc.x) + (m.y - cc.y) * (m.y - cc.y) < 17.0f * 17.0f;
-                            ImDrawList* odl = ImGui::GetWindowDrawList();
-                            odl->AddCircleFilled(cc, 16.0f, okaytheme::U32(okaytheme::kDeep, ((overPlay ? 215 : 165) / 255.0f)));
-                            odl->AddCircle(cc, 16.0f, ImGui::GetColorU32(kAccent), 0, overPlay ? 2.2f : 1.4f);
-                            odl->AddTriangleFilled(ImVec2(cc.x - 4.5f, cc.y - 7.0f),
-                                                   ImVec2(cc.x - 4.5f, cc.y + 7.0f),
-                                                   ImVec2(cc.x + 8.0f, cc.y), okaytheme::OnColorU32(0.961f));
-                        }
-                        if (tileHov) {
-                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                            if (overStar)
-                                ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
-                            else
-                                ImGui::SetTooltip("Double-click to play %s", name.c_str());
-                            // MouseClickedCount == 1 so the second click of a fast
-                            // double on the overlay doesn't launch the game twice.
-                            bool click1 = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-                                          ImGui::GetIO().MouseClickedCount[ImGuiMouseButton_Left] == 1;
-                            if (overStar && click1) {
-                                ToggleFavorite(path); SavePrefs();
-                            } else if ((overPlay && click1) ||
-                                       (!overStar && !overPlay && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
-                                Launch(player, path);
-                                RecordPlayed(path); SavePrefs();
-                                Toast(std::string("Playing ") + name);
-                            }
-                        }
-                        if (ImGui::BeginPopupContextWindow("gtilectx", ImGuiPopupFlags_MouseButtonRight)) {
-                            if (ImGui::MenuItem("Play")) {
-                                Launch(player, path); RecordPlayed(path); SavePrefs();
-                                Toast(std::string("Playing ") + name);
-                            }
-                            if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
-                            if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
-                            if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
-                            ImGui::EndPopup();
-                        }
-                        ImGui::EndChild();
-                        ImGui::PopID();
-                        if (++col >= cols) col = 0;
-                    }
-                    if (shown == 0)
-                        ImGui::TextDisabled("No games match \"%s\".", playFilter);
-                    else
-                        ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
-                                            needle.empty() ? "" : " matching");
-                } else {
-                for (std::size_t oi = 0; oi < order.size(); ++oi) {
-                    std::size_t i = order[oi];
-                    std::string name = scenes[i].filename().string();
-                    if (!needle.empty() && lower(name).find(needle) == std::string::npos)
-                        continue;
-                    ++shown;
-                    std::string path = scenes[i].string();
-                    bool fav = IsFavorite(path);
-                    ImGui::PushID((int)i);
-                    ImGui::BeginChild("game", ImVec2(0, 64), true, ImGuiWindowFlags_NoScrollbar);
-                    HoverRing();
-                    ImGui::SetCursorPos(ImVec2(10, 10));
-                    DrawGameIcon(path, name, 44.0f);
-                    ImGui::SameLine();
-                    ImGui::BeginGroup();
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
-                    ImGui::Text("%s", name.c_str());
-                    if (RecentRank(path) < 3) {
-                        // "recent" as a small accent pill chip next to the name.
-                        ImGui::SameLine(0, 8);
-                        const char* rl = "recent";
-                        ImVec2 rs = ImGui::CalcTextSize(rl);
-                        ImVec2 pp = ImGui::GetCursorScreenPos();
-                        float ph = rs.y + 4.0f, pw = rs.x + 14.0f;
-                        ImDrawList* rdl = ImGui::GetWindowDrawList();
-                        rdl->AddRectFilled(ImVec2(pp.x, pp.y - 1), ImVec2(pp.x + pw, pp.y - 1 + ph),
-                                           ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.20f)),
-                                           ph * 0.5f);
-                        rdl->AddText(ImVec2(pp.x + 7, pp.y + 1), ImGui::GetColorU32(kAccent), rl);
-                        ImGui::Dummy(ImVec2(pw, rs.y));
-                    }
-                    std::string ago = ModifiedAgo(scenes[i]);
-                    std::string sub = scenes[i].parent_path().string();
-                    if (!ago.empty()) sub += "  \xC2\xB7  " + ago;
-                    int pc = PlayCount(path);
-                    if (pc > 0) {
-                        char pb[64];
-                        std::string la = AgoText(LastPlayed(path));
-                        std::snprintf(pb, sizeof(pb), "  \xC2\xB7  played %d\xC3\x97%s%s",
-                                      pc, la.empty() ? "" : "  \xC2\xB7  last ", la.c_str());
-                        sub += pb;
-                    }
-                    ImGui::TextDisabled("%s", sub.c_str());
-                    ImGui::EndGroup();
-                    // Right-aligned: favorite star, Folder, Play.
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));
-                    ImGui::SetCursorPosY(12.0f);
-                    if (ImGui::Button("##fav", ImVec2(36, 40))) { ToggleFavorite(path); SavePrefs(); }
-                    {
-                        // Drawn five-point star (the UI font has no ★ glyph):
-                        // filled gold when favorited, gray outline otherwise.
-                        ImVec2 fmn = ImGui::GetItemRectMin(), fmx = ImGui::GetItemRectMax();
-                        ImVec2 fc((fmn.x + fmx.x) * 0.5f, (fmn.y + fmx.y) * 0.5f);
-                        float R = 9.0f;
-                        ImVec2 pts[10];
-                        for (int k = 0; k < 10; ++k) {
-                            float ang = -1.5707963f + k * 0.62831853f;
-                            float rr = (k % 2 == 0) ? R : R * 0.45f;
-                            pts[k] = ImVec2(fc.x + std::cos(ang) * rr, fc.y + std::sin(ang) * rr);
-                        }
-                        ImDrawList* fdl = ImGui::GetWindowDrawList();
-                        if (fav)
-                            fdl->AddConcavePolyFilled(pts, 10, okaytheme::WarningFillU32());
-                        else
-                            fdl->AddPolyline(pts, 10, okaytheme::TextDimU32(),
-                                             ImDrawFlags_Closed, 1.6f);
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
-                    ImGui::SameLine();
-                    if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(82.0f)), okl::UiPx(40.0f)))) OpenExternal(scenes[i].parent_path().string());
-                    ImGui::SameLine();
-                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(80.0f)), okl::UiPx(40.0f)))) {
-                        Launch(player, path);
-                        RecordPlayed(path); SavePrefs();
-                        Toast(std::string("Playing ") + name);
-                    }
-                    // Double-click anywhere on the row also plays it.
-                    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        Launch(player, path);
-                        RecordPlayed(path); SavePrefs();
-                        Toast(std::string("Playing ") + name);
-                    }
-                    // Right-click anywhere on the row for the usual file actions.
-                    if (ImGui::BeginPopupContextWindow("gamectx", ImGuiPopupFlags_MouseButtonRight)) {
-                        if (ImGui::MenuItem("Play")) {
-                            Launch(player, path); RecordPlayed(path); SavePrefs();
-                            Toast(std::string("Playing ") + name);
-                        }
-                        if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
-                        if (ImGui::BeginMenu("Collections")) {
-                            for (auto& kv : g_collections) {
-                                bool in = InCollection(kv.first, path);
-                                if (ImGui::MenuItem(kv.first.c_str(), nullptr, in)) {
-                                    ToggleInCollection(kv.first, path); SavePrefs();
-                                }
-                            }
-                            if (!g_collections.empty()) ImGui::Separator();
-                            static char nbuf[48] = "";
-                            ImGui::TextDisabled("New collection");
-                            ImGui::SetNextItemWidth(160);
-                            bool mk = ImGui::InputTextWithHint("##mkcoll", "Name...", nbuf, sizeof(nbuf),
-                                                               ImGuiInputTextFlags_EnterReturnsTrue);
-                            ImGui::SameLine();
-                            if ((ImGui::SmallButton("Add") || mk) && nbuf[0]) {
-                                std::string nm = nbuf; for (char& ch : nm) if (ch == '|') ch = '-';
-                                g_collections[nm].push_back(path); SavePrefs();
-                                nbuf[0] = '\0';
-                            }
-                            ImGui::EndMenu();
-                        }
-                        if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
-                        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
-                        if (ImGui::MenuItem("Publish to Marketplace...")) {
-                            g_pendingPublishTitle = scenes[i].stem().string();   // Market tab prefills + opens its form
-                            tab = 7;
-                        }
-                        ImGui::EndPopup();
-                    }
-                    ImGui::EndChild();
-                    ImGui::PopID();
-                }
-                if (shown == 0)
-                    ImGui::TextDisabled("No games match \"%s\".", playFilter);
-                else {
-                    long totalLaunches = 0;   // lifetime launches across this library
-                    for (const auto& s : scenes) totalLaunches += PlayCount(s.string());
-                    if (totalLaunches > 0)
-                        ImGui::TextDisabled("%d game%s%s  \xC2\xB7  %ld total launch%s", shown,
-                                            shown == 1 ? "" : "s", needle.empty() ? "" : " matching",
-                                            totalLaunches, totalLaunches == 1 ? "" : "es");
-                    else
-                        ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
-                                            needle.empty() ? "" : " matching");
-                }
-                }   // end list view
+                ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
             }
+
+            // ---- The body: the library, and the details sheet beside it when a game is selected and there is room ----
+            const float bodyH = std::max(UiPx(160.0f), ImGui::GetContentRegionAvail().y - PageFooterH());
+            const float sheetW = std::clamp(TW * 0.27f, UiPx(290.0f), UiPx(360.0f)), sheetGap = UiPx(16.0f);
+            const PL::SidePanel side = PL::LayoutSidePanel(TW, sheetW, sheetGap, UiPx(900.0f), sel < 0, false);
+
+            // The details of one game: its art, Play, favourite / folder / more, then what the launcher knows about it.
+            auto drawDetails = [&](const PL::PlayGame& g, float w, bool inPopup) {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                // (No art in the popup: a cover drawn in an OkayUI popup did not show under Xvfb on 2026-11-28; cause not found.)
+                const float artH = inPopup ? 0.0f : std::floor(w * 0.5625f), r = UiPx(12.0f);
+                if (!inPopup) DrawGameArt(dl, g.path, g.name, p0, ImVec2(p0.x + w, p0.y + artH), r);
+                if (!inPopup) {
+                    const float cd = UiPx(28.0f);
+                    ImGui::SetCursorScreenPos(ImVec2(p0.x + w - cd - UiPx(8.0f), p0.y + UiPx(8.0f)));
+                    if (RoundIconButton("##closesheet", kRibClose, cd, okaytheme::Shade(150), okaytheme::Shade(210), okaytheme::OnColorU32(0.95f), "Close (Esc)")) s_playSel.clear();
+                }
+                ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + artH + (inPopup ? 0.0f : UiPx(14.0f))));
+                ImGui::SetWindowFontScale(1.30f);
+                const std::string nm = FitText(g.name, w);
+                ImGui::TextUnformatted(nm.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+                const fs::path gp(g.path);
+                const ExportInfo* ei = g.web ? nullptr : &ExportInfoOf(gp);
+                std::string kind = g.web ? std::string("HTML game") + kDot + "opens in your browser"
+                                         : std::string(g.installed ? "Installed game" : "Your exported game");
+                if (ei && !ei->version.empty()) kind += kDot + std::string("v") + ei->version;
+                ImGui::TextColored(accLt, "%s", FitText(kind, w).c_str());
+                ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                const bool canPlay = g.web || !player.empty();
+                ImGui::BeginDisabled(!canPlay);
+                if (PrimaryButton(g.web ? "Play in browser" : "Play", ImVec2(w, ImGui::GetFrameHeight() + UiPx(16.0f)))) playGame(g);
+                ImGui::EndDisabled();
+                if (!canPlay && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The game player is missing: reinstall this version from Versions.");
+                ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                {   // Favourite, Open folder, More
+                    const float bh = ImGui::GetFrameHeight() + UiPx(4.0f), mw = bh;
+                    const float half = std::floor((w - mw - 2 * gap) * 0.5f);
+                    if (ImGui::Button(g.favorite ? "Unfavourite" : "Favourite", ImVec2(half, bh))) { ToggleFavorite(g.path); SavePrefs(); }
+                    ImGui::SameLine(0, gap);
+                    if (ImGui::Button("Open folder", ImVec2(half, bh))) OpenExternal(gameFolder(g).string());
+                    ImGui::SameLine(0, gap);
+                    if (RoundIconButton("##sheetmore", kRibMore, mw, okaytheme::Ink(14), okaytheme::Ink(30), cText, "More")) ImGui::OpenPopup("##sheetctx");
+                    if (ImGui::BeginPopup("##sheetctx")) { gameMenu(g); ImGui::EndPopup(); }
+                }
+                ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                // What the launcher knows: label on the left, value on the right.
+                auto row = [&](const char* label, const std::string& value) {
+                    const ImVec2 rp = ImGui::GetCursorScreenPos();
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    d->AddText(rp, cDim, label);
+                    const std::string v = FitText(value, std::max(0.0f, w - ImGui::CalcTextSize(label).x - UiPx(16.0f)));
+                    d->AddText(ImVec2(rp.x + w - ImGui::CalcTextSize(v.c_str()).x, rp.y), cText, v.c_str());
+                    ImGui::Dummy(ImVec2(w, lh + UiPx(4.0f)));
+                    d->AddLine(ImVec2(rp.x, rp.y + lh + UiPx(7.0f)), ImVec2(rp.x + w, rp.y + lh + UiPx(7.0f)), okaytheme::Ink(10));
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                };
+                row("Last played", g.lastPlayed > 0 ? AgoText(g.lastPlayed) : std::string("Never"));
+                if (!g.web) row("Play time", g.seconds > 0 ? PL::PlaytimeText(g.seconds) : std::string(kDash));
+                row("Launches", g.plays > 0 ? std::to_string(g.plays) : std::string(kDash));
+                if (!g.web) row("Size on disk", OffBytes((long long)ExportBytes(fs::path(g.path))));
+                {
+                    std::string cs;
+                    for (auto& kv : g_collections) if (InCollection(kv.first, g.path)) cs += (cs.empty() ? "" : ", ") + kv.first;
+                    row("Collections", cs.empty() ? std::string("None") : cs);
+                }
+                ImGui::TextDisabled("Location");
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+                ImGui::TextWrapped("%s", gameFolder(g).string().c_str());
+                ImGui::PopTextWrapPos();
+                if (g.installed) {
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
+                    if (ImGui::Button("Remove from library...", ImVec2(w, 0))) { commRemovePath = CommunityItemRoot(fs::path(g.path)).string(); commRemoveName = g.name; }
+                    ImGui::PopStyleColor();
+                }
+            };
+
+            ImGui::BeginChild("##playbody", ImVec2(side.contentW, bodyH), false);
+            {
+                const float W = ImGui::GetContentRegionAvail().x;
+                if (player.empty() && nExported > 0) {   // the player program is missing: say so, with the way to get it back
+                    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().warning);
+                    ImGui::TextWrapped("The game player (OkaySpacePlayer) is missing, so games can't start. Reinstall this version from Versions.");
+                    ImGui::PopStyleColor();
+                    if (ImGui::SmallButton("Open Versions")) { tab = 15; g_lastTab = 15; SavePrefs(); }
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                }
+                if (games.empty()) {
+                    if (player.empty()) {
+                        EmptyState(kIcoAlert, "The game player is missing", "Games run in OkaySpacePlayer, which should sit next to the launcher. Reinstall this version from Versions to get it back.", UiPx(40.0f));
+                        const float bw = FitButtonW("Open Versions", UiPx(160.0f));
+                        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                        if (PrimaryButton("Open Versions", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(10.0f)))) { tab = 15; g_lastTab = 15; SavePrefs(); }
+                    } else {
+                        // No exported games: a friendly card that says how games get here, with the next steps.
+                        ImGui::Dummy(ImVec2(0, UiPx(18.0f)));
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(14.0f));
+                        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(24.0f), UiPx(26.0f)));
+                        ImGui::BeginChild("noGames", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+                        {
+                            const float cw = ImGui::GetContentRegionAvail().x;
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            const ImVec2 c0 = ImGui::GetCursorScreenPos();
+                            // Three placeholder covers fanned out behind the play icon.
+                            const float tw = UiPx(92.0f), th = std::floor(tw * 0.625f);
+                            const char* fake[3] = {"Your Game", "Next Level", "Big Idea"};
+                            for (int k = 0; k < 3; ++k) {
+                                const float ox = (k - 1) * (tw * 0.72f), oy = k == 1 ? 0.0f : UiPx(10.0f);
+                                const ImVec2 a(c0.x + cw * 0.5f - tw * 0.5f + ox, c0.y + oy);
+                                if (k != 1) DrawCoverPlaceholder(dl, fake[k], a, ImVec2(a.x + tw, a.y + th), UiPx(10.0f));
+                            }
+                            const ImVec2 a1(c0.x + cw * 0.5f - tw * 0.5f, c0.y);
+                            DrawCoverPlaceholder(dl, fake[1], a1, ImVec2(a1.x + tw, a1.y + th), UiPx(10.0f));
+                            const ImVec2 ic(c0.x + cw * 0.5f, c0.y + th * 0.5f);
+                            dl->AddCircleFilled(ic, UiPx(20.0f), cAcc, 32);
+                            dl->AddTriangleFilled(ImVec2(ic.x - UiPx(6.0f), ic.y - UiPx(9.0f)), ImVec2(ic.x - UiPx(6.0f), ic.y + UiPx(9.0f)), ImVec2(ic.x + UiPx(10.0f), ic.y), okaytheme::OnColorU32());
+                            ImGui::Dummy(ImVec2(cw, th + UiPx(22.0f)));
+                            auto centered = [&](const char* t, bool dim) {
+                                const float w = ImGui::CalcTextSize(t).x;
+                                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (cw - w) * 0.5f));
+                                if (dim) ImGui::TextDisabled("%s", t); else ImGui::TextUnformatted(t);
+                            };
+                            ImGui::SetWindowFontScale(1.15f);
+                            centered("No games in your library yet", false);
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::Dummy(ImVec2(0, 2));
+                            centered("Only exported games play here. Open a project on Create and export it with File > Build Game,", true);
+                            centered("or drop an exported game (or an .html web game) onto this window.", true);
+                            ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                            const float b1 = FitButtonW("Create a game", UiPx(150.0f)), b2 = FitButtonW("Open games folder"), b3 = FitButtonW("Refresh", UiPx(90.0f));
+                            const float bh = ImGui::GetFrameHeight() + UiPx(10.0f), bg = UiPx(8.0f);
+                            const bool oneRow = b1 + b2 + b3 + 2 * bg <= cw;   // a narrow card stacks them
+                            const float rw = oneRow ? b1 + b2 + b3 + 2 * bg : b1;
+                            const float x0 = ImGui::GetCursorPosX();
+                            ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - rw) * 0.5f));
+                            if (PrimaryButton("Create a game", ImVec2(b1, bh))) tab = 0;
+                            if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b2) * 0.5f));
+                            if (ImGui::Button("Open games folder", ImVec2(b2, bh))) OpenExternal(g_exeDir);
+                            if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b3) * 0.5f));
+                            if (ImGui::Button("Refresh", ImVec2(b3, bh))) refreshPlay();
+                        }
+                        ImGui::EndChild();
+                        ImGui::PopStyleVar(2);
+                        ImGui::PopStyleColor();
+                    }
+                } else {
+                    // ---- Continue playing: the last game played, big (the All shelf, no search, no collection) ----
+                    const int cont = PL::PlayContinueIndex(games);
+                    if (cont >= 0 && shelf == PL::PlayShelf::All && needle.empty() && g_collFilter.empty()) {
+                        const PL::PlayGame& g = games[(std::size_t)cont];
+                        ImGui::SetWindowFontScale(1.7f);
+                        const float titleH = ImGui::GetFontSize();
+                        ImGui::SetWindowFontScale(1.0f);
+                        const float btnH = ImGui::GetFrameHeight() + UiPx(16.0f), r = UiPx(14.0f);
+                        const PL::PlayHero h = PL::LayoutPlayHero(W, UiPx(196.0f), UiPx(26.0f), lh, titleH, FitButtonW("Play", UiPx(150.0f)),
+                                                                  FitButtonW("Details", UiPx(96.0f)), btnH, UiPx(10.0f), UiPx(560.0f));
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const ImVec2 cp = ImGui::GetCursorScreenPos();
+                        auto at = [&](const PL::Rect& q) { return ImVec2(cp.x + q.x, cp.y + q.y); };
+                        auto end = [&](const PL::Rect& q) { return ImVec2(cp.x + q.R(), cp.y + q.B()); };
+                        ImGui::SetNextItemAllowOverlap();
+                        ImGui::InvisibleButton("##hero", ImVec2(h.hero.w, h.hero.h));
+                        const bool hov = ImGui::IsItemHovered();
+                        if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) playGame(g);
+                        if (ImGui::BeginPopupContextItem("##heroctx")) { gameMenu(g); ImGui::EndPopup(); }
+                        const float t = ease("##hero", hov);
+                        const ImU32 raised = ImGui::GetColorU32(okaytheme::kRaised);
+                        dl->AddRectFilled(at(h.hero), end(h.hero), raised, r);
+                        if (h.artFull) {
+                            DrawGameArt(dl, g.path, g.name, at(h.art), end(h.art), r);
+                            dl->AddRectFilled(at(h.art), end(h.art), okaytheme::Shade(150), r);   // a wash so the text reads on the art
+                        } else {
+                            DrawGameArt(dl, g.path, g.name, at(h.art), end(h.art), r, ImDrawFlags_RoundCornersRight);
+                            const ImU32 clear = ImGui::GetColorU32(okaytheme::WithAlpha(okaytheme::kRaised, 0.0f));
+                            dl->AddRectFilledMultiColor(at(h.art), ImVec2(cp.x + h.art.x + h.art.w * 0.45f, cp.y + h.art.B()), raised, clear, clear, raised);   // the art fades into the card
+                        }
+                        dl->AddRect(at(h.hero), end(h.hero), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f + 0.30f * t)), r, 0, 1.0f + t);
+                        ImGui::SetWindowFontScale(0.82f);
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at(h.kicker), ImGui::GetColorU32(accLt), "CONTINUE PLAYING");
+                        ImGui::SetWindowFontScale(1.7f);
+                        const std::string tt = FitText(g.name, h.title.w);
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at(h.title), h.artFull ? okaytheme::OnColorU32() : cText, tt.c_str());
+                        ImGui::SetWindowFontScale(1.0f);
+                        std::string meta = g.lastPlayed > 0 ? "Last played " + AgoText(g.lastPlayed) : std::string("Played before");
+                        if (g.seconds > 0) meta += kDot + PL::PlaytimeText(g.seconds) + " played";
+                        if (g.plays > 0) meta += kDot + std::to_string(g.plays) + (g.plays == 1 ? " launch" : " launches");
+                        dl->AddText(at(h.meta), h.artFull ? okaytheme::OnColorU32(0.8f) : cDim, FitText(meta, h.meta.w).c_str());
+                        ImGui::SetCursorScreenPos(at(h.play));
+                        ImGui::BeginDisabled(player.empty());
+                        if (PrimaryButton("Play", ImVec2(h.play.w, h.play.h))) playGame(g);
+                        ImGui::EndDisabled();
+                        if (h.more.w > 0) {
+                            ImGui::SetCursorScreenPos(at(h.more));
+                            if (ImGui::Button("Details", ImVec2(h.more.w, h.more.h))) { select(g); s_playDetailsReq = true; }
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + h.hero.h + UiPx(20.0f)));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    }
+
+                    std::string label = PL::PlayShelfName(shelf);
+                    if (!g_collFilter.empty()) label += kDot + g_collFilter;
+                    for (char& c : label) c = (char)std::toupper((unsigned char)c);
+                    SectionLabel(label.c_str(), (int)order.size());
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+
+                    if (order.empty()) {
+                        std::string why;
+                        if (!needle.empty()) why = std::string("Nothing on this shelf matches \"") + playFilter + "\".";
+                        else if (!g_collFilter.empty() && PL::PlayShelfCount(games, PL::PlayShelf::All) == 0) why = "This collection is empty. Right-click a game and pick Collections to add it.";
+                        else switch (shelf) {
+                            case PL::PlayShelf::Favorites: why = "Star a game to keep it here."; break;
+                            case PL::PlayShelf::Recent:    why = "The games you play show up here."; break;
+                            case PL::PlayShelf::Installed: why = "Games you get from the Marketplace or Downloads show up here."; break;
+                            case PL::PlayShelf::Yours:     why = "Your exported games show up here: export a project with File > Build Game."; break;
+                            case PL::PlayShelf::Web:       why = "Drop an .html game onto this window to add it."; break;
+                            default:                       why = "No games here."; break;
+                        }
+                        EmptyState(kIcoSearch, "Nothing here yet", why.c_str(), UiPx(20.0f));
+                        const float bw = FitButtonW("Show all games", UiPx(150.0f));
+                        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (W - bw) * 0.5f));
+                        if (ImGui::Button("Show all games", ImVec2(bw, 0))) { g_playShelf = 0; playFilter[0] = '\0'; g_collFilter.clear(); SavePrefs(); }
+                    } else if (g_playView == 1) {
+                        // ---- Grid: covers; hover lifts the tile and shows Play ----
+                        const PL::Grid grid = PL::FitGrid(W, UiPx(200.0f), UiPx(16.0f), 6);
+                        s_playCols = grid.cols;
+                        const PL::PlayTile T = PL::LayoutPlayTile(grid.cardW, lh, UiPx(12.0f), UiPx(54.0f), UiPx(30.0f));
+                        const float r = UiPx(12.0f);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                        int n = 0;
+                        for (std::size_t oi : order) {
+                            const PL::PlayGame& g = games[oi];
+                            const PL::Rect cell = PL::GridCell(grid, n++, T.tile.h);
+                            const ImVec2 cp(g0.x + cell.x, g0.y + cell.y);
+                            ImGui::PushID(g.path.c_str());
+                            ImGui::SetCursorScreenPos(cp);
+                            ImGui::SetNextItemAllowOverlap();
+                            ImGui::InvisibleButton("##tile", ImVec2(T.tile.w, T.tile.h));
+                            const bool bgHov = ImGui::IsItemHovered();
+                            if (bgHov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) select(g);
+                            if (bgHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) playGame(g);
+                            if (ImGui::BeginPopupContextItem("##ctx")) { select(g); gameMenu(g); ImGui::EndPopup(); }
+                            const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + T.tile.w, cp.y + T.tile.h)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+                            const bool isSel = (int)oi == sel;
+                            const float t = ease(g.path, hov || isSel);
+                            const float lift = -UiPx(4.0f) * t;
+                            const ImVec2 a(cp.x, cp.y + lift), b(cp.x + T.tile.w, cp.y + T.tile.h + lift);
+                            if (t > 0.0f) dl->AddRectFilled(ImVec2(a.x + UiPx(2.0f), a.y + UiPx(8.0f)), ImVec2(b.x - UiPx(2.0f), b.y + UiPx(6.0f)), okaytheme::Shade((int)(70 * t)), r);   // the shadow under a lifted tile
+                            CardBackground(dl, a, b, hov);
+                            const ImVec2 ca(a.x + T.cover.x, a.y + T.cover.y), cb(a.x + T.cover.R(), a.y + T.cover.B());
+                            DrawGameArt(dl, g.path, g.name, ca, cb, r, ImDrawFlags_RoundCornersTop);
+                            if (t > 0.0f) dl->AddRectFilled(ca, cb, okaytheme::Shade((int)(60 * t)), r, ImDrawFlags_RoundCornersTop);
+                            if (isSel) dl->AddRect(a, b, cAcc, r, 0, 2.0f);
+                            if (g.web) {   // a small "WEB" pill on the cover
+                                const ImVec2 ts = ImGui::CalcTextSize("WEB");
+                                const ImVec2 pa(ca.x + UiPx(8.0f), cb.y - ts.y - UiPx(12.0f));
+                                dl->AddRectFilled(pa, ImVec2(pa.x + ts.x + UiPx(12.0f), pa.y + ts.y + UiPx(4.0f)), okaytheme::WarningFillU32(0.92f), (ts.y + UiPx(4.0f)) * 0.5f);
+                                dl->AddText(ImVec2(pa.x + UiPx(6.0f), pa.y + UiPx(2.0f)), okaytheme::U32(okaytheme::kDeep), "WEB");
+                            }
+                            if (t > 0.02f) {   // the Play button in the middle of the cover
+                                const ImVec2 pa(a.x + T.play.x, a.y + T.play.y);
+                                ImGui::SetCursorScreenPos(pa);
+                                const bool pc = ImGui::InvisibleButton("##play", ImVec2(T.play.w, T.play.h));
+                                const bool ph = ImGui::IsItemHovered();
+                                const ImVec2 c(pa.x + T.play.w * 0.5f, pa.y + T.play.h * 0.5f);
+                                const float R = T.play.w * 0.5f * (ph ? 1.06f : 1.0f);
+                                dl->AddCircleFilled(ImVec2(c.x, c.y + UiPx(2.0f)), R, okaytheme::Shade((int)(90 * t)), 32);
+                                dl->AddCircleFilled(c, R, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, t)), 32);
+                                const float s = R * 0.42f;
+                                dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), ImVec2(c.x + s * 1.05f, c.y), okaytheme::OnColorU32(t));
+                                if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Play %s", g.name.c_str()); }
+                                if (pc) playGame(g);
+                            }
+                            if (g.favorite || t > 0.02f)
+                                if (starButton("##fav", ImVec2(a.x + T.star.x, a.y + T.star.y), T.star.w, g.favorite, g.favorite ? 1.0f : t, true)) { ToggleFavorite(g.path); SavePrefs(); }
+                            const std::string tt = FitText(g.name, T.title.w);
+                            dl->AddText(ImVec2(a.x + T.title.x, a.y + T.title.y), cText, tt.c_str());
+                            dl->AddText(ImVec2(a.x + T.title.x + 0.6f, a.y + T.title.y), cText, tt.c_str());   // faux bold, like the Marketplace cards
+                            dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(metaLine(g), T.meta.w).c_str());
+                            if (bgHov && !ImGui::IsAnyItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (isSel) scrollIntoView(a, b);
+                            ImGui::PopID();
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, n, T.tile.h) + UiPx(14.0f)));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    } else {
+                        // ---- List: name, last played, play time, size; Play on the right ----
+                        s_playCols = 1;
+                        const float rowH = UiPx(64.0f), rowGap = UiPx(6.0f), cg = UiPx(14.0f), pad = UiPx(12.0f), r = UiPx(10.0f);
+                        const float playW = FitButtonW("Play", UiPx(84.0f)), btnH = UiPx(36.0f), starD = UiPx(36.0f);
+                        const float lastW = std::max(UiPx(96.0f), ImGui::CalcTextSize("LAST PLAYED").x * 0.86f), timeW = std::max(UiPx(96.0f), ImGui::CalcTextSize("3 h 20 min").x);
+                        const float sizeW = std::max(UiPx(80.0f), ImGui::CalcTextSize("999.9 MB").x);
+                        const PL::PlayColumns C = PL::LayoutPlayColumns(W, rowH, pad, UiPx(44.0f), lastW, timeW, sizeW, starD + gap + playW, UiPx(170.0f), cg, playW);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        {   // the column heads
+                            const ImVec2 hp = ImGui::GetCursorScreenPos();
+                            ImGui::SetWindowFontScale(0.82f);
+                            const float fs = ImGui::GetFontSize();
+                            auto head = [&](const PL::Rect& q, const char* t) { dl->AddText(ImGui::GetFont(), fs, ImVec2(hp.x + q.x, hp.y), cDim, t); };
+                            head(C.name, "NAME");
+                            if (C.showLast) head(C.last, "LAST PLAYED");
+                            if (C.showTime) head(C.time, "PLAY TIME");
+                            if (C.showSize) head(C.size, "SIZE");
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::Dummy(ImVec2(W, fs + UiPx(6.0f)));
+                        }
+                        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                        int n = 0;
+                        for (std::size_t oi : order) {
+                            const PL::PlayGame& g = games[oi];
+                            const ImVec2 rp(g0.x, g0.y + n++ * (rowH + rowGap));
+                            ImGui::PushID(g.path.c_str());
+                            ImGui::SetCursorScreenPos(rp);
+                            ImGui::SetNextItemAllowOverlap();
+                            ImGui::InvisibleButton("##row", ImVec2(W, rowH));
+                            const bool bgHov = ImGui::IsItemHovered();
+                            if (bgHov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) select(g);
+                            if (bgHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) playGame(g);
+                            if (ImGui::BeginPopupContextItem("##ctx")) { select(g); gameMenu(g); ImGui::EndPopup(); }
+                            const bool hov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + W, rp.y + rowH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+                            const bool isSel = (int)oi == sel;
+                            const float t = ease(g.path, hov);
+                            const ImVec2 ra(rp.x, rp.y), rb(rp.x + W, rp.y + rowH);
+                            dl->AddRectFilled(ra, rb, isSel ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.14f + 0.06f * t)) : okaytheme::Ink((int)(9 + 16 * t)), r);
+                            if (isSel) dl->AddRect(ra, rb, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)), r, 0, 1.5f);
+                            DrawGameArt(dl, g.path, g.name, ImVec2(rp.x + C.icon.x, rp.y + C.icon.y), ImVec2(rp.x + C.icon.R(), rp.y + C.icon.B()), UiPx(8.0f));
+                            // Name (faux bold) and the kind of game under it.
+                            float nx = rp.x + C.name.x;
+                            const float ny = rp.y + rowH * 0.5f - lh - UiPx(1.0f);
+                            std::string nm = FitText(g.name, C.name.w - (g.favorite ? UiPx(18.0f) : 0.0f));
+                            dl->AddText(ImVec2(nx, ny), cText, nm.c_str());
+                            dl->AddText(ImVec2(nx + 0.6f, ny), cText, nm.c_str());
+                            if (g.favorite) star(dl, ImVec2(nx + ImGui::CalcTextSize(nm.c_str()).x + UiPx(11.0f), ny + lh * 0.5f), UiPx(6.0f), true, 0);
+                            std::string sub = g.web ? std::string("Web game") + kDot + "opens in your browser" : std::string(g.installed ? "Installed" : "Your game");
+                            if (!g.web) { const fs::path gp(g.path); const std::string& ver = ExportInfoOf(gp).version; if (!ver.empty()) sub += kDot + std::string("v") + ver; }
+                            if (!C.showLast) sub += kDot + metaLine(g);   // a narrow list: the dropped columns' facts go here
+                            dl->AddText(ImVec2(nx, rp.y + rowH * 0.5f + UiPx(2.0f)), cDim, FitText(sub, C.name.w).c_str());
+                            const float cy = rp.y + (rowH - lh) * 0.5f;
+                            if (C.showLast) dl->AddText(ImVec2(rp.x + C.last.x, cy), g.lastPlayed > 0 ? cText : cDim, g.lastPlayed > 0 ? AgoText(g.lastPlayed).c_str() : "Never");
+                            if (C.showTime) { const std::string pt = PL::PlaytimeText(g.seconds); dl->AddText(ImVec2(rp.x + C.time.x, cy), pt.empty() ? cDim : cText, pt.empty() ? kDash : pt.c_str()); }
+                            if (C.showSize) dl->AddText(ImVec2(rp.x + C.size.x, cy), cDim, g.web ? kDash : OffBytes((long long)ExportBytes(fs::path(g.path))).c_str());
+                            // Favourite, then Play.
+                            const float ax = rp.x + C.actions.x, ay = rp.y + (rowH - btnH) * 0.5f;
+                            if (!C.narrowActions && starButton("##fav", ImVec2(ax, rp.y + (rowH - starD) * 0.5f), starD, g.favorite, 1.0f, false)) { ToggleFavorite(g.path); SavePrefs(); }
+                            ImGui::SetCursorScreenPos(ImVec2(C.narrowActions ? ax : ax + starD + gap, ay));
+                            ImGui::BeginDisabled(!g.web && player.empty());
+                            if (PrimaryButton("Play", ImVec2(playW, btnH))) playGame(g);
+                            ImGui::EndDisabled();
+                            if (isSel) scrollIntoView(ra, rb);
+                            ImGui::PopID();
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + n * (rowH + rowGap) + UiPx(8.0f)));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    }
+                    if (!order.empty()) {
+                        long launches = 0; long secs = 0;
+                        for (const PL::PlayGame& g : games) { launches += g.plays; secs += g.seconds; }
+                        std::string foot = std::to_string(order.size()) + (order.size() == 1 ? " game" : " games") + (needle.empty() ? "" : " matching");
+                        if (launches > 0) foot += kDot + std::to_string(launches) + (launches == 1 ? " launch" : " launches") + " in all";
+                        if (secs > 0) foot += kDot + PL::PlaytimeText(secs) + " played";
+                        ImGui::TextDisabled("%s", foot.c_str());
+                        ImGui::TextDisabled("Click a game for its details. Arrow keys move, Enter plays, right-click for more.");
+                    }
+                }
+            }
+            ImGui::EndChild();   // ##playbody
+            if (side.shown && sel >= 0) {
+                ImGui::SameLine(0, sheetGap);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(14.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(16.0f), UiPx(16.0f)));
+                ImGui::BeginChild("##playsheet", ImVec2(sheetW, bodyH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                drawDetails(games[(std::size_t)sel], ImGui::GetContentRegionAvail().x, false);
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+                s_playDetailsReq = false;   // the sheet is already showing it
+            } else if (s_playDetailsReq && sel >= 0) {   // a narrow page: the details open over it
+                ImGui::OpenPopup("Game details##play");
+                s_playDetailsReq = false;
+            }
+            if (sel >= 0) {
+                const float pw = std::min(TW, UiPx(420.0f));
+                ImGui::SetNextWindowSize(ImVec2(pw, 0), ImGuiCond_Appearing);
+                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                if (ImGui::BeginPopupModal("Game details##play", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    drawDetails(games[(std::size_t)sel], pw - 2 * ImGui::GetStyle().WindowPadding.x, true);
+                    ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                    if (ImGui::Button("Close", ImVec2(-1, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+            }
+            removeFromLibraryPopup(refreshPlay);
         } else if (tab == 2) {                            // ---- Community ----
             namespace PL = okay::launcherlayout;
             sectionHeader("Community", "Games and levels the OkaySpace community made. Play them, and share your own.");
@@ -16379,10 +16688,10 @@ int main(int argc, char** argv) {
                 if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
                 else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
                 else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
-                std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
+                std::string meta = std::string(IsExportedGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
                 return s_commMeta.emplace(scene.string(), meta).first->second;
             };
-            auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); };
+            auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); ForgetExportInfo(); };
 
             // Collect library items (scenes living under community/). One search filters the library and the templates.
             const std::string cneedle = lowerStr(commFilter);
@@ -16438,7 +16747,7 @@ int main(int argc, char** argv) {
                     dl->AddCircleFilled(ic, UiPx(26.0f), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.18f)), 32);
                     DrawNavIcon(dl, 10, ic, ImGui::GetColorU32(accLt));
                     const char* t1 = "Your library is empty";
-                    const char* t2 = "Drag a game folder, scene, script or model onto this window to add it. A dropped .okayscene plays right away.";
+                    const char* t2 = "Drag a game folder, scene, script or model onto this window to add it. A dropped exported game plays right away.";
                     ImGui::SetWindowFontScale(1.12f);
                     const ImVec2 s1 = ImGui::CalcTextSize(t1);
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + (W - s1.x) * 0.5f, p.y + UiPx(86.0f)), cText, t1);
@@ -16488,13 +16797,14 @@ int main(int argc, char** argv) {
                     ImGui::InvisibleButton("##ccard", ImVec2(cardW, cardH));
                     const bool bgHov = ImGui::IsItemHovered();
                     const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + cardW, cp.y + cardH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-                    // Double-click plays, right-click opens the item menu.
-                    if (bgHov && !player.empty() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
+                    // Double-click plays (an exported game only), right-click opens the item menu.
+                    const bool playable = !player.empty() && IsExportedGame(scene);
+                    if (bgHov && playable && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        if (Launch(player, cpath)) { RecordPlayed(cpath); SavePrefs(); }
                     }
-                    if (bgHov) ImGui::SetTooltip("Double-click to play, right-click for more");
+                    if (bgHov) ImGui::SetTooltip(playable ? "Double-click to play, right-click for more" : "Not an exported game: open it in the editor and Build it to play it");
                     if (ImGui::BeginPopupContextItem("##commctx")) {
-                        if (!player.empty() && ImGui::MenuItem("Play")) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                        if (playable && ImGui::MenuItem("Play")) { if (Launch(player, cpath)) { RecordPlayed(cpath); SavePrefs(); } }
                         if (ImGui::MenuItem("Show in Explorer")) OpenExternal(it.root.string());
                         if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(cpath.c_str());
                         ImGui::Separator();
@@ -16521,11 +16831,11 @@ int main(int argc, char** argv) {
                     const std::vector<PL::Rect> row = PL::LayoutActionRow(lc.actions.w, actH, FitButtonW("Play"), {actH, actH}, UiPx(8.0f));
                     const ImVec2 ra(cp.x + lc.actions.x, cp.y + lc.actions.y);
                     ImGui::SetCursorScreenPos(ImVec2(ra.x + row[0].x, ra.y));
-                    ImGui::BeginDisabled(player.empty());
-                    if (PrimaryButton("Play", ImVec2(row[0].w, actH))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                    ImGui::BeginDisabled(!playable);
+                    if (PrimaryButton("Play", ImVec2(row[0].w, actH))) { if (Launch(player, cpath)) { RecordPlayed(cpath); SavePrefs(); } }
                     ImGui::EndDisabled();
-                    if (player.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Player runtime not found next to the launcher");
+                    if (!playable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("%s", player.empty() ? "Player runtime not found next to the launcher" : okaylib::NotExportedMessage());
                     {
                         const ImVec2 fp(ra.x + row[1].x, ra.y);
                         ImGui::SetCursorScreenPos(fp);
@@ -16645,34 +16955,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
             ImGui::EndChild();   // ##commbody
 
-            // Confirm before deleting a community game's folder from disk.
-            if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
-                ImGui::OpenPopup("Remove from library?");
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
-                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            if (ImGui::BeginPopupModal("Remove from library?", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
-                ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
-                bool doRemove = ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0));
-                ImGui::PopStyleColor(2);
-                if (doRemove) {
-                    std::error_code rec; fs::remove_all(commRemovePath, rec);
-                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
-                    refreshLibrary();
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) {
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
+            removeFromLibraryPopup(refreshLibrary);
             }   // (Your creations)
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
@@ -18328,7 +18611,7 @@ int main(int argc, char** argv) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
                     okayappearance::Commit(OkayUI::design::Options());   // the default design and options (every program follows)
                     g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
-    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
+    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_playShelf = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; vs.skippedVersion.clear(); }   // update settings (the versions themselves stay)
                     ApplyAccent(g_accentIndex);   // re-applies the design
                     SavePrefs();

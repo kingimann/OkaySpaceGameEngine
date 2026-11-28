@@ -184,6 +184,9 @@ struct LambdaInfo {
     std::string tag;     // the closure class
     int mode = 0;        // capture default: 0 none, 1 [&], 2 [=]
     std::vector<std::pair<std::string, bool>> caps;  // explicit captures: name, by reference
+    // Init-captures [x = e] ([expr.prim.lambda.capture] p6): the hidden variable (also in caps, by
+    // copy; the body's x is renamed to it) and e. The checker declares it where the lambda is.
+    std::vector<std::pair<std::string, std::unique_ptr<Expr>>> inits;
     bool done = false;
 };
 
@@ -194,6 +197,7 @@ struct Tu {
     std::deque<LambdaInfo> lambdas;
     std::vector<std::string> usingNs;                 // using namespace N; (qualified names)
     std::map<std::string, std::string> usingDecl;     // using N::f;  f -> N::f
+    std::string unitSfx;  // the unit's file name as a symbol part (__okay_init_<unitSfx>)
 };
 
 // withDefaults false: the default arguments of function parameters are left out (a checked

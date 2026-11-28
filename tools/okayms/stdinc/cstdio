@@ -56,6 +56,10 @@ int _fseeki64(std::FILE *stream, long long offset, int origin);
 long long _ftelli64(std::FILE *stream);
 int _wremove(const unsigned short *path);
 int _wrename(const unsigned short *from, const unsigned short *to);
+// The descriptor of a stream and a stream for a descriptor (Microsoft's _fileno and _fdopen, "Required header <stdio.h>";
+// Round 36, SaveFile.cpp's `_commit(_fileno(f))`).
+int _fileno(std::FILE *stream);
+std::FILE *_fdopen(int fd, const char *mode);
 }
 #define EOF (-1)
 #define SEEK_SET 0

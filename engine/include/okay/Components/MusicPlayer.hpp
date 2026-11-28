@@ -119,6 +119,7 @@ private:
         for (int i = 0; i < 2; ++i) {
             if (m_voice[i]) continue;
             GameObject* go = scene->CreateGameObject(i == 0 ? "Music A" : "Music B");
+            go->transient = true;   // runtime-only: never saved, so a load does not add another pair (#888 F54)
             go->transform->SetParent(transform, false);
             m_voice[i] = go->AddComponent<AudioSource>();
             m_voice[i]->group = AudioGroup::Music;

@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <new>
 #include <utility>
+#include <iterator>
 namespace std {
 template <typename T>
 class deque {
@@ -99,6 +100,11 @@ public:
     T* end() { return block_ + head_ + size_; }
     const T* begin() const { return block_ + head_; }
     const T* end() const { return block_ + head_ + size_; }
+    // Reverse iteration ([sequence.reqmts], [reverse.iterators]; Round 36, Undo.cpp's `m_undo.rbegin()`).
+    std::reverse_iterator<T*> rbegin() { return std::reverse_iterator<T*>(end()); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(end()); }
+    std::reverse_iterator<T*> rend() { return std::reverse_iterator<T*>(begin()); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(begin()); }
 
     void push_back(const T& value) {
         if (block_ != 0 && head_ + size_ == cap_) {
@@ -198,6 +204,27 @@ public:
         for (size_t i = size_ - 1; i > at; --i) block_[head_ + i] = std::move(block_[head_ + i - 1]);
         block_[head_ + at] = std::move(copy);
         return block_ + head_ + at;
+    }
+    // [sequence.reqmts] a.insert(p, i, j) (Round 35, OwnLinuxAudio.cpp's queue of bytes): the items of [first, last)
+    // go before pos, in order. They are added at the end and then turned into place (three reversals).
+    template <typename It>
+    T* insert(T* pos, It first, It last) {
+        const size_t at = (size_t)(pos - (block_ + head_));
+        const size_t old = size_;
+        for (; first != last; ++first) push_back(T(*first));
+        okay_reverse__(at, old);
+        okay_reverse__(old, size_);
+        okay_reverse__(at, size_);
+        return block_ + head_ + at;
+    }
+    void okay_reverse__(size_t from, size_t to) {
+        while (from + 1 < to) {
+            --to;
+            T t(std::move(block_[head_ + from]));
+            block_[head_ + from] = std::move(block_[head_ + to]);
+            block_[head_ + to] = std::move(t);
+            ++from;
+        }
     }
     void swap(deque& other) {
         T* b = block_; block_ = other.block_; other.block_ = b;

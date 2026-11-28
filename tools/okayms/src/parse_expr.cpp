@@ -483,8 +483,34 @@ bool Parser::parse_lambda(Node* out) {
     }
     // The captured variables: the named ones, then (for = or &) every visible local the body mentions.
     std::vector<Cap> list;
+    // A name the lambda around this one captured ([co] inside [this, co] { ... }; [expr.prim.lambda.capture] 10: the
+    // variable is captured from the outer closure): its value is that closure's member (through its address for one
+    // captured by reference). Round 36, OkayScriptVM_Coroutine.cpp; before "unknown name co".
+    const bool in_lambda = cur_class >= 0 && structs[static_cast<size_t>(cur_class)].name.compare(0, 5, "__lam") == 0 &&
+                           local_visible("this");
+    auto outer_member = [&](const std::string& n) {
+        return in_lambda && !local_visible(n) && find_field_named(structs[static_cast<size_t>(cur_class)], n) >= 0;
+    };
+    auto cap_value = [&](const Cap& c) {
+        if (c.src.empty() && outer_member(c.name)) {
+            Node f;
+            f.kind = Node::Field;
+            f.op = TArrow;
+            f.text = c.name;
+            f.kids.push_back(node_name("this"));
+            if (structs[static_cast<size_t>(cur_class)].ref_caps.count(c.name) > 0) {
+                Node d;
+                d.kind = Node::Unary;
+                d.op = TStar;
+                d.kids.push_back(std::move(f));
+                return d;
+            }
+            return f;
+        }
+        return node_name(c.src.empty() ? c.name : c.src);
+    };
     for (const Cap& c : caps)
-        if (!c.src.empty() || local_visible(c.name)) list.push_back(c);
+        if (!c.src.empty() || local_visible(c.name) || outer_member(c.name)) list.push_back(c);
     if (default_value || default_ref) {
         for (size_t i = body_at; i < body_end; ++i) {
             if (tokens[i].kind != TIdent || !local_visible(tokens[i].text) || tokens[i].text == "this") continue;
@@ -531,7 +557,7 @@ bool Parser::parse_lambda(Node* out) {
         def.lam_outer = cur_class;
     }
     for (const Cap& c : list) {
-        Node probe = node_name(c.src.empty() ? c.name : c.src);
+        Node probe = cap_value(c);
         Type vt;
         if (!static_type(probe, &vt)) {
             error = "cannot tell the type of the captured variable " + c.name;
@@ -691,7 +717,7 @@ bool Parser::parse_lambda(Node* out) {
         m.params = decl.params;
         m.param_names = decl.param_names;
         m.defaults = decl.param_defaults;
-        m.is_static = list.empty() && !cap_this;
+        m.is_static = list.empty() && !cap_this && decl.param_defaults.empty();
         m.has_body = true;
         m.body_at = body_at;
         // Does the body return a value?
@@ -765,7 +791,10 @@ bool Parser::parse_lambda(Node* out) {
     } else {
         at = body_end + 1;
     }
-    if (generic_names.empty() && list.empty() && !cap_this) {
+    // A lambda with default arguments stays an object even when it captures nothing ([expr.prim.lambda.closure] 4: the
+    // defaults belong to its operator(); a function pointer has none): `rgb(38, 38, 42)` with
+    // `[](int r, int g, int b, int a = 255)` (VehicleBuilder.hpp, Round 35; before "wrong number of arguments to rgb").
+    if (generic_names.empty() && list.empty() && !cap_this && decl.param_defaults.empty()) {
         *out = node_name(qname);
         return true;
     }
@@ -798,7 +827,7 @@ bool Parser::parse_lambda(Node* out) {
         target.op = TDot;
         target.text = c.name;
         target.kids.push_back(node_name(hidden.name));
-        Node value = node_name(c.src.empty() ? c.name : c.src);
+        Node value = cap_value(c);
         Type vt;
         static_type(value, &vt);
         if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
@@ -901,6 +930,20 @@ bool Parser::static_type(const Node& node, Type* out) const {
             *out = peel_array(inner);
             return true;
         }
+        if ((node.op == TPlusPlus || node.op == TMinusMinus) && !(inner.base == 3 && inner.pointers == 0)) {
+            // ++x, x++, --x, x-- of a number or a pointer: the operand's type ([expr.post.incr] 1, [expr.pre.incr] 1;
+            // Round 36, `auto dead = it++;` with a pointer iterator, before "cannot work out the type").
+            inner.is_ref = false;
+            if (inner.pointers == 0) inner.is_const = false;
+            *out = inner;
+            return true;
+        }
+        if (node.op == TNot && !(inner.base == 3 && inner.pointers == 0)) {
+            // !x is a bool ([expr.unary.op] 9; Round 36: before it had no type, and `return !x;` for a class result
+            // was not converted by the class's bool constructor).
+            *out = bool_type();
+            return true;
+        }
         if (node.op == TAmp) {
             inner.is_ref = false;
             if (inner.is_array()) {
@@ -932,8 +975,9 @@ bool Parser::static_type(const Node& node, Type* out) const {
         if (node.kids.size() != 2) return false;
         if (node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
             node.op == TGe || node.op == TAndAnd || node.op == TOrOr) {
-            *out = Type{};
-            out->base = 1;
+            // A bool ([expr.rel] 6, [expr.eq] 6, [expr.log.and] 1, [expr.log.or] 1). Before Round 36 an int, so
+            // `return a == b;` and `Kind(a == b)` chose an int overload over a bool one (silent wrong code).
+            *out = bool_type();
             return true;
         }
         Type left;
@@ -985,6 +1029,12 @@ bool Parser::static_type(const Node& node, Type* out) const {
     case Node::Ternary: {
         if (node.kids.size() != 3 || !static_type(node.kids[1], out)) return false;
         if (out->base == 0 && out->pointers == 0) return static_type(node.kids[2], out);  // c ? throw x : y
+        if (node.kids[1].kind == Node::IntLit && node.kids[1].number == 0 && out->pointers == 0) {
+            // c ? nullptr : p (nullptr and 0 are a 0 here): the type is the pointer's ([expr.cond] 7.3; Round 36,
+            // HumanoidActionsRuntime.cpp's `auto* tp = fp ? nullptr : go->GetComponent<T>()`, before an int).
+            Type other;
+            if (static_type(node.kids[2], &other) && other.pointers > 0) *out = other;
+        }
         return true;
     }
     case Node::Call:
@@ -1232,9 +1282,12 @@ bool Parser::parse_new(Node* out) {
         }
     }
     const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
-    bool plain_copy = false;  // new C(other) where C has constructors but no copy constructor: the bytes are copied
+    // new C(other) where C has constructors but no copy or move constructor: the bytes are copied. (A class with a move
+    // constructor and no copy constructor, unique_ptr, is moved by it: before Round 36 its bytes were copied, so
+    // `new (p) T(std::move(x))` in vector::push_back left x owning the object too, and x's destructor deleted it.)
+    bool plain_copy = false;
     if (obj && args.size() == 1 && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) &&
-        !class_has_copy(ty.struct_id)) {
+        !class_has_copy(ty.struct_id) && !has_move_ctor(ty.struct_id)) {
         Type from;
         plain_copy = static_type(args[0], &from) && from.base == 3 && from.pointers == 0 && !from.is_array() &&
                      from.struct_id == ty.struct_id;
@@ -1605,6 +1658,7 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = cur().real != 0 ? cur().real : 1;
         if (cur().real == 0) {
             out->type.wide = cur().ity >= 2;
+            out->type.long_word = cur().long_lit;
             out->type.is_unsigned = cur().ity == 1 || cur().ity == 3;
             // A number is kept in the form its type gives: sign-extended int, zero-extended unsigned int.
             if (cur().ity == 0) out->number = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(out->number)));
@@ -3223,6 +3277,20 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                                               &ctor_stmt))
                                 return false;
                             chosen.kids.push_back(std::move(ctor_stmt));
+                            continue;
+                        }
+                        if (lvalue(*branch) && class_has_copy(ta.struct_id)) {
+                            // `c ? f() : s` with an lvalue s: s is copied into the result by the copy constructor
+                            // ([expr.cond] 7.1, the lvalue-to-rvalue conversion of a class makes a copy). Before Round 35
+                            // its bytes were copied, so the result shared s's buffer and its destructor freed it
+                            // (Layers::Name in engine/include/okay/Scene/Layers.hpp: `s.empty() ? ("Layer " + ...) : s`).
+                            Node copy_stmt;
+                            std::vector<Node> cargs;
+                            cargs.push_back(std::move(*branch));
+                            if (!special_call(ta.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs),
+                                              &copy_stmt))
+                                return false;
+                            chosen.kids.push_back(std::move(copy_stmt));
                             continue;
                         }
                         Node assign;

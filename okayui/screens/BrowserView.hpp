@@ -23,6 +23,7 @@ namespace okayuiscreens {
 struct BrowserViewResult {
     bool back = false, forward = false, reload = false;
     bool stop = false, home = false, bookmark = false, menu = false;   // the program's buttons (BrowserViewOptions::programButtons)
+    bool ownWindow = false;             // the "Open in its own window" button (BrowserViewOptions::ownWindowButton)
     OkayUI::Rect menuButton;            // where the menu button is (the program opens its menu under it)
     std::string navigate;               // the address field: the address the person typed and confirmed (Enter or Go)
     int playEmbed = -1;                 // the Play button of an embedded game: its index into the layout's cmds
@@ -123,6 +124,7 @@ struct BrowserViewOptions {
     // ---- the browser program (round 1 of "a regular browser") ----
     bool programButtons = false;       ///< Reload becomes Stop while loading; Home, a bookmark star and a menu button
     bool bookmarked = false;           ///< the star shows the page is bookmarked
+    bool ownWindowButton = false;      ///< a button before the menu that opens the page in the browser program (the launcher's page)
     std::string placeholder;           ///< shown in an empty address field ("Search the web or type an address")
     bool focusAddress = false;         ///< put the keyboard in the address field and select it (Ctrl+L, a new tab)
     bool blockInput = false;           ///< a menu or dialog of the program is open over the page: the page takes no clicks
@@ -171,7 +173,7 @@ inline void FollowDesign() {
 
 /// Toolbar icons, drawn with lines (no picture files): centred on (cx, cy), about `size` px across, into the current window
 /// (`onTop`: over everything, the foreground list).
-enum class BrowserIcon { Back, Forward, Reload, Stop, Home, Menu, Star, StarFilled, Lock, Info, Warning, Close, Plus, Globe, Search, Clock, Tab };
+enum class BrowserIcon { Back, Forward, Reload, Stop, Home, Menu, Star, StarFilled, Lock, Info, Warning, Close, Plus, Globe, Search, Clock, Tab, OwnWindow };
 void DrawBrowserIcon(BrowserIcon icon, float cx, float cy, float size, OkayUI::Color32 col, bool onTop = false);
 
 /// A round toolbar button with an icon: a circle while the pointer is over it, darker while held; `tip` is shown after the

@@ -330,6 +330,24 @@ void menuBarReset();
 void regionReset();   // OkayUI_Windows.cpp: regions left open are forgotten (BeginFrame, ResetState)   // a BeginMenuBar left without EndMenuBar is forgotten (BeginFrame, ResetState)
 extern int g_menuDepth;
 extern bool g_framedWidgets;
+extern float g_labelCol;
+extern bool g_alignFrameNext;   // AlignTextToFramePadding: the next text line is a frame tall (cleared by place())
+// StyleVar_LabelColumn (see OkayUI.hpp): made at the start of a labelled field, before its place(). When the column applies (`on`) the
+// field is placed after the column and draws no label of its own; placed(y, h), called right after place(), draws the label in the
+// column; at the end of the field the item's rectangle is widened over the label.
+struct LabelColumn {
+    bool on = false;
+    explicit LabelColumn(const char* label);
+    void placed(float y, float h);
+    void finish();   // widen the item's rectangle now (before a popup body begins, which has its own layout); the destructor then does nothing
+    ~LabelColumn();
+    LabelColumn(const LabelColumn&) = delete;
+    LabelColumn& operator=(const LabelColumn&) = delete;
+private:
+    bool done = false;
+    float left = 0.0f, col = 0.0f, savedIndent = 0.0f;
+    char text[128] = {0};
+};
 extern bool g_escapeUsed;
 extern bool g_dblClick;
 extern float g_popupPadX, g_popupPadY, g_popupW, g_innerX;
@@ -358,10 +376,18 @@ void focusRing(float x, float y, float w, float h, float rad);
 // every frame it is drawn; the list of one frame is the Tab order of the next (submission order, one window or popup at a time). The
 // control with the keyboard focus gets the focus ring while the keyboard was used last; Space or Enter acts on it (navItem returns true).
 // A text field reached with Tab takes the keyboard (g_focus) with its text selected.
-struct NavEntry { int id = 0, win = 0; float wx = 0, wy = 0, ww = 0, wh = 0; bool text = false; };
+// Round 6: sliders and drags (NavKind::Value: Left / Right step the value), selectable rows, menu rows in popups and tree rows (NavKind::Row
+// and NavKind::Tree: Up / Down move along the rows of the window, Left / Right close and open a tree row) are in it too. A run of rows next
+// to each other is one Tab stop (a list is reached with Tab, walked with the arrows); in an open popup with nothing focused, Down and Up
+// go to its first and last row.
+enum class NavKind : unsigned char { Control, Text, Value, Row, Tree };
+struct NavEntry { int id = 0, win = 0; float wx = 0, wy = 0, ww = 0, wh = 0; bool text = false; NavKind kind = NavKind::Control; bool popup = false; };
 struct NavState {
     static constexpr int kMax = 512;
     int id = 0, activate = 0, selectAll = 0;
+    int step = 0;          // -1 / +1: Left / Right on the focused value control or tree row this frame
+    int reveal = 0;        // the row the arrows just moved to: scrolled into view when it is drawn
+    int back = 0;          // what had the focus before the arrows went into a popup: it gets the focus back when the popup closes
     bool visible = false;
     int nPrev = 0, nNow = 0;
     NavEntry prev[kMax], now[kMax];
@@ -369,6 +395,12 @@ struct NavState {
 };
 extern NavState g_nav;
 bool navItem(int id, float x, float y, float w, float h, float rad, bool text = false);
+// A value control (slider, drag) in the Tab order: -1 / +1 when Left / Right is pressed on it (held: repeats), else 0.
+int navValue(int id, float x, float y, float w, float h, float rad);
+// A row (kind Row or Tree) in the Tab order and the arrow-key walk: true when Space or Enter acts on it; *step is Left / Right on it.
+bool navRow(int id, float x, float y, float w, float h, float rad, NavKind kind, int* step = nullptr);
+// The ring of a focused row, drawn by the row after its own fill (inside its edge: rows touch).
+void navRowRing(int id, float x, float y, float w, float h, float rad);
 void navFrameStart();
 void controlBox(float x, float y, float w, float h, float rad, const unsigned char* fill);
 const unsigned char* mixColor(const unsigned char a[4], const unsigned char b[4], float t, unsigned char out[4]);
@@ -407,6 +439,13 @@ struct CurMenu {
     // popup's row height and padding (Dear ImGui's menu rows: one text line plus the item spacing), so it matches the popup.
     float rowH = 0.0f, textInset = 10.0f;
     bool  fromPopup = false;
+    // A chain of sub-menus opened from a popup's row: the lists are drawn in the order they are submitted, so the popup's later rows would
+    // be drawn over a list that lies on it (the editor's tab menu: "Add Tab > World & Gameplay" turned back onto the menu and both were
+    // unreadable). [chainX0, chainX1) is the width the popup's row and the open lists of the chain take; a new list goes beside all of
+    // them, on the side the chain was going (`leftward`: it turned left for want of room), and only overlaps them when neither side has room.
+    // `anchorR`: a list placed to the left ends there (it keeps that edge when it widens).
+    bool  leftward = false;
+    float chainX0 = 0.0f, chainX1 = 0.0f, anchorR = 0.0f;
     // Kept inside the display: the list starts higher when last frame's height would run past the bottom; when it is taller than the
     // display it shows the band [clipY0, clipY1) and scrolls by whole rows (the wheel over it, or the keyboard highlight).
     float clipY0 = 0.0f, clipY1 = 0.0f;
@@ -444,8 +483,9 @@ constexpr float kScrollbarW = 10.0f;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
                   float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0;
                   int clipBase = 0;      // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
-                  bool menu = false, wasOverlay = false;
-                  int childTop = 0; };   // g_childTop when it began: a child region begun inside it is deeper   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
+                  bool menu = false, wasOverlay = false;   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
+                  int childTop = 0;      // g_childTop when it began: a child region begun inside it is deeper
+                  bool capped = false; };   // a modal as wide as the display allows: a text line too long for it wraps
 constexpr int kPopupStackMax = 8;   // popups and open menu lists, nested
 extern PopupCtx g_popupStack[kPopupStackMax];
 extern int g_popupTop;
@@ -455,6 +495,7 @@ struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0,
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
                  int fitAxes = 0; float fitW = 0, fitH = 0;  // SetNextWindowSize with a 0 axis: 1 = fit the width, 2 = the height, to the content once (the other axis is fitW / fitH)
+                 bool pivPending = false; float pivAtX = 0, pivAtY = 0, pivX = 0, pivY = 0;   // a pivot position kept once, taken while the window was still being measured: placed again with the measured size
                };
 extern WinSlot g_wins[64];
 struct NextCollapse { bool set = false; bool value = false; int cond = 0; };
@@ -561,15 +602,28 @@ extern WinEnd g_we;
 constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
 struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; float pivX = 0, pivY = 0; };
 extern NextWin g_nextWinPos, g_nextWinSize;
+// Drops what the SetNextWindow* calls left for the next window (position, size, focus, collapse, background alpha). Called by a Begin
+// that does not open a window this frame (a popup or modal that is not open, a null title), as Dear ImGui documents: what was set
+// before it is used up there and must not move or size the window begun after it.
+void clearNextWindowData();
 extern int g_wflagsNext;
 extern int g_focusWin;
 extern bool g_pinNext, g_bareNext, g_noTitleNext, g_resizeNext;
 extern bool g_dockAware, g_dockRouted;
 struct TabSel { int bar = 0; int sel = 0; };
 // The remembered order and widths of a Reorderable tab bar's tabs (the tabs are placed from last frame's widths, so a drag can swap them).
-struct TabOrder { int bar = 0; int n = 0; int ids[32] = {}; float w[32] = {}; unsigned long long lastFrame = 0; };
+// A reorderable bar's order (ids and widths by place) and where each tab was drawn last frame (shown, by place; shownFrame: that frame),
+// so tabs that make room for a dragged one slide (tabSlideX); grab: where in the held tab the pointer took it.
+struct TabOrder { int bar = 0; int n = 0; int ids[32] = {}; float w[32] = {}; unsigned long long lastFrame = 0;
+                  float shown[32] = {}; unsigned long long shownFrame[32] = {}; float grab = 0; };
+// heldX / heldW: the dragged tab of a reorderable bar, once drawn this frame (the tabs drawn after it leave its place uncovered).
 struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0;
-                   int flags = 0; TabOrder* ord = nullptr; int seen[32] = {}; int nSeen = 0; bool fresh = false; };
+                   int flags = 0; TabOrder* ord = nullptr; int seen[32] = {}; int nSeen = 0; bool fresh = false; bool held = false; float heldX = 0, heldW = 0; };
+// Tabs moved along their strip (the dock's strips and reorderable tab bars share these): a tab whose slot moved eases from where it was
+// drawn last frame to the slot, about 90% of the way in 0.13 s, and is at the slot once within half a pixel; a held tab follows the
+// pointer where it was grabbed, kept inside its strip.
+float tabSlideX(float lastX, float slotX);
+float tabHeldX(float mouseX, float grab, float stripX, float stripW, float tabW);
 struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
 struct DragDrop {
     bool  active = false;
@@ -596,7 +650,8 @@ extern bool g_mPressed;
 extern float g_pressX, g_pressY;
 extern Tex const kAtlasTex;
 extern int g_nfb;
-extern okay::TtfFont* g_fbFonts[8];
+constexpr int kMaxFallbackFonts = 32;   // fonts (and the sized faces of fonts drawn sharp) a frame can draw text with
+extern okay::TtfFont* g_fbFonts[kMaxFallbackFonts];
 extern unsigned g_frame;
 extern ColorSave g_colStack[64];
 extern int g_colTop;

@@ -399,6 +399,9 @@ inline std::vector<Entry> ViewMenu(const State& s) {
                             "Dim everything except the selected object and its children. Esc leaves isolation."),
                        s.isolating || s.selectedCount > 0, kNeedSelection));
     m.push_back(Toggle("view.uionly", "UI Editing Mode", "Lock THIS Scene view to a flat UI canvas with the 3D scene hidden.\nAlso available as the 'UI Only' button on the Scene toolbar."));
+    m.push_back(Toggle("view.automation", "Automation Link", "Connect to Claude: let an AI agent or a script work in this editor through okay mcp (its scene,\n"
+                       "selection, Undo and Play), set up Claude Desktop or Claude Code in one click, and allow or block its scripts.\n"
+                       "This computer only (127.0.0.1), with a new secret token each time, kept in a file only you can read. Remembered."));
     m.push_back(Sep());
     m.push_back(SlotMenu("view.overlays", "Scene Overlays"));
     m.push_back(SlotMenu("view.bookmarks", "Camera Bookmarks"));

@@ -7,6 +7,7 @@
 #include "PainterBridge.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "BrowserApp.hpp"
+#include "CommandLine.hpp"   // FindPrograms, StartTool: the launcher's one way to start its programs
 
 #include <cstdlib>
 #include <memory>
@@ -35,6 +36,11 @@ br::BrowserApp& App() {
         cfg.runner.playerExe = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});   // games run in the player, as in the program
         cfg.profilePath = cfg.runner.dataRoot.empty() ? std::string() : cfg.runner.dataRoot + "profile.json";
         cfg.idPrefix = "##launcher_browser";
+        cfg.openOwnWindow = [](const std::string& url) {   // the browser program, as a program of its own, on this page
+            std::string message;
+            const bool ok = okaylcli::StartTool(okaylcli::FindPrograms(okaylcli::ProgramDirs(g_exeDir)), "Browser", url, message);
+            Toast(message, ok ? 1 : 2);   // a plain sentence when it is not installed
+        };
         g_app.reset(new br::BrowserApp(cfg));
         if (const char* demo = std::getenv("OKAY_UI_DEMO_BROWSER")) {   // dev screenshot hook: addresses to open, one tab each
             std::string list = demo, one;

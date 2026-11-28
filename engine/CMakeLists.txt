@@ -525,6 +525,11 @@ add_library(okay_engine
     src/Testing/SceneValidator.cpp
     src/Testing/Regression.cpp
     src/Testing/GoldenImage.cpp
+    src/Automation/Automation.cpp      # the automation command table (okay/Automation/Automation.hpp, docs/engine/automation.md)
+    src/Automation/EngineCommands.cpp  # its engine commands: reflection, scene, components, physics, animation, screenshots, log
+    src/Automation/Mcp.cpp             # the table served over MCP (JSON-RPC 2.0); okay mcp and the editor's link use it
+    src/Automation/ScriptRun.cpp       # script.run: OkayScript, Lua or JavaScript run inside the host, with automation_call
+    src/Automation/Link.cpp            # the editor's automation link: 127.0.0.1 only, a per-session token (okay mcp's bridge)
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
     src/Render/FbxSceneClips.cpp

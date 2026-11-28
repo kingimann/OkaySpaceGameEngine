@@ -6,6 +6,7 @@
 #include "PrefabEdit.hpp"
 #include <deque>
 #include "imgui_internal.h"
+#include "InspectorPanelModel.hpp"   // InspFitText: a label cut to the label column
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -43,12 +44,39 @@ bool InEditorWindow(const ImGuiWindow* w) {
 
 const char* LabelEnd(const char* label) { return ImGui::FindRenderedTextEnd(label); }
 
+bool g_ledLabel = false;   // PropertyField drew the label in the label column: FieldLabel draws none
+
 // The label to the right of a widget, in the Inspector's usual style.
 void FieldLabel(const char* label, const char* tooltip) {
+    if (g_ledLabel) return;
     ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
     ImGui::TextUnformatted(label, LabelEnd(label));
     if (tooltip && *tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
 }
+
+} // namespace
+
+bool LeadLabel(const char* label, const char* tooltip) {
+    const float col = OkayUI::LabelColumnWidth();
+    if (col <= 0.0f || !label) return false;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float rowW = ImGui::GetContentRegionAvail().x;
+    const std::string vis(label, LabelEnd(label));
+    const std::string shown = okaypanels::InspFitText(vis.c_str(), col - ImGui::GetStyle().ItemInnerSpacing.x,
+                                                      [](const char* t) { return ImGui::CalcTextSize(t).x; });
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(shown.c_str());
+    if (ImGui::IsItemHovered()) {
+        if (tooltip && *tooltip) ImGui::SetTooltip("%s", tooltip);
+        else if (shown != vis) ImGui::SetTooltip("%s", vis.c_str());   // the whole label when it was cut
+    }
+    ImGui::SameLine();
+    ImGui::SetCursorScreenPos(ImVec2(start.x + col, ImGui::GetCursorScreenPos().y));
+    ImGui::PushItemWidth(std::max(30.0f, rowW - col));
+    return true;
+}
+
+namespace {
 
 void DropOutline(bool compatible, bool over) {
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
@@ -324,6 +352,9 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
     ImGui::PushID(d.name.c_str());
     const bool ro = d.IsReadOnly();
     if (ro) ImGui::BeginDisabled();
+    // the label in the Inspector's label column (a check box puts its own there): the field after it, no label after the field
+    const bool led = d.type != PropertyType::Bool && LeadLabel(label.c_str(), tip);
+    g_ledLabel = led;
     switch (d.type) {
         case PropertyType::Bool: {
             bool b = st.value.AsBool();
@@ -430,6 +461,8 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
         }
         default: break;
     }
+    if (led) ImGui::PopItemWidth();
+    g_ledLabel = false;
     PrefabFieldMark(label.c_str());   // a prefab instance's overridden property: blue bar and Revert / Apply menu
     if (ro) ImGui::EndDisabled();
     ImGui::PopID();

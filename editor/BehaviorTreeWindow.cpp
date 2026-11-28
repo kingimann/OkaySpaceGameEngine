@@ -1913,7 +1913,6 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
         for (const auto& e : r->blackboard.Entries()) ImGui::TextDisabled("%s = %s", e.name.c_str(), e.value.AsString().c_str());
         if (ImGui::SmallButton(r->IsRunning() ? "Stop##btrlive" : "Run##btrlive")) { if (r->IsRunning()) r->Stop(); else r->Run(); }
     }
-    if (ImGui::SmallButton("Remove##btrunner")) toRemove = r;
 }
 
 void BehaviorTreeAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item) {

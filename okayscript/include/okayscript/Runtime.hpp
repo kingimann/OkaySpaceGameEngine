@@ -89,6 +89,12 @@ struct Limits {
     bool runtimeErrorLines = true;             ///< give runtime errors the line they happened on (the engine: off)
 };
 
+/// A step budget for the calling thread: how many more loop turns and calls the scripts it runs may make before they are
+/// stopped with a runtime error; -1 (the default) is no budget. It counts across every loop and call, so nested endless
+/// loops stop too (Limits only caps each loop on its own). The engine's automation command script.run sets it around one
+/// run; once it is used up, every further loop turn and call fails again, so a catch cannot keep a script going.
+inline long long& StepBudget() { thread_local long long left = -1; return left; }
+
 /// `exit(code)` from a script: stops the program; Run lets it through so the host can end with that code.
 struct ExitRequest { int code = 0; };
 

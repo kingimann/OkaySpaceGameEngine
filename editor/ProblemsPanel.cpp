@@ -203,6 +203,8 @@ void ActivateBoundConsoleSource(const ConsoleSource& source) {
     OpenDiagnostic(*g_bound, d);
 }
 
+void RequestEditorShot(const std::string& path, int frames) { RequestShot(path, frames > 0 ? frames : 1); }
+
 std::string TakePendingEditorShot() {
     if (g_shotArm <= 0 || g_shotPath.empty()) return {};
     if (--g_shotArm > 0) return {};

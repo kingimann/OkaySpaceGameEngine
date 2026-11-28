@@ -43,6 +43,14 @@ const std::vector<CommandHelp>& Commands() {
          "okay engine build [editor|launcher|player|all] [--debug] [--jobs N] [--clean] [--run] [--dir BUILD]\n"
          "  builds OkayEngine.exe, OkaySpace.exe and OkaySpacePlayer.exe with CMake (as scripts/build-local.ps1 does).\n"
          "okay engine doctor  says what is missing (CMake, a compiler, Ninja) and where to get it."},
+        {"mcp", "okay mcp [--scene S] [--editor | --headless]",
+         "Let an AI agent run the engine: an MCP server on standard input and output.",
+         "Every automation command (okay automation list) is an MCP tool. It finds the open editor by itself (View > Automation\n"
+         "Link on): the agent works in that editor (its scene, selection, undo and Play), whatever project is open, so one entry\n"
+         "(command okay, argument mcp) serves every project. With no editor open it says so and ends; okay --project <folder> mcp\n"
+         "(or --headless) loads that project with no window instead. View > Automation Link > Connect to Claude adds the entry."},
+        {"automation", "okay automation <list|describe|call|run|link> ...", "Run the engine's automation commands from scripts.",
+         "The same commands okay mcp offers: list them, describe one, call one with JSON parameters, or run a file of them."},
         {"completion", "okay completion <bash|powershell>", "Print a script that completes okay's commands when you press Tab.",
          "bash:        okay completion bash > ~/.okay-completion.sh, then add  source ~/.okay-completion.sh  to ~/.bashrc\n"
          "PowerShell:  okay completion powershell | Out-String | Invoke-Expression  (add that line to your $PROFILE)"},
@@ -99,6 +107,21 @@ const std::vector<CommandHelp>& AssetCommands() {
         {"uses", "okay asset uses <file> [--json]", "Which files this asset uses.", ""},
         {"import", "okay asset import <file> [--to FOLDER]", "Copy a file into Assets (under a free name) with its .okaymeta.",
          "The same import as the editor's Project panel; --to is a folder inside Assets."},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& AutomationCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"list", "okay automation list [prefix] [--json]", "Every automation command (or those starting with prefix, such as scene.).", ""},
+        {"describe", "okay automation describe <command>", "One command's parameters (JSON Schema), result and errors, as JSON.", ""},
+        {"call", "okay automation call <command> [JSON] [--scene S]", "Run one command on the project with no window and print its answer.",
+         "The parameters are one JSON object: okay automation call object.inspect '{\"object\":\"Player\"}'. Nothing is saved\n"
+         "unless the commands save (scene.save). Exit code 1 when the command failed."},
+        {"run", "okay automation run <file.jsonl | -> [--scene S]", "Run a list of commands in order, one JSON object per line.",
+         "Each line is {\"command\": \"scene.hierarchy\", \"params\": {...}}; every answer is printed as one line. Exit code 1 when any failed."},
+        {"link", "okay automation link [--scene S] [--seconds N]", "Keep the project open with no window and the automation link on.",
+         "As the editor's View > Automation Link: okay mcp processes connect to it and share one scene. 127.0.0.1 only, with a\n"
+         "token in a file only you can read."},
     };
     return c;
 }
@@ -160,6 +183,7 @@ const std::vector<CommandHelp>* SubCommands(const std::string& cmd) {
     if (cmd == "vs") return &VsGraphCommands();
     if (cmd == "asset") return &AssetCommands();
     if (cmd == "engine") return &EngineCommands();
+    if (cmd == "automation") return &AutomationCommands();
     if (cmd == "completion") return &CompletionCommands();
     return nullptr;
 }
@@ -170,6 +194,7 @@ const std::vector<HelpGroup>& Groups() {
         {"Scenes, scripts and assets", {"scene", "script", "vs", "asset"}},
         {"Version control", {"vc"}},
         {"The engine itself", {"engine"}},
+        {"Automation (scripts and AI agents)", {"mcp", "automation"}},
         {"This program", {"completion", "help"}},
     };
     return g;

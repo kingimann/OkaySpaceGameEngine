@@ -314,6 +314,48 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// `signed char` and `long` as types of their own ([basic.fundamental] 1, 2; Round 35): both are the size of char and
+// int on Windows x64 (LLP64), but an overload or a specialization of one is not taken for the other, and the decorated
+// names use C (signed char) and J/K (long, unsigned long) as MSVC does. Before: the overloads Kind(int) and Kind(long)
+// were one function, and Tag<long> took Tag<int>'s specialization.
+static void r35_distinct_types(Tally& tally) {
+    std::printf("r35_distinct_types\n");
+    okayms::ObjectFile object;
+    okayms_test::run_both(kRun, tally, "distinct_types", std::string(kAlloc) + R"OKMS(
+#include <limits>
+#include <vector>
+#include <functional>
+static int Kind(int) { return 1; }
+static int Kind(long) { return 2; }
+static int Kind(signed char) { return 3; }
+static int Kind(char) { return 4; }
+static int Kind(unsigned char) { return 5; }
+template <class T> struct Tag { static int id() { return 0; } };
+template <> struct Tag<long> { static int id() { return 7; } };
+template <> struct Tag<int> { static int id() { return 8; } };
+template <> struct Tag<signed char> { static int id() { return 9; } };
+int entry(void) {
+  long l = 3;
+  int i = 4;
+  signed char sc = -1;
+  char c = 'a';
+  unsigned char uc = 200;
+  CK(1, Kind(l) == 2 && Kind(i) == 1);
+  CK(2, Kind(sc) == 3 && Kind(c) == 4 && Kind(uc) == 5);
+  CK(3, Tag<long>::id() == 7 && Tag<int>::id() == 8 && Tag<signed char>::id() == 9 && Tag<char>::id() == 0);
+  CK(4, std::numeric_limits<long>::max() == 2147483647 && std::numeric_limits<unsigned long>::max() == 4294967295u);
+  std::vector<long> v{1, 2, 3};
+  std::vector<int> w{4};
+  CK(5, v.size() == 3 && v[2] == 3 && w[0] == 4);
+  CK(6, sizeof(long) == 4 && sizeof(signed char) == 1 && (int)sc == -1);
+  return 0;
+}
+)OKMS", 0, &object);
+    CHECK(tally, okayms_test::has_symbol(object, "?Kind@@YAHJ@Z"));
+    CHECK(tally, okayms_test::has_symbol(object, "?Kind@@YAHC@Z"));
+    CHECK(tally, okayms_test::has_symbol(object, "?Kind@@YAHH@Z"));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -323,5 +365,6 @@ int main(int argc, char** argv) {
     r35_thread_local(tally);
     r35_wrong_code(tally);
     r35_language(tally);
-    return tally.finish(5);
+    r35_distinct_types(tally);
+    return tally.finish(6);
 }

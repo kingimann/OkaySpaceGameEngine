@@ -98,6 +98,12 @@ struct Type {
     bool is_bool = false;
     // long long, unsigned long long, __int64: a base 1 integer that is 8 bytes wide and lives in rax.
     bool wide = false;
+    // Written `long` (one `long`, not long long; Round 35): a 32-bit integer on Windows x64 (LLP64) as int is, but a type
+    // of its own for decorated names (J and K; MSVC writes H and I for int and unsigned int).
+    bool long_word = false;
+    // Written `signed char` (Round 35): a type of its own beside char and unsigned char ([basic.fundamental] 1), decorated
+    // C (char is D, unsigned char E).
+    bool signed_char = false;
     // An enumeration (its values are int here): its index in enum_names(), or -1. The decorated name of the type is
     // W4 name @@ (the public MSVC rule), so a template instance for an enumeration is not the one for int.
     int enum_id = -1;

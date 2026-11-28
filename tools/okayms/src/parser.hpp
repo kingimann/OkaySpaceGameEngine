@@ -2871,6 +2871,8 @@ struct Parser {
         }
         type->is_unsigned = unsign && !sign;
         if ((longs >= 2 || int64_word) && type->base == 1) type->wide = true;
+        if (longs == 1 && !int64_word && type->base == 1) type->long_word = true;
+        if (sign && type->base == 2) type->signed_char = true;
         if (!saw) {
             error = "expected a type";
             return false;
@@ -4655,7 +4657,9 @@ struct Parser {
             !(a.base == p.base && a.wide == p.wide && a.is_bool == p.is_bool && (a.base >= 5 || a.is_unsigned == p.is_unsigned)))
             return -1;
         if (a.base == p.base && a.wide == p.wide && a.is_bool == p.is_bool && (a.base >= 5 || a.is_unsigned == p.is_unsigned))
-            return 0;
+            // int and long, char and signed char: the same size here, but other types ([basic.fundamental]; Round 35):
+            // the one written the same is the better match.
+            return a.base < 5 && (a.long_word != p.long_word || a.signed_char != p.signed_char) ? 1 : 0;
         if (p.base == 6 && a.base == 5) return 1;
         if (p.base == 1 && !p.wide && !p.is_unsigned && (a.base == 2 || a.base == 4)) return 1;
         return 2;
@@ -7849,8 +7853,9 @@ struct Parser {
         // int is not int, unsigned char not char, long long not int (Round 34: numeric_limits<unsigned>::max() was
         // numeric_limits<int>'s 2147483647, silent wrong values). Deduction from a call keeps the loose rule.
         if (match_loose) return true;
+        // long is not int and signed char not char either (Round 35).
         return pat.is_unsigned == act.is_unsigned && pat.wide == act.wide && pat.is_bool == act.is_bool &&
-               pat.enum_id == act.enum_id;
+               pat.enum_id == act.enum_id && pat.long_word == act.long_word && pat.signed_char == act.signed_char;
     }
 
     // Box<int>: the class instance, made the first time it is named.

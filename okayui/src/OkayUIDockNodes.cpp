@@ -18,6 +18,7 @@
 namespace OkayUI {
 
 DockId DockNodeIdOf(int layoutNode);
+bool DockWindowSubmitted(const std::string& name);   // OkayUIDock.cpp: the window has a tab (its DockBegin ran this frame or the one before)
 
 namespace {
 
@@ -196,6 +197,7 @@ void Rebuild(Table& t) {
         for (int k = 0; k < 2; ++k) if (n.child[k]) { auto it = slotOf.find(n.child[k]); if (it != slotOf.end()) d.ChildNodes[k] = &t.nodes[(size_t)it->second]; }
         if (!n.IsSplit()) {
             for (size_t k = 0; k < n.tabs.size(); ++k) {
+                if (!DockWindowSubmitted(n.tabs[k])) continue;   // a closed window has no tab and is not one of the node's windows
                 WindowRef* w = Slot(t, n.tabs[k]);
                 if (!w) continue;
                 d.Windows.push_back(w);

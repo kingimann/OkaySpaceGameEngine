@@ -209,10 +209,28 @@ int main() {
         auto tabsOf = [&](int leaf) { std::vector<std::string> v; for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.node == leaf) v.push_back(t.window); return v; };
         auto has = [](const std::vector<std::string>& v, const char* w) { for (const std::string& x : v) if (x == w) return true; return false; };
         const UI::DockLayout& L = UI::GetDockLayout();
-        f(); f();
+        UI::GetDockLayout().SetActive("Lighting");   // a saved layout whose chosen tab was Lighting, while Lighting is closed now (owner, at launch)
+        f();
+        {   // the very first frame (the editor's first frame at launch can stay on screen a while): no tab of a closed window
+            bool ghost = false;
+            for (const UI::DockTabInfo& t : UI::GetDockTabs()) ghost |= t.window == "Stats" || t.window == "Lighting";
+            if (ghost) std::cerr << "  the first frame shows tabs for the closed Stats and Lighting\n";
+            CHECK(!ghost);
+        }
+        f();
         const int leaf = L.NodeOf("Inspector");
         CHECK(leaf != 0 && L.NodeOf("Stats") == leaf && L.NodeOf("Lighting") == leaf);
         CHECK(tabsOf(leaf) == std::vector<std::string>{"Inspector"});   // Stats and Lighting are closed: no tabs for them
+        {   // the node a ported host reads lists only the open window, also when the host hides the strip (the editor's side tabs, which
+            // listed Inspector, Stats and Lighting at launch, and clicking Stats or Lighting showed nothing)
+            UI::DockNodeRef* node = UI::DockBuilderGetNode(right);
+            CHECK(node && node->Windows.Size == 1 && std::string(node->Windows[0]->Name) == "Inspector");
+            UI::GetDockLayout().SetNoTabBar(leaf, true); f(); f();
+            node = UI::DockBuilderGetNode(right);
+            if (node && node->Windows.Size != 1) std::cerr << "  with its strip hidden, the node lists " << node->Windows.Size << " windows\n";
+            CHECK(node && node->Windows.Size == 1);
+            UI::GetDockLayout().SetNoTabBar(leaf, false); f();
+        }
         // close the Inspector with its tab's cross
         UI::Rect cross{};
         for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == "Inspector") cross = t.rect;

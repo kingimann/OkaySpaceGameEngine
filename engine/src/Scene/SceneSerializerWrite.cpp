@@ -2863,8 +2863,20 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << (cv->billboard ? 1 : 0)                                  // world-space canvas (optional)
             << " " << (int)cv->screenMatch << "\n";                             // newest: screen match mode
     }
-    for (EventSystem* dupKeep_ : go->GetComponents<EventSystem>()) { (void)dupKeep_;
-        out << "  eventsystem\n";
+    for (EventSystem* es : go->GetComponents<EventSystem>()) {
+        // Settings as key=value, only those changed from the default, so a plain Event System still saves as the
+        // bare record older builds read.
+        out << "  eventsystem";
+        const EventSystem def;
+        KvOut kv{out};
+        if (es->dragThreshold != def.dragThreshold) kv("drag", es->dragThreshold);
+        if (es->navigation != def.navigation) kv.b("nav", es->navigation);
+        if (es->blockWorldClicks != def.blockWorldClicks) kv.b("blockWorld", es->blockWorldClicks);
+        if (es->submitAction != def.submitAction) kv.str("submit", es->submitAction);
+        if (es->cancelAction != def.cancelAction) kv.str("cancel", es->cancelAction);
+        if (es->navigateAction != def.navigateAction) kv.str("navigate", es->navigateAction);
+        if (es->firstSelected != def.firstSelected) kv.str("first", es->firstSelected);
+        out << "\n";
     }
     for (auto* w3 : go->GetComponents<WorldSpaceUI>()) {
         out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0)

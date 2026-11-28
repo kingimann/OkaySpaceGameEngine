@@ -866,7 +866,7 @@ inline const VsRule kBuiltinRules[] = {
     {"ui_set_radio", "Buttons & Inputs", "Sliders & Toggles"},
     {"ui_dropdown_value", "Buttons & Inputs", "Dropdowns & Text Fields"},
     {"ui_set_dropdown", "Buttons & Inputs", "Dropdowns & Text Fields"}, {"ui_clicked", "Buttons & Inputs", ""},
-    {"ui_hovered", "Buttons & Inputs", ""}, {"ui_is_hovered", "Buttons & Inputs", ""},
+    {"ui_hovered", "Buttons & Inputs", ""}, {"ui_is_hovered", "Buttons & Inputs", ""}, {"ui_selected", "Buttons & Inputs", ""},
     {"ui_pointer_over", "Buttons & Inputs", ""}, {"ui_set_interactable", "Buttons & Inputs", ""},
     {"ui_set_button_ease", "Buttons & Inputs", ""}, {"ui_set_focus", "Buttons & Inputs", ""},
     {"ui_set_search", "Buttons & Inputs", "Pickers & Search"}, {"ui_search_*", "Buttons & Inputs", "Pickers & Search"},

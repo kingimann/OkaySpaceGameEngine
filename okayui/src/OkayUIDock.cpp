@@ -79,11 +79,9 @@ void BuildTabs(Ctx& c) {
     c.tabs.clear();
     // a pushed StyleVar_FramePadding (x) is the text's inset on each side of a tab (Dear ImGui's tabs: room for an icon the host draws there)
     const float pad = TabTextInset(), closeW = c.tabH * 0.7f;
-    // Windows not submitted get no tab. Only while no window of the whole layout has been submitted yet (a layout just built or loaded, its
-    // first frame: DockSpace runs before the DockBegin calls) do all of them show. Not per leaf: a leaf whose open window was closed would
-    // then show tabs for its closed windows (the editor's right column showed empty Stats and Lighting tabs once the Inspector was closed).
-    bool anySubmitted = false;
-    for (const DockLayout::Node& n : c.layout.Nodes()) for (const std::string& t : n.tabs) anySubmitted = anySubmitted || c.Submitted(t);
+    // Windows not submitted get no tab, as in Dear ImGui, not even on a layout's first frame (DockSpace runs before the DockBegin calls, so
+    // the strips are empty for that one frame): a tab of a closed window has nothing behind it. The editor's right column showed empty Stats
+    // and Lighting tabs once the Inspector was closed, and on a slow first frame at launch.
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit() || n.tabs.empty() || n.noTabBar) continue;
         float keep = 0.0f;
@@ -91,7 +89,7 @@ void BuildTabs(Ctx& c) {
         keep = std::max(0.0f, std::min(keep, n.rect.w * 0.5f));
         std::vector<float> w;
         float total = 0.0f;
-        auto shown = [&](const std::string& t) { return !anySubmitted || c.Submitted(t); };
+        auto shown = [&](const std::string& t) { return c.Submitted(t); };
         for (const std::string& t : n.tabs) { const float tw = shown(t) ? CalcTextSize(Display(t).c_str()).x + 2.0f * pad + closeW : 0.0f; w.push_back(tw); total += tw; }
         const float room = n.rect.w - keep;
         const float scale = total > room && total > 0.0f ? room / total : 1.0f;
@@ -583,6 +581,10 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     return vis;
 }
 
+// Has the window a tab (its DockBegin ran this frame or the one before)? The node snapshots ported code reads (OkayUIDockNodes.cpp) list
+// only these, as Dear ImGui's nodes hold only windows that are submitted: a strip the host hides (side tabs) must not list closed windows.
+bool DockWindowSubmitted(const std::string& name) { return C().Submitted(name); }
+
 std::vector<DockTabInfo> GetDockTabs() {
     const Ctx& c = C();
     std::vector<DockTabInfo> out;
@@ -613,16 +615,10 @@ Rect GetDockStripRect(int leaf) {
 bool DockAdoptTitle(const char* title) {
     if (!title || !*title) return false;
     DockLayout& L = C().layout;
-    if (L.Contains(title)) return true;
-    if (ReturnHome(C(), title)) return true;   // a closed tab's window opened again: its ordinary Begin docks it where it was
-    const char* key = std::strstr(title, "###");
-    if (!key) return false;
-    const std::size_t keyLen = std::strlen(key);
-    for (const std::string& n : L.Windows()) {
-        const std::size_t at = n.find("###");
-        if (at != std::string::npos && n.size() - at == keyLen && n.compare(at, keyLen, key) == 0) return L.Rename(n, title);
-    }
-    return false;
+    const std::string have = L.SameWindowName(title);   // the title itself, or the same "###" id under its earlier text
+    if (have == title) return true;
+    if (!have.empty()) return L.Rename(have, title);
+    return ReturnHome(C(), title);   // a closed tab's window opened again: its ordinary Begin docks it where it was
 }
 bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
 bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)

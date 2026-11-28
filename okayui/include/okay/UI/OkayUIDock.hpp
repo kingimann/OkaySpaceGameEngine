@@ -58,6 +58,10 @@ public:
     const std::vector<Floating>& FloatingWindows() const { return floating_; }
     int NodeOf(const std::string& window) const;     // the leaf holding the window, 0 when it floats or is unknown
     bool Contains(const std::string& window) const;
+    /// The name the layout holds for `window`: the name itself, or one with the same "###" id (Dear ImGui's rule: "Console  [x 3]###Console" and
+    /// "Console###Console" are one window whose title text changes). Empty when the layout does not hold it. Every edit that adds a window
+    /// renames such an entry instead of adding a second one, and Load drops a second entry of one id.
+    std::string SameWindowName(const std::string& window) const;
     bool IsFloating(const std::string& window) const;
     const Floating* FindFloating(const std::string& window) const;
     std::vector<std::string> Windows() const;        // every window, docked first (tree order) then floating
@@ -119,6 +123,7 @@ private:
     int NewId();
     bool RemoveWindowFromTree(const std::string& window, int* sourceLeaf);
     void CollapseIfEmpty(int leaf);
+    void AdoptSameId(const std::string& window);   // an added window whose "###" id the layout holds under another title: that entry takes the title
     bool Rebuild(Raw& raw, int* repairs);
     float MinWOf(const std::string& w) const;
     float MinHOf(const std::string& w) const;

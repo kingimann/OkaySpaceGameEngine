@@ -1089,6 +1089,11 @@ inline bool UIPointerBlockedByPanel(GameObject* go, const Vec2& p, float screenW
     return false;
 }
 
+/// The scene's Event System lets the pointer at `p` reach `go`: no other interactive widget drawn
+/// above it covers the point (defined with the Event System, engine/src/Components/EventSystem.cpp).
+/// True when the scene has no Event System, so its widgets keep their own input.
+bool UIEventSystemReaches(GameObject* go, const Vec2& p, float screenW, float screenH);
+
 /// The host's `UIWorld().clipContains`: clip hover, presses and releases to the
 /// visible part of a widget, but not a drag in progress (a slider or scrollbar
 /// keeps tracking when the pointer leaves its scroll view).
@@ -1098,6 +1103,7 @@ inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float sc
     if (UIDropdown::HoldsClick(go)) return false;         // an open dropdown list is on top
     if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
     if (UIPointerBlockedByPanel(go, p, screenW, screenH)) return false;   // covered by a blocking panel
+    if (!UIEventSystemReaches(go, p, screenW, screenH)) return false;     // another widget is on top of it
     return UIClipContains(go, p, screenW, screenH);
 }
 

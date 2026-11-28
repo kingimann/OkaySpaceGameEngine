@@ -119,7 +119,7 @@ Back to the [code index](../code_index.md). 28 headers, 131 names.
 
 - `SceneGraphStats` struct, line 34: What a scene holds, counted in one pass (Scene::Stats): enough for a debug overlay or a log line.
 - `Scene` class, line 56: Owns a graph of GameObjects and drives their lifecycle and rendering.
-- `ScriptsRun` function, line 748: True when 'go''s scene lets scripts run (see Scene::runScripts).
+- `ScriptsRun` function, line 753: True when 'go''s scene lets scripts run (see Scene::runScripts).
 
 ## `engine/include/okay/Scene/SceneDiff.hpp`
 

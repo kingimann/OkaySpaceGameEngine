@@ -385,6 +385,11 @@ public:
         return nullptr;
     }
 
+    /// Set by the UI kit's Event System when one runs: true while the pointer is over UI that keeps its clicks
+    /// from world objects. DispatchPointer then sends no mouse messages to world objects. Null: never.
+    using WorldPointerFilter = bool (*)(Scene& scene);
+    static inline WorldPointerFilter worldPointerFilter = nullptr;
+
     /// The camera used for rendering. Set automatically by Camera::Awake.
     Camera* mainCamera = nullptr;
 

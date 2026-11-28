@@ -1376,6 +1376,7 @@ first object with that name. `GameObject.Find`, `FindWithTag` and
 | `ui_get_rotation("n")` / `ui_set_rotation("n", degrees)` | Read or turn a UI frame, in degrees clockwise around its pivot. Children turn with it |
 | `ui_get_scale("n")` / `ui_set_scale("n", x, y)` | Read or set a UI frame's width and height scale. One number sets both. 1, 1 is unchanged. Children scale with it |
 | `ui_set_focus("n")` | Move keyboard and gamepad focus to that widget, draw the focus ring, and scroll it into view. A mouse click hides the ring until the next keyboard, gamepad or script focus |
+| `ui_selected()` | Name of the widget the scene's Event System has selected: the last one pressed with the pointer, or the keyboard and gamepad focus. Empty when nothing is selected or the scene has no Event System |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
 #### OkayUI (build a HUD from script — no Canvas objects)

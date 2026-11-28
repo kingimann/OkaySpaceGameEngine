@@ -64,7 +64,7 @@ static std::vector<MpLibGame> MpLibrary(bool refresh = false) {
         cache.clear(); at = okay::platform::TicksMs32();
         std::set<std::string> seen;
         for (const auto& sc : FindScenes()) {
-            if (!IsBuiltGame(sc)) continue;   // exported games only, not editor projects / loose scenes
+            if (!IsExportedGame(sc)) continue;   // exported games only, not editor projects / loose scenes
             const std::string t = GameTitleFromPath(sc.string());
             std::string low = t; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
             if (seen.insert(low).second) cache.push_back({t, sc.string()});
@@ -173,7 +173,7 @@ void MpLaunch(const okay::JoinLink& in) {
     if (!g) { g_mpPickLink = link; g_mpPickReq = true; return; }
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
-    if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
+    if (!PlayerMayRun(g->scene) || !AntiCheatAllowsSceneLaunch(g->scene)) return;
     // A server that needs a session ticket: ask the ticket service first (off the UI thread). A banned answer refreshes the ban banner and
     // the game is not started; "required" without an answer doesn't start it either. When it passes, this runs again and goes through.
     if (TicketPreflightHolds(l, g->scene)) return;
@@ -211,7 +211,7 @@ static void MpFindMatch(const std::string& game, const std::string& mode, int pl
     if (!mode.empty()) args += " \"" + mode + "\"";
     args += " --match-players " + std::to_string(players) + (players > 2 ? " --match-min 2" : "");
     if (!region.empty()) args += " --region \"" + region + "\"";
-    if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
+    if (!PlayerMayRun(g->scene) || !AntiCheatAllowsSceneLaunch(g->scene)) return;
     if (SpawnTracked(player, args, "game:" + g->title, g->title)) {
         RecordPlayed(g->scene); SavePrefs();
         Toast("Starting " + g->title + " \xE2\x80\x94 finding a match", 1);

@@ -4143,6 +4143,8 @@ void BindVisualScriptComponent() {
     c.methods = {
         {"Source", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.Source()}; }, true},
         {"Path", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.Path()}; }, true},
+        {"SetPathFromScene", {ArgKind::String, ArgKind::String}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.SetPathFromScene(a[0].AsString(), a[1].AsString()); return V{}; }, false},
+        {"ScenePath", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.ScenePath()}; }, true},
         {"LastError", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); return V{s.LastError()}; }, true},
         {"Send", {ArgKind::String}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.Send(a[0].AsString()); return V{}; }, false},
         {"OnMouseDown", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<VisualScriptComponent&>(self); s.OnMouseDown(); return V{}; }, false},

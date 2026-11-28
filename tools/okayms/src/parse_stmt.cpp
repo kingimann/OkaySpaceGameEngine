@@ -1716,6 +1716,24 @@ bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
     Type vt;
     const bool typed = static_type(*e, &vt);
     Node value = std::move(*e);
+    // `hidden = v`, then the destructors of the expression's temporaries, as parts of the comma chain.
+    auto store_then_end_temps = [&](const std::string& hidden, Node v) {
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.kids.push_back(node_name(hidden));
+        assign.kids.push_back(std::move(v));
+        parts.push_back(std::move(assign));
+        for (size_t i = temps.size(); i-- > 0;) {
+            Node call;
+            if (!temp_end_call(temps[i], &call)) return false;
+            if (!flatten_expr_stmts(call, &parts)) {
+                error = "a temporary with a destructor in a loop condition is not supported here";
+                return false;
+            }
+        }
+        return true;
+    };
     if (!temps.empty() && typed && vt.base == 3 && vt.pointers == 0 && !vt.is_array() && value.kind == Node::Unary &&
         value.op == TStar && !value.kids.empty()) {
         // `t = sc.Next()` as a for loop's step (Round 37, Md5Reader.cpp): the implicit operator= returns the object it
@@ -1730,20 +1748,7 @@ bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
             hidden.name = "__lc" + std::to_string(tmp_count++);
             hidden.type = pt;
             place_local(cur_locals, hidden);
-            Node assign;
-            assign.kind = Node::Assign;
-            assign.op = TAssign;
-            assign.kids.push_back(node_name(hidden.name));
-            assign.kids.push_back(std::move(addr));
-            parts.push_back(std::move(assign));
-            for (size_t i = temps.size(); i-- > 0;) {
-                Node call;
-                if (!temp_end_call(temps[i], &call)) return false;
-                if (!flatten_expr_stmts(call, &parts)) {
-                    error = "a temporary with a destructor in a loop condition is not supported here";
-                    return false;
-                }
-            }
+            if (!store_then_end_temps(hidden.name, std::move(addr))) return false;
             temps.clear();
             Node deref;
             deref.kind = Node::Unary;
@@ -1765,20 +1770,7 @@ bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
         hidden.type.is_ref = false;
         hidden.type.is_const = false;
         place_local(cur_locals, hidden);
-        Node assign;
-        assign.kind = Node::Assign;
-        assign.op = TAssign;
-        assign.kids.push_back(node_name(hidden.name));
-        assign.kids.push_back(std::move(value));
-        parts.push_back(std::move(assign));
-        for (size_t i = temps.size(); i-- > 0;) {
-            Node call;
-            if (!temp_end_call(temps[i], &call)) return false;
-            if (!flatten_expr_stmts(call, &parts)) {
-                error = "a temporary with a destructor in a loop condition is not supported here";
-                return false;
-            }
-        }
+        if (!store_then_end_temps(hidden.name, std::move(value))) return false;
         value = node_name(hidden.name);
     }
     parts.push_back(std::move(value));

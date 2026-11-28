@@ -3474,7 +3474,7 @@ add_executable(test_automation test_automation.cpp ${PROJECT_SOURCE_DIR}/editor/
                ${PROJECT_SOURCE_DIR}/editor/AutomationOps.cpp ${PROJECT_SOURCE_DIR}/editor/MenuActions.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp
                ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_automation PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
-target_link_libraries(test_automation PRIVATE okay::engine)
+target_link_libraries(test_automation PRIVATE okay::engine okayscript::lang)   # okayscript/Runtime.hpp (the step budget)
 if(WIN32)
     target_link_libraries(test_automation PRIVATE comdlg32 ole32 shell32 user32)
 endif()

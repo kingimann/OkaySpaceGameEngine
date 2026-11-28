@@ -951,3 +951,11 @@ Maths helpers.
 | `Mathf.Clamp(value, min, max)` | `Mathf.Clamp/3` | value | value (Number), min (Number), max (Number) | Result (Number) | Keep between min and max. |
 | `Mathf.Lerp(a, b, t)` | `Mathf.Lerp/3` | value | a (Number), b (Number), t (Number) | Result (Number) | Blend from a (t = 0) to b (t = 1). |
 | `Mathf.MoveTowards(current, target, maxDelta)` | `Mathf.MoveTowards/3` | value | current (Number), target (Number), maxDelta (Number) | Result (Number) | Step from current toward target by at most maxDelta. |
+
+## Automation
+
+
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Automation.Call(command, params)` | `Automation.Call/2` | step | command (Text), params (Text) | Result (Text) | Run an automation command (its name and its parameters as JSON text) and give its answer as JSON text {ok, data | error}. Only inside a script that the automation command script.run runs; scripts use automation_call(name, params). |

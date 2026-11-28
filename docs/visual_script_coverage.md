@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1630 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1637 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -265,6 +265,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `assert` | `Fn.assert` |
 | `atan` | `Fn.atan` |
 | `atan2` | `Fn.atan2` |
+| `automation_call_json` | `Fn.automation_call_json` |
 | `avg` | `Fn.avg` |
 | `axis_x` | `Fn.axis_x` |
 | `axis_y` | `Fn.axis_y` |
@@ -1569,6 +1570,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_sameline` | `Fn.ui_sameline` |
 | `ui_search_count` | `Fn.ui_search_count` |
 | `ui_search_query` | `Fn.ui_search_query` |
+| `ui_selected` | `Fn.ui_selected` |
 | `ui_separator` | `Fn.ui_separator` |
 | `ui_set_bar_format` | `Fn.ui_set_bar_format` |
 | `ui_set_bar_segments` | `Fn.ui_set_bar_segments` |

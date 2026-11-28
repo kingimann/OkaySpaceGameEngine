@@ -241,6 +241,12 @@ static int FirstLong(const std::string& a, const std::string& b) {
   for (const T& t : {T(a), T(b)}) if (t.s.size() > 3) return (int)t.s.size();
   return 0;
 }
+struct V2 { float x, y; V2(float a, float b) : x(a), y(b) {} };  // a constructor and nothing to destroy (Physics2D.cpp)
+static float SumX(float a) {
+  float t = 0.0f;
+  for (const V2& v : {V2(a, 1.0f), V2(2.0f * a, 0.0f)}) t += v.x;
+  return t;
+}
 static int Breaks(const std::string& a) {
   int n = 0;
   for (const T& t : {T(a), T(a + a), T(a)}) { ++n; if (t.s.size() > 2) break; }
@@ -262,7 +268,7 @@ struct Vert { float x, y; unsigned char r, g, b, a; float u, v; };
 int entry(void) {
   CK(1, Joined("ab", "cde") == 8);
   CK(2, FirstLong("ab", "lengthy") == 7 && g_live == 0);
-  CK(3, Breaks("xy") == 2 && g_live == 0);
+  CK(3, Breaks("xy") == 2 && g_live == 0 && SumX(1.5f) == 4.5f);
   bool final = false;
   int k = 3;
   if (k > 2) final = true;

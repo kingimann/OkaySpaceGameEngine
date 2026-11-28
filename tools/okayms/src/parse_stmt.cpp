@@ -2000,11 +2000,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     if (braced_class) {
         // The list's objects live around the loop: a return or a throw in the body destroys them too.
         dscopes.emplace_back();
-        DObj list_obj;
-        list_obj.name = range.text;
-        list_obj.sid = braced_sid;
-        list_obj.count = range_type.array_len;
-        dscopes.back().push_back(list_obj);
+        if (class_needs_dtor(structs[static_cast<size_t>(braced_sid)])) {  // (a Vec2 has nothing to destroy)
+            DObj list_obj;
+            list_obj.name = range.text;
+            list_obj.sid = braced_sid;
+            list_obj.count = range_type.array_len;
+            dscopes.back().push_back(list_obj);
+        }
     }
     push_scope();
     dscopes.emplace_back();

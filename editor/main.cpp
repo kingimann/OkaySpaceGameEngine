@@ -776,6 +776,7 @@ int main(int argc, char** argv) {
 #include "imgui.h"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
+#include "okay/UI/OkayUIDock.hpp"   // GetDockTabs: which docked tab is being dragged (its icon is drawn over its neighbours')
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "SignInGate.hpp"   // the OkaySpace sign-in the editor needs before a project opens
 #include "ModalGuard.hpp"   // one question at a time; undrawn or hidden modals closed or named; clicks that land nowhere logged
@@ -2374,6 +2375,9 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
     if (activated) *activated = false;
     ImGuiStyle& st = ImGui::GetStyle();
     ImGui::PushID(label);
+    // The Inspector's label column (OkayUI's StyleVar_LabelColumn): the label first, in the column, the three cells after it filling the
+    // row; without the column, Dear ImGui's way: the cells, then the label.
+    const bool labelCol = oked::LeadLabel(label);
     ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
     for (int i = 0; i < 3; ++i) {
         ImGui::PushID(i);
@@ -2401,8 +2405,11 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
         ImGui::PopID();
         ImGui::PopItemWidth();
     }
-    ImGui::SameLine(0, st.ItemInnerSpacing.x);
-    ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));   // hide the ##id suffix
+    if (labelCol) ImGui::PopItemWidth();
+    else {
+        ImGui::SameLine(0, st.ItemInnerSpacing.x);
+        ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));   // hide the ##id suffix
+    }
     ImGui::PopID();
     return changed;
 }
@@ -5050,6 +5057,33 @@ static void DrawPanelTabMenu() {
     ImGui::EndPopup();
 }
 
+// OKAY_UI_INSPECTALL=<folder> (a dev hook, round 6: every Inspector body checked in the running editor): once a project is open, one
+// object per component type the property registry knows ("Inspect <Type>", the type added the way Add Component adds it); each is
+// selected in turn and a picture of the editor is saved for it (<folder>/insp_NNN_<Type>.png), one every 8 frames. The console says
+// "Inspect all: done" after the last one.
+static void InspectAllDevHook(EditorState& ed) {
+    const char* dir = std::getenv("OKAY_UI_INSPECTALL");
+    if (!dir || !*dir || ed.projectDir().empty()) return;
+    static std::vector<std::pair<std::string, std::string>> s_objs;   // (object name, type name)
+    static int s_frame = -1, s_next = 0;
+    if (s_frame < 0) {
+        s_frame = 0;
+        for (const auto& info : okay::PropertyRegistry::All()) {
+            if (!info || !info->add) continue;
+            GameObject* g = ed.scene().CreateGameObject("Inspect " + info->name);
+            if (!g || !info->add(*g)) continue;
+            s_objs.push_back({g->name, info->name});
+        }
+        ConsoleLog("Inspect all: " + std::to_string(s_objs.size()) + " component types");
+    }
+    if (++s_frame < 20 || s_next >= (int)s_objs.size() || (s_frame - 20) % 8 != 0) return;
+    const auto& o = s_objs[(size_t)s_next];
+    for (const auto& up : ed.scene().Objects()) if (up->name == o.first) { ed.Select(up.get()); break; }
+    char name[64]; std::snprintf(name, sizeof name, "insp_%03d_", s_next);
+    oked::RequestEditorShot((std::filesystem::path(dir) / (std::string(name) + o.second + ".png")).string(), 6);
+    if (++s_next == (int)s_objs.size()) ConsoleLog("Inspect all: done");
+}
+
 // Panel icons on docked tabs: drawn over each tab, in the room TabPaddingScope
 // leaves before the name. The active tab's icon takes the accent colour.
 static void DrawPanelTabIcons() {
@@ -5059,15 +5093,27 @@ static void DrawPanelTabIcons() {
     const ImU32 accent = ImGui::GetColorU32(AccentCol(1.0f));
     const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text, 0.85f);
     const ImU32 dim    = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    // A tab dragged along its strip is drawn over its neighbours: its icon is drawn last, and a neighbour's icon only beside it (the
+    // neighbour's icon used to show on top of the dragged tab).
+    std::string heldName; ImRect held;
+    for (const OkayUI::DockTabInfo& t : OkayUI::GetDockTabs())
+        if (t.held) { heldName = t.window; held = ImRect(t.shown.x, t.shown.y, t.shown.x + t.shown.w, t.shown.y + t.shown.h); }
+    for (int pass = 0; pass < 2; ++pass)
     for (ImGuiWindow* w : g.Windows) {
         ImGuiDockNode* node = w->DockNode;
         if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
         if (node->IsHiddenTabBar() || node->IsNoTabBar()) continue;   // every tab of a strip has its icon, chosen or not (the hidden ones had none)
+        const bool isHeld = !heldName.empty() && heldName == w->Name;
+        if (isHeld != (pass == 1)) continue;
         ImRect r = w->DC.DockTabItemRect;
         if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
         ImRect clip = r;
         clip.ClipWith(node->TabBar->BarRect);
-        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view
+        if (!isHeld && !heldName.empty() && clip.Min.y < held.Max.y && held.Min.y < clip.Max.y) {   // under the held tab: only the part beside it
+            const float lw = std::max(0.0f, std::min(clip.Max.x, held.Min.x) - clip.Min.x), rw = std::max(0.0f, clip.Max.x - std::max(clip.Min.x, held.Max.x));
+            if (lw >= rw) clip.Max.x = clip.Min.x + lw; else clip.Min.x = clip.Max.x - rw;
+        }
+        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view (or under the held tab)
         ImGuiTabBar* tb = node->TabBar;
         const bool sel = tb->VisibleTabId == w->TabId;
         const bool focused = (tb->Flags & ImGuiTabBarFlags_IsFocused) != 0;
@@ -8397,6 +8443,12 @@ static okay::ui2d::Tex ProjectThumb(const std::string& abs) {
     auto it = g_thumbTex.find(r.key);
     if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
     if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
+    {   // a picture with nothing drawn in it (a model that rendered empty: the .fbx of round 5's list view) is no picture: the icon shows
+        const std::vector<std::uint8_t>& px = r.image->Pixels();
+        bool any = false;
+        for (std::size_t i = 3; i < px.size() && !any; i += 4) any = px[i] > 8;
+        if (!any) { g_thumbTex[r.key] = {nullptr, g_thumbFrame}; return nullptr; }
+    }
     okay::ui2d::Tex tex = okay::pb::CreateTexture(g_sdlRenderer, r.image->Width(), r.image->Height(), okay::pb::Access::Static, true, true,
                                                (const std::uint8_t*)r.image->Pixels().data());
     g_thumbTex[r.key] = {tex, g_thumbFrame};
@@ -9748,7 +9800,10 @@ void DrawProject(EditorState& ed) {
             // materials their albedo ball; everything else keeps its icon chip.
             okay::ui2d::Tex rowThumb = isDir ? nullptr : ProjectThumb(full);
             ImVec4 rowMat;
-            if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
+            if (rowThumb) {   // on a light chip: a dark model (the black cube of an .fbx) or a dark picture was invisible on the dark row
+                dl->AddRectFilled(c0, c1, IM_COL32(118, 122, 134, 255), 3.0f);
+                dl->AddImage((ImTextureID)rowThumb, c0, c1);
+            }
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
                 DrawMaterialBall(dl, c0, c1, rowMat);
             else DrawAssetIcon(dl, c0, c1, k);
@@ -12913,7 +12968,8 @@ static std::string FitPathEnd(const std::string& where, float maxW) {
 }
 // Draw the form. True on the frame "Create project" is pressed with a usable plan (f.plan, and the template in f.tpl).
 static bool DrawNewProjectForm(NewProjectForm& f) {
-    const float labelW = 84.0f;
+    // the label column: 84 pixels, or the widest label and a gap when the text is bigger (at 150% "Location" ran into its field)
+    const float labelW = std::max(84.0f, std::max(ImGui::CalcTextSize("Location").x, ImGui::CalcTextSize("Creates").x) + ImGui::GetStyle().ItemSpacing.x * 2.0f);
     const ImVec4 red(0.96f, 0.55f, 0.50f, 1.0f), amber(0.95f, 0.80f, 0.35f, 1.0f), green(0.45f, 0.82f, 0.56f, 1.0f);
     if (!f.loc[0]) std::snprintf(f.loc, sizeof(f.loc), "%s", DefaultProjectsLocation().c_str());
     const okayproj::Plan& plan0 = NewProjectPlan(f);
@@ -23355,10 +23411,14 @@ void DrawInspector(EditorState& ed) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(im.framePadding.x, im.framePadding.y));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(im.innerSpacing.x, im.innerSpacing.y));
         g_inspSectionGap = im.sectionGap;
-        if (!im.stacked) {   // the value column's width (the label goes right of it); Begin() set the 65% default
+        if (!im.stacked) {   // the value column's width; Begin() set the 65% default
             ImGuiWindow* iw = ImGui::GetCurrentWindow();
             iw->DC.ItemWidthDefault = im.valueWidth; iw->DC.ItemWidth = im.valueWidth;
         }
+        // The labels on the left, in one column (OkayUI's label column): every field that starts a row has its label at the left edge and
+        // its box where the value column starts, so the boxes line up (round 6). A panel too narrow for both side by side keeps the
+        // plain layout (0: off).
+        OkayUI::PushStyleVar(OkayUI::StyleVar_LabelColumn, im.stacked ? 0.0f : im.labelWidth + im.innerSpacing.x);
     }
     oked::DrawPlayModeNote(ed);   // "Changes made here are not saved" while playing
 
@@ -23395,7 +23455,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Separator();
             if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ProjectForgetThumb(s_seenAsset); }
             else ImGui::TextDisabled("This file has no import settings.");
-            ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+            ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
             ImGui::End();
             return;
         }
@@ -23414,14 +23474,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::SetCursorPosX(x0 + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
             if (ImGui::Button("Unlock Inspector")) s_lock.Unlock();
         }
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;
     }
     if (!go) {
         EmptyState("\xE2\x97\x88", "Nothing selected",
                    "Select an object in the Hierarchy or Scene to edit it.");
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;
     }
@@ -23641,7 +23701,7 @@ void DrawInspector(EditorState& ed) {
     oked::DrawPrefabHeader(ed, go);
     oked::DrawPrefabChanges(ed, go);
     if (oked::RunPrefabRequests(ed)) {   // a revert rebuilt the instance: this object is gone
-        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f; ImGui::End();
+        ImGui::PopStyleVar(4); g_inspSectionGap = 0.0f; ImGui::End();
         return;
     }
     oked::BeginInspectorFrame();
@@ -35488,7 +35548,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
     if (oked::RunPrefabRequests(ed)) {           // Revert / Apply Property or Component from a right-click menu
-        ImGui::PopItemWidth(); ImGui::PopStyleVar(3); ImGui::End();
+        ImGui::PopItemWidth(); ImGui::PopStyleVar(4); ImGui::End();
         return;
     }
     // Apply a queued component removal (undoable).
@@ -36156,7 +36216,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     ImGui::PopItemWidth();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);   // (the three spacings and the label column)
     ImGui::End();
 }
 
@@ -45743,6 +45803,7 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            InspectAllDevHook(ed);    // OKAY_UI_INSPECTALL
             if (std::getenv("OKAY_UI_TIMERS")) {
                 g_showTimers = true;
                 if (s_focusFrames == 40) {

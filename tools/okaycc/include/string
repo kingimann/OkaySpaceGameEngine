@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <__okay_minmax>
 #include <__string_view>
 #include <__reverse_iterator>
 namespace std {
@@ -143,6 +144,7 @@ public:
     void pop_back() { p_[--n_] = 0; }
     void reserve(unsigned long n) { release(grow(n)); }
     void shrink_to_fit() {}  // [string.capacity]: a non-binding request; kept as it is
+    unsigned long capacity() const { return cap_ ? cap_ - 1 : 0; }  // (cap_ counts the terminating zero)
     void resize(unsigned long n, char c = 0) {
         release(grow(n));
         for (unsigned long i = n_; i < n; ++i) p_[i] = c;

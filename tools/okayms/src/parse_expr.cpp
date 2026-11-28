@@ -3225,6 +3225,20 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                             chosen.kids.push_back(std::move(ctor_stmt));
                             continue;
                         }
+                        if (lvalue(*branch) && class_has_copy(ta.struct_id)) {
+                            // `c ? f() : s` with an lvalue s: s is copied into the result by the copy constructor
+                            // ([expr.cond] 7.1, the lvalue-to-rvalue conversion of a class makes a copy). Before Round 35
+                            // its bytes were copied, so the result shared s's buffer and its destructor freed it
+                            // (Layers::Name in engine/include/okay/Scene/Layers.hpp: `s.empty() ? ("Layer " + ...) : s`).
+                            Node copy_stmt;
+                            std::vector<Node> cargs;
+                            cargs.push_back(std::move(*branch));
+                            if (!special_call(ta.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs),
+                                              &copy_stmt))
+                                return false;
+                            chosen.kids.push_back(std::move(copy_stmt));
+                            continue;
+                        }
                         Node assign;
                         assign.kind = Node::Assign;
                         assign.op = TAssign;

@@ -46,7 +46,7 @@ const std::string kDir = "/tmp/okayms-el-" + std::to_string(static_cast<long>(ge
 bool build_runtime(Tally& tally, const std::string& cl, const std::string& root) {
     const std::string rt = root + "/tools/okayms/runtime";
     okayms::Archive archive;
-    for (const char* name : {"string", "printf", "startup", "mem"}) {
+    for (const char* name : {"string", "printf", "startup", "mem", "eh"}) {
         const std::string obj = std::string(kDir) + "/rt_" + name + ".obj";
         const int rc = run(cl + " /I" + rt + " /c /Fo" + obj + " " + rt + "/" + name + ".c", std::string(kDir) + "/rt.log");
         CHECK(tally, rc == 0);
@@ -83,6 +83,9 @@ bool build_runtime(Tally& tally, const std::string& cl, const std::string& root)
 struct Program {
     const char* name;
     std::vector<std::string> engine_sources;  // relative to the repository root
+    // g++ builds the reference with exceptions (an engine header throws in a function the program does not call;
+    // okay-cl's objects then name the exception runtime only from functions that cannot run; Round 35).
+    bool gpp_exceptions = false;
 };
 
 // The text the program printed, with the carriage returns that a MinGW text-mode stdout adds taken out.
@@ -110,7 +113,8 @@ void check_program(Tally& tally, const std::string& root, const Program& program
         std::string sources = test_src;
         for (const std::string& s : program.engine_sources) sources += " " + root + "/" + s;
         const std::string exe = dir + "/" + program.name + "-gpp.exe";
-        const int built = run("x86_64-w64-mingw32-g++ -static -O2 -w -fno-exceptions -fno-rtti -std=c++17 -I" + root +
+        const int built = run(std::string("x86_64-w64-mingw32-g++ -static -O2 -w ") +
+                                  (program.gpp_exceptions ? "" : "-fno-exceptions ") + "-fno-rtti -std=c++17 -I" + root +
                                   "/tools/okayms/linktests -I" + root + "/engine/include -I" + root + "/engine/src -I" + root +
                                   "/shared -I" + root + "/tests -o " + exe + " " + sources,
                               dir + "/" + program.name + "-gpp.log");
@@ -180,6 +184,8 @@ int main(int argc, char** argv) {
                                     {"engine/src/Crypto/Sha512.cpp", "engine/src/Crypto/Blake2b.cpp",
                                      "engine/src/Crypto/ChaCha20.cpp", "engine/src/Crypto/Util.cpp"}});
         check_program(tally, root, {"link_math", {}});
+        // Round 35: an engine file whose namespace-scope std::string is made by the .CRT$XCU start-up table.
+        check_program(tally, root, {"link_scene_lists", {"engine/src/Scene/ProjectLists.cpp"}, true});
     }
     // The folder goes when every check passed; a failed run keeps its files for a look.
     if (tally.fail == 0) std::system(("rm -rf " + kDir).c_str());

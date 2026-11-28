@@ -53,6 +53,9 @@ struct Token {
     std::string qual;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
+    // `explicit` was written in front of this name (a constructor's name; Round 35): the constructor is not used for
+    // implicit conversions ([class.conv.ctor] 1).
+    bool expl = false;
 };
 
 // The names of the enumerations read so far (Type::enum_id indexes it).
@@ -194,6 +197,8 @@ struct Method {
     // A constructor or destructor the compiler made because a member or base
     // needs one. It has no tokens.
     bool implicit = false;
+    // An `explicit` constructor ([class.conv.ctor] 1; Round 35): not a converting constructor.
+    bool is_explicit = false;
     // The implicit copy constructor: copies the base and each member.
     bool implicit_copy = false;
     // An inherited constructor (Round 34, [class.inhctor.init]): the base inherit_sid is made by its constructor
@@ -340,6 +345,10 @@ struct Global {
     // `extern T name;` ([basic.def] 2.3): declared here, defined in another file; no storage, an undefined symbol. A
     // definition later in the same file takes its place.
     bool external = false;
+    // A section of its own (Round 35): the variable's bytes go into a section of this name, one per variable
+    // (".CRT$XCU": a pointer to the file's start-up function, found by the program's main through the .CRT$XCA and
+    // .CRT$XCZ markers; PE/COFF specification, "Grouped Sections"). Empty for the usual .data, .bss or .tls$.
+    std::string section;
 };
 
 inline Type peel_array(const Type& type) {

@@ -14,3 +14,4 @@ typedef unsigned long long ino_t;
 typedef unsigned long long nlink_t;
 typedef long long blksize_t;
 typedef long long blkcnt_t;
+typedef unsigned int useconds_t;  // Round 35: ServerQuery.cpp's usleep((useconds_t)ms * 1000)

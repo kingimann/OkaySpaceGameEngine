@@ -576,6 +576,9 @@ struct Parser {
                                       t.text == "consteval" || t.text == "constinit" ||
                                       t.text == "volatile")) {
                 if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
+                if (t.text == "explicit" && i + 2 < tokens.size() && tokens[i + 1].kind == TIdent &&
+                    tokens[i + 2].kind == TLParen)
+                    tokens[i + 1].expl = true;  // `explicit C(int)`: the constructor is marked (Round 35)
                 if (t.text == "explicit")
                     // `explicit operator bool()`: the conversion function is marked, so an implicit conversion (an
                     // overload's argument, is_convertible) does not use it ([class.conv.fct] 2; Round 34: shared_ptr's
@@ -1156,6 +1159,25 @@ struct Parser {
     Node init_body{};
     bool init_used = false;
     std::vector<GlobalObj> global_objs{};
+    // The same three for thread_local objects of class type at namespace scope (Round 35): __okay_tls_init and
+    // __okay_tls_fini. TlsListSwap exchanges them with the lists above while such an object is read.
+    std::vector<Local> tls_locals{};
+    Node tls_body{};
+    bool tls_used = false;
+    std::vector<GlobalObj> tls_objs{};
+    struct TlsListSwap {
+        Parser& p;
+        bool on;
+        TlsListSwap(Parser& parser, bool swap) : p(parser), on(swap) { flip(); }
+        ~TlsListSwap() { flip(); }
+        void flip() {
+            if (!on) return;
+            std::swap(p.init_locals, p.tls_locals);
+            std::swap(p.init_body, p.tls_body);
+            std::swap(p.init_used, p.tls_used);
+            std::swap(p.global_objs, p.tls_objs);
+        }
+    };
     std::vector<GlobalObj> static_objs{};
     std::vector<Node> global_init{};
     std::vector<std::vector<DObj>> dscopes{};
@@ -1737,7 +1759,7 @@ struct Parser {
     // for (i = 0; i < n; i = i + 1) ctor(&name[i]) (or, going down, for the destructors). The
     // counter is a hidden local of the function being compiled.
     bool element_loop(const std::string& name, int count, bool reverse, int sid, const char* which, Node* out,
-                      const Node* count_expr = nullptr) {
+                      const Node* count_expr = nullptr, const Node* base_ptr = nullptr) {
         if (cur_locals == nullptr) {
             error = "an array of objects needs a function";
             return false;
@@ -1785,7 +1807,7 @@ struct Parser {
         Node step = assign(std::move(step_value));
         Node element;
         element.kind = Node::Index;
-        element.kids.push_back(node_name(name));
+        element.kids.push_back(base_ptr != nullptr ? *base_ptr : node_name(name));
         element.kids.push_back(node_name(hidden.name));
         Node call;
         if (!special_call(sid, which, node_addr(std::move(element)), {}, &call)) return false;
@@ -1797,6 +1819,24 @@ struct Parser {
         loop.kids.push_back(std::move(call));
         *out = std::move(loop);
         return true;
+    }
+
+    // A member that is an array of objects (`std::string e[4]`, `Vec3 buf[2][9]`; std::array's elems_): the default
+    // constructor or the destructor of every element, the last first for the destructor ([class.base.init] 9,
+    // [class.dtor] 13), through a pointer to the first element over all of its dimensions. Before Round 35 only the first
+    // element was made or destroyed: `std::array<std::string, 4> a{};` left a[1..3] as whatever the stack held, and a
+    // store to a[2] freed that (an access violation in Layers::Names, engine/include/okay/Scene/Layers.hpp).
+    bool member_array_loop(const Field& field, bool reverse, const char* which, Node* out) {
+        Type ptr = peel_array(field.type);
+        int count = field.type.array_len;
+        for (int d : field.type.more) {
+            ptr = peel_array(ptr);
+            count *= d;
+        }
+        ptr.pointers = 1;
+        ptr.is_const = false;
+        const Node base = cast_node(ptr, node_addr(node_this_field(field.name)));
+        return element_loop(std::string(), count, reverse, field.type.struct_id, which, out, nullptr, &base);
     }
 
     // C a[N] = { x, { y, z } }: element i is built by a constructor given its item (a brace is a
@@ -4422,7 +4462,8 @@ struct Parser {
     // A constructor of class sid that can make an object from one argument of type a: its first parameter takes a by
     // a standard conversion (or is a's own class), and any other parameters have defaults. Copy and move constructors
     // do not count, and a parameter of another class is not tried, so only one user-defined conversion is made
-    // ([over.best.ics] 4). `explicit` is not recorded here, so an explicit constructor counts too.
+    // ([over.best.ics] 4). An `explicit` constructor does not count ([class.conv.ctor] 1; Round 35: a time point's
+    // `operator-(const time_point&)` took `t - period`, the duration made into a time point).
     bool converts_by_ctor(int sid, const Node& arg, const Type& a) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
         // A constructor template (std::function's) is taken to accept the argument; its instance is made by the call.
@@ -4430,6 +4471,7 @@ struct Parser {
             return true;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
             if (m.name != "<ctor>" || m.params.empty() || required_args(m.defaults, m.params.size()) > 1) continue;
+            if (m.is_explicit) continue;
             Type first = m.params[0];
             if (first.base == 3 && first.pointers == 0 && !first.is_array()) {
                 if (first.struct_id == sid) continue;  // copy or move
@@ -5058,6 +5100,7 @@ struct Parser {
                 m.access = bm.access;
                 m.implicit = true;
                 m.inherit_sid = bsid;
+                m.is_explicit = bm.is_explicit;
                 m.has_body = true;
                 m.body_at = 1;
                 if (!add_method(def, self, std::move(m))) return false;
@@ -5616,6 +5659,7 @@ struct Parser {
                                  tokens[at + 1].text == ctor_name && tokens[at + 2].kind == TLParen;
             const bool is_ctor = is(TIdent) && cur().text == ctor_name && at + 1 < tokens.size() &&
                                  tokens[at + 1].kind == TLParen;
+            const bool ctor_expl = is_ctor && cur().expl;
             if (is_dtor || is_ctor) {
                 if (is_dtor) next();
                 next();
@@ -5654,6 +5698,7 @@ struct Parser {
                 }
                 Method m;
                 m.name = is_dtor ? "<dtor>" : "<ctor>";
+                m.is_explicit = ctor_expl;
                 m.ret.base = 0;
                 if (is_ctor) {
                     // A constructor returns its object, so that "new C(args)" is one call.
@@ -6277,6 +6322,9 @@ struct Parser {
         FuncDecl fn;
         fn.name = m.qname + "/sdd";
         fn.symbol = sdd_symbol(structs[static_cast<size_t>(sid)], m);
+        // Internal when the destructor is (written in its class): each file that makes it keeps its own copy, as with
+        // the destructor itself (Round 35: two objects with <exception> gave "duplicate symbol ??_Gexception@@...").
+        fn.is_static = !m.out_of_class;
         fn.ret.base = 0;
         fn.ret.pointers = 1;
         Type self_ptr;
@@ -6713,6 +6761,12 @@ struct Parser {
                             continue;
                         }
                     }
+                    if (field.type.is_array() && args.empty()) {
+                        if (!member_array_loop(field, false, "<ctor>", &call)) return false;
+                        push_ctor_call(std::move(call));
+                        for (Node& n : after) pre.push_back(std::move(n));
+                        continue;
+                    }
                     if (!special_call(field.type.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
                                       std::move(args), &call))
                         return false;
@@ -6833,8 +6887,11 @@ struct Parser {
                 const Field& field = def.fields[fi];
                 if (!obj_needs_dtor(field.type)) continue;
                 Node call;
-                if (!special_call(field.type.struct_id, "<dtor>", node_addr(node_this_field(field.name)), {}, &call))
+                if (field.type.is_array()) {
+                    if (!member_array_loop(field, true, "<dtor>", &call)) return false;
+                } else if (!special_call(field.type.struct_id, "<dtor>", node_addr(node_this_field(field.name)), {}, &call)) {
                     return false;
+                }
                 post.push_back(std::move(call));
             }
             // The bases in reverse declaration order ([class.dtor] 13).
@@ -9626,11 +9683,21 @@ struct Parser {
     }
 
     // Wraps every return of fn so that __okay_fini runs after the value is computed.
-    void rewrite_returns(Node& n, FuncDecl& fn) {
+    // `inline` was written in the declaration that starts at token `begin` and is being read (the word itself is dropped
+    // from the tokens; the token after it is marked). An out-of-class member definition written inline ([dcl.inline] 6,
+    // `inline string_view::string_view(const string&)` in <string>) is an inline function: an internal symbol in each file
+    // that includes it, as a member defined in its class (Round 35: two objects that both included <string> could not be
+    // linked together, "duplicate symbol ??0string_view@@QEAA@AEBVstring@@@Z").
+    bool written_inline(size_t begin) const {
+        for (size_t k = begin; k < at && k < tokens.size(); ++k)
+            if (tokens[k].inl) return true;
+        return false;
+    }
+    void rewrite_returns(Node& n, FuncDecl& fn, const char* fini_name) {
         if (n.kind == Node::Return) {
             Node call;
             call.kind = Node::Call;
-            call.text = "__okay_fini";
+            call.text = fini_name;
             Node call_stmt;
             call_stmt.kind = Node::ExprStmt;
             call_stmt.kids.push_back(std::move(call));
@@ -9669,7 +9736,7 @@ struct Parser {
             n = std::move(block);
             return;
         }
-        for (Node& kid : n.kids) rewrite_returns(kid, fn);
+        for (Node& kid : n.kids) rewrite_returns(kid, fn, fini_name);
     }
 
     // A member function that is declared in its class and defined in another file (the engine's Sha512::Update): a call of
@@ -9767,8 +9834,32 @@ struct Parser {
             if (g.vtable || g.name.find("?$") != std::string::npos) g.is_static = true;
         for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
         static_objs.clear();
+        // The start-up tables (Round 35; PE/COFF "Grouped Sections"). The file with main (or entry) carries the markers of
+        // the tables and the functions that walk them (compile.cpp adds their text, kStartupText); each file puts the
+        // address of its own start-up function in .CRT$XCU, its end function in .CRT$XTU, and those of its thread_local
+        // objects in .CRT$XDU and .okaytd$U. The linker puts every table's entries between its two markers.
+        static const std::pair<const char*, const char*> kMarkers[] = {
+            {"__okay_xc_a", ".CRT$XCA"}, {"__okay_xc_z", ".CRT$XCZ"}, {"__okay_xd_a", ".CRT$XDA"},
+            {"__okay_xd_z", ".CRT$XDZ"}, {"__okay_xt_a", ".CRT$XTA"}, {"__okay_xt_z", ".CRT$XTZ"},
+            {"__okay_td_a", ".okaytd$A"}, {"__okay_td_z", ".okaytd$Z"}};
+        bool tables = false;  // this file walks the tables (it has main and the start-up text)
+        for (Global& g : globals)
+            for (const auto& m : kMarkers)
+                if (g.name == m.first && !g.external) {
+                    g.section = m.second;
+                    g.bss = false;
+                    g.init_bytes.assign(8, 0);
+                    tables = true;
+                }
+        FuncDecl* start = nullptr;
+        for (FuncDecl& fn : funcs)
+            if (fn.name == "main" && fn.defined) start = &fn;
+        if (start == nullptr)
+            for (FuncDecl& fn : funcs)
+                if (fn.name == "entry" && fn.defined) start = &fn;
+        if (start == nullptr) tables = false;
         const bool need_fini = !global_objs.empty();
-        if (!init_used && !need_fini) return true;
+        const bool need_tls_fini = !tls_objs.empty();
         auto make_fn = [&](const std::string& name, Node body, std::vector<Local> locals) {
             FuncDecl fn;
             fn.name = name;
@@ -9777,13 +9868,26 @@ struct Parser {
             fn.body = std::move(body);
             fn.locals = std::move(locals);
             fn.defined = true;
+            // Reached through a table or a call in this file only (each file has its own).
+            fn.is_static = true;
             funcs.push_back(std::move(fn));
+            return funcs.back().symbol.empty() ? funcs.back().name : funcs.back().symbol;
         };
-        if (init_used) {
-            init_body.kind = Node::Block;
-            make_fn("__okay_init", std::move(init_body), init_locals);
-        }
-        if (need_fini) {
+        // One table entry: an 8-byte pointer to fn in a section of its own.
+        auto table_entry = [&](const std::string& gname, const char* section, const std::string& fn) {
+            Global g;
+            g.name = gname;
+            g.type.base = 0;
+            g.type.pointers = 1;
+            g.is_static = true;
+            g.bss = false;
+            g.init_bytes.assign(8, 0);
+            g.addr_relocs.push_back({0, fn});
+            g.section = section;
+            globals.push_back(std::move(g));
+        };
+        // The destructors of objs, latest first, as the body of one function ([basic.start.term] 1, 3).
+        auto make_fini = [&](const std::vector<GlobalObj>& objs, const std::string& name, std::string* symbol) {
             std::vector<Local> fini_locals;
             std::vector<Local>* saved_locals = cur_locals;
             const int saved_depth = scope_depth;
@@ -9791,8 +9895,8 @@ struct Parser {
             scope_depth = 0;
             Node body;
             body.kind = Node::Block;
-            for (size_t i = global_objs.size(); i-- > 0;) {
-                const GlobalObj& g = global_objs[i];
+            for (size_t i = objs.size(); i-- > 0;) {
+                const GlobalObj& g = objs[i];
                 Node call;
                 if (g.count > 0) {
                     if (!element_loop(g.name, g.count, true, g.sid, "<dtor>", &call)) return false;
@@ -9810,30 +9914,53 @@ struct Parser {
             }
             cur_locals = saved_locals;
             scope_depth = saved_depth;
-            make_fn("__okay_fini", std::move(body), std::move(fini_locals));
+            *symbol = make_fn(name, std::move(body), std::move(fini_locals));
+            return true;
+        };
+        // thread_local objects of class type: always through the tables (a file without main has them made by the
+        // TLS callback of the file with main).
+        if (tls_used) {
+            tls_body.kind = Node::Block;
+            table_entry("__okay_xdu", ".CRT$XDU", make_fn("__okay_tls_init", std::move(tls_body), tls_locals));
         }
-        // main (or entry when there is no main) runs them.
-        FuncDecl* start = nullptr;
-        for (FuncDecl& fn : funcs)
-            if (fn.name == "main" && fn.defined) start = &fn;
-        if (start == nullptr)
-            for (FuncDecl& fn : funcs)
-                if (fn.name == "entry" && fn.defined) start = &fn;
-        if (start == nullptr) return true;
+        if (need_tls_fini) {
+            std::string sym;
+            if (!make_fini(tls_objs, "__okay_tls_fini", &sym)) return false;
+            table_entry("__okay_tdu", ".okaytd$U", sym);
+        }
+        if (!init_used && !need_fini && !tables) return true;
+        // A file with main and without the start-up text (it was not found when the tokens were read) runs its own
+        // functions from main, as before Round 35; every other file puts them in the tables.
+        const bool direct = start != nullptr && !tables;
+        if (init_used) {
+            init_body.kind = Node::Block;
+            const std::string sym = make_fn("__okay_init", std::move(init_body), init_locals);
+            if (!direct) table_entry("__okay_xcu", ".CRT$XCU", sym);
+        }
         if (need_fini) {
-            rewrite_returns(start->body, *start);
+            std::string sym;
+            if (!make_fini(global_objs, "__okay_fini", &sym)) return false;
+            if (!direct) table_entry("__okay_xtu", ".CRT$XTU", sym);
+        }
+        if (start == nullptr) return true;
+        // main runs the start-up functions first and the end functions at each return and at its end (the tables'
+        // walkers, or this file's own two functions).
+        const char* run_init = tables ? "__okay_run_xc" : init_used ? "__okay_init" : nullptr;
+        const char* run_fini = tables ? "__okay_run_xt" : need_fini ? "__okay_fini" : nullptr;
+        if (run_fini != nullptr) {
+            rewrite_returns(start->body, *start, run_fini);
             Node call;
             call.kind = Node::Call;
-            call.text = "__okay_fini";
+            call.text = run_fini;
             Node call_stmt;
             call_stmt.kind = Node::ExprStmt;
             call_stmt.kids.push_back(std::move(call));
             start->body.kids.push_back(std::move(call_stmt));
         }
-        if (init_used) {
+        if (run_init != nullptr) {
             Node call;
             call.kind = Node::Call;
-            call.text = "__okay_init";
+            call.text = run_init;
             Node call_stmt;
             call_stmt.kind = Node::ExprStmt;
             call_stmt.kids.push_back(std::move(call));
@@ -10099,7 +10226,7 @@ struct Parser {
                     continue;
                 }
                 owner.methods[mi].has_body = true;
-                owner.methods[mi].out_of_class = true;
+                owner.methods[mi].out_of_class = !written_inline(decl_begin);
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
                 skip_mem_initializers();
@@ -10234,7 +10361,7 @@ struct Parser {
                     return false;
                 }
                 owner.methods[mi].has_body = true;
-                owner.methods[mi].out_of_class = true;
+                owner.methods[mi].out_of_class = !written_inline(decl_begin);
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
                 if (!skip_body()) return false;
@@ -10349,16 +10476,19 @@ struct Parser {
                         global.bss = false;
                         if (!flatten_dyn(decl.type, tls_init, &global, &leaves)) return false;
                     }
-                    if (global.name.empty() || !leaves.empty()) {
-                        error = "a thread_local object with a constructor or destructor at namespace scope is not supported "
-                                "yet (" + decl.name + ")";
-                        return false;
+                    if (!global.name.empty() && leaves.empty()) {
+                        global.dynamic = false;
+                        globals.push_back(global);
+                        next();  // ';'
+                        continue;
                     }
-                    global.dynamic = false;
-                    globals.push_back(global);
-                    next();  // ';'
-                    continue;
                 }
+                // Any other thread_local object of a class type ([basic.stc.thread], [basic.start.dynamic] 7, Round 35):
+                // its constructor runs in each thread before the thread's code (main's thread before main), from the
+                // file's __okay_tls_init, and its destructor when the thread ends (main's thread: at the end of main),
+                // from __okay_tls_fini (see finish_program). The rest of this branch is the one for global objects; while
+                // it runs, the statements and destructors it records go to the thread_local lists.
+                TlsListSwap tls_swap(*this, decl_tls);
                 Node ginit;
                 bool has_ginit = false;
                 Type gil_type;
@@ -10390,6 +10520,7 @@ struct Parser {
                         global.type = decl.type;
                         global.bss = true;
                         global.is_static = is_static || anon_depth > 0;
+                        global.tls = decl_tls;
                         globals.push_back(global);
                         {
                             std::vector<DynLeaf> one(1);
@@ -10420,6 +10551,7 @@ struct Parser {
                 global.type = decl.type;
                 global.bss = true;
                 global.is_static = is_static || anon_depth > 0;
+                global.tls = decl_tls;
                 globals.push_back(global);
                 if (!register_global_object(decl.name, decl.type, std::move(gargs), has_ginit ? &ginit : nullptr))
                     return false;

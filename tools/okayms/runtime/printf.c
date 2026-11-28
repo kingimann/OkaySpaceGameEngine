@@ -44,6 +44,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             int wide;
             int upper;
             char *s;
+            char *src;
             double fval;
             int fwhole;
             int fi;
@@ -58,6 +59,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             has_prec = 0;
             wide = 0;
             upper = 0;
+            src = tmp;
             fmt = fmt + 1;
             if (fmt[0] == '%') {
                 if (n + 1 < cap) {
@@ -125,13 +127,11 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                     tmp[0] = v;
                     tn = 1;
                 } else if (spec == 's') {
+                    /* The text is written from where it is, at any length (Round 35; before, it went through the
+                       64-byte tmp and was cut at 60 characters). */
                     s = va_arg(ap, char *);
-                    i = 0;
-                    while (s[i] != 0 && tn < 60 && (has_prec == 0 || i < prec)) {
-                        tmp[tn] = s[i];
-                        tn = tn + 1;
-                        i = i + 1;
-                    }
+                    src = s;
+                    while (s[tn] != 0 && (has_prec == 0 || tn < prec)) tn = tn + 1;
                 } else if (spec == 'f') {
                     fval = va_arg(ap, double);
                     if (fval < 0) {
@@ -206,7 +206,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                 }
                 i = 0;
                 while (i < tn && n + 1 < cap) {
-                    buf[n] = tmp[i];
+                    buf[n] = src[i];
                     n = n + 1;
                     i = i + 1;
                 }
@@ -226,12 +226,12 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
 }
 
 int printf(char *fmt, ...) {
-    char out[128];
+    char out[1024];
     unsigned int wrote;
     int count;
     va_list ap;
     va_start(ap, fmt);
-    count = format_out(out, 128, fmt, ap);
+    count = format_out(out, 1024, fmt, ap);
     va_end(ap);
     WriteFile(GetStdHandle(0xFFFFFFF5), out, count, &wrote, 0);
     return count;

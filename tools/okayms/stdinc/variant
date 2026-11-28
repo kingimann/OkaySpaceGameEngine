@@ -15,6 +15,7 @@
 #include <new>
 #include <type_traits>
 #include <utility>
+#include <exception>
 namespace std {
 
 struct monostate {};
@@ -167,6 +168,13 @@ public:
     }
 };
 
+// bad_variant_access ([variant.bad.access]; Round 36, VsApi.cpp's `catch (const std::bad_variant_access&)`). Declared
+// so that it can be caught; get and visit here do not throw it (see the notes above).
+class bad_variant_access : public exception {
+public:
+    bad_variant_access() noexcept {}
+    const char* what() const noexcept { return "bad variant access"; }
+};
 template <typename V> struct variant_size {};
 template <typename... T> struct variant_size<variant<T...>> { static const size_t value = sizeof...(T); };
 template <size_t I, typename V> struct variant_alternative {};
@@ -190,4 +198,26 @@ template <typename X, typename... T> const X& get(const variant<T...>& v) {
     return *reinterpret_cast<const X*>(v.store__);
 }
 
+// visit ([variant.visit]) of one variant: the visitor is called with the alternative the variant holds. The result
+// type is that of calling it with the first alternative (Round 36: declared in this header's notes before, but not
+// written; Interpreter.cpp's `std::visit(*this, c->v)`). Own design: a chain of class template specializations steps
+// through the alternatives to the one at the index.
+template <typename R, typename... T> struct variant_visit__ {};
+template <typename R, typename H> struct variant_visit__<R, H> {
+    template <typename F> static R run(F& f, size_t, void* p) { return f(*reinterpret_cast<H*>(p)); }
+};
+template <typename R, typename H, typename N, typename... Rest> struct variant_visit__<R, H, N, Rest...> {
+    template <typename F> static R run(F& f, size_t i, void* p) {
+        if (i == 0) return f(*reinterpret_cast<H*>(p));
+        return variant_visit__<R, N, Rest...>::run(f, i - 1, p);
+    }
+};
+template <typename F, typename H, typename... T> auto visit(F&& f, variant<H, T...>& v) {
+    typedef decltype(f(*reinterpret_cast<H*>(v.store__))) R;
+    return variant_visit__<R, H, T...>::run(f, v.index__, v.store__);
+}
+template <typename F, typename H, typename... T> auto visit(F&& f, const variant<H, T...>& v) {
+    typedef decltype(f(*reinterpret_cast<const H*>(v.store__))) R;
+    return variant_visit__<R, const H, const T...>::run(f, v.index__, (void*)v.store__);
+}
 }  // namespace std

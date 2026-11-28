@@ -344,6 +344,86 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// More blockers of the Windows survey (Round 36):
+// - a lambda in a lambda that captures a variable the outer one captured ([co] in [this, co]; [expr.prim.lambda.capture]
+//   10; OkayScriptVM_Coroutine.cpp, before "unknown name co"), by value and through an outer capture by reference;
+// - a class object with `operator bool` for overloads taking bool, float, int and a shared_ptr: the conversion to bool
+//   is the best ([over.ics.rank] 3.3), and shared_ptr's constructor template does not take part (VsValue{go->active},
+//   4 files, before "cannot deduce template arguments of shared_ptr");
+// - our own std::visit ([variant.visit]), std::bad_variant_access, std::erf and std::erfc (ISO/IEC 9899 7.12.8; checked
+//   against their known values), duration::zero ([time.duration.special]), min_element and max_element with a
+//   comparison ([alg.min.max]) and error_category::message.
+static void r36_library_and_lambdas(Tally& tally) {
+    std::printf("r36_library_and_lambdas\n");
+    okayms_test::run_both(kRun, tally, "library_lambdas", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <variant>
+#include <vector>
+struct Co { int turn; };
+struct R {
+  int x;
+  int g(Co* co) {
+    auto a = [this, co] { auto b = [co] { return co->turn; }; return b() + x; };
+    return a();
+  }
+};
+static int Twice(int v) {
+  auto a = [&v] { auto b = [v] { return v * 2; }; return b(); };
+  return a();
+}
+struct Flag { bool on; explicit Flag(bool b) : on(b) {} operator bool() const { return on; } };
+struct Val {
+  int k;
+  Val(float) : k(1) {}
+  Val(bool) : k(2) {}
+  Val(int) : k(3) {}
+  Val(std::shared_ptr<std::vector<int>>) : k(4) {}
+};
+struct Show {
+  int operator()(float f) const { return (int)f; }
+  int operator()(const std::string& s) const { return (int)s.size() + 100; }
+  int operator()(bool b) const { return b ? 7 : 8; }
+};
+static bool Near(double a, double b, double rel) {
+  double d = a - b;
+  if (d < 0) d = -d;
+  double m = b < 0 ? -b : b;
+  return d <= rel * m;
+}
+int entry(void) {
+  Co co{5};
+  R r{10};
+  CK(1, r.g(&co) == 15 && Twice(21) == 42);
+  Flag f(true);
+  Val v{f};
+  CK(2, v.k == 2);
+  std::variant<float, std::string, bool> var = 3.0f;
+  CK(3, std::visit(Show{}, var) == 3);
+  var = std::string("abcd");
+  CK(4, std::visit(Show{}, var) == 104);
+  const std::variant<float, std::string, bool> cv = true;
+  CK(5, std::visit(Show{}, cv) == 7);
+  std::bad_variant_access bad;
+  CK(6, bad.what() != nullptr);
+  CK(7, Near(std::erf(0.5), 0.5204998778130465, 1e-12) && Near(std::erf(1.0), 0.8427007929497149, 1e-12));
+  CK(8, Near(std::erfc(3.0), 2.209049699858544e-05, 1e-9) && Near(std::erfc(4.0), 1.541725790028002e-08, 1e-9));
+  CK(9, Near(std::erfc(-1.0), 1.8427007929497149, 1e-12) && Near(std::erf(-2.0), -0.9953222650189527, 1e-12));
+  CK(10, std::chrono::nanoseconds::zero().count() == 0 && std::chrono::nanoseconds(5) > std::chrono::nanoseconds::zero());
+  std::vector<int> nums{4, 9, 2, 7};
+  auto hi = std::max_element(nums.begin(), nums.end(), [](int a, int b) { return a % 5 < b % 5; });
+  auto lo = std::min_element(nums.begin(), nums.end(), [](int a, int b) { return a > b; });
+  CK(11, *hi == 4 && *lo == 9);
+  CK(12, !std::generic_category().message(2).empty());
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -354,5 +434,6 @@ int main(int argc, char** argv) {
     r36_unique_ptr_convert(tally);
     r36_by_value_params(tally);
     r36_single_file_blockers(tally);
-    return tally.finish(6);
+    r36_library_and_lambdas(tally);
+    return tally.finish(7);
 }

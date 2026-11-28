@@ -28,6 +28,11 @@ public:
     duration() : count_(0) {}
     explicit duration(Rep c) : count_(c) {}
     Rep count() const { return count_; }
+    // zero, min and max ([time.duration.special]; Round 36, DedicatedServer.cpp's `nanoseconds::zero()`). Own
+    // simplification: min and max are those of a 64-bit count.
+    static duration zero() { return duration((Rep)0); }
+    static duration min() { return duration((Rep)(-9223372036854775807LL - 1)); }
+    static duration max() { return duration((Rep)9223372036854775807LL); }
     static double scale_num() { return (double)Period::num; }
     static double scale_den() { return (double)Period::den; }
     static long long period_num() { return Period::num; }

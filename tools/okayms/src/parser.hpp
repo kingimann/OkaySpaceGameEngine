@@ -4559,10 +4559,11 @@ struct Parser {
     // do not count, and a parameter of another class is not tried, so only one user-defined conversion is made
     // ([over.best.ics] 4). An `explicit` constructor does not count ([class.conv.ctor] 1; Round 35: a time point's
     // `operator-(const time_point&)` took `t - period`, the duration made into a time point).
-    bool converts_by_ctor(int sid, const Node& arg, const Type& a) const {
+    bool converts_by_ctor(int sid, const Node& arg, const Type& a, bool templates = true) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
         // A constructor template (std::function's) is taken to accept the argument; its instance is made by the call.
-        if (has_ctor_template_taking(sid, 1) && !(a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == sid))
+        if (templates && has_ctor_template_taking(sid, 1) &&
+            !(a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == sid))
             return true;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
             if (m.name != "<ctor>" || m.params.empty() || required_args(m.defaults, m.params.size()) > 1) continue;
@@ -4694,8 +4695,14 @@ struct Parser {
             // A user-defined conversion by a converting constructor of the parameter's class ([over.ics.user]): it
             // ranks after every standard conversion. Only by value or through a const reference (a temporary).
             if (p.pointers == 0 && p.struct_id >= 0 && (!want_ref || p.is_const || p.pconst || want_rref) &&
-                converts_by_ctor(p.struct_id, arg, a))
+                converts_by_ctor(p.struct_id, arg, a, false))
                 return 4;
+            // Only by a constructor template, taken to accept any argument without deducing it here: it ranks after a
+            // conversion that is known to work (Round 36: VsValue{go->active} with ActiveFlag's operator bool chose
+            // VsValue(shared_ptr<Array>) through shared_ptr's constructor template, then failed to deduce it).
+            if (p.pointers == 0 && p.struct_id >= 0 && (!want_ref || p.is_const || p.pconst || want_rref) &&
+                converts_by_ctor(p.struct_id, arg, a))
+                return 6;
             // Or by a conversion function of the argument's class to the parameter's class (path to string).
             if (a.pointers == 0 && a.base == 3 && a.struct_id >= 0 && p.struct_id >= 0 && !a.is_array() &&
                 (!want_ref || p.is_const || p.pconst || want_rref))
@@ -4709,7 +4716,17 @@ struct Parser {
         // A conversion function (operator bool, operator int) is a user-defined conversion too ([over.ics.user]): it
         // ranks with a converting constructor, so a constructor template that takes the class itself is preferred to
         // `S(int)` reached through `operator bool`.
-        if (a.base == 3) return conv_for(a.struct_id, p, true) != nullptr ? 4 : -1;
+        if (a.base == 3) {
+            // The second standard conversion after the conversion function decides between two of them
+            // ([over.ics.rank] 3.3): operator bool to a bool parameter is better than to a float or an int one.
+            const Method* cm = conv_for(a.struct_id, p, true);
+            if (cm == nullptr) return -1;
+            Type r = cm->ret;
+            r.is_ref = false;
+            const bool same = r.base == p.base && r.wide == p.wide && r.is_bool == p.is_bool && r.pointers == p.pointers &&
+                              (r.base >= 5 || r.is_unsigned == p.is_unsigned);
+            return same ? 4 : 5;
+        }
         if (a.base == 0 || p.base == 0) return -1;
         // A reference to a non-const scalar binds only to an lvalue of that same type ([dcl.init.ref] 5): int& does not
         // take a double, so from_chars(first, last, int_value) does not pick the double overload.

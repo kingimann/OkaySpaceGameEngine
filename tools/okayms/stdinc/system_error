@@ -22,6 +22,14 @@ class error_category {
 public:
     explicit error_category(const char* n) : name_(n) {}
     const char* name() const { return name_; }
+    // The text for a code of this category (Round 36, SaveFile.cpp's `generic_category().message(err)`): as
+    // error_code::message, the number as text (own difference: no system message table).
+    string message(int code) const {
+        if (code == 0) return string("ok");
+        string out("error ");
+        out += to_string(code);
+        return out;
+    }
     bool operator==(const error_category& o) const {
         const char* a = name_;
         const char* b = o.name_;

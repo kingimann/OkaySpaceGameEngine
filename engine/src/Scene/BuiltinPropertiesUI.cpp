@@ -1051,9 +1051,23 @@ void RegisterTouchButton() {
     b.Commit();
 }
 
-// EventSystem (`eventsystem`): routes the pointer to UI widgets. No fields of its own.
+// EventSystem (`eventsystem`): the one place game UI input goes through (pointer, keys, gamepad).
 void RegisterEventSystem() {
     PropertyBuilder<EventSystem> b("EventSystem", "eventsystem", "UI");
+    b.AddFloat("dragThreshold", &EventSystem::dragThreshold).Range(0.0, 200.0, 0.5)
+         .Tooltip("Pixels the pointer moves with the button held before a press becomes a drag (no click is sent then)")
+     .AddBool("navigation", &EventSystem::navigation)
+         .Tooltip("Arrow keys, WASD, the D-pad and the navigation action move the focus between widgets")
+     .AddBool("blockWorldClicks", &EventSystem::blockWorldClicks)
+         .Tooltip("While the pointer is over UI, world objects get no mouse messages and gameplay world clicks are held back")
+     .AddString("submitAction", &EventSystem::submitAction)
+         .Tooltip("Input action that presses the focused widget, as well as Enter, Space and pad A")
+     .AddString("cancelAction", &EventSystem::cancelAction)
+         .Tooltip("Input action that sends on_cancel to the selected widget, as well as Escape and pad B")
+     .AddString("navigateAction", &EventSystem::navigateAction)
+         .Tooltip("Direction action that moves the focus, as well as the arrow keys, WASD and the D-pad (empty: only those)")
+     .AddString("firstSelected", &EventSystem::firstSelected)
+         .Tooltip("Name of the widget that takes the focus first (empty: the first one in reading order)");
     b.Commit();
 }
 

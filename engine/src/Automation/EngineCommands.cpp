@@ -1003,8 +1003,11 @@ void AddLog(Registry& r) {
 } // namespace
 
 namespace detail {
+void AddScriptRunCommands(Registry& r);   // ScriptRun.cpp
+
 void RegisterEngineCommands(Registry& r) {
     AddAutomation(r);
+    AddScriptRunCommands(r);
     AddApi(r);
     AddScene(r);
     AddComponents(r);

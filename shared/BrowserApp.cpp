@@ -604,6 +604,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
     opt.address = &cur.field;
     opt.hostButtons = false;
     opt.programButtons = true;
+    opt.ownWindowButton = (bool)cfg.openOwnWindow;
     opt.bookmarked = profile().bookmarks.Has(t.Url());
     opt.placeholder = AddressPlaceholder(profile().settings.searchUrl);
     opt.focusAddress = cur.focusAddress && !modal;
@@ -691,6 +692,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         if (r.stop) t.Stop();
         if (r.home) load(cur, homeAddress());
         if (r.bookmark) doAction(A_Bookmark);
+        if (r.ownWindow && cfg.openOwnWindow) cfg.openOwnWindow(t.Url() == "about:newtab" ? std::string() : t.Url());
         if (r.menu) {
             const bool bar = profile().settings.showBookmarksBar;
             std::vector<MenuItem> items = {{"New tab", "Ctrl+T", A_NewTab}, {"Reopen closed tab", "Ctrl+Shift+T", A_ReopenTab}, {"", "", 0},

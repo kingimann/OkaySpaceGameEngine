@@ -317,6 +317,39 @@ inline double log1p(double x) {
     return log(u) * x / (u - 1.0);
 }
 inline float log1p(float x) { return (float)log1p((double)x); }
+// lgamma (C 7.12.8.3): log |Gamma(x)|. For x >= 8 Stirling's series (Abramowitz and Stegun 6.1.41)
+// to the x^-7 term, (x - 1/2) log x - x + log(2 pi) / 2 + 1/(12x) - 1/(360x^3) + 1/(1260x^5) -
+// 1/(1680x^7); below 8 the recurrence Gamma(x + 1) = x Gamma(x) moves x up first (dividing the
+// product out again), and below 1/2 the reflection Gamma(x) Gamma(1 - x) = pi / sin(pi x) (6.1.17).
+// Poles (0, -1, ..) give +infinity. Not checked against glibc to the last bit.
+inline double lgamma(double x) {
+    const double kPi = 3.14159265358979323846;
+    if (x != x) return x;
+    if (x <= 0 && floor(x) == x) return HUGE_VAL;
+    if (x == 1.0 || x == 2.0) return 0.0;  // exactly (Gamma(1) = Gamma(2) = 1)
+    if (x < 0.5) return log(kPi / fabs(sin(kPi * x))) - lgamma(1.0 - x);
+    double shift = 0.0, prod = 1.0;
+    while (x < 8.0) {
+        prod *= x;
+        x += 1.0;
+        if (prod > 1e280) {
+            shift += log(prod);
+            prod = 1.0;
+        }
+    }
+    shift += log(prod);
+    const double r = 1.0 / x, r2 = r * r;
+    const double series = r * (1.0 / 12.0 - r2 * (1.0 / 360.0 - r2 * (1.0 / 1260.0 - r2 * (1.0 / 1680.0))));
+    return (x - 0.5) * log(x) - x + 0.91893853320467274178 + series - shift;
+}
+inline float lgamma(float x) { return (float)lgamma((double)x); }
+inline double tgamma(double x) {  // (C 7.12.8.4) exp(lgamma(x)) with the sign of Gamma(x)
+    if (x <= 0 && floor(x) == x) return x == 0 ? (1.0 / x > 0 ? HUGE_VAL : -HUGE_VAL) : (x - x) / (x - x);
+    double v = exp(lgamma(x));
+    if (x < 0 && ((long)floor(x)) % 2 != 0) v = -v;
+    return v;
+}
+inline float tgamma(float x) { return (float)tgamma((double)x); }
 // The hyperbolic functions and their inverses (C 7.12.5), from their definitions by exp and log:
 // sinh x = (e^x - e^-x) / 2, cosh x = (e^x + e^-x) / 2, tanh x = sinh x / cosh x,
 // asinh x = ln(x + sqrt(x^2 + 1)), acosh x = ln(x + sqrt(x^2 - 1)), atanh x = ln((1 + x) / (1 - x)) / 2;

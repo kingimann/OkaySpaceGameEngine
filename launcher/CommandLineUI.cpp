@@ -518,6 +518,13 @@ bool OpenProgram(const Host& host, const FoundProgram& p) {
     return ok;
 }
 
+bool OpenTool(const Host& host, const std::string& label, const std::string& target) {
+    std::string message;
+    const bool ok = StartTool(host.programs, label, target, message);
+    if (host.toast) host.toast(message, ok ? 1 : 2);
+    return ok;
+}
+
 void DrawProgramsRow(const Host& host) {
     if (host.programs.empty()) return;
     ImGui::AlignTextToFramePadding();

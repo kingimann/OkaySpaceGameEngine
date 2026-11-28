@@ -85,6 +85,17 @@ def scene_shape(m):
     return walk(data.get("objects", []))
 
 
+def scene_names(m):
+    out = []
+
+    def walk(nodes):
+        for n in nodes:
+            out.append(n["name"])
+            walk(n.get("children", []))
+    walk(m.ok("scene_hierarchy").get("objects", []))
+    return out
+
+
 def main():
     okay = os.path.abspath(sys.argv[1])
     tmp = tempfile.mkdtemp(prefix="okay_mcp_e2e_")
@@ -175,6 +186,25 @@ def main():
     m.p.stdin.flush()
     bad = json.loads(m.p.stdout.readline())
     check(bad.get("error", {}).get("code") == -32700 and bad.get("id") is None, "parse error -32700")
+
+    # Ops (every menu item) and script.run through MCP.
+    names = [t["name"] for t in m.request("tools/list")["result"]["tools"]]
+    check("op_edit_duplicate" in names and "op_h_tf_resetpos" in names and "op_list" in names and "script_run" in names, "ops and script.run are tools")
+    check(len([n for n in names if n.startswith("op_")]) > 250, "every menu item is an op tool")
+    m.ok("editor_select", {"objects": ["Box"]})
+    m.ok("op_edit_duplicate")
+    check(len([n for n in scene_names(m) if n.startswith("Box")]) == 2, "op_edit_duplicate made a copy")
+    m.ok("undo_undo")
+    res, sc = m.call("op_file_open")
+    check(sc and sc["error"]["code"] == "needs_ui" and sc["error"]["details"]["param"] == "path", "a dialog op answers needs_ui")
+    ran = m.ok("script_run", {"language": "lua", "source": "print('from lua')\nlocal r = automation_call('object.create', {kind = 'cube', name = 'ScriptBox'})\nreturn r.data.name"})
+    check(ran.get("value") == "ScriptBox" and any("from lua" in x for x in ran.get("output", [])), "script_run: output, value, automation_call")
+    res, sc = m.call("script_run", {"language": "javascript", "source": "let a = 1;\nnull.x;"})
+    check(sc and not sc["ok"] and sc["error"]["details"]["line"] == 2, "script_run: an error with its line")
+    res, sc = m.call("script_run", {"source": "while (true) { }", "budget": 10000})
+    check(sc and not sc["ok"] and sc["error"]["details"]["stopped"] is True, "script_run: a runaway script stops")
+    m.ok("undo_undo")
+    check("ScriptBox" not in scene_names(m), "script_run is one undo step")
     check(m.close() == 0, "okay mcp ends cleanly when stdin closes")
 
     # ---- a scripted list of commands -------------------------------------------------------------------------------
@@ -187,7 +217,7 @@ def main():
     check(r.returncode == 0 and len(outs) == 2 and outs[1]["data"]["name"] == "Ball", "okay automation run")
     r = subprocess.run([okay, "automation", "list", "--json"], env=env, capture_output=True, timeout=60)
     listed = json.loads(r.stdout.decode())
-    check(r.returncode == 0 and listed["count"] >= 70 and listed["commands"][0]["inputSchema"], "okay automation list --json")
+    check(r.returncode == 0 and listed["count"] >= 330 and listed["commands"][0]["inputSchema"], "okay automation list --json")
 
     # ---- the editor link: okay mcp --editor in front of a host with the link on -------------------------------------
     link = subprocess.Popen([okay, "--project", project, "automation", "link", "--seconds", "60"], env=env,
@@ -219,6 +249,11 @@ def main():
         check(e2.ok("object_inspect", {"object": made.get("id", "?")}).get("name") == "FromLink", "two clients share the linked scene")
         check(e.ok("automation_host").get("kind") == "headless", "the link answers from its host")
         check(e.close() == 0 and e2.close() == 0, "okay mcp --editor ends cleanly")
+        # One config entry for every project: okay mcp with no --project finds the open editor from its link file.
+        a = Mcp([okay, "mcp"], env)
+        a.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        check(a.ok("object_inspect", {"object": made.get("id", "?")}).get("name") == "FromLink", "okay mcp with no project finds the open editor")
+        check(a.close() == 0, "okay mcp (found editor) ends cleanly")
     link.terminate()
     try:
         link.wait(timeout=20)
@@ -227,6 +262,10 @@ def main():
     r = subprocess.run([okay, "--project", project, "mcp", "--editor"], env=dict(env, OKAY_AUTOMATION_LINK_FILE=os.path.join(tmp, "none.json")),
                        input=b"", capture_output=True, timeout=60)
     check(r.returncode == 1, "okay mcp --editor with no editor fails plainly")
+    r = subprocess.run([okay, "mcp"], env=dict(env, OKAY_AUTOMATION_LINK_FILE=os.path.join(tmp, "none.json")), cwd=tmp,
+                       input=b"", capture_output=True, timeout=60)
+    said = r.stderr.decode(errors="replace") + r.stdout.decode(errors="replace")
+    check(r.returncode == 1 and "No OkaySpace editor is open" in said and "Automation Link" in said, "okay mcp with no editor and no project says so plainly")
 
     shutil.rmtree(tmp, ignore_errors=True)
     if FAILS:

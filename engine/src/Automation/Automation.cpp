@@ -206,6 +206,16 @@ bool Registry::Add(Command c) {
     return true;
 }
 
+bool Registry::AddAlias(const std::string& alias, const std::string& target) {
+    const Command* t = Find(target);
+    if (!t) return false;
+    Command c = *t;
+    c.name = alias;
+    c.aliasOf = t->aliasOf.empty() ? t->name : t->aliasOf;
+    c.summary = "Same as " + c.aliasOf + ": " + t->summary;
+    return Add(std::move(c));
+}
+
 const Command* Registry::Find(const std::string& name) const {
     const auto at = std::lower_bound(m_commands.begin(), m_commands.end(), name,
                                      [](const Command& a, const std::string& n) { return a.name < n; });
@@ -238,6 +248,7 @@ json::Value Registry::Describe(const Command& c) {
     d.Set("name", json::Value::Str(c.name));
     d.Set("summary", json::Value::Str(c.summary));
     d.Set("flags", FlagList(c.flags));
+    if (!c.aliasOf.empty()) d.Set("aliasOf", json::Value::Str(c.aliasOf));
     json::Value ps = json::Value::Arr();
     for (const Param& p : c.params) {
         json::Value e = json::Value::Obj();
@@ -295,11 +306,11 @@ Result Registry::Run(Host& host, const std::string& name, const json::Value& par
     const Command* c = Find(name);
     if (!c) {
         // Name the commands that share its namespace, so a caller with a typo sees what exists.
-        json::Value near = json::Value::Arr();
+        json::Value similar = json::Value::Arr();
         const std::string ns = name.substr(0, name.find('.') == std::string::npos ? name.size() : name.find('.') + 1);
-        for (const Command* k : List(ns)) near.Push(json::Value::Str(k->name));
+        for (const Command* k : List(ns)) similar.Push(json::Value::Str(k->name));
         return Result::Fail(code::UnknownCommand, "There is no command called '" + name + "'.",
-                            near.array.empty() ? json::Value() : json::Value::Obj().Set("similar", std::move(near)));
+                            similar.array.empty() ? json::Value() : json::Value::Obj().Set("similar", std::move(similar)));
     }
     const std::string bad = Validate(*c, params);
     if (!bad.empty()) return Result::Fail(code::InvalidParams, bad + ".");

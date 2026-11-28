@@ -64,6 +64,9 @@ struct Ctx {
     // Where each tab was drawn last frame (its leaf and x): a tab whose slot moved slides there over a few frames instead of jumping.
     struct Slide { int node = 0; float x = 0.0f; long long frame = 0; };
     std::map<std::string, Slide> slide;
+    // A docked tab closed with its cross leaves the layout; the tabs it shared its leaf with are kept here, so when the window is opened
+    // again (its DockBegin runs once more) it goes back into that group as a tab, as Dear ImGui's closed windows keep their dock node.
+    std::map<std::string, std::vector<std::string>> closedHome;
     bool Submitted(const std::string& name) const {
         const auto it = seen.find(name);
         return it != seen.end() && it->second >= (long long)GetFrameCount() - 1;
@@ -76,17 +79,17 @@ void BuildTabs(Ctx& c) {
     c.tabs.clear();
     // a pushed StyleVar_FramePadding (x) is the text's inset on each side of a tab (Dear ImGui's tabs: room for an icon the host draws there)
     const float pad = TabTextInset(), closeW = c.tabH * 0.7f;
+    // Windows not submitted get no tab, as in Dear ImGui, not even on a layout's first frame (DockSpace runs before the DockBegin calls, so
+    // the strips are empty for that one frame): a tab of a closed window has nothing behind it. The editor's right column showed empty Stats
+    // and Lighting tabs once the Inspector was closed, and on a slow first frame at launch.
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit() || n.tabs.empty() || n.noTabBar) continue;
-        bool anySubmitted = false;
-        for (const std::string& t : n.tabs) anySubmitted |= c.Submitted(t);
         float keep = 0.0f;
         for (const auto& rv : c.reserve) if (rv.first == n.id) keep = rv.second;
         keep = std::max(0.0f, std::min(keep, n.rect.w * 0.5f));
         std::vector<float> w;
         float total = 0.0f;
-        // windows not submitted get no tab (while none of the leaf's windows has been seen yet, e.g. a layout just built, all show)
-        auto shown = [&](const std::string& t) { return !anySubmitted || c.Submitted(t); };
+        auto shown = [&](const std::string& t) { return c.Submitted(t); };
         for (const std::string& t : n.tabs) { const float tw = shown(t) ? CalcTextSize(Display(t).c_str()).x + 2.0f * pad + closeW : 0.0f; w.push_back(tw); total += tw; }
         const float room = n.rect.w - keep;
         const float scale = total > room && total > 0.0f ? room / total : 1.0f;
@@ -107,6 +110,19 @@ void BuildTabs(Ctx& c) {
     }
 }
 void Rebuild(Ctx& c) { c.layout.Compute(c.area, c.tabH); BuildTabs(c); }
+// A window opened again after its tab was closed goes back into the group it was closed from (when one of that group's tabs is still
+// docked), chosen. True when it did.
+bool ReturnHome(Ctx& c, const std::string& name) {
+    const auto home = c.closedHome.find(name);
+    if (home == c.closedHome.end()) return false;
+    bool back = false;
+    for (const std::string& o : home->second) {
+        const int leaf = c.layout.NodeOf(o);
+        if (leaf && c.layout.Dock(name, leaf, DockSide_Center)) { c.layout.SetActive(name); Rebuild(c); back = true; break; }
+    }
+    c.closedHome.erase(home);
+    return back;
+}
 
 // The guide tiles a drag shows: five over the leaf under the pointer (centre = join its tabs, the four sides = split it) and four at the
 // middle of the dock area's edges (dock along the whole edge). The tile under the pointer is the target; elsewhere the leaf's region
@@ -273,7 +289,7 @@ std::string DockSaveLayout() { return C().layout.Save(); }
 bool DockLoadLayout(const std::string& blob, int* repairs) {
     Ctx& c = C();
     const bool ok = c.layout.Load(blob, repairs);
-    if (ok) { c.kind = Ctx::None; c.drop = DockDropInfo(); }
+    if (ok) { c.kind = Ctx::None; c.drop = DockDropInfo(); c.closedHome.clear(); }   // a new layout: groups of tabs closed before do not apply
     return ok;
 }
 
@@ -320,7 +336,14 @@ void DockSpace(Rect area) {
     if (c.kind == Ctx::None && pressed && !underFloat) {
         bool done = false;
         for (const TabRect& t : c.tabs) {
-            if (In(t.close, m)) { const std::string n = t.name; c.layout.Close(n); c.closed.push_back(n); Rebuild(c); done = true; break; }
+            if (In(t.close, m)) {
+                const std::string n = t.name;
+                if (c.closedHome.size() >= 64) c.closedHome.clear();   // (titles with counts in them come and go)
+                std::vector<std::string>& home = c.closedHome[n];
+                home.clear();
+                if (const DockLayout::Node* leaf = c.layout.Find(t.node)) for (const std::string& o : leaf->tabs) if (o != n) home.push_back(o);
+                c.layout.Close(n); c.closed.push_back(n); Rebuild(c); done = true; break;
+            }
         }
         if (!done) for (const TabRect& t : c.tabs) {
             if (In(t.r, m)) {
@@ -434,23 +457,18 @@ void DockSpace(Rect area) {
         }
     }
     {   // where each tab is drawn: a tab held and moved along its strip follows the pointer (where it was grabbed, kept inside the strip);
-        // the others ease from where they were drawn last frame to their slots (about 90% of the way in 0.13 s), so a tab that makes room
-        // slides aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
-        const float dt = std::isfinite(ui_core::g_io.deltaTime) ? std::clamp(ui_core::g_io.deltaTime, 0.0f, 0.1f) : 0.0f;
-        const float k = 1.0f - std::exp(-dt * 18.0f);
+        // the others slide from where they were drawn last frame to their slots (ui_core::tabSlideX, shared with reorderable tab bars), so
+        // a tab that makes room moves aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
         const bool held = c.kind == Ctx::TabPress && c.moving;
         std::map<std::string, Ctx::Slide> next;
         for (TabRect& t : c.tabs) {
             float x = t.r.x;
             const DockLayout::Node* n = c.layout.Find(t.node);
             if (held && t.name == c.dragWin && n) {
-                x = std::max(n->rect.x, std::min(m.x - c.grab.x, n->rect.x + n->rect.w - t.r.w));
+                x = ui_core::tabHeldX(m.x, c.grab.x, n->rect.x, n->rect.w, t.r.w);
             } else {
                 const auto it = c.slide.find(t.name);
-                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1 && std::isfinite(it->second.x)) {
-                    x = it->second.x + (t.r.x - it->second.x) * k;
-                    if (std::fabs(x - t.r.x) < 0.5f) x = t.r.x;
-                }
+                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1) x = ui_core::tabSlideX(it->second.x, t.r.x);
             }
             t.shownX = x;
             next[t.name] = Ctx::Slide{t.node, x, frame};
@@ -519,6 +537,7 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     if (p_open && !*p_open) { DockBuilderDropNext(); return false; }
     c.seen[name] = GetFrameCount();   // submitted this frame: it has a tab
     DockBuilderApplyNext(name);   // SetNextWindowDockID
+    if (!c.layout.Contains(name)) ReturnHome(c, name);
     if (!c.layout.Contains(name)) {
         const float k = (float)(c.layout.FloatingWindows().size() % 8) * 26.0f;
         if (!c.layout.AddFloating(name, Rect{c.area.x + 40.0f + k, c.area.y + 40.0f + k, 320.0f, 240.0f})) return false;   // layout full
@@ -562,6 +581,10 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     return vis;
 }
 
+// Has the window a tab (its DockBegin ran this frame or the one before)? The node snapshots ported code reads (OkayUIDockNodes.cpp) list
+// only these, as Dear ImGui's nodes hold only windows that are submitted: a strip the host hides (side tabs) must not list closed windows.
+bool DockWindowSubmitted(const std::string& name) { return C().Submitted(name); }
+
 std::vector<DockTabInfo> GetDockTabs() {
     const Ctx& c = C();
     std::vector<DockTabInfo> out;
@@ -569,6 +592,7 @@ std::vector<DockTabInfo> GetDockTabs() {
         const DockLayout::Node* n = c.layout.Find(t.node);
         DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal; i.shown = t.r; i.shown.x = t.shownX;
         i.selected = n && n->active == t.index;
+        i.held = c.kind == Ctx::TabPress && c.moving && t.name == c.dragWin;
         out.push_back(i);
     }
     return out;
@@ -591,15 +615,10 @@ Rect GetDockStripRect(int leaf) {
 bool DockAdoptTitle(const char* title) {
     if (!title || !*title) return false;
     DockLayout& L = C().layout;
-    if (L.Contains(title)) return true;
-    const char* key = std::strstr(title, "###");
-    if (!key) return false;
-    const std::size_t keyLen = std::strlen(key);
-    for (const std::string& n : L.Windows()) {
-        const std::size_t at = n.find("###");
-        if (at != std::string::npos && n.size() - at == keyLen && n.compare(at, keyLen, key) == 0) return L.Rename(n, title);
-    }
-    return false;
+    const std::string have = L.SameWindowName(title);   // the title itself, or the same "###" id under its earlier text
+    if (have == title) return true;
+    if (!have.empty()) return L.Rename(have, title);
+    return ReturnHome(C(), title);   // a closed tab's window opened again: its ordinary Begin docks it where it was
 }
 bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
 bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)

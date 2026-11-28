@@ -3477,6 +3477,7 @@ endif()
 # in process, the editor link, and each command group against the real system (scene text, undo, properties, bindings, physics, Play,
 # animation, modeling, UI layout, visual script files, screenshots, the log). tests/scripts/test_automation_mcp.py runs a real okay mcp.
 add_executable(test_automation test_automation.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationEditor.cpp ${PROJECT_SOURCE_DIR}/editor/AutomationVs.cpp
+               ${PROJECT_SOURCE_DIR}/editor/AutomationOps.cpp ${PROJECT_SOURCE_DIR}/editor/MenuActions.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp
                ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_automation PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
 target_link_libraries(test_automation PRIVATE okay::engine)

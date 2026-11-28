@@ -57,15 +57,16 @@ Tex const kAtlasTex = (Tex)(void*)&g_ttf;   // placeholder (never dereferenced)
 Tex g_defTex = nullptr;                    // texture for flat geometry (nullptr / kAtlasTex)
 float g_whiteU = 0.0f, g_whiteV = 0.0f;             // uv of an opaque texel for flat geometry
 // Engine fonts drawing text the atlas lacks (fontatlas::FallbackFont). Their spans
-// carry the font's address as a placeholder; the backend binds the font's atlas (FallbackFontOf).
-okay::TtfFont* g_fbFonts[8];
+// carry the font's address as a placeholder; EndFrame binds the font's atlas.
+// (32: a font drawn sharp is one face per drawn size, okay::TtfFont::ForDeviceSize, so the UI font takes a few of them.)
+okay::TtfFont* g_fbFonts[kMaxFallbackFonts];
 int            g_nfb = 0;
 OverlaySpan g_ovSpans[kMaxOvSpans];
 int g_clipBase = 0;
 int         g_novSpans = 0;
 Tex fallbackTex(okay::TtfFont* f) {
     for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (Tex)(void*)f;
-    if (g_nfb == 8) return nullptr;
+    if (g_nfb == kMaxFallbackFonts) return nullptr;
     g_fbFonts[g_nfb++] = f;
     return (Tex)(void*)f;
 }
@@ -284,12 +285,20 @@ DragDrop g_dd;
 WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
-struct OpenSlot { int id = 0; bool open = false; bool used = false; };
-OpenSlot g_opens[128];
+// Open / closed state of tree nodes, collapsing headers and combos, by id. When every slot is taken, the one used longest ago (not this
+// frame) is given to the new id. (It was 128 slots and then one shared fallback: an editor that had shown many components ran out, and
+// once a default-open header had set the shared one, every combo past the table drew its list open, seen in round 6's Inspector pass.)
+struct OpenSlot { int id = 0; bool open = false; bool used = false; unsigned long long seen = 0; };
+OpenSlot g_opens[1024];
 bool* openState(int id, bool dflt) {
-    for (OpenSlot& s : g_opens) if (s.used && s.id == id) return &s.open;
-    for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
-    static bool sink = false; return &sink;   // table full: harmless fallback
+    for (OpenSlot& s : g_opens) if (s.used && s.id == id) { s.seen = g_frameCount; return &s.open; }
+    OpenSlot* pick = nullptr;
+    for (OpenSlot& s : g_opens) {
+        if (!s.used) { pick = &s; break; }
+        if (s.seen != g_frameCount && (!pick || s.seen < pick->seen)) pick = &s;
+    }
+    if (pick) { pick->used = true; pick->id = id; pick->open = dflt; pick->seen = g_frameCount; return &pick->open; }
+    static bool sink = false; sink = dflt; return &sink;   // all 1024 used this very frame: this frame's default
 }
 // Per-id float state (child-region scroll offsets), persisted across frames.
 struct FloatSlot { int id = 0; float v = 0.0f; bool used = false; };
@@ -416,6 +425,11 @@ float g_framePadX = -1.0f;
 float g_sbSize = -1.0f;
 // StyleVar_FramedWidgets (OkayUI's own; 0 = off): check boxes as a frame with a check mark, combos as a field with a square arrow button.
 bool g_framedWidgets = false;
+// AlignTextToFramePadding (Dear ImGui's rows): the next text is a frame tall, its line centred in it, so a label before a framed field on
+// the same line sits on the field's text line (the New Project form's "Name" and "Location" sat above their fields' text). Any item
+// placed clears it (place()), so it never reaches a text further down.
+bool g_alignFrameNext = false;
+float g_labelCol = 0.0f;   // StyleVar_LabelColumn: 0 off, else the label column's width (below 1: a share of the row); see LabelColumn
 float g_childRounding = -1.0f;   // StyleVar_ChildRounding / GetStyle().ChildRounding: the corners of children (< 0: the frame rounding)
 // A pushed StyleVar_WindowPadding (y; < 0 = none pushed): a framed or padded child (the flags form of BeginChild) then pads its content by
 // the window padding (x, y) instead of 6 pixels each way.
@@ -445,6 +459,7 @@ float availW() {
 // to the next line (SameLine() keeps it on the current line instead).
 bool g_prevInOverlay = false;
 void place(float w, float h, float& x, float& y) {
+    g_alignFrameNext = false;
     g_prevInOverlay = false;
     bool sameLine = false;
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
@@ -706,14 +721,29 @@ void overlayClipToStack() {
     const auto& r = g_clipStack[g_clipTop - 1];
     overlayClipSet(true, r.x, r.y, r.w, r.h);
 }
-void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4]) {
+// Text with a TrueType font: one textured quad per glyph. With `sharp` (the UI fonts: small files) the glyphs come from a face baked at
+// the size the text is drawn (okay::TtfFont::ForDeviceSize), placed on whole pixels: the baseline is rounded, and each glyph's left
+// edge is the whole pixel left of the pen with a copy rendered for the quarter pixel the pen is past it (GlyphForPhase), so every
+// glyph is copied one atlas pixel to one screen pixel, with no blur from scaling a 48-pixel bake down or from a fractional position.
+// Without it (a fallback font for a script, which can be megabytes) the glyphs are its bake, scaled.
+void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4], bool sharp) {
     if (g_cullRow && !g_toOverlay) return;
-    Tex tex = fallbackTex(f);
+    const float px = fH() * s;
+    okay::TtfFont* face = f;
+    if (sharp && px >= 4.0f && px <= 256.0f) {
+        okay::TtfFont* d = f->ForDeviceSize(px, false);
+        if (d && d->Valid()) face = d;
+    }
+    Tex tex = fallbackTex(face);
+    if (!tex && face != f) { face = f; tex = fallbackTex(f); }   // every texture slot taken: the font's own bake, scaled
     if (!tex) return;
-    f->Prepare(str);   // bake its new characters before reading the atlas size
-    const float px = fH() * s, k = px / f->BakeHeight();
-    const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
-    const float base = y + f->Ascent(px);
+    face->Prepare(str);   // bake its new characters before reading the atlas size
+    const float k = px / face->BakeHeight();
+    const bool snap = face != f || std::fabs(k - 1.0f) < 0.02f;
+    if (snap)   // the quarter-pixel copies too, before the atlas size is read (baking one can make the atlas bigger)
+        for (const char* p = str; *p;) { const unsigned cp = fontatlas::NextCodepoint(&p); if (cp > ' ') for (int ph = 1; ph < okay::TtfFont::kPhases; ++ph) face->GlyphForPhase(cp, ph); }
+    const float aw = (float)face->Atlas().Width(), ah = (float)face->Atlas().Height();
+    const float base = snap ? std::floor(y + face->Ascent(px) + 0.5f) : y + face->Ascent(px);
     const VtxColor sc = toColor(c);
     BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
@@ -722,13 +752,25 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     bindTexture(tex);
     float pen = x;
     for (const char* p = str; *p;) {
-        const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
+        const unsigned cp = fontatlas::NextCodepoint(&p);
+        const okay::TtfFont::Glyph* g = face->GlyphFor(cp);
         if (!g) continue;
         if (g->x1 > g->x0 && g->y1 > g->y0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
         if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
-            const float x0 = pen + g->xoff * k, y0 = base + g->yoff * k;
-            const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
-            const float u0 = g->x0 / aw, v0 = g->y0 / ah, u1 = g->x1 / aw, v1 = g->y1 / ah;
+            const okay::TtfFont::Glyph* q = g;   // the bitmap drawn (a quarter-pixel copy when snapped)
+            float x0, y0, x1, y1;
+            if (snap) {
+                float whole = std::floor(pen);
+                int phase = (int)std::floor((pen - whole) * (float)okay::TtfFont::kPhases + 0.5f);
+                if (phase >= okay::TtfFont::kPhases) { phase = 0; whole += 1.0f; }
+                if (phase > 0) { const okay::TtfFont::Glyph* ph = face->GlyphForPhase(cp, phase); if (ph) q = ph; }
+                x0 = whole + std::floor(g->xoff + 0.5f); y0 = base + std::floor(g->yoff + 0.5f);
+                x1 = x0 + (float)(q->x1 - q->x0); y1 = y0 + (float)(q->y1 - q->y0);
+            } else {
+                x0 = pen + g->xoff * k; y0 = base + g->yoff * k;
+                x1 = x0 + (g->x1 - g->x0) * k; y1 = y0 + (g->y1 - g->y0) * k;
+            }
+            const float u0 = q->x0 / aw, v0 = q->y0 / ah, u1 = q->x1 / aw, v1 = q->y1 / ah;
             const int b0 = nv;
             BatchVertex v; v.color = sc;
             v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
@@ -747,14 +789,18 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
     { const float lh = fH() * s; if (clippedAway(x - lh, y - lh, 1e30f, y + 2.0f * lh)) return; }   // a line above, below or right of the clip
-    if (g_font->ttf) { drawTextWith(const_cast<okay::TtfFont*>(static_cast<const okay::TtfFont*>(g_font->ttf)), x, y, str, s, c); return; }
+    if (g_font->ttf) { drawTextWith(const_cast<okay::TtfFont*>(static_cast<const okay::TtfFont*>(g_font->ttf)), x, y, str, s, c, true); return; }
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
-        if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
+        if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c, f == okay::BuiltinUIFont()); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
         const float px = fH() * s;
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
+        // A size between the baked ones (16 px text at 150% is 24 px, between 20 and 26): the same font (Roboto, okay::BuiltinUIFont) baked
+        // at that size and placed on whole pixels, not the next baked size scaled down and blurred.
+        if (!exact && (!g_toOverlay || g_novSpans < 30))
+            if (okay::TtfFont* ui = okay::BuiltinUIFont(); ui && ui->Valid()) { drawTextWith(ui, x, y, str, s, c, true); return; }
         float pen = exact ? std::floor(x + 0.5f) : x;
         const float base = exact ? std::floor(y + z.ascent * k + 0.5f) : y + z.ascent * k;
         BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
@@ -880,37 +926,89 @@ void focusRing(float x, float y, float w, float h, float rad) {
 // window, Shift+Tab to the one before, both wrap round; a click puts the focus on what was clicked without showing the ring; Space or Enter
 // presses the focused control; Escape hides the ring.
 NavState g_nav;
-bool navItem(int id, float x, float y, float w, float h, float rad, bool text) {
+namespace {
+// Shared by every kind: is this control in the Tab order here (not disabled, not in a window or child that keeps the keys), and its entry.
+bool navEntry(int id, NavKind kind, NavEntry& e) {
     if (!id || g_disCount > 0 || !g_lay.active) return false;
     if (g_popupTop == 0 && g_curWin.valid && g_curWin.noNav) return false;            // a window that keeps the keys for itself
     const int childBase = g_popupTop > 0 ? g_popupStack[g_popupTop - 1].childTop : 0;   // (a popup opened from such a child is not one)
     for (int i = childBase; i < g_childTop && i < 8; ++i) if (g_nav.childOff[i]) return false;   // ... or a child region of one
-    NavState& n = g_nav;
-    NavEntry e; e.id = id; e.text = text;
+    e.id = id; e.kind = kind; e.text = kind == NavKind::Text;
     if (g_popupTop > 0) {   // inside a popup or a modal: its own Tab order
         const PopupCtx& c = g_popupStack[g_popupTop - 1];
-        e.win = c.id; e.wx = c.x; e.wy = c.y; e.ww = c.w; e.wh = (c.hSlot ? *c.hSlot : 0.0f) + 2.0f * c.padY;
+        e.win = c.id; e.wx = c.x; e.wy = c.y; e.ww = c.w; e.wh = (c.hSlot ? *c.hSlot : 0.0f) + 2.0f * c.padY; e.popup = true;
     } else if (g_curWin.valid) { e.win = g_curWin.id; e.wx = g_curWin.x; e.wy = g_curWin.y; e.ww = g_curWin.w; e.wh = g_curWin.h; }
     else { e.win = 0; e.wx = 0.0f; e.wy = 0.0f; e.ww = g_dispW; e.wh = g_dispH; }
+    NavState& n = g_nav;
     if (n.nNow < NavState::kMax) n.now[n.nNow++] = e;
     if (g_active == id && g_pressed) n.id = id;   // a click: the focus goes there, without the ring
+    return true;
+}
+bool isRow(NavKind k) { return k == NavKind::Row || k == NavKind::Tree; }
+// A key pressed this frame, or held and due to repeat (the rate IsKeyPressed repeats at)
+bool navKeyRepeat(int k) {
+    if (!g_keyNow[k]) return false;
+    if (!g_keyPrev[k]) return true;
+    if (g_clock >= g_keyNextRepeat[k]) { g_keyNextRepeat[k] = g_clock + 0.05; return true; }
+    return false;
+}
+}   // namespace
+bool navItem(int id, float x, float y, float w, float h, float rad, bool text) {
+    NavEntry e;
+    if (!navEntry(id, text ? NavKind::Text : NavKind::Control, e)) return false;
+    const NavState& n = g_nav;
     if (n.visible && n.id == id && !text) focusRing(x, y, w, h, rad);   // (a text field draws its own ring while it has the keyboard)
     return n.activate == id && !text;
+}
+int navValue(int id, float x, float y, float w, float h, float rad) {
+    NavEntry e;
+    if (!navEntry(id, NavKind::Value, e)) return 0;
+    const NavState& n = g_nav;
+    if (!(n.visible && n.id == id)) return 0;
+    if (g_active != id) focusRing(x, y, w, h, rad);
+    return n.step;
+}
+bool navRow(int id, float x, float y, float w, float h, float rad, NavKind kind, int* step) {
+    if (step) *step = 0;
+    NavEntry e;
+    if (!navEntry(id, kind, e)) return false;
+    NavState& n = g_nav;
+    if (!(n.visible && n.id == id)) return false;
+    if (n.reveal == id) {   // moved to with the arrows: bring it into view in its scrolling window
+        n.reveal = 0;
+        if (g_childTop > 0 && g_clipTop > g_clipBase) {   // inside a scrolling child: scroll by what is out of its clip
+            const auto& c = g_clipStack[g_clipTop - 1];
+            if (y < (float)c.y) SetScrollY(GetScrollY() - ((float)c.y - y));
+            else if (y + h > (float)(c.y + c.h)) SetScrollY(GetScrollY() + (y + h - (float)(c.y + c.h)));
+        }
+    }
+    (void)x; (void)w; (void)rad;
+    if (step) *step = n.step;
+    return n.activate == id;
+}
+void navRowRing(int id, float x, float y, float w, float h, float rad) {
+    const NavState& n = g_nav;
+    if (n.visible && n.id == id && id != 0) focusRing(x + 4.0f, y + 4.0f, w - 8.0f, h - 8.0f, rad);   // inside the row: rows touch, a ring outside would cover the next one
 }
 void navFrameStart() {
     NavState& n = g_nav;
     for (int i = 0; i < n.nNow; ++i) n.prev[i] = n.now[i];
-    n.nPrev = n.nNow; n.nNow = 0; n.activate = 0;
+    n.nPrev = n.nNow; n.nNow = 0; n.activate = 0; n.step = 0;
     if (g_pressed) { n.visible = false; n.id = 0; }
     auto edgeOf = [](int k) { return g_keyNow[k] && !g_keyPrev[k]; };
     const bool tab = edgeOf(KeyId_Tab) && !g_io.keyCtrl && !g_io.keyAlt;
+    int cur = -1;   // the focused entry of last frame's list
+    for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == n.id) cur = i;
+    if (cur < 0 && n.back != 0 && n.id != 0) {   // the focused row was in a popup that closed: the focus goes back to what opened it
+        for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == n.back) cur = i;
+        if (cur >= 0) n.id = n.back;
+        n.back = 0;
+    }
     if (tab && n.nPrev > 0) {
         // where the focus is now: a text field with the keyboard, else the last control focused; a field that is not in the Tab order
         // (a multi-line field, one that completes on Tab, a code editor) keeps Tab for itself
-        int cur = -1;
         bool own = true;
-        if (g_focus != 0) { own = false; for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == g_focus) { cur = i; own = n.prev[i].text; } }
-        else for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == n.id) cur = i;
+        if (g_focus != 0) { own = false; cur = -1; for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].id == g_focus) { cur = i; own = n.prev[i].text; } }
         int win = 0; bool haveWin = cur >= 0;
         if (haveWin) win = n.prev[cur].win;
         else {   // nothing focused yet: the window or popup under the pointer (the last one listed there is in front)
@@ -920,17 +1018,48 @@ void navFrameStart() {
             }
         }
         if (own && haveWin) {
+            // the stops: every control, and the first row of each run of rows (a list is one stop); the focused row stands for its run
             int idx[NavState::kMax]; int cnt = 0, at = -1;
-            for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].win == win) { if (i == cur) at = cnt; idx[cnt++] = i; }
+            int prevInWin = -1;
+            for (int i = 0; i < n.nPrev; ++i) {
+                if (n.prev[i].win != win) continue;
+                const bool runGoesOn = isRow(n.prev[i].kind) && prevInWin >= 0 && isRow(n.prev[prevInWin].kind);
+                prevInWin = i;
+                if (runGoesOn) {
+                    if (i == cur && cnt > 0) { idx[cnt - 1] = i; at = cnt - 1; }   // the run's stop is the row that has the focus
+                    continue;
+                }
+                if (i == cur) at = cnt;
+                idx[cnt++] = i;
+            }
             if (cnt > 0) {
                 const bool back = g_io.keyShift;
                 const int pos = at < 0 ? (back ? cnt - 1 : 0) : (at + (back ? cnt - 1 : 1)) % cnt;
                 const NavEntry& t = n.prev[idx[pos]];
-                n.id = t.id; n.visible = true;
+                n.id = t.id; n.visible = true; n.reveal = isRow(t.kind) ? t.id : 0;
                 if (t.text) { if (g_focus != 0 && g_focus != t.id) g_focusLostEnd = g_focus; g_focus = t.id; g_focusClaimed = true; n.selectAll = t.id; }
                 else if (g_focus != 0) { g_focusLostEnd = g_focus; g_focus = 0; }
             }
         }
+    } else if (g_focus == 0 && !g_io.keyCtrl && !g_io.keyAlt && n.nPrev > 0) {
+        const bool up = navKeyRepeat(KeyId_Up), down = !up && navKeyRepeat(KeyId_Down);
+        const bool left = navKeyRepeat(KeyId_Left), right = !left && navKeyRepeat(KeyId_Right);
+        // the popup in front (the last one listed): with nothing of it focused, Down and Up go to its first and last row
+        int front = -1;
+        for (int i = n.nPrev - 1; i >= 0 && front < 0; --i) if (n.prev[i].popup) front = i;
+        const bool inFront = cur >= 0 && front >= 0 && n.prev[cur].win == n.prev[front].win;
+        if ((up || down) && front >= 0 && !inFront) {
+            const int win = n.prev[front].win;
+            int pick = -1;
+            for (int i = 0; i < n.nPrev; ++i) if (n.prev[i].win == win && isRow(n.prev[i].kind) && (pick < 0 || up)) pick = i;
+            if (pick >= 0) { n.back = n.visible ? n.id : 0; n.id = n.prev[pick].id; n.visible = true; n.reveal = n.id; }
+        } else if (n.visible && cur >= 0 && isRow(n.prev[cur].kind) && (up || down)) {   // along the rows of the window
+            const int win = n.prev[cur].win;
+            for (int i = cur + (up ? -1 : 1); i >= 0 && i < n.nPrev; i += up ? -1 : 1)
+                if (n.prev[i].win == win && isRow(n.prev[i].kind)) { n.id = n.prev[i].id; n.reveal = n.id; break; }
+        }
+        if (n.visible && cur >= 0 && n.prev[cur].id == n.id && (n.prev[cur].kind == NavKind::Value || n.prev[cur].kind == NavKind::Tree) && (left || right))
+            n.step = left ? -1 : 1;
     }
     if (n.visible && n.id != 0 && g_focus == 0 && (edgeOf(KeyId_Space) || edgeOf(KeyId_Enter) || g_in.enter)) n.activate = n.id;
     if (n.visible && g_focus == 0 && (edgeOf(KeyId_Escape) || g_in.escape)) n.visible = false;
@@ -1956,7 +2085,8 @@ namespace ui_core { float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -
 namespace ui_core {
 inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) {
-    const float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : (g_textRowH < 0.0f ? textH() : rowH()));
+    float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : (g_textRowH < 0.0f ? textH() : rowH()));
+    if (g_alignFrameNext && rowHeight <= 0.0f) h = std::max(h, rowH());   // AlignTextToFramePadding: a frame tall, the text centred in it
     const bool after = g_lay.pendingSameLine && !g_posOverride;
     const float prevH = g_lay.prevH;
     const bool onText = after && g_lay.hasLineTop;   // after a centred text: on that text's line (one baseline), the line's top kept
@@ -2119,6 +2249,10 @@ void textBlock(const char* s, const unsigned char* col) {
         para.Done();
     } else if (s && g_textRowH != 0.0f && std::strchr(s, '\n')) {   // Dear ImGui's text rows: a line break starts a new line under the first (no '?' glyph)
         wrapLines(s, 1.0e9f, col, 1.0e9f);
+    } else if (s && g_popupTop > 0 && g_popupStack[g_popupTop - 1].capped && g_childTop == g_popupStack[g_popupTop - 1].childTop && labelW(s) > availW()) {
+        const float right = cursorX() + availW();
+        wrapLines(s, availW(), col, fullW());   // a dialog as wide as the display: a longer line wraps inside it instead of running past its edge
+        if (right > g_lay.maxRight) g_lay.maxRight = right;   // and it still needs the whole width (the dialog stays at its widest, no flicker)
     } else textLine(s, col);
 }
 } // namespace
@@ -2218,19 +2352,26 @@ void Unindent(float w) {
     if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
 }
 
+// A bullet: a round dot, centred on the text line it starts. With Dear ImGui's text rows (StyleVar_TextRowHeight) the item is one text line
+// tall, so text placed after it with SameLine (the launcher's What's New list: Bullet, SameLine, a wrapped text in a group) has its first
+// line on the dot; it was a square in a whole row's height and sat below the line it marked.
+static float bulletRowH() { return g_textRowH > 0.0f ? g_textRowH : (g_textRowH < 0.0f ? textH() : rowH()); }
+static void bulletDot(float x, float y, float h, float d) {
+    fillCircle(x + d * 0.5f, y + h * 0.5f, d * 0.5f, g_theme.text, 16);
+}
 void Bullet() {
     if (!g_lay.active) return;
-    const float d = textH() * 0.35f, h = rowH();
+    const float d = std::max(4.0f, std::round(textH() * 0.35f)), h = bulletRowH();
     float x, y; place(d, h, x, y);
-    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+    bulletDot(x, y, h, d);
 }
 
 void BulletText(const char* s) {
     if (!g_lay.active) return;
-    const float d = textH() * 0.35f, h = rowH();
+    const float d = std::max(4.0f, std::round(textH() * 0.35f)), h = bulletRowH();
     const float w = d + 8.0f + (s && *s ? labelW(s) : 0.0f);
     float x, y; place(w, h, x, y);
-    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+    bulletDot(x, y, h, d);
     if (s && *s) drawText(x + d + 8.0f, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
 }
 
@@ -2255,7 +2396,10 @@ static float sizeOr(float v, float automatic) { return (v > 0.0f && std::isfinit
 bool Button(const char* label, Vec2 size) {
     if (!g_lay.active) return false;
     const float sx = std::isfinite(size.x) ? size.x : 0.0f, sy = std::isfinite(size.y) ? size.y : 0.0f;
-    const float w = sx > 0.0f ? sx : (sx < 0.0f ? availW() : visW(label) + 24.0f), h = sy > 0.0f ? sy : rowH();
+    float w = sx > 0.0f ? sx : (sx < 0.0f ? availW() : visW(label) + 24.0f), h = sy > 0.0f ? sy : rowH();
+    // A width given in pixels that its label does not fit (the editor's 220-pixel "Open a project folder..." at 150%): the button grows to
+    // hold the label with 8 pixels each side, as far as the row has room, instead of the label running out of it.
+    if (sx > 0.0f) { const float need = visW(label); if (need > 0.0f && need + 16.0f > w) w = std::max(w, std::min(need + 16.0f, realAvailW())); }
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -2294,6 +2438,7 @@ void PushStyleVar(StyleVar var, Vec2 value) {
                                      g_framePadX = std::isfinite(value.x) ? std::min(std::max(value.x, 0.0f), 64.0f) : -1.0f; break;
         case StyleVar_ScrollbarSize: s.a = g_sbSize; g_sbSize = std::isfinite(value.x) && value.x >= 4.0f ? std::min(value.x, 64.0f) : -1.0f; break;
         case StyleVar_FramedWidgets: s.a = g_framedWidgets ? 1.0f : 0.0f; g_framedWidgets = std::isfinite(value.x) && value.x != 0.0f; break;
+        case StyleVar_LabelColumn:   s.a = g_labelCol; g_labelCol = std::isfinite(value.x) && value.x > 0.0f ? std::min(value.x, 4096.0f) : 0.0f; break;
         case StyleVar_ButtonTextAlign: s.a = g_btnAlignX; g_btnAlignX = std::isfinite(value.x) ? std::min(1.0f, std::max(0.0f, value.x)) : 0.5f; break;
         case StyleVar_TextRowHeight: s.a = g_textRowH; g_textRowH = !std::isfinite(value.x) ? 0.0f : (value.x > 0.0f ? std::min(value.x, 4096.0f) : (value.x < 0.0f ? -1.0f : 0.0f)); break;
         case StyleVar_PopupPadding:  s.a = g_popupPadX; s.b = g_popupPadY;
@@ -2321,6 +2466,7 @@ void PopStyleVar(int count) {
             case StyleVar_FramePadding:  g_framePadY = s.a; g_framePadX = s.b; break;
             case StyleVar_ScrollbarSize: g_sbSize = s.a; break;
             case StyleVar_FramedWidgets: g_framedWidgets = s.a != 0.0f; break;
+            case StyleVar_LabelColumn:   g_labelCol = s.a; break;
             case StyleVar_CellPadding:   g_cellPadX = s.a; g_cellPadY = s.b; break;
             case StyleVar_PopupPadding:  g_popupPadX = s.a; g_popupPadY = s.b; break;
             case StyleVar_PopupWidth:    g_popupW = s.a; break;
@@ -2330,13 +2476,61 @@ void PopStyleVar(int count) {
     }
 }
 
+// ---- The label column (StyleVar_LabelColumn) -------------------------------------------------------------------------------------
+// The column's width for a field that starts a line here (0: no column: off, after SameLine, or the row too narrow).
+static float labelColumnHere() {
+    if (!(g_labelCol > 0.0f) || !g_lay.active || g_lay.pendingSameLine || g_posOverride) return 0.0f;
+    const float row = fullW();
+    float col = g_labelCol < 1.0f ? g_labelCol * row : g_labelCol;
+    col = std::floor(std::min(col, row * 0.6f));
+    return col < 40.0f || row - col < 40.0f ? 0.0f : col;   // too narrow for a column: the plain layout
+}
+float LabelColumnWidth() { return labelColumnHere(); }
+LabelColumn::LabelColumn(const char* label) {
+    if (!label) return;
+    const VisLabel vis(label);
+    if (!vis.b[0]) return;
+    const float col = labelColumnHere();
+    if (col <= 0.0f) return;
+    on = true; this->col = col; savedIndent = g_lay.indent; left = leftEdge();
+    std::snprintf(text, sizeof text, "%s", vis.b);
+    g_lay.indent += col;   // the field is placed after the column
+}
+void LabelColumn::placed(float y, float h) {
+    if (!on || done) return;
+    done = true;
+    g_lay.indent = savedIndent;
+    // the label, cut to the column (less a gap) with "..." on whole characters
+    const float room = col - 8.0f;
+    char shown[sizeof text + 4];
+    std::snprintf(shown, sizeof shown, "%s", text);
+    if (labelW(shown) > room) {
+        std::size_t n = std::strlen(shown);
+        while (n > 0) {
+            do { --n; } while (n > 0 && ((unsigned char)shown[n] & 0xC0) == 0x80);   // back to a character's first byte
+            std::memcpy(shown + n, "...", 4);
+            if (labelW(shown) <= room) break;
+        }
+    }
+    drawText(left, y + (h - textH()) * 0.5f, shown, g_theme.textScale, g_theme.text);
+}
+void LabelColumn::finish() {
+    if (!on) return;
+    if (!done) g_lay.indent = savedIndent;
+    else if (g_lay.prevX > left) { g_lay.prevW += g_lay.prevX - left; g_lay.prevX = left; }   // the item's rectangle covers its label
+    on = false;
+}
+LabelColumn::~LabelColumn() { finish(); }
+
 static bool Checkbox_raw(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);   // "##" and what follows only name the widget
+    LabelColumn lc(label);       // StyleVar_LabelColumn: the label in the column, the box after it
     const float sz = boxSize(), h = std::max(rowH(), sz);
-    const float w = sz + ((vis.b[0] || !g_framedWidgets) ? 8.0f + labelW(vis.b) : 0.0f);   // no label with StyleVar_FramedWidgets: just the box (Dear ImGui's: no gap after it either)
+    const float w = sz + (!lc.on && (vis.b[0] || !g_framedWidgets) ? 8.0f + labelW(vis.b) : 0.0f);   // no label with StyleVar_FramedWidgets: just the box (Dear ImGui's: no gap after it either)
     float x, y; place(w, h, x, y);
-    return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value);
+    lc.placed(y, h);
+    return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, lc.on ? "" : vis.b, value);
 }
 
 static bool RadioButton_raw(const char* label, int* value, int option) {
@@ -2466,9 +2660,11 @@ static bool SliderFloat_raw(const char* label, float* value, float minV, float m
     const NextNumber nn = takeNextNumber();
     noteNumberText(0, "");
     const float h = rowH();
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     int decs = -1;
     if (nn.has) { char probe[8]; FormatNumber(probe, sizeof probe, nn.fmt, 0.0, isInt, &decs); }
@@ -2522,6 +2718,8 @@ static bool SliderInt_raw(const char* label, int* value, int minV, int maxV) {
     float f = (float)*value;
     // Reuse the float slider, then snap to the nearest integer.
     bool ch = SliderFloat_raw(label, &f, (float)minV, (float)maxV, true);
+    // Left / Right moved it less than one: still one whole step (a hundredth of a small range rounds back to the same number)
+    if (g_nav.visible && g_nav.id == hashLabel(label) && g_nav.step != 0 && (int)(f + (f >= 0.0f ? 0.5f : -0.5f)) == *value) f = (float)(*value + g_nav.step);
     int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
     if (iv < minV) iv = minV;
     if (iv > maxV) iv = maxV;
@@ -2708,12 +2906,14 @@ bool ImageButton(const char* id, Tex tex, float w, float h) {
 static bool InputText_raw(const char* label, char* buf, int cap, unsigned flags) {
     if (!g_lay.active || !buf) return false;
     const VisLabel vis(label);
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
     const float h = rowH();
-    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
+    const float lw = !lc.on && labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     // A field with no visible label honours a negative width (SetNextItemWidth(-n): end n pixels before the right edge, Dear ImGui's rule, as
     // CalcItemWidth does): the Project panel's name prompt leaves room for the file type after the field (".okaymat" ran past the dialog)
-    const float w = lw == 0.0f ? CalcItemWidth() : availW();
+    const float w = lw == 0.0f && !lc.on ? CalcItemWidth() : availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap, flags);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
@@ -2725,9 +2925,11 @@ static bool InputInt_raw(const char* label, int* value, int step) {
     const bool steppers = step > 0;   // Dear ImGui's rule: a step of 0 (or less) is a plain number field
     const int id = hashLabel(label);
     const float h = rowH();
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     if (g_framedWidgets) {   // Dear ImGui's look: a field in the frame colours with the value FramePadding.x in, then the two square
                              // steppers, StyleVar_ItemInnerSpacing (x, default 4) apart and before the label
         const VisLabel vis(label);   // "##" and what follows only name the widget
@@ -2914,7 +3116,7 @@ void TextUnformatted(const char* text, const char* textEnd) {
     textBlock(buf, g_theme.text);
 }
 
-void AlignTextToFramePadding() {}   // text in a row is already vertically centred with framed widgets
+void AlignTextToFramePadding() { if (g_lay.active && g_textRowH != 0.0f) g_alignFrameNext = true; }   // (OkayUI's own rows: text is already a frame tall)
 
 Vec2 GetItemRectMin() { const Rect r = GetItemRect(); return Vec2{ r.x, r.y }; }
 Vec2 GetItemRectMax() { const Rect r = GetItemRect(); return Vec2{ r.x + r.w, r.y + r.h }; }
@@ -2979,12 +3181,14 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
     const int id = hashLabel(label);
     bool* open = openState(id, false);
     const VisLabel vis(label);
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the box after it
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
+    const float lw = !lc.on && labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     float w = availW();
     // an explicit width is the box's; the label is extra (with StyleVar_FramedWidgets the views pass the whole row's width, label included)
     if (lw > 0.0f && widthOverridden() && !g_framedWidgets) { const float room = realAvailW(); w = w + lw < room ? w + lw : room; }
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
 
     // An open list of another combo (last frame's overlays) lying over this box takes the press: without this, a combo under a long
@@ -3033,12 +3237,21 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
     return changed;
 }
 
+// The value one Left / Right press adds to a float drag: its drag speed, but at least the smallest step its format shows (0.01 for "%.2f"),
+// so a press always changes what is shown. `decimals` < 0: unknown (then the speed, or 0.001 for a speed of 0).
+static float navDragStep(float speed, int decimals) {
+    const float shown = decimals >= 0 && decimals < 10 ? std::pow(10.0f, (float)-decimals) : 0.0f;
+    const float s = std::isfinite(speed) ? std::fabs(speed) : 0.0f;
+    const float step = std::max(s, shown);
+    return step > 0.0f ? step : 0.001f;
+}
 // Shared body for the drag widgets: returns the pixels dragged this frame (0 unless
 // this id is the active drag). Draws the box; the caller formats/places the value.
 namespace {
-bool dragBox(int id, float x, float y, float w, float h, bool inside, float& outDelta) {
+bool dragBox(int id, float x, float y, float w, float h, bool inside, float& outDelta, int* navStep = nullptr) {
     outDelta = 0.0f;
     g_lastId = id; if (inside) g_hot = id;
+    { const int st = navValue(id, x, y, w, h, rnd()); if (navStep) *navStep = st * (g_io.keyShift ? 10 : 1); }   // Tab reaches it; Left / Right step it
     bool dragging = false;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
@@ -3063,9 +3276,11 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
     const int id = hashLabel(label);
     const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
     if (!nn.noInput) {   // Ctrl+click: type a number
@@ -3078,10 +3293,12 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
             return false;
         }
     }
-    float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
+    float delta; int nav = 0; dragBox(id, x, y, ctrlW, h, inside, delta, &nav);
     bool changed = false;
+    float perPx = speed;   // the value change per pixel dragged; a Left / Right step counts as one pixel of a step's size
+    if (nav != 0) { delta = (float)nav; perPx = navDragStep(speed, decs); }
     if (delta != 0.0f) {
-        float nv = *v + delta * speed;
+        float nv = *v + delta * perPx;
         if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
         if (nv != *v) { *v = nv; changed = true; }
     }
@@ -3098,9 +3315,11 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
     const int id = hashLabel(label);
     const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
     if (!nn.noInput) {   // Ctrl+click: type a number
@@ -3112,8 +3331,10 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
             return false;
         }
     }
-    float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
+    float delta; int nav = 0; dragBox(id, x, y, ctrlW, h, inside, delta, &nav);
     bool changed = false;
+    if (nav != 0) { long long nv = (long long)*v + nav; if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);   // one per Left / Right
+                    if (nv != *v) { *v = (int)nv; changed = true; } }
     if (delta != 0.0f) {
         g_dragAccum += delta * speed;          // accumulate sub-unit motion
         int step = (int)g_dragAccum;
@@ -3143,9 +3364,11 @@ static bool dragCells_ed(const char* label, float* fv, int* iv, int n, float spe
     const int base = hashLabel(label);
     const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     const float gap = 4.0f;
     float ctrlW = w - lw; if (ctrlW < 32.0f * (float)n) ctrlW = 32.0f * (float)n;
     const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
@@ -3172,23 +3395,28 @@ static bool dragCells_ed(const char* label, float* fv, int* iv, int n, float spe
             }
             if (e == 1) continue;
         }
-        float delta; dragBox(id, cx, y, cw, h, inside, delta);
-        if (delta != 0.0f && std::isfinite(delta) && std::isfinite(speed)) {
-            if (fv) {
-                float nv = fv[i] + delta * speed;
+        float delta; int nav = 0; dragBox(id, cx, y, cw, h, inside, delta, &nav);
+        float perPx = speed;   // the value change per pixel dragged (a Left / Right step counts as one pixel of its own size)
+        if (nav != 0 && fv) { delta = (float)nav; perPx = navDragStep(speed, -1); }
+        if (fv) {
+            if (delta != 0.0f && std::isfinite(delta) && std::isfinite(perPx)) {
+                float nv = fv[i] + delta * perPx;
                 if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                 if (range && n == 2) { if (i == 0 && nv > fv[1]) nv = fv[1]; if (i == 1 && nv < fv[0]) nv = fv[0]; }
                 if (std::isfinite(nv) && nv != fv[i]) { fv[i] = nv; changed = true; }
-            } else {
+            }
+        } else {
+            int step = nav;   // Left / Right: one whole step; a drag: its accumulated whole steps
+            if (step == 0 && delta != 0.0f && std::isfinite(delta) && std::isfinite(speed)) {
                 g_dragAccum += delta * speed;
-                const int step = (int)g_dragAccum;
-                if (step != 0) {
-                    g_dragAccum -= (float)step;
-                    int nv = iv[i] + step;
-                    if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
-                    if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
-                    if (nv != iv[i]) { iv[i] = nv; changed = true; }
-                }
+                step = (int)g_dragAccum;
+                g_dragAccum -= (float)step;
+            }
+            if (step != 0) {
+                long long nv = (long long)iv[i] + step;
+                if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
+                if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
+                if (nv != iv[i]) { iv[i] = (int)nv; changed = true; }
             }
         }
         char buf[64];
@@ -3243,9 +3471,11 @@ static bool sliderCells_ed(const char* label, float* v, int n, float minV, float
     if (!g_lay.active || !v || n < 2 || n > 4) return false;
     const int base = hashLabel(label);
     const float h = rowH();
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     const float gap = 4.0f;
     float ctrlW = w - lw; if (ctrlW < 24.0f * (float)n) ctrlW = 24.0f * (float)n;
     const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
@@ -3273,9 +3503,11 @@ static bool InputFloat_raw(const char* label, float* value, float step) {
     const NextNumber nn = takeNextNumber();
     const int id = hashLabel(label);
     const float h = rowH();
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column, the field after it
+    const float lw = !lc.on && visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     const float btnW = h;
     float fieldW = w - lw - btnW * 2.0f - 8.0f;
     if (fieldW < 24.0f) fieldW = 24.0f;
@@ -3372,7 +3604,8 @@ static bool colorEditPicker(int id, bool swatchClicked, float sx, float sy, floa
 static bool colorEditFramed(const char* label, float* c, int n, int flags) {
     const int id = hashLabel(label);
     const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f;
-    const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
+    LabelColumn lc(!(flags & ColorEdit_NoLabel) ? label : nullptr);   // StyleVar_LabelColumn: the label in the column, the cells after it
+    const bool showLabel = !lc.on && !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
     const float lw = showLabel ? visW(label) + gap : 0.0f;
     const float w = availW(), swatch = h;
     float cellsW = w - lw - swatch - gap; if (cellsW < 24.0f * (float)n) cellsW = 24.0f * (float)n;
@@ -3384,6 +3617,7 @@ static bool colorEditFramed(const char* label, float* c, int n, int flags) {
     bool changed = fmtDragCells(cellsId, v, n, asFloat ? 0.01f : 1.0f, 0.0f, (flags & ColorEdit_HDR) ? 0.0f : (asFloat ? 1.0f : 255.0f), asFloat ? "%.3f" : "%.0f", false);
     if (changed) for (int i = 0; i < n; ++i) c[i] = asFloat ? v[i] : clamp01(std::floor(v[i] + 0.5f) / 255.0f);
     const float x = g_lay.prevX, y = g_lay.prevY;
+    lc.placed(y, h);
     const float cw = (cellsW - gap * (float)(n - 1)) / (float)n;
     static const unsigned char kMarker[4][4] = {{230, 70, 70, 255}, {90, 200, 90, 255}, {80, 130, 240, 255}, {200, 200, 200, 255}};
     for (int i = 0; i < n; ++i) quad(x + (float)i * (cw + gap), y, 3.0f, h, kMarker[i]);
@@ -3775,6 +4009,7 @@ void ResetState() {
     g_popupPadX = g_popupPadY = g_popupW = g_innerX = g_childPadY = -1.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;
+    g_nav = NavState(); g_labelCol = 0.0f; g_alignFrameNext = false;   // no keyboard focus carried over (round 6: a test's focus leaked into the next)
     for (PopupSlot& p : g_popups) p = PopupSlot();
     for (WinSlot& w : g_wins) w = WinSlot();
     for (OpenSlot& o : g_opens) o = OpenSlot();
@@ -3964,10 +4199,12 @@ bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, f
     static double s_logT = 0.0;   // the held drag's place on the logarithmic scale (kept so rounding to the format does not stop it)
     const VisLabel vis(label);
     const int base = hashLabel(label);
+    LabelColumn lc(label);   // StyleVar_LabelColumn: the label in the column at the left, the cells after it
     const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f, lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
-    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
+    const float lw = !lc.on && labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 24.0f * (float)n) ctrlW = 24.0f * (float)n;
     const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
     bool changed = false;
@@ -3982,6 +4219,11 @@ bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, f
         if (e == 2) { const float nv = (float)typed; if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; } }
         if (e != 0) continue;
         g_lastId = id; if (inside) g_hot = id;
+        if (const int st = navValue(id, cx, y, cw, h, rnd())) {   // Tab reaches the cell; Left / Right step it (Shift: ten steps)
+            float nv = v[i] + (float)(st * (g_io.keyShift ? 10 : 1)) * navDragStep(speed, formatDecimals(format));
+            if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+            if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
+        }
         // Dear ImGui's drag threshold: the value follows the pointer only once it has moved 3 pixels from the press (half of
         // io.MouseDragThreshold), so a click does not nudge it; from then on every pixel counts.
         static bool s_pastThreshold = false;
@@ -4032,6 +4274,14 @@ bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, boo
         if (isInt && range < 1e6) grab = std::max(grab, track / (float)(range + 1.0));
         grab = std::min(grab, track);
         g_lastId = id; if (inside) g_hot = id;
+        if (const int st = navValue(id, x, y, ctrlW, h, rnd())) {   // Tab reaches it; Left / Right step it: one for whole numbers, else a
+            // hundredth of the range (a logarithmic one in equal factors); Shift: ten steps
+            const double k = g_io.keyShift ? 10.0 : 1.0;
+            double nv = logScale ? *v * std::pow(maxV / minV, (double)st * k / 100.0) : *v + (double)st * k * (isInt ? 1.0 : range / 100.0);
+            if (isInt) nv = std::floor(nv + 0.5);
+            nv = std::min(maxV, std::max(minV, nv));
+            if (nv != *v) { *v = nv; changed = true; }
+        }
         auto fromMouse = [&] {
             const float t = track > grab ? clamp01((g_in.mouseX - x - pad - grab * 0.5f) / (track - grab)) : 0.0f;
             double nv = logScale ? minV * std::pow(maxV / minV, (double)t) : minV + (double)t * range;
@@ -4062,10 +4312,12 @@ bool fmtSlider(const char* label, double* v, bool isInt, double minV, double max
     if (!g_lay.active || !v || !(maxV > minV)) return false;
     const VisLabel vis(label);
     const int id = hashLabel(label);
+    LabelColumn lc(label);
     const float h = rowH(), lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
-    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
+    const float lw = !lc.on && labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool changed = fmtSliderBox(id, x, y, ctrlW, h, v, isInt, minV, maxV, format, logScale);
     if (lw > 0.0f) drawText(x + ctrlW + lgap, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
@@ -4076,10 +4328,12 @@ bool fmtSliderCells(const char* label, float* v, int n, float minV, float maxV, 
     if (!g_lay.active || !v || n < 2 || n > 4 || !(maxV > minV)) return false;
     const VisLabel vis(label);
     const int base = hashLabel(label);
+    LabelColumn lc(label);
     const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f, lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
-    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
+    const float lw = !lc.on && labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
+    lc.placed(y, h);
     float ctrlW = w - lw; if (ctrlW < 32.0f * (float)n) ctrlW = 32.0f * (float)n;
     const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
     bool changed = false;
@@ -4224,6 +4478,8 @@ OKAYUI_CONTEXT_STATE(
     OKAYUI_CTX_VAR(ui_core::g_frameCount),
     OKAYUI_CTX_VAR(ui_core::g_childRounding),
     OKAYUI_CTX_VAR(ui_core::g_framedWidgets),
+    OKAYUI_CTX_VAR(ui_core::g_labelCol),
+    OKAYUI_CTX_VAR(ui_core::g_alignFrameNext),
     OKAYUI_CTX_VAR(ui_core::g_framePadX),
     OKAYUI_CTX_VAR(ui_core::g_styleIndent),
     OKAYUI_CTX_VAR(ui_core::g_framePadY),

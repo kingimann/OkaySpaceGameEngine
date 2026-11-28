@@ -160,8 +160,15 @@ bool Parser::static_guard_block(const std::string& symbol, Node* then_block) {
     guard.type.base = 1;
     guard.bss = true;
     guard.is_static = true;
-    for (const Global& g : globals)
-        if (g.name == symbol) guard.tls = g.tls;  // each thread initializes its own copy once ([stmt.dcl] 3)
+    for (const Global& g : globals) {
+        if (g.name != symbol) continue;
+        guard.tls = g.tls;  // each thread initializes its own copy once ([stmt.dcl] 3)
+        if (g.comdat) {
+            // The guard of a shared static local is shared too (Round 36): it is made once in the program.
+            guard.comdat = true;
+            guard.is_static = false;
+        }
+    }
     globals.push_back(guard);
     then_block->kind = Node::Block;
     for (Node& n : stmt_pre) then_block->kids.push_back(std::move(n));
@@ -1376,6 +1383,25 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             has_init = false;
         }
         global.tls = local_decl_tls;
+        if (cur_fn_inline && !global.tls) {
+            // A static local of an inline function: one object in the program ([dcl.inline] 6), in a COMDAT section
+            // named from the function's symbol, the variable's name and its number among the function's static locals
+            // of that name, the same in every file (Round 36; Global::comdat).
+            std::string base = "__okay_sl_";
+            for (char c : cur_fn_symbol) base += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '$';
+            base += "_" + decl.name + "_";
+            int k = 0;
+            while (true) {
+                bool used = false;
+                for (const Global& g : globals)
+                    if (g.name == base + std::to_string(k)) used = true;
+                if (!used) break;
+                ++k;
+            }
+            global.name = base + std::to_string(k);
+            global.is_static = false;
+            global.comdat = true;
+        }
         local.symbol = global.name;
         globals.push_back(global);
     }

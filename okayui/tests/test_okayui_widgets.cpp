@@ -520,6 +520,68 @@ void TestFuzz() {
 
 } // namespace
 
+// A context menu opened near the right edge (the editor's tab menu, owner's report 2026-11-28): "Add Tab" has no room on the right, so its list
+// opens to the left; its "World & Gameplay" sub-menu must keep going left, not open to the right of its row, on top of the menu it came from
+// (the menu's later rows were drawn over that list and both were unreadable). One right-click opens one popup.
+void TestPopupSubMenuChainNoOverlap() {
+    RUN_SUITE("a sub-menu chain that turned left keeps going left (never over the menus it came from)");
+    Rig r(1000, 420);
+    UI::Rect popupRows{}, addRow{}, catRow{}, listItem{}, subItem{}; bool openReq = false, listShown = false, subShown = false;
+    auto grow = [](UI::Rect& a, const UI::Rect& b) {
+        if (b.w <= 0.0f) return;
+        if (a.w <= 0.0f) { a = b; return; }
+        const float x0 = std::min(a.x, b.x), y0 = std::min(a.y, b.y), x1 = std::max(a.x + a.w, b.x + b.w), y1 = std::max(a.y + a.h, b.y + b.h);
+        a = UI::Rect{x0, y0, x1 - x0, y1 - y0};
+    };
+    r.body = [&] {
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+        if (openReq) { openReq = false; UI::OpenPopup("##tabmenu"); }
+        listShown = subShown = false;
+        popupRows = UI::Rect{};
+        if (UI::BeginPopup("##tabmenu")) {
+            UI::TextDisabled("Hierarchy"); grow(popupRows, UI::GetItemRect());
+            UI::Separator();
+            if (UI::BeginMenu("Add Tab")) {
+                listShown = true;
+                if (UI::BeginMenu("Main")) { UI::MenuItem("Scene"); UI::EndMenu(); }
+                if (UI::BeginMenu("World & Gameplay")) {
+                    subShown = true;
+                    UI::MenuItem("Scene Manager"); subItem = UI::GetItemRect();
+                    UI::MenuItem("Lighting"); UI::MenuItem("Audio Mixer"); UI::MenuItem("Navigation");
+                    UI::EndMenu();
+                }
+                catRow = UI::GetItemRect();
+                UI::MenuItem("More"); listItem = UI::GetItemRect();
+                UI::EndMenu();
+            }
+            addRow = UI::GetItemRect(); grow(popupRows, addRow);
+            UI::Separator();
+            UI::MenuItem("Close Tab", "Middle-click"); grow(popupRows, UI::GetItemRect());
+            UI::MenuItem("Close Other Tabs"); grow(popupRows, UI::GetItemRect());
+            UI::MenuItem("Float (undock)"); grow(popupRows, UI::GetItemRect());
+            UI::MenuItem("Show Group as Side Tabs"); grow(popupRows, UI::GetItemRect());
+            UI::EndPopup();
+        }
+        UI::PopStyleVar(2);
+    };
+    r.Frames(3);
+    r.sim.Move(840, 60); r.Frame(); openReq = true; r.Frames(3);   // opened at the pointer, close to the right edge
+    UI::PopupSlotInfo pops[4];
+    CHECK(UI::ListOpenPopups(pops, 4) == 1);
+    r.sim.Move(addRow.x + 20.0f, addRow.y + addRow.h * 0.5f); r.Frames(3);        // hover "Add Tab": its list opens
+    CHECK(listShown);
+    r.sim.Move(catRow.x + 20.0f, catRow.y + catRow.h * 0.5f); r.Frames(3);        // hover "World & Gameplay"
+    CHECK(listShown && subShown);
+    auto overlaps = [](const UI::Rect& a, const UI::Rect& b) { return a.x < b.x + b.w - 0.5f && b.x < a.x + a.w - 0.5f && a.y < b.y + b.h - 0.5f && b.y < a.y + a.h - 0.5f; };
+    const UI::Rect subCol{subItem.x, 0.0f, subItem.w, 420.0f}, popCol{popupRows.x, 0.0f, popupRows.w, 420.0f}, listCol{listItem.x, 0.0f, listItem.w, 420.0f};
+    if (overlaps(subCol, popCol)) std::fprintf(stderr, "  the third list (x %.0f..%.0f) is drawn over the context menu (x %.0f..%.0f)\n", subItem.x, subItem.x + subItem.w, popupRows.x, popupRows.x + popupRows.w);
+    CHECK(listItem.x + listItem.w <= popupRows.x + 0.5f);   // "Add Tab"'s list: to the left of the menu (no room on the right)
+    CHECK(!overlaps(subCol, popCol));                       // the third list is beside the menu, not on it
+    CHECK(!overlaps(subCol, listCol));                      // nor on the list it opened from
+    CHECK(subItem.x >= -0.5f);
+    CHECK(UI::ListOpenPopups(pops, 4) == 1);                 // still one popup
+}
+
 // Dear ImGui's look (StyleVar_FramedWidgets with StyleVar_TextRowHeight -1, how the editor and launcher on OkayUI draw every frame):
 // an unframed tree node is one text line tall (the editor's Hierarchy rows were a whole frame tall), its label starts
 // GetTreeNodeToLabelSpacing() from its left edge (the editor draws each row's type icon at that spacing's arrow part: the icon covered
@@ -841,6 +903,7 @@ int main() {
     TestImGuiLookColorEdit();
     TestNestedTabBars();
     TestTabRightClickMenu();
+    TestPopupSubMenuChainNoOverlap();
     TestHoverEverywhere();
     TestImGuiLookSelectable();
     TestDragPreviewIsTooltip();

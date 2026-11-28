@@ -251,7 +251,6 @@ void DrawWindInspector(EditorState& ed, GameObject* go, Component* comp, Compone
             }
             const Vec3 here = WindField::At(z->transform->Position(), PreviewTime(ed));
             ImGui::TextDisabled("Wind at this object right now: %.1f m/s", here.Magnitude());
-            if (ImGui::SmallButton("Remove##wz")) toRemove = z;
         }
         ImGui::PopID();
         return;
@@ -272,7 +271,6 @@ void DrawWindInspector(EditorState& ed, GameObject* go, Component* comp, Compone
             Tip("A volume knob for the whole push.");
             if (ImGui::Checkbox("Also push the bodies below", &d->includeChildren)) ed.dirty = true;
             Tip("Turn this on for a ragdoll: every bone body is pushed, sharing the size above.");
-            if (ImGui::SmallButton("Remove##wd")) toRemove = d;
         }
         ImGui::PopID();
         return;
@@ -302,7 +300,6 @@ void DrawWindInspector(EditorState& ed, GameObject* go, Component* comp, Compone
                 Tip("Far away it stands still. 0 = always moves.");
                 ImGui::TreePop();
             }
-            if (ImGui::SmallButton("Remove##ws")) toRemove = w;
         }
         ImGui::PopID();
         return;
@@ -317,7 +314,6 @@ void DrawWindInspector(EditorState& ed, GameObject* go, Component* comp, Compone
             if (ImGui::DragFloat("Follows changes in", &a->smoothing, 0.05f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
             Tip("A little time makes gusts swell instead of clicking.");
             if (ed.isPlaying()) ImGui::TextDisabled("Play: loudness now %.2f", a->Current());
-            if (ImGui::SmallButton("Remove##wa")) toRemove = a;
         }
         ImGui::PopID();
         return;

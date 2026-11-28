@@ -4,11 +4,16 @@
 #include "test_framework.hpp"
 
 #include "GameContent.hpp"
+#include "ContentBackendStorage.hpp"
+#include "ContentLiveConfig.hpp"
+#include "ContentPolicy.hpp"
+#include "ContentPublish.hpp"
 #include "ContentOverlay.hpp"
 #include "ContentSync.hpp"
 
 #include <cstdio>
 #include <map>
+#include <set>
 #include <sstream>
 #include <chrono>
 
@@ -116,6 +121,83 @@ SyncConfig Cfg(const Env& e, const Publisher& p) {
     c.retry.maxAttempts = 4;
     return c;
 }
+
+// ---- Live Updates helpers (local folder provider, a cut connection, an in-memory OkayBackend Storage) ----------------------------
+void WriteFile(const fs::path& p, const std::string& bytes) { fs::create_directories(p.parent_path()); std::ofstream(p, std::ios::binary | std::ios::trunc) << bytes; }
+
+// A publisher's work folder: files on disk, a manifest made by ScanFolder, signed with the throw-away seed.
+struct LiveFolder {
+    fs::path dir;
+    Seed seed = MakeSeed(1);
+    std::string game = "testgame";
+    Manifest Make(std::uint64_t version, std::string* sig) {
+        std::vector<std::string> problems;
+        Manifest m; m.game = game; m.version = version;
+        m.entries = ScanFolder(dir.u8string(), {}, problems);
+        if (sig) *sig = MakeSignatureFile(Serialize(m), seed);
+        return m;
+    }
+};
+
+// Wraps any provider; the first GET of `name` delivers only `cut` bytes, then the connection "drops".
+struct CutOnce : Transport {
+    Transport& inner; std::string name; std::size_t cut; bool done = false;
+    std::vector<std::pair<std::string, std::uint64_t>> gets;
+    CutOnce(Transport& t, std::string n, std::size_t c) : inner(t), name(std::move(n)), cut(c) {}
+    GetResult Get(const std::string& n, std::uint64_t from, std::uint64_t maxBytes, const GetHandlers& h) override {
+        gets.emplace_back(n, from);
+        if (n != name || done) return inner.Get(n, from, maxBytes, h);
+        done = true;
+        std::size_t sent = 0;
+        GetHandlers w = h;
+        w.onData = [&](const std::uint8_t* d, std::size_t k) { const std::size_t take = std::min(k, cut - sent); sent += take; if (take && h.onData) h.onData(d, take); return sent < cut; };
+        GetResult r = inner.Get(n, from, maxBytes, w);
+        r.reached = false; r.aborted = false; r.error = "connection dropped";
+        return r;
+    }
+    const char* Describe() const override { return "cut-once"; }
+};
+
+// OkayBackend Storage in memory: what a bucket holds, answered the way the Storage interface describes (a folder has no "id").
+struct MemStorage : okay::backend::Storage {
+    std::map<std::string, std::string> objects;   // "bucket/path" -> bytes
+    int uploads = 0;
+    static std::string Decode(const std::string& p) {   // the server stores the name, not its URL spelling
+        std::string o;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            if (p[i] == '%' && i + 2 < p.size()) { o += static_cast<char>(std::stoi(p.substr(i + 1, 2), nullptr, 16)); i += 2; } else o += p[i];
+        }
+        return o;
+    }
+    okay::backend::Response Ok(std::string body) { okay::backend::Response r; r.ok = r.reached = true; r.status = 200; r.body = std::move(body); return r; }
+    okay::backend::Response Upload(const std::string& b, const std::string& p, const std::string& f, const std::string&, const okay::backend::UploadOptions&) override {
+        ++uploads; objects[b + "/" + Decode(p)] = Slurp(f); return Ok("{}");
+    }
+    okay::backend::Response ReadPublic(const std::string& b, const std::string& p, const std::string&) override {
+        auto it = objects.find(b + "/" + Decode(p));
+        if (it == objects.end()) { okay::backend::Response r; r.reached = true; r.status = 404; return r; }
+        return Ok(it->second);
+    }
+    okay::backend::Response List(const std::string& b, const okay::backend::ListOptions& o) override {
+        std::set<std::string> folders; std::vector<std::pair<std::string, std::size_t>> files;
+        const std::string pre = b + "/" + o.prefix;
+        for (auto& [k, v] : objects) {
+            if (k.compare(0, pre.size(), pre) != 0) continue;
+            const std::string rest = k.substr(pre.size());
+            const std::size_t sl = rest.find('/');
+            if (sl == std::string::npos) files.emplace_back(rest, v.size()); else folders.insert(rest.substr(0, sl));
+        }
+        std::vector<std::string> items;
+        for (const std::string& f : folders) items.push_back("{\"name\":\"" + f + "\",\"id\":null}");
+        for (auto& [n, sz] : files) items.push_back("{\"name\":\"" + n + "\",\"id\":\"x\",\"metadata\":{\"size\":" + std::to_string(sz) + "}}");
+        std::string body = "[";
+        for (std::size_t i = static_cast<std::size_t>(o.offset); i < items.size() && i < static_cast<std::size_t>(o.offset + o.limit); ++i) body += (body.size() > 1 ? "," : "") + items[i];
+        return Ok(body + "]");
+    }
+    okay::backend::Response Remove(const std::string&, const std::vector<std::string>&) override { return Ok("[]"); }
+    okay::backend::Response RemoveObject(const std::string&, const std::string&) override { return Ok("{}"); }
+    std::string PublicUrl(const std::string& b, const std::string& p) const override { return "mem://" + b + "/" + p; }
+};
 
 }  // namespace
 
@@ -645,6 +727,406 @@ int main() {
         GameContentConfig badk = fc; badk.keys = PubHex(MakeSeed(5)); Env env4("start_badkey"); Overlay ov4;
         o = StartGameContent(badk, env4.Root(), "2.900.0", nullptr, nullptr, nullptr, nullptr, &ov4);
         CHECK(o.sync.reason == Reason::SignatureBad && !o.overlayActive && !ov4.Active());
+    }
+
+    // ================================================================ Live Updates foundations (docs/design/live_updates.md)
+    {
+        RUN_SUITE("live: manifest kinds, min-game, apply, delta");
+        Manifest m; m.game = "g1"; m.version = 3; m.minGame = "1.4.0"; m.apply = ApplyWhen::BetweenMatches;
+        Entry a; a.path = "live/balance.okaylive"; a.sha256 = Sha256Hex("x"); a.size = 1; a.kind = Kind::Config; m.entries.push_back(a);
+        Entry b; b.path = "models/ship.glb"; b.sha256 = Sha256Hex("s"); b.size = 1; b.kind = Kind::Model; m.entries.push_back(b);
+        const std::string text = Serialize(m);
+        CHECK(text.find("min-game 1.4.0\napply between-matches\n") != std::string::npos && text.find("\tconfig\t") != std::string::npos);
+        Manifest back; std::string why;
+        CHECK(Parse(text, back, &why) && back.minGame == "1.4.0" && back.apply == ApplyWhen::BetweenMatches && back.entries[0].kind == Kind::Config);
+        CHECK(Serialize(back) == text);
+        std::string t2 = text; t2.replace(t2.find("between-matches"), 15, "whenever");
+        CHECK(!Parse(t2, back, &why) && why.find("apply") != std::string::npos);
+        std::string t3 = text; t3.replace(t3.find("min-game 1.4.0"), 14, "min-game soon!");
+        CHECK(!Parse(t3, back, &why));
+        // headers in another order are accepted, a repeated one is not
+        std::string t4 = "okay-content 1\napply next-launch\nversion 3\ngame g1\n";
+        CHECK(Parse(t4, back, &why) && back.apply == ApplyWhen::NextLaunch && back.version == 3);
+        CHECK(!Parse("okay-content 1\ngame g1\nversion 3\napply next-launch\napply immediately\n", back, &why));
+        // delta: added, changed, removed, unchanged
+        Manifest n = m; n.version = 4;
+        n.entries[0].sha256 = Sha256Hex("y");                                                      // changed bytes
+        Entry c; c.path = "scenes/new.okayscene"; c.sha256 = Sha256Hex("n"); c.size = 9; c.kind = Kind::Scene; n.entries.push_back(c);   // added
+        n.entries.erase(n.entries.begin() + 1);                                                    // models/ship.glb removed
+        Delta d = Diff(m, n);
+        CHECK(d.added.size() == 1 && d.added[0].path == "scenes/new.okayscene" && d.changed.size() == 1 && d.changed[0].path == "live/balance.okaylive");
+        CHECK(d.removed.size() == 1 && d.removed[0] == "models/ship.glb" && d.unchanged == 0 && d.BytesToSend() == 10);
+        Manifest k = n; k.entries[0].group = "hd";   // metadata only: no bytes to move
+        d = Diff(n, k);
+        CHECK(d.Empty() && d.unchanged == 2);
+        d = Diff(Manifest(), n);
+        CHECK(d.added.size() == 2 && d.removed.empty());
+    }
+    {
+        RUN_SUITE("live: local folder provider (list, get whole, put)");
+        Env env("live_provider");
+        FileTransport store((env.dir / "store").string());
+        std::vector<Listed> ls;
+        CHECK(store.List("", ls).ok && ls.empty());   // nothing published yet: an empty list, not an error
+        WriteFile(env.dir / "src.bin", "hello");
+        CHECK(store.Put("a/b.okaydata", (env.dir / "src.bin").string()).ok);
+        CHECK(store.Put("c.okaydata", (env.dir / "src.bin").string()).ok);
+        CHECK(!store.Put("../escape.okaydata", (env.dir / "src.bin").string()).ok && !fs::exists(env.dir / "escape.okaydata"));
+        CHECK(store.List("", ls).ok && ls.size() == 2 && ls[0].name == "a/b.okaydata" && ls[0].size == 5 && ls[1].name == "c.okaydata");
+        CHECK(store.List("a/", ls).ok && ls.size() == 1);
+        std::string got;
+        CHECK(GetWhole(store, "a/b.okaydata", 100, got).Ok() && got == "hello");
+        CHECK(GetWhole(store, "a/b.okaydata", 3, got).tooBig);
+        CHECK(GetWhole(store, "missing", 100, got).status == 404);
+        // a read-only provider says so instead of pretending
+        FakeServer ro;
+        CHECK(!ro.Put("x", (env.dir / "src.bin").string()).ok && !ro.List("", ls).ok);
+    }
+    {
+        RUN_SUITE("live: publish sends only the changed files; the client downloads only them");
+        Env env("live_publish");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "models/ship.glb", Bytes('M', 3000));
+        WriteFile(lf.dir / "textures/ship.png", Bytes('T', 2000));
+        WriteFile(lf.dir / "live/game.okaylive", "okay-live 1\nset\tspeed\t10\t-\t-\n");
+        std::string sig;
+        Manifest v1 = lf.Make(1, &sig);
+        CHECK(v1.entries.size() == 3 && v1.entries[0].kind == Kind::Config);
+        FileTransport store((env.dir / "store").string());
+        PublishOptions po; po.verifyKeys = PubHex(lf.seed);
+        PublishResult pr = PublishVersion(store, lf.dir.string(), v1, sig, po);
+        CHECK(pr.ok && pr.uploaded == 3 && pr.previous == 0 && pr.delta.added.size() == 3);
+        CHECK(!fs::exists(lf.dir / ".okay-publish"));
+        // the client takes version 1 from the folder
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        SyncResult r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Updated && r.version == 1 && r.filesDownloaded == 3);
+        // version 2: one texture changed, one scene added, the model unchanged
+        WriteFile(lf.dir / "textures/ship.png", Bytes('U', 2100));
+        WriteFile(lf.dir / "scenes/dock.okayscene", "scene\n");
+        Manifest v2 = lf.Make(2, &sig);
+        pr = PublishVersion(store, lf.dir.string(), v2, sig, po);
+        CHECK(pr.ok && pr.previous == 1 && pr.uploaded == 2 && pr.delta.changed.size() == 1 && pr.delta.added.size() == 1 && pr.delta.unchanged == 2);
+        CHECK(pr.bytesUploaded == 2100 + 6);
+        {
+            struct Counting : Transport {
+                Transport& in; std::vector<std::string> names;
+                explicit Counting(Transport& t) : in(t) {}
+                GetResult Get(const std::string& n, std::uint64_t f, std::uint64_t m, const GetHandlers& h) override { names.push_back(n); return in.Get(n, f, m, h); }
+                const char* Describe() const override { return "counting"; }
+            } counting(store);
+            r = Sync(cfg, counting).Run();
+            CHECK(r.status == Status::Updated && r.version == 2 && r.filesDownloaded == 2 && r.filesReused == 2);
+            std::set<std::string> fetched(counting.names.begin(), counting.names.end());
+            CHECK(fetched.count("textures/ship.png") && fetched.count("scenes/dock.okayscene") && !fetched.count("models/ship.glb") && !fetched.count("live/game.okaylive"));
+        }
+        // refusals send nothing: same version again, a wrong key, an unsigned list, a local file that changed after the manifest was made
+        const int before = static_cast<int>(fs::file_size(env.dir / "store" / "content.manifest"));
+        pr = PublishVersion(store, lf.dir.string(), v2, sig, po);
+        CHECK(!pr.ok && pr.message.find("higher") != std::string::npos);
+        Manifest v3 = lf.Make(3, nullptr);
+        pr = PublishVersion(store, lf.dir.string(), v3, MakeSignatureFile(Serialize(v3), MakeSeed(9)), po);
+        CHECK(!pr.ok && pr.message.find("key") != std::string::npos);
+        pr = PublishVersion(store, lf.dir.string(), v3, std::string(), po);
+        CHECK(!pr.ok && pr.message.find("not signed") != std::string::npos);
+        WriteFile(lf.dir / "scenes/dock.okayscene", "scene changed after make\n");
+        Manifest v3b = v2; v3b.version = 3; v3b.entries[2].sha256 = Sha256Hex("something else"); v3b.entries[2].size = 14;
+        pr = PublishVersion(store, lf.dir.string(), v3b, MakeSignatureFile(Serialize(v3b), lf.seed), po);
+        CHECK(!pr.ok && pr.message.find("does not match") != std::string::npos);
+        std::string live; GetWhole(store, kManifestName, 1 << 20, live);
+        Manifest lm; CHECK(Parse(live, lm) && lm.version == 2 && static_cast<int>(live.size()) == before);
+        // the server lost an unchanged file: the next publish sends it again
+        fs::remove(env.dir / "store" / "models" / "ship.glb");
+        Manifest v4 = lf.Make(4, &sig);
+        pr = PublishVersion(store, lf.dir.string(), v4, sig, po);
+        CHECK(pr.ok && pr.repaired == 1 && pr.uploaded == 1 && fs::exists(env.dir / "store" / "models" / "ship.glb"));
+    }
+    {
+        RUN_SUITE("live: an interrupted download resumes by byte range (local provider)");
+        Env env("live_resume");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "models/big.glb", Bytes('B', 50000));
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        CutOnce cut(store, "models/big.glb", 20000);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        const SyncResult r = Sync(cfg, cut).Run();
+        CHECK(r.status == Status::Updated && r.retries == 1 && r.bytesDownloaded == 50000);
+        std::vector<std::uint64_t> starts;
+        for (auto& g : cut.gets) if (g.first == "models/big.glb") starts.push_back(g.second);
+        CHECK(starts.size() == 2 && starts[0] == 0 && starts[1] == 20000);   // the second GET asked only for the rest
+        CHECK(Slurp(fs::path(env.Root()) / "trees" / "1" / "models" / "big.glb") == Bytes('B', 50000));
+    }
+    {
+        RUN_SUITE("live: corrupted file and bad signatures are refused and not applied (local provider)");
+        Env env("live_refuse");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "data/a.okaydata", "a=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        CHECK(Sync(cfg, store).Run().status == Status::Updated);
+        WriteFile(lf.dir / "data/a.okaydata", "a=2\n");
+        Manifest v2 = lf.Make(2, &sig);
+        CHECK(PublishVersion(store, lf.dir.string(), v2, sig).ok);
+        WriteFile(env.dir / "store" / "data" / "a.okaydata", "a=X\n");   // same size, wrong bytes on the server
+        SyncResult r = Sync(cfg, store).Run();
+        Commit c;
+        CHECK(r.status == Status::Failed && r.reason == Reason::FileCorrupt && r.corruptRejected >= 1);
+        CHECK(ReadCommit(StorePaths{env.Root()}, c) && c.version == 1 && Slurp(fs::path(env.Root()) / "trees" / "1" / "data" / "a.okaydata") == "a=1\n");
+        WriteFile(env.dir / "store" / "data" / "a.okaydata", "a=2\n");
+        fs::remove(env.dir / "store" / kSigName);                         // missing signature
+        r = Sync(cfg, store).Run();
+        CHECK(r.reason == Reason::SignatureBad && ReadCommit(StorePaths{env.Root()}, c) && c.version == 1);
+        WriteFile(env.dir / "store" / kSigName, "okay-sig1 " + std::string(128, '0') + "\n");   // a signature that does not verify
+        r = Sync(cfg, store).Run();
+        CHECK(r.reason == Reason::SignatureBad && ReadCommit(StorePaths{env.Root()}, c) && c.version == 1);
+        WriteFile(env.dir / "store" / kSigName, sig);
+        CHECK(Sync(cfg, store).Run().status == Status::Updated);
+    }
+    {
+        RUN_SUITE("live: incompatible versions are refused");
+        Env env("live_minversion");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "data/a.okaydata", "a=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, nullptr); v1.minGame = "2.0.0"; sig = MakeSignatureFile(Serialize(v1), lf.seed);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        cfg.gameVersion = "1.5.0";
+        SyncResult r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Failed && r.reason == Reason::GameTooOld && !fs::exists(StorePaths{env.Root()}.CommitFile()));
+        cfg.gameVersion.clear();   // unknown game version: the requirement is not met either
+        CHECK(Sync(cfg, store).Run().reason == Reason::GameTooOld);
+        cfg.gameVersion = "2.0.1";
+        CHECK(Sync(cfg, store).Run().status == Status::Updated);
+        // multiplayer: client and server
+        PeerVersions s; s.game = "1.4.2"; s.content = 7; s.protocol = 5; s.minProtocol = 3;
+        PeerVersions k = s;
+        CHECK(CheckCompat(s, k).Accepts());
+        k.protocol = 2; k.minProtocol = 1;
+        Compat cc = CheckCompat(s, k);
+        CHECK(cc.verdict == CompatVerdict::ProtocolMismatch && cc.update == UpdateSide::Client && !cc.message.empty());
+        k = s; k.minProtocol = 6; k.protocol = 7;
+        CHECK(CheckCompat(s, k).verdict == CompatVerdict::ProtocolMismatch && CheckCompat(s, k).update == UpdateSide::Server);
+        k = s; k.protocol = 4; k.minProtocol = 4;   // ranges [3,5] and [4,4] meet
+        CHECK(CheckCompat(s, k).Accepts());
+        k = s; k.game = "1.4.1";
+        cc = CheckCompat(s, k);
+        CHECK(cc.verdict == CompatVerdict::GameMismatch && cc.update == UpdateSide::Client && cc.message.find("1.4.1") != std::string::npos);
+        CompatRules mm; mm.game = CompatRules::Game::SameMajorMinor;
+        CHECK(CheckCompat(s, k, mm).Accepts());
+        k.game = "1.5.0";
+        CHECK(!CheckCompat(s, k, mm).Accepts() && CheckCompat(s, k, mm).update == UpdateSide::Server);
+        k.game = ""; CHECK(!CheckCompat(s, k, mm).Accepts());   // unknown is never "the same"
+        CompatRules any; any.game = CompatRules::Game::Any; CHECK(CheckCompat(s, k, any).Accepts());
+        k = s; k.content = 6;
+        cc = CheckCompat(s, k);
+        CHECK(cc.verdict == CompatVerdict::ClientContentOld && cc.update == UpdateSide::Client);
+        CompatRules lag; lag.contentBehind = 1; CHECK(CheckCompat(s, k, lag).Accepts());
+        k.content = 5; CHECK(!CheckCompat(s, k, lag).Accepts());
+        k.content = 8;
+        CHECK(CheckCompat(s, k).verdict == CompatVerdict::ClientContentNew && CheckCompat(s, k).update == UpdateSide::Server);
+        CompatRules ahead; ahead.allowClientAhead = true; CHECK(CheckCompat(s, k, ahead).Accepts());
+    }
+    {
+        RUN_SUITE("live: a failed apply or a crashing start-up rolls back, and the bad version is not taken again");
+        Env env("live_rollback");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "data/a.okaydata", "a=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        CHECK(Sync(cfg, store).Run().status == Status::Updated);
+        const StorePaths sp{env.Root()};
+        CHECK(MarkLaunchGood(sp) && LastGoodVersion(sp) == 1);
+        WriteFile(lf.dir / "data/a.okaydata", "a=2\n");
+        Manifest v2 = lf.Make(2, &sig);
+        CHECK(PublishVersion(store, lf.dir.string(), v2, sig).ok);
+        CHECK(Sync(cfg, store).Run().version == 2);
+        // start-up guard: two starts of version 2 never reach "good"; the third start rolls back to 1
+        LaunchCheck lc = BeginLaunch(sp);
+        CHECK(!lc.rolledBack && lc.version == 2 && lc.failedStarts == 0);
+        lc = BeginLaunch(sp);   // (the game crashed before MarkLaunchGood)
+        CHECK(!lc.rolledBack && lc.failedStarts == 1);
+        lc = BeginLaunch(sp);
+        CHECK(lc.rolledBack && lc.version == 1 && lc.failedStarts == 2 && lc.message.find("rolled back to version 1") != std::string::npos);
+        Overlay ov; CHECK(ov.Load(env.Root(), who.game, PubHex(who.seed)) && ov.Version() == 1 && Slurp(ov.Find("data/a.okaydata")) == "a=1\n");
+        lc = BeginLaunch(sp);   // version 1 is known good: never blamed
+        CHECK(!lc.rolledBack && lc.version == 1 && lc.failedStarts == 0);
+        // the rolled-back version is not downloaded again; a newer one is
+        SyncResult r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Failed && r.reason == Reason::RolledBack);
+        CHECK(ov.Load(env.Root(), who.game, PubHex(who.seed)) && ov.Version() == 1);
+        WriteFile(lf.dir / "data/a.okaydata", "a=3\n");
+        Manifest v3 = lf.Make(3, &sig);
+        CHECK(PublishVersion(store, lf.dir.string(), v3, sig).ok);
+        r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Updated && r.version == 3);
+        // a version that started fine once is not rolled back by later crashes
+        CHECK(MarkLaunchGood(sp));
+        for (int i = 0; i < 4; ++i) CHECK(!BeginLaunch(sp).rolledBack);
+        // a failed hot-apply in the running game: the game calls Rollback and the kept previous version (1) is visible again
+        std::string why;
+        Commit c; CHECK(ReadCommit(sp, c) && c.version == 3 && c.previous == 1);
+        CHECK(Rollback(sp, &why) && ReadCommit(sp, c) && c.version == 1);
+        CHECK(Sync(cfg, store).Run().reason == Reason::RolledBack);
+        // a validator refusal (a damaged live config) never becomes visible at all
+        WriteFile(lf.dir / "live/game.okaylive", "okay-live 1\nset\tSpeed!\t10\t-\t-\n");
+        Manifest v4 = lf.Make(4, &sig);
+        CHECK(PublishVersion(store, lf.dir.string(), v4, sig).ok);
+        cfg.validate = [](const Entry& e, const std::string& path) { return e.kind == Kind::Config ? LiveConfigProblem(Slurp(path)) : std::string(); };
+        r = Sync(cfg, store).Run();
+        CHECK(r.reason == Reason::Validation && ReadCommit(sp, c) && c.version == 1 && !fs::exists(sp.TmpTree(4)));
+    }
+    {
+        RUN_SUITE("live: offline keeps the last good version working (local provider)");
+        Env env("live_offline");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "data/a.okaydata", "a=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        Publisher who;
+        GameContentConfig gc; gc.url = "file://" + (env.dir / "store").string(); gc.game = who.game; gc.keys = PubHex(who.seed);
+        Overlay ov;
+        StartOutcome o = StartGameContent(gc, env.Root(), "2.900.0", nullptr, nullptr, nullptr, nullptr, &ov);
+        CHECK(o.sync.status == Status::Updated && ov.Version() == 1);
+        fs::remove_all(env.dir / "store");   // the server is gone
+        Overlay ov2;
+        o = StartGameContent(gc, env.Root(), "2.900.0", nullptr, nullptr, nullptr, nullptr, &ov2);
+        CHECK(o.sync.status == Status::Failed && o.overlayActive && ov2.Version() == 1 && Slurp(ov2.Find("data/a.okaydata")) == "a=1\n");
+    }
+    {
+        RUN_SUITE("live: staged apply (download now, make visible later)");
+        Env env("live_staged");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "data/a.okaydata", "a=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        FileTransport store((env.dir / "store").string());
+        CHECK(PublishVersion(store, lf.dir.string(), v1, sig).ok);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        CHECK(Sync(cfg, store).Run().status == Status::Updated);
+        WriteFile(lf.dir / "data/a.okaydata", "a=2\n");
+        WriteFile(lf.dir / "data/b.okaydata", "b=1\n");
+        Manifest v2 = lf.Make(2, nullptr); v2.apply = ApplyWhen::AtLoadingScreen; sig = MakeSignatureFile(Serialize(v2), lf.seed);
+        CHECK(PublishVersion(store, lf.dir.string(), v2, sig).ok);
+        const StorePaths sp{env.Root()};
+        SyncConfig st = cfg; st.stageOnly = true;
+        SyncResult r = Sync(st, store).Run();
+        Commit c;
+        CHECK(r.status == Status::Staged && r.version == 1 && ReadCommit(sp, c) && c.version == 1);   // downloaded, not visible
+        Overlay ov; CHECK(ov.Load(env.Root(), who.game, PubHex(who.seed)) && ov.Version() == 1 && ov.Find("data/b.okaydata").empty());
+        // the game asks when it may apply: the published policy says "at a loading screen"
+        Manifest staged; std::string stext; std::uint64_t sv = 0; std::string sgame, ssha;
+        CHECK(Sync::ReadStaged(sp, sgame, sv, ssha) && sv == 2);
+        CHECK(detail::ReadAll(sp.StagedManifest(2), stext, 1 << 20) && Parse(stext, staged) && staged.apply == ApplyWhen::AtLoadingScreen);
+        GameMoment playing; playing.inMatch = true;
+        CHECK(!DecideApply(staged.apply, ApplyWhen::NextLaunch, true, playing).applyNow);
+        GameMoment loading; loading.loadingScreen = true;
+        CHECK(DecideApply(staged.apply, ApplyWhen::NextLaunch, true, loading).applyNow);
+        // offline now: ApplyStaged needs no network
+        fs::remove_all(env.dir / "store");
+        r = Sync(cfg, store).ApplyStaged();
+        CHECK(r.status == Status::Updated && r.version == 2 && ReadCommit(sp, c) && c.version == 2 && c.previous == 1 && !fs::exists(sp.StagedFile()) && !fs::exists(sp.StagedManifest(2)));
+        Overlay ov2; CHECK(ov2.Load(env.Root(), who.game, PubHex(who.seed)) && Slurp(ov2.Find("data/b.okaydata")) == "b=1\n");
+        CHECK(Sync(cfg, store).ApplyStaged().reason == Reason::NothingStaged);
+        // a staged file damaged on disk is refused at apply time, and nothing changes
+        FileTransport store2((env.dir / "store2").string());
+        WriteFile(lf.dir / "data/b.okaydata", "b=2\n");
+        Manifest v3 = lf.Make(3, &sig);
+        CHECK(PublishVersion(store2, lf.dir.string(), v3, sig).ok);
+        CHECK(Sync(st, store2).Run().status == Status::Staged);
+        WriteFile(sp.TmpTree(3) / "data" / "b.okaydata", "b=9\n");
+        r = Sync(cfg, store2).ApplyStaged();
+        CHECK(r.reason == Reason::FileCorrupt && ReadCommit(sp, c) && c.version == 2 && !fs::exists(sp.StagedFile()));
+        // a staged manifest whose signature no longer verifies (key changed) is refused too
+        CHECK(Sync(st, store2).Run().status == Status::Staged);
+        SyncConfig other = cfg; other.trustedKeys = PubHex(MakeSeed(9));
+        CHECK(Sync(other, store2).ApplyStaged().reason == Reason::SignatureBad && ReadCommit(sp, c) && c.version == 2);
+    }
+    {
+        RUN_SUITE("live: apply timing decisions");
+        GameMoment start; start.startingUp = true;
+        GameMoment match; match.inMatch = true;
+        GameMoment menu;
+        GameMoment load; load.loadingScreen = true;
+        GameMoment loadInMatch; loadInMatch.loadingScreen = true; loadInMatch.inMatch = true;   // a level change inside a match
+        const ApplyWhen D = ApplyWhen::GameDefault;
+        for (ApplyWhen p : {ApplyWhen::Immediately, ApplyWhen::AtLoadingScreen, ApplyWhen::BetweenMatches, ApplyWhen::NextLaunch, D}) {
+            CHECK(!DecideApply(p, D, false, start).applyNow);   // nothing staged: nothing to do
+            CHECK(DecideApply(p, D, true, start).applyNow);     // start-up applies every policy
+        }
+        CHECK(DecideApply(ApplyWhen::Immediately, D, true, match).applyNow);
+        CHECK(!DecideApply(ApplyWhen::AtLoadingScreen, D, true, match).applyNow && DecideApply(ApplyWhen::AtLoadingScreen, D, true, load).applyNow);
+        CHECK(DecideApply(ApplyWhen::AtLoadingScreen, D, true, loadInMatch).applyNow);
+        CHECK(!DecideApply(ApplyWhen::BetweenMatches, D, true, match).applyNow && !DecideApply(ApplyWhen::BetweenMatches, D, true, loadInMatch).applyNow);
+        CHECK(DecideApply(ApplyWhen::BetweenMatches, D, true, menu).applyNow && DecideApply(ApplyWhen::BetweenMatches, D, true, load).applyNow);
+        CHECK(!DecideApply(ApplyWhen::NextLaunch, D, true, menu).applyNow && !DecideApply(ApplyWhen::NextLaunch, D, true, load).applyNow);
+        // no published policy: the game's own; neither: next launch
+        CHECK(DecideApply(D, ApplyWhen::Immediately, true, match).applyNow && DecideApply(D, ApplyWhen::Immediately, true, match).policy == ApplyWhen::Immediately);
+        CHECK(!DecideApply(D, D, true, menu).applyNow && DecideApply(D, D, true, menu).policy == ApplyWhen::NextLaunch);
+        // the publisher's wish beats the game's default
+        CHECK(!DecideApply(ApplyWhen::NextLaunch, ApplyWhen::Immediately, true, menu).applyNow);
+        CHECK(!DecideApply(ApplyWhen::BetweenMatches, D, true, match).reason.empty());
+    }
+    {
+        RUN_SUITE("live: remote config and scheduled toggles");
+        LiveConfig lc; std::string why;
+        const std::string text =
+            "okay-live 1\n"
+            "# balancing\n"
+            "set\tspeed\t10\t-\t-\n"
+            "set\tdouble_xp\toff\t-\t-\n"
+            "set\tdouble_xp\ton\t1000\t2000\n"       // a weekend event
+            "set\tspeed\t12.5\t1500\t-\n"            // a balance change that starts later and stays
+            "\n"
+            "set\tmotd\tWelcome back!\t-\t1800\n";
+        CHECK(lc.Parse(text, &why));
+        CHECK(!lc.IsOn("double_xp", 999) && lc.IsOn("double_xp", 1000) && lc.IsOn("double_xp", 1999) && !lc.IsOn("double_xp", 2000));
+        CHECK(lc.GetInt("speed", 0, -1) == 10 && lc.GetNumber("speed", 1499, -1) == 10.0 && lc.GetNumber("speed", 1500, -1) == 12.5);
+        CHECK(lc.GetInt("speed", 1500, -1) == -1);   // "12.5" is not a whole number: the fallback, not 12
+        CHECK(lc.Get("motd", 1799) == "Welcome back!" && lc.Get("motd", 1800, "none") == "none");
+        CHECK(lc.Get("unknown", 5, "dflt") == "dflt" && lc.IsOn("unknown", 5, true));
+        CHECK(lc.NextChange(0) == 1000 && lc.NextChange(1000) == 1500 && lc.NextChange(1500) == 1800 && lc.NextChange(1800) == 2000 && lc.NextChange(2000) == kLiveOpen);
+        // into the engine's settings (the game passes the Cvar registry; here a map that refuses one key, as a read-only cvar would)
+        std::map<std::string, std::string> cvars;
+        const int applied = lc.ApplyTo(1600, [&](const std::string& k, const std::string& v) { if (k == "motd") return false; cvars[k] = v; return true; });
+        CHECK(applied == 2 && cvars["speed"] == "12.5" && cvars["double_xp"] == "on" && !cvars.count("motd"));
+        // refused whole: the game keeps its shipped values
+        CHECK(!lc.Parse("okay-live 1\nset\tspeed\t10\t-\n", &why) && lc.Empty() && lc.GetInt("speed", 0, 7) == 7);
+        CHECK(!LiveConfigProblem("okay-live 1\nset\tspeed\t10\t2000\t1000\n").empty());   // ends before it starts
+        CHECK(!LiveConfigProblem("okay-live 1\nset\tBad Key\t1\t-\t-\n").empty());
+        CHECK(!LiveConfigProblem("okay-live 2\n").empty() && !LiveConfigProblem("okay-live 1").empty());
+        CHECK(!LiveConfigProblem("okay-live 1\nset\tk\tv\x01\t-\t-\n").empty());
+        CHECK(LiveConfigProblem("okay-live 1\n").empty());
+    }
+    {
+        RUN_SUITE("live: OkayBackend Storage provider (publish and sync through the Storage interface)");
+        Env env("live_backend");
+        MemStorage mem;
+        StorageTransport store(mem, "game-content", "testgame");
+        LiveFolder lf; lf.dir = env.dir / "work";
+        WriteFile(lf.dir / "models/a b.glb", Bytes('A', 1500));
+        WriteFile(lf.dir / "data/x.okaydata", "x=1\n");
+        std::string sig; Manifest v1 = lf.Make(1, &sig);
+        PublishResult pr = PublishVersion(store, lf.dir.string(), v1, sig);
+        CHECK(pr.ok && pr.uploaded == 2 && mem.objects.count("game-content/testgame/models/a b.glb") && mem.objects.count("game-content/testgame/content.manifest"));
+        std::vector<Listed> ls;
+        CHECK(store.List("", ls).ok && ls.size() == 4 && ls[0].name == "content.manifest" && ls[2].name == "data/x.okaydata" && ls[2].size == 4);
+        Publisher who; SyncConfig cfg = Cfg(env, who);
+        SyncResult r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Updated && r.filesDownloaded == 2);
+        WriteFile(lf.dir / "data/x.okaydata", "x=2\n");
+        Manifest v2 = lf.Make(2, &sig);
+        const int up = mem.uploads;
+        pr = PublishVersion(store, lf.dir.string(), v2, sig);
+        CHECK(pr.ok && pr.uploaded == 1 && mem.uploads == up + 3);   // one file, the signature, the manifest
+        r = Sync(cfg, store).Run();
+        CHECK(r.status == Status::Updated && r.version == 2 && r.filesDownloaded == 1);
     }
 
     TEST_MAIN_RESULT();

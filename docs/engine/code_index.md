@@ -12,11 +12,12 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-AI | 8 | 41 | [code_index/engine-AI.md](code_index/engine-AI.md) |
 | engine-Animation | 13 | 118 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 35 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
+| engine-Automation | 3 | 35 | [code_index/engine-Automation.md](code_index/engine-Automation.md) |
 | engine-Backend | 8 | 39 | [code_index/engine-Backend.md](code_index/engine-Backend.md) |
 | engine-Browser | 15 | 206 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 83 | 524 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 83 | 526 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 83 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
@@ -41,4 +42,4 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-UI | 15 | 71 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
 | okayui | 12 | 684 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 72 | 1094 | [code_index/shared.md](code_index/shared.md) |
+| shared | 76 | 1131 | [code_index/shared.md](code_index/shared.md) |

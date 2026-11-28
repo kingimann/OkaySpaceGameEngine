@@ -7,6 +7,7 @@
 #include "okay/Core/SaveGame.hpp"
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <filesystem>
 #include <limits>
@@ -189,6 +190,19 @@ int main() {
         WriteText(ed, edited);
         SaveFile e;
         CHECK(!e.Load(ed) && Contains(e.LastError(), "checksum"));
+        // A damaged header line (#888 F47): the checksum used to be checked only when the first line was exactly
+        // "okaysave 3", so a flipped digit or a stray letter there let an edited body load as if it were good.
+        for (const char* head : {"okaysave 3x", "okaysave 2", "okaysave 1", "okaysave 0", "okaysave", "okaysave 4", "okaysave  3",
+                                 "okaysave 3 ", "okaysave 03", "okaysave -3", "okaysave 99999999999", "0kaysave 3", "OKAYSAVE 3", ""}) {
+            std::string bad = edited;   // the body was edited too: only the checksum can tell
+            bad.replace(0, bad.find('\n'), head);
+            const std::string hp = (dir / "head.okaysave").string();
+            WriteText(hp, bad);
+            SaveFile h;
+            const bool refused = !h.Load(hp) && h.Count() == 0 && !h.LastError().empty();
+            if (!refused) std::printf("  header \"%s\" was accepted\n", head);
+            CHECK(refused);
+        }
         // A zero-filled file (a power cut on some file systems) is not "an empty save".
         const std::string zero = (dir / "zero.okaysave").string();
         WriteText(zero, std::string(80, '\0'));

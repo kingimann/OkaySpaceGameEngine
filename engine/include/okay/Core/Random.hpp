@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -76,6 +77,25 @@ public:
 
     /// A raw 64-bit value as a float in [0, 1): the top 24 bits, which a float holds
     /// exactly, so the largest input gives 1 - 2^-24 and never rounds up to 1.
+    /// A 32-bit seed from a place on the ground (x, z) plus `salt`, for components that want their own repeatable
+    /// stream (Spawner, NPCController, BehaviorTreeRunner). Where the old formula |x| * 73856093 + |z| * 19349663 fits
+    /// in 32 bits (within about 58 units of the origin) the seed is the same as before; past that, where the cast was
+    /// undefined and gave every far spawner the same seed (#888 F52), the two coordinates' bits are mixed instead.
+    /// NaN and infinity give a defined seed too.
+    static std::uint32_t PositionSeed(float x, float z, std::uint32_t salt) {
+        const float v = std::fabs(x) * 73856093.0f + std::fabs(z) * 19349663.0f;
+        if (v >= 0.0f && v < 4294967296.0f) return (std::uint32_t)v + salt;
+        auto bits = [](float f) -> std::uint64_t {
+            if (std::isnan(f)) return 0x7FC00000u;
+            f = std::fabs(f);
+            std::uint32_t u = 0;
+            static_assert(sizeof(u) == sizeof(f), "32-bit float");
+            std::memcpy(&u, &f, sizeof(u));
+            return u;
+        };
+        std::uint64_t k = (bits(x) << 32) | bits(z);
+        return (std::uint32_t)SplitMix(k) + salt;
+    }
     static float ToUnitFloat(std::uint64_t raw) {
         return (float)(raw >> 40) * (1.0f / 16777216.0f);
     }

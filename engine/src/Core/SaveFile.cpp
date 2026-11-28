@@ -217,8 +217,23 @@ ReadState ParseSaveText(const std::string& raw, std::unordered_map<std::string, 
     const bool header = first.rfind("okaysave", 0) == 0;
     int version = 0;   // 0: no header (the oldest files)
     if (header) {
-        version = std::atoi(first.c_str() + 8);
-        if (version < 1) version = 1;
+        // Every writer wrote exactly "okaysave <n>" (n = 1, 2 or 3). Anything else on that line is a damaged header, and a
+        // damaged header must not switch the checksum off (#888 F47: "okaysave 3x" or a flipped digit loaded an edited body).
+        const std::string num = first.substr(8);
+        const bool digits = num.size() == 2 && num[0] == ' ' && num[1] >= '1' && num[1] <= '9';
+        version = digits ? num[1] - '0' : -1;
+        if (version < 1 || version > SaveFile::kFormatVersion) {
+            if (why) *why = version > SaveFile::kFormatVersion ? "was written by a newer version of the game" : "has a damaged header";
+            return ReadState::Damaged;
+        }
+    }
+    // Only the current format ends with "#end" and a checksum. An older header (or none) on a file that ends that way is
+    // a current file whose first line was damaged: its checksum (which covers the header) decides.
+    const std::size_t trailerAt = text.rfind(kTrailerTail);
+    if (version != SaveFile::kFormatVersion && trailerAt != std::string::npos &&
+        text.find('\n', trailerAt + std::strlen(kTrailerTail)) >= text.size() - 1) {
+        if (why) *why = "has a damaged header";
+        return ReadState::Damaged;
     }
     std::size_t bodyEnd = text.size();
     if (version == SaveFile::kFormatVersion) {

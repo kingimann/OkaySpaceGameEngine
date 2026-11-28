@@ -5,6 +5,9 @@
 #include "scene_text_testkit.hpp"
 #include "okay/Scene/SceneMigration.hpp"
 
+#include "okay/Components/VisualScriptComponent.hpp"
+
+#include <filesystem>
 #include <fstream>
 
 using namespace okay;
@@ -399,7 +402,38 @@ static void TestFuzz() {
     CHECK(ok > 0 && refused > 0);
 }
 
+// #888 F42: a scene that names its graph next to it ("gl_health.okayvs") keeps that name when it is opened and saved.
+// Loading used to store the found file's full path, so the first save wrote this machine's absolute path and a moved or
+// cloned project silently ran the copy saved in the scene instead of the edited graph file.
+static void TestVisualScriptPathKept() {
+    namespace fs = std::filesystem;
+    const fs::path src = fs::path(OKAY_SOURCE_DIR) / "examples" / "visual_script" / "playground";
+    const fs::path dir = fs::temp_directory_path() / "okay_vs_path_kept";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    for (const char* f : {"gl_health.okayscene", "gl_health.okayvs"}) fs::copy_file(src / f, dir / f, fs::copy_options::overwrite_existing, ec);
+    const std::string scenePath = (dir / "gl_health.okayscene").string();
+    {
+        Scene s("vs");
+        CHECK(SceneSerializer::LoadFromFile(s, scenePath));
+        int graphs = 0, found = 0;
+        for (const auto& go : s.Objects())
+            for (auto* vc : go->GetComponents<VisualScriptComponent>()) {
+                ++graphs;
+                if (fs::exists(vc->Path(), ec)) ++found;   // the loaded component still opens the file (editor, hot reload)
+            }
+        CHECK(graphs > 0 && found == graphs);
+        CHECK(SceneSerializer::SaveToFile(s, scenePath));
+    }
+    const std::string saved = ReadFile(scenePath);
+    CHECK(Has(saved, "visualscriptpath \"gl_health.okayvs\""));
+    CHECK(!Has(saved, dir.string()) && !Has(saved, dir.generic_string()));
+    fs::remove_all(dir, ec);
+}
+
 int main() {
+    TestVisualScriptPathKept();
     TestRegistry();
     TestOldFormats();
     TestEngineSteps();

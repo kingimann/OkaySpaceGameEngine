@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -320,6 +321,34 @@ int main() {
         CHECK(s.Lines().size() == 5);
         CHECK(s.Lines().back().text == "Done.");
         CHECK(s.Text().find("[a]") == std::string::npos);
+    }
+    {   // The Projects page's Git buttons (#888 F50): every word reaches git as one argument, nothing goes through a shell.
+        // Before, the launcher built `git -C "<folder>" commit -m "<message>"` and ran it with the shell, so a message
+        // like the one below ran `touch INJECTED`.
+        const fs::path gitLog = dir / "git_args.txt";
+        const fs::path fakeGit = dir / "git";
+        {
+            std::ofstream f(fakeGit);
+            f << "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\" >> '" << gitLog.string() << "'; done\n"
+                 "[ \"$3\" = fail ] && exit 4\nexit 0\n";
+        }
+        ::chmod(fakeGit.c_str(), 0755);
+        const std::string folder = (dir / "My Project").string();
+        const std::string msg = "fix\"; touch INJECTED; echo \"$(touch INJECTED2)`touch INJECTED3` & 'x'";
+        const std::string url = "https://example.invalid/a b.git;touch INJECTED4";
+        CHECK(GitArgv("", folder, {"commit", "-m", msg}) == (std::vector<std::string>{"git", "-C", folder, "commit", "-m", msg}));
+        CHECK(RunGitSteps(folder, {{"add", "-A"}, {"commit", "-m", msg}, {"remote", "add", "--", "origin", url}}, fakeGit.string()) == 0);
+        std::ifstream in(gitLog);
+        const std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(got == "[-C]\n[" + folder + "]\n[add]\n[-A]\n[-C]\n[" + folder + "]\n[commit]\n[-m]\n[" + msg + "]\n"
+                     "[-C]\n[" + folder + "]\n[remote]\n[add]\n[--]\n[origin]\n[" + url + "]\n");
+        for (const char* f : {"INJECTED", "INJECTED2", "INJECTED3", "INJECTED4"})
+            CHECK(!fs::exists(dir / "My Project" / f) && !fs::exists(dir / f) && !fs::exists(fs::path(f)));
+        // The last step decides; a git that cannot start is -1.
+        CHECK(RunGitSteps(folder, {{"pull"}, {"fail"}}, fakeGit.string()) == 4);
+        CHECK(RunGitSteps(folder, {{"fail"}, {"pull"}}, fakeGit.string()) == 0);
+        CHECK(RunGitSteps(folder, {{"pull"}}, (dir / "no-git-here").string()) == -1);
+        CHECK(GitWorks(fakeGit.string()) && !GitWorks((dir / "no-git-here").string()));
     }
     {   // Opening a terminal refuses a folder that is not there (the window itself is not opened in a test)
         std::string err;

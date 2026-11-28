@@ -1208,3 +1208,55 @@ Not done / unverified / differences (Round 34):
 - Not run on Windows. No decorated name compared with MSVC; local classes use our own decoration.
 - `signed char` and `char` are one type, and `long` is `int`, to okay-ms (specializations of both collide).
 - Namespace-scope `thread_local` objects with constructors (5 files), a local pointer to an array `T (*p)[N]` (2 files), `<d3d11.h>`, an out-of-class definition of a conversion function, and `std::quoted` reading needs a modifiable string (one form for both directions).
+
+### Round 35: our own POSIX headers, `thread_local` objects, start-up tables, the first engine objects linked and run, and four silent wrong-code bugs
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-35`, 2026-11-28. Not run on Windows. Started from Round 34 (a6a8d7a7a).
+
+**Language and preprocessor (each from ISO/IEC 14882):**
+
+- `__has_include(<h>)` and `__has_include("h")`, and `#ifdef __has_include` ([cpp.cond] 1, 5, 6). An `#if` or `#elif` in a skipped group is no longer evaluated ([cpp.cond] 13; OwnLinuxX11.cpp's `__has_include` inside a skipped `#else` was "bad preprocessor expression").
+- `thread_local` objects of class type at namespace scope ([basic.stc.thread], [basic.start.dynamic] 7, [basic.start.term] 1; 6 files). Own design: each file puts the address of a function that makes its thread_local objects in `.CRT$XDU` and of one that destroys them in `.okaytd$U`; the image's TLS callback (PE/COFF "TLS Callback Functions") walks the tables for main's thread before main (reason 1), for every new thread (2), and destroys at thread end (3); main destroys its thread's objects at its end, before the globals. The callback is `__okay_tls_callback`, written into the file with main when it names `thread_local`, or `__okay_tls_callback_rt` in our runtime (`runtime/startup.c`); the linker puts the one it finds into the TLS directory it makes.
+- Start-up tables: a file without main puts its global constructors' function in `.CRT$XCU` and its destructors' function in `.CRT$XTU`. Our runtime's `mainCRTStartup` walks `.CRT$XCA`..`.CRT$XCZ` before main and `.CRT$XTA`..`.CRT$XTZ` (latest first) after it. The file with main runs its own two functions from main, as before. Before Round 35 the globals of a file without main were never made (ProjectLists.cpp's `const std::string kLayerKey` stayed empty).
+- `explicit` constructors are left out of implicit conversions ([class.conv.ctor] 1).
+- A lambda with default arguments stays an object, so calls may leave them out ([expr.prim.lambda.closure] 4; VehicleBuilder.hpp's `rgb`, 3 files).
+- Arrays of objects of more than one dimension: local, static local, global and as members (`Vec3 buf[2][9]`, NavMeshBake.cpp). `T (&a)[N]` and `T (&a)[M][N]` parameters, with T deduced from an array argument ([temp.deduct.call] 3; MdlReader.cpp, UVUnwrap.cpp).
+- `signed char` and `long` are types of their own: same sizes as before (1 and 4 bytes, LLP64), but told apart from char and int for overloads, specializations and decorated names (C, J, K as in Microsoft's decoration).
+- Out-of-class `inline` member definitions, in-class scalar deleting destructors and virtual tables are internal symbols (each file keeps its copy), so two objects that include `<string>` or `<exception>` link together (before: "duplicate symbol ??0string_view@@...", "??_Gexception@@...", "??_7exception@@6B@").
+
+**Linker (PE/COFF specification):**
+
+- Grouped sections are put in the order of the text after the `$` ("Grouped Sections"); before, in the order the objects came.
+- Functions and data that nothing reachable names may name undefined symbols, like a linker that drops unreferenced functions (MSVC's /OPT:REF): reachable is the entry point, the exports, the TLS directory and callback, the `.CRT` tables and everything named from them through relocations; code is cut at function symbols, data at symbols (a reached piece of data keeps the piece before it, for a virtual table's two leading slots). `.pdata` and `.xdata` are not followed, and an undefined symbol there stays an error. Without this an engine object could not be linked: okay-ms writes every inline function of a header into each object, and many name functions nothing defines.
+
+**Silent wrong code fixed (each has a check in `tests/test_round35.cpp`; the Round 34 compiler's result in brackets):**
+
+- A member that is an array of objects (`std::string e[4]`, so every `std::array<std::string, N>`) had only its first element made and destroyed [the other elements held what the stack held; an access violation in `Layers::Names`].
+- `c ? f() : s` with a class prvalue and an lvalue `s` copied `s`'s bytes without its copy constructor ([expr.cond] 7) [the result shared `s`'s buffer and its destructor freed it: `Layers::Name` broke `Layers::Names()[0]`].
+- `t - period` of a time point and a duration took the time point's member `operator-(time_point)` through the duration's explicit constructor [a duration, not a time point].
+- The runtime's `printf` cut `%s` at 60 characters.
+
+**Our own headers:** `<time.h>`, `<errno.h>` (the C names of `<ctime>` and `<cerrno>`, ISO/IEC 9899 7.27, 7.5); `<sys/socket.h>`, `<netinet/in.h>`, `<netinet/tcp.h>`, `<arpa/inet.h>`, `<netdb.h>`, `<sys/select.h>`, `<poll.h>`, `<dlfcn.h>`, `<dirent.h>` (POSIX.1-2017; declarations only: the Microsoft C runtime has none of these functions, so a program that calls one does not link on Windows; numbers our own choice except AF_INET 2, SOCK_STREAM 1, SOCK_DGRAM 2 and RFC 790's protocol numbers); `deque::insert(pos, first, last)`; `duration * n`, `n * duration`, `duration / n`, `d1 / d2`; `numeric_limits<signed char>`, `<long>`, `<unsigned long>`.
+
+**Linked and run engine objects:** `tests/test_engine_link.cpp` now also builds `engine/src/Scene/ProjectLists.cpp` (with the header-only Tags and Layers) and a test main (`linktests/link_scene_lists.cpp`) as two okay-cl objects, links them with our runtime (`okayrt.lib`, now with `eh.c`) and runs them under Wine at /O0, /O1 and /O2; the printed text must equal MinGW g++'s. `linktests/link_thread_local.cpp` with `tls_part.cpp` checks thread_local objects of another object across two threads.
+
+Measurement: `tools/okayms/survey.sh` (300-second limit per file, 2 jobs) on the 514 `engine/src/**/*.cpp` files with the compiler and headers of commit b77f7dc54. "Before" is Round 34's own final run (same commit a6a8d7a7a this round started from).
+
+| Survey | Before (Round 34) | After |
+|---|---|---|
+| Windows (default) | 424 of 514 | **437 of 514** (no time-outs) |
+| Plain (`SURVEY_PLAIN=1`) | 408 of 514 | **444 of 514** |
+
+No file that compiled before stops compiling (checked file by file, both surveys). Next blockers (Windows): `NotNode::Eval` "not an address: a unary operator or cast" (4 files, the Lua-style script nodes), Jobs.hpp:259 `std::addressof` (2), `<d3d11.h>` (2), then single files (OkayScriptVM_*.cpp, Scene*.cpp, VsApi.cpp, NavGrid3D.hpp) and the headers `<io.h>`, `<shellapi.h>`, `<initguid.h>`, `<hidusage.h>`, `<d3d12.h>`, `<linux/input.h>` (OwnLinuxEvdev.cpp also compiles in the Windows mode) and Steam's. The plain survey has the same compiler blockers; its header leftovers are `<linux/input.h>` and Steam's (third-party).
+
+Tests: new `tests/test_round35.cpp`, 6 tests (programs built by okay-cl at /O0, /O1, /O2, run under Wine and compared with MinGW g++; one compile-only check of the POSIX headers in the plain mode): `tests 6, checks passed 77, failed 0`. With the Round 34 compiler and headers (first five tests; the sixth was added later): `tests 5, checks passed 17, failed 13`. `test_engine_link`: `tests 2, checks passed 90, failed 0`. The whole suite (`tools/okayms/build.sh`, 77 test programs, `env -u TMPDIR -u TEMP -u TMP`) on commit b77f7dc54: 76 of 77 passed; `test_suite5` failed once with a Wine page fault inside a Wine DLL (thread 008c, reading address 8) on its adventure program, and passed 8 of 8 runs alone after it (an earlier full run on 0c2c4f724 passed it, 77 of 77 on 97d44f954). Not explained; recorded as a possible Wine flake.
+
+Written from ISO/IEC 14882 (the sections named above), ISO/IEC 9899 (7.5, 7.27), POSIX.1-2017 (the headers named above), RFC 790 and the Microsoft PE/COFF specification (grouped sections, TLS directory and callbacks). No code from MSVC, its CRT or STL, the Windows SDK, MinGW, glibc, musl, Linux, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography.
+
+Not done / unverified / differences (Round 35):
+
+- Not run on Windows. No decorated name compared with MSVC.
+- An inline function's static local (and its guard) is one object per file, not one per program: `Tags::Custom()` changed from one object is not seen from another (MSVC keeps one, in a COMDAT). The linked test reads Tags and Layers only through ProjectLists for this reason. Type information objects are per file too.
+- With a file with main that names no `thread_local`, main's thread's thread_local objects in other files are not destroyed at the end (other threads' are).
+- `<linux/input.h>`, X11 and SDL headers (plain survey) are not written; a local pointer to an array `T (*p)[N]` (not a parameter), virtual bases (no engine file uses one) and `<d3d11.h>` are not done.
+- The `.okaytd` section (thread_local destructors) is our own name, not an MSVC one.

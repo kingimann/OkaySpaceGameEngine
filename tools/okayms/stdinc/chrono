@@ -37,7 +37,24 @@ public:
     duration operator-(const duration& o) const { return duration(count_ - o.count_); }
     duration& operator+=(const duration& o) { count_ += o.count_; return *this; }
     duration& operator-=(const duration& o) { count_ -= o.count_; return *this; }
+    // d1 / d2 of one unit: how many times d2 goes into d1, a bare count ([time.duration.nonmember]; a member here, so it
+    // is chosen before the template for d / count below).
+    Rep operator/(const duration& o) const { return count_ / o.count_; }
 };
+// [time.duration.nonmember] d * s, s * d, d / s and d % s with a count s (Round 35, OwnLinuxAudio.cpp's `2 * period`).
+// Own simplification: the result keeps d's Rep (the standard takes the common type of the two).
+template <typename Rep, typename Period, typename S>
+duration<Rep, Period> operator*(const duration<Rep, Period>& d, const S& s) {
+    return duration<Rep, Period>((Rep)(d.count() * s));
+}
+template <typename S, typename Rep, typename Period>
+duration<Rep, Period> operator*(const S& s, const duration<Rep, Period>& d) {
+    return duration<Rep, Period>((Rep)(s * d.count()));
+}
+template <typename Rep, typename Period, typename S>
+duration<Rep, Period> operator/(const duration<Rep, Period>& d, const S& s) {
+    return duration<Rep, Period>((Rep)(d.count() / s));
+}
 typedef duration<long long, nano> nanoseconds;
 typedef duration<long long, micro> microseconds;
 typedef duration<long long, milli> milliseconds;
@@ -129,7 +146,6 @@ public:
     explicit time_point(const Dur& d) : since_(d) {}
     Dur time_since_epoch() const { return since_; }
     time_point operator+(const Dur& d) const { return time_point(since_ + d); }
-    Dur operator-(const time_point& o) const { return since_ - o.since_; }
     bool operator<(const time_point& o) const { return since_ < o.since_; }
     bool operator>(const time_point& o) const { return since_ > o.since_; }
     bool operator<=(const time_point& o) const { return since_ <= o.since_; }
@@ -141,6 +157,13 @@ public:
 // A time point moved by a duration of any unit ([time.point.nonmember]; Round 31): `steady_clock::now() -
 // milliseconds(1000)` in NativeFetch.hpp. The duration is converted to the time point's unit first. Before, there was
 // no such operator and okay-ms subtracted the two objects' bytes.
+// The time between two time points of one clock ([time.point.nonmember]). A function template rather than a member
+// (Round 35): okay-ms does not leave explicit constructors out of implicit conversions, so a member taking a time_point
+// was chosen for `t - period` (the duration made into a time point) and the result was a duration.
+template <typename C, typename D>
+D operator-(const time_point<C, D>& a, const time_point<C, D>& b) {
+    return a.time_since_epoch() - b.time_since_epoch();
+}
 template <typename C, typename D, typename R2, typename P2>
 time_point<C, D> operator-(const time_point<C, D>& t, const duration<R2, P2>& d) {
     return time_point<C, D>(t.time_since_epoch() - duration_cast<D>(d));

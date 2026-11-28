@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Random.hpp"
 #include "okay/Components/Damage.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/AI/Navigation.hpp"
@@ -180,7 +181,7 @@ public:
         stanceControl.Start(gameObject);
         health = maxHealth; m_dead = false; m_provoked = false;
         if (transform) m_home = transform->Position();
-        m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
+        m_seed = Random::PositionSeed(m_home.x, m_home.z, 1u);   // defined at any distance (#888 F52)
         m_state = State::Idle; m_wp = 0; m_wpDir = 1;
         PickWander();
         if (footIK) AttachCharacterFootIK(gameObject);

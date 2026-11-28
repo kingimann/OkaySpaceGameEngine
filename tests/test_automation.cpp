@@ -43,7 +43,8 @@ struct TempDir {
 TempDir MakeScratch() {
     std::error_code ec;
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    TempDir t{(fs::temp_directory_path(ec) / ("okay_automation_" + std::to_string((long long)stamp))).string()};
+    // Forward slashes, so a path can go into a JSON string as it is on Windows too.
+    TempDir t{(fs::temp_directory_path(ec) / ("okay_automation_" + std::to_string((long long)stamp))).generic_string()};
     fs::create_directories(t.root, ec);
     return t;
 }
@@ -408,9 +409,10 @@ void TestScreenshotLogValidate(Driver& d, const TempDir& tmp) {
         CHECK(be(16) == 160 && be(20) == 90);
     }
     d.ed.view3D = true;
-    r = d.Run("viewport.screenshot", R"({"view":"editor","width":64,"height":64})");
+    r = d.Run("viewport.screenshot", "{\"view\":\"editor\",\"width\":64,\"height\":64,\"path\":\"" + tmp.Sub("editor.png") + "\"}");
     CHECK(r.ok && r.data.Get("drawnPixels")->number > 0);
-    r = d.Run("viewport.screenshot", R"({"view":"custom","eye":{"x":0,"y":500,"z":0.01},"target":{"x":0,"y":0,"z":0},"width":32,"height":32})");
+    r = d.Run("viewport.screenshot", "{\"view\":\"custom\",\"eye\":{\"x\":0,\"y\":500,\"z\":0.01},\"target\":{\"x\":0,\"y\":0,\"z\":0},"
+                                     "\"width\":32,\"height\":32,\"path\":\"" + tmp.Sub("top.png") + "\"}");
     CHECK(r.ok);
     r = d.Run("viewport.screenshot", R"({"camera":"Nobody"})");
     CHECK(!r.ok && r.error.code == automation::code::NotFound);
@@ -460,7 +462,7 @@ void TestVisualScripts(Driver& d, const TempDir& tmp) {
     CHECK(!r.ok && r.error.code == automation::code::NotFound);
 }
 
-void TestMcp(Driver& d) {
+void TestMcp(Driver& d, const TempDir& tmp) {
     RUN_SUITE("MCP over JSON-RPC 2.0: initialize, tools/list, tools/call, notifications, errors, batches");
     automation::McpServer s(automation::Commands(), d.host);
     std::string a = s.Handle(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}})");
@@ -498,7 +500,8 @@ void TestMcp(Driver& d) {
     CHECK(v.Get("error") && v.Get("error")->Get("code")->number == -32600);
     v = J(s.Handle(R"([{"jsonrpc":"2.0","id":8,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/x"},{"jsonrpc":"2.0","id":9,"method":"ping"}])"));
     CHECK(v.IsArray() && v.array.size() == 2);
-    v = J(s.Handle(R"({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"viewport_screenshot","arguments":{"width":32,"height":32,"inline":true}}})"));
+    v = J(s.Handle("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"viewport_screenshot\",\"arguments\":"
+                   "{\"width\":32,\"height\":32,\"inline\":true,\"path\":\"" + tmp.Sub("mcp.png") + "\"}}}"));
     res = v.Get("result");
     CHECK(res && res->Get("content")->array.size() == 2 && res->Get("content")->array[1].Get("type")->string == "image");
 }
@@ -580,7 +583,7 @@ int main() {
         TestAnimationModelUi(d);
         TestScreenshotLogValidate(d, tmp);
         TestVisualScripts(d, tmp);
-        TestMcp(d);
+        TestMcp(d, tmp);
         TestLink(d, tmp);
     }
     std::error_code ec;

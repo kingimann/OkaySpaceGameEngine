@@ -216,7 +216,21 @@ bool wants_tls_directory(const std::vector<ObjectFile>& objects) {
     }
     return tls;
 }
-ObjectFile tls_directory() {
+// When an object defines __okay_tls_callback (okay-ms writes it into the file with main when that file names
+// thread_local), or else __okay_tls_callback_rt (okay-ms's runtime, runtime/startup.c), the callback list holds its
+// address, then the null end (PE/COFF "TLS Callback Functions"). The callback runs the constructors of the thread_local
+// objects for each new thread and their destructors when a thread ends (Round 35). Empty when neither is defined.
+std::string tls_callback_name(const std::vector<ObjectFile>& objects) {
+    std::string found;
+    for (const ObjectFile& object : objects)
+        for (const Symbol& symbol : object.symbols) {
+            if (symbol.section <= 0 || symbol.storage != kClassExternal) continue;
+            if (symbol.name == "__okay_tls_callback") return symbol.name;
+            if (symbol.name == "__okay_tls_callback_rt") found = symbol.name;
+        }
+    return found;
+}
+ObjectFile tls_directory(const std::string& callback) {
     ObjectFile object;
     Section dir;
     dir.name = ".rdata";
@@ -224,7 +238,7 @@ ObjectFile tls_directory() {
     dir.characteristics = kScnCntInitData | kScnMemRead | kScnAlign8;
     Section data;
     data.name = ".data";
-    data.data.assign(16, 0);  // _tls_index (4 bytes, padded to 8), then a callback list holding only its null end
+    data.data.assign(24, 0);  // _tls_index (4 bytes, padded to 8), then the callback list (one slot or none, null end)
     data.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite | kScnAlign8;
     object.sections.push_back(dir);   // section 1
     object.sections.push_back(data);  // section 2
@@ -246,6 +260,17 @@ ObjectFile tls_directory() {
         reloc.type = kRelAmd64Addr64;
         object.sections[0].relocations.push_back(reloc);
     }
+    if (!callback.empty()) {
+        Symbol sym;
+        sym.name = callback;
+        sym.storage = kClassExternal;  // undefined here: the object that defines it supplies it
+        object.symbols.push_back(sym);
+        Relocation reloc;
+        reloc.offset = 8;
+        reloc.symbol = static_cast<uint32_t>(object.symbols.size() - 1);
+        reloc.type = kRelAmd64Addr64;
+        object.sections[1].relocations.push_back(reloc);
+    }
     return object;
 }
 }  // namespace
@@ -256,7 +281,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     const bool make_tls = wants_tls_directory(objects_in);
     if (make_tls) {
         objects_tls = objects_in;
-        objects_tls.push_back(tls_directory());
+        objects_tls.push_back(tls_directory(tls_callback_name(objects_in)));
     }
     const std::vector<ObjectFile>& objects = make_tls ? objects_tls : objects_in;
     if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {
@@ -279,10 +304,42 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     std::map<std::string, uint32_t> section_index;
     std::vector<std::vector<Contrib>> contribs(objects.size());
 
-    for (size_t oi = 0; oi < objects.size(); ++oi) {
+    // Grouped sections (PE/COFF specification, "Grouped Sections (Object Only)"): `.CRT$XCU` goes into the image section
+    // `.CRT`, and the contributions to one image section are put in the order of the text after the '$' (an empty one
+    // first), objects in their given order within one name (Round 35: the .CRT$XCA, .CRT$XCU and .CRT$XCZ start-up
+    // tables). Before, they were put in the order the objects came.
+    std::vector<std::pair<size_t, size_t>> order;
+    {
+        std::map<std::string, size_t> first_seen;  // image section name -> rank of its first contribution
+        struct Item {
+            size_t rank;
+            std::string suffix;
+            size_t oi;
+            size_t si;
+        };
+        std::vector<Item> items;
+        for (size_t oi = 0; oi < objects.size(); ++oi) {
+            contribs[oi].resize(objects[oi].sections.size());
+            for (size_t si = 0; si < objects[oi].sections.size(); ++si) {
+                const std::string& name = objects[oi].sections[si].name;
+                const size_t dollar = name.find('$');
+                // One name per section, read once (no tail copies in a loop).
+                const std::string base = dollar == std::string::npos ? name : std::string(name, 0, dollar);
+                const auto seen = first_seen.emplace(base, first_seen.size()).first;
+                items.push_back({seen->second, dollar == std::string::npos ? std::string() : std::string(name, dollar + 1), oi, si});
+            }
+        }
+        std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+            if (a.rank != b.rank) return a.rank < b.rank;
+            return a.suffix < b.suffix;
+        });
+        for (const Item& item : items) order.push_back({item.oi, item.si});
+    }
+    for (const auto& place : order) {
+        const size_t oi = place.first;
+        const size_t si = place.second;
         const ObjectFile& object = objects[oi];
-        contribs[oi].resize(object.sections.size());
-        for (size_t si = 0; si < object.sections.size(); ++si) {
+        {
             const Section& section = object.sections[si];
             if ((section.characteristics & kScnLnkRemove) != 0) continue;
             // CodeView data (.debug$S, .debug$T) is for a debugger's database.
@@ -751,6 +808,122 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     }
     const uint32_t entry_rva = outs[entry.out_section].rva + entry.offset;
 
+    // Which functions and data can be used (Round 35). okay-ms writes every inline function of a header into each object,
+    // and many of them name functions no object defines (a <filesystem> member nothing calls, through a virtual table
+    // nothing makes), so an object of the engine could not be linked alone. Like a linker that drops unreferenced
+    // functions and data (MSVC's /OPT:REF on /Gy objects), a function or a piece of data that nothing reachable refers to
+    // may name an undefined symbol: that address is left unfilled, as it is never used. Reachable: the entry point, the
+    // exports, the TLS directory and callback, the .CRT start-up tables, and everything named from them, followed through
+    // every relocation. A code section is cut into functions at its function symbols, any other section into pieces at
+    // its symbols; a piece that is reached also keeps the piece before it (a virtual table's symbol is its first slot,
+    // and the two slots before it, the offset and the type information, belong to the piece before). .pdata and .xdata
+    // name every function: they are not followed, and an undefined symbol there is always an error.
+    // Our own design, from the PE/COFF specification's symbol table and relocation records.
+    std::vector<std::vector<std::vector<uint32_t>>> fn_starts(objects.size());  // [object][section] sorted starts
+    std::vector<std::vector<size_t>> node_base(objects.size());                   // [object][section] first node
+    size_t node_count = 0;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ObjectFile& object = objects[oi];
+        fn_starts[oi].resize(object.sections.size());
+        node_base[oi].resize(object.sections.size());
+        for (const Symbol& symbol : object.symbols) {
+            if (symbol.section <= 0 || static_cast<size_t>(symbol.section) > object.sections.size()) continue;
+            const bool code = (object.sections[static_cast<size_t>(symbol.section) - 1].characteristics & kScnCntCode) != 0;
+            if (!code || (symbol.type & 0x20) != 0) fn_starts[oi][static_cast<size_t>(symbol.section) - 1].push_back(symbol.value);
+        }
+        for (size_t si = 0; si < object.sections.size(); ++si) {
+            std::vector<uint32_t>& starts = fn_starts[oi][si];
+            starts.push_back(0);
+            std::sort(starts.begin(), starts.end());
+            starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+            node_base[oi][si] = node_count;
+            node_count += starts.size();
+        }
+    }
+    std::vector<std::pair<size_t, size_t>> node_home(node_count);  // node -> (object, section)
+    for (size_t oi = 0; oi < objects.size(); ++oi)
+        for (size_t si = 0; si < objects[oi].sections.size(); ++si)
+            for (size_t k = 0; k < fn_starts[oi][si].size(); ++k) node_home[node_base[oi][si] + k] = {oi, si};
+    auto node_of = [&](size_t oi, size_t si, uint32_t offset) {
+        const std::vector<uint32_t>& starts = fn_starts[oi][si];
+        const size_t k = static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), offset) - starts.begin());
+        return node_base[oi][si] + (k == 0 ? 0 : k - 1);
+    };
+    std::map<std::string, std::pair<size_t, size_t>> defined_at;  // external name -> (object, symbol)
+    for (size_t oi = 0; oi < objects.size(); ++oi)
+        for (size_t yi = 0; yi < objects[oi].symbols.size(); ++yi) {
+            const Symbol& symbol = objects[oi].symbols[yi];
+            if (symbol.storage == kClassExternal && symbol.section > 0 && contribs[oi][static_cast<size_t>(symbol.section) - 1].present)
+                defined_at.emplace(symbol.name, std::make_pair(oi, yi));
+        }
+    // The node a symbol of object oi stands for, or none (an import, or nothing defines it).
+    auto target_node = [&](size_t oi, uint32_t symbol_index, size_t* node) {
+        if (symbol_index >= objects[oi].symbols.size()) return false;
+        const Symbol* symbol = &objects[oi].symbols[symbol_index];
+        size_t home = oi;
+        if (symbol->section <= 0) {
+            const auto found = defined_at.find(symbol->name);
+            if (found == defined_at.end()) return false;
+            home = found->second.first;
+            symbol = &objects[home].symbols[found->second.second];
+        }
+        if (symbol->section <= 0 || static_cast<size_t>(symbol->section) > objects[home].sections.size()) return false;
+        *node = node_of(home, static_cast<size_t>(symbol->section) - 1, symbol->value);
+        return true;
+    };
+    std::vector<char> live(node_count, 0);
+    std::vector<size_t> work;
+    auto mark = [&](size_t node) {
+        for (int twice = 0; twice < 2; ++twice) {
+            if (!live[node]) {
+                live[node] = 1;
+                work.push_back(node);
+            }
+            const auto home = node_home[node];
+            const bool code = (objects[home.first].sections[home.second].characteristics & kScnCntCode) != 0;
+            if (code || node == node_base[home.first][home.second]) break;
+            --node;  // the piece before a reached piece of data
+        }
+    };
+    {
+        std::vector<std::string> roots{options.entry, "__okay_tls_callback", "__okay_tls_callback_rt", "_tls_used"};
+        for (const std::string& name : exp.names) roots.push_back(name);
+        for (const std::string& name : roots) {
+            const auto found = defined_at.find(name);
+            if (found == defined_at.end()) continue;
+            size_t node = 0;
+            if (target_node(found->second.first, static_cast<uint32_t>(found->second.second), &node)) mark(node);
+        }
+        for (size_t oi = 0; oi < objects.size(); ++oi)
+            for (size_t si = 0; si < objects[oi].sections.size(); ++si) {
+                const Section& section = objects[oi].sections[si];
+                if (!contribs[oi][si].present || section.name.compare(0, 4, ".CRT") != 0) continue;
+                for (size_t k = 0; k < fn_starts[oi][si].size(); ++k) mark(node_base[oi][si] + k);
+            }
+        for (size_t oi = 0; oi < objects.size(); ++oi)
+            for (size_t yi = 0; yi < objects[oi].symbols.size(); ++yi)
+                if (objects[oi].symbols[yi].name == options.entry && objects[oi].symbols[yi].section > 0) {
+                    size_t node = 0;
+                    if (target_node(oi, static_cast<uint32_t>(yi), &node)) mark(node);
+                }
+    }
+    // The relocations of each node, found by walking every section once.
+    std::vector<std::vector<std::pair<size_t, uint32_t>>> node_relocs(node_count);  // (object, symbol)
+    for (size_t oi = 0; oi < objects.size(); ++oi)
+        for (size_t si = 0; si < objects[oi].sections.size(); ++si) {
+            if (!contribs[oi][si].present) continue;
+            for (const Relocation& reloc : objects[oi].sections[si].relocations)
+                node_relocs[node_of(oi, si, reloc.offset)].push_back({oi, reloc.symbol});
+        }
+    while (!work.empty()) {
+        const size_t node = work.back();
+        work.pop_back();
+        for (const auto& ref : node_relocs[node]) {
+            size_t to = 0;
+            if (target_node(ref.first, ref.second, &to)) mark(to);
+        }
+    }
+
     auto resolve = [&](size_t oi, uint32_t symbol_index, Placed* out, std::string* err) -> bool {
         const ObjectFile& object = objects[oi];
         if (symbol_index >= object.symbols.size()) {
@@ -817,7 +990,11 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                     return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");
                 }
                 Placed target;
-                if (!resolve(oi, reloc.symbol, &target, &error)) return Result<std::vector<uint8_t>>::fail(error);
+                if (!resolve(oi, reloc.symbol, &target, &error)) {
+                    // A function or data that cannot be used may name what nothing defines (see live above).
+                    if (section.name != ".pdata" && section.name != ".xdata" && !live[node_of(oi, si, reloc.offset)]) continue;
+                    return Result<std::vector<uint8_t>>::fail(error);
+                }
                 const uint32_t location = contrib.offset + reloc.offset;
                 if (static_cast<uint64_t>(location) + width > out.bytes.size()) {
                     return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");

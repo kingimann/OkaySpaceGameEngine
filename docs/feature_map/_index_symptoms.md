@@ -123,7 +123,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a function behaves differently than the reference says | [13.7](13-scripting.md#137-built-in-function-library) Built-in function library |
 | a function exists in OkayScript but not in a graph node or the typed API | [13.7](13-scripting.md#137-built-in-function-library) Built-in function library |
 | a function returns nothing | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
-| a game shows old content after a publish | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
+| a game shows old content after a publish | [18.11](18-build-export-release.md#1811-live-updates-downloadable-game-content-content-delivery) Live Updates (downloadable game content, content delivery) |
 | a game starts the wrong player | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | a generated node's pins differ from the table | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | a golden image test fails | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -510,7 +510,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | configure fails offline | [41.10](41-build-tools-infra.md#4110-dependencies-and-pinned-versions) Dependencies and pinned versions |
 | Console warns about missing bones or unweighted vertices | [3.6](03-modeling-import.md#36-model-import) Model import |
 | contact points and rays are hard to see while debugging | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
-| content refused: not signed | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
+| content refused: not signed | [18.11](18-build-export-release.md#1811-live-updates-downloadable-game-content-content-delivery) Live Updates (downloadable game content, content delivery) |
 | copies all face the same way | [44.2](43-proposals.md#442-prefab-brush-and-placement) Prefab brush and placement |
 | copy and paste invents wires | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | corners are square when they should be round | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
@@ -571,6 +571,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | every object using the shared file changes at once | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | every tree in the forest looks the same | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
 | everything the same volume | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
+| Export this project from the editor (Build) to play it. | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | F-keys or Alt cannot be bound | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
 | faces look dark or inside out after a weld or mirror | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
@@ -655,6 +656,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I want a minimal two-window multiplayer test | [42.2](42-examples-samples.md#422-network-demo) Network demo |
 | I want a node for my own system | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
 | I want a quick check that 2D physics works | [42.3](42-examples-samples.md#423-physics-demo) Physics demo |
+| I want a script to drive the editor | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
+| I want an AI agent to build my level | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
 | I want an example plugin to copy | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | I want players to design their character | [30.1](20-35-planned.md#301-customization) Customization |
 | I want to commit from the editor | [28.1](20-35-planned.md#281-git-integration) Git integration |
@@ -747,6 +750,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | my built game doesn't show in Play | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | my component's range is invisible in the Scene view | [54.2](43-proposals.md#542-gizmos-for-components) Gizmos for components |
 | my player moves a beat late | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
+| my project is not on Play | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | my script does something odd and I can only add prints | [55.1](43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) Breakpoints and stepping for text scripts |
 | NaN positions after a pause | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | need a browser to read the manual | [57.3](43-proposals.md#573-docs-inside-the-editor) Docs inside the editor |
@@ -809,6 +813,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | objects shake far from the centre | [45.2](43-proposals.md#452-large-world-coordinates) Large world coordinates |
 | objects vanish at screen edges | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | odd files named `x` or `map` at the repo root | [19.6](19-docs-tests-health.md#196-repository-hygiene) Repository hygiene |
+| okay mcp does not see my open editor | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
 | okayscript: can't read | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | OkaySpace crashed" box | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
 | OkayUI draws under ImGui or the game | [40.3](40-okayui-library.md#403-backends-and-frame-loop) Backends and frame loop |
@@ -1136,7 +1141,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
-| the owner wants new models, maps or scripts in a shipped game without a new build | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
+| the owner wants new models, maps or scripts in a shipped game without a new build | [18.11](18-build-export-release.md#1811-live-updates-downloadable-game-content-content-delivery) Live Updates (downloadable game content, content delivery) |
 | the owner wants to try the game on an Xbox One | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |

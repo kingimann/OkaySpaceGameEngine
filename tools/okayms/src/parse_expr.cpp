@@ -691,7 +691,7 @@ bool Parser::parse_lambda(Node* out) {
         m.params = decl.params;
         m.param_names = decl.param_names;
         m.defaults = decl.param_defaults;
-        m.is_static = list.empty() && !cap_this;
+        m.is_static = list.empty() && !cap_this && decl.param_defaults.empty();
         m.has_body = true;
         m.body_at = body_at;
         // Does the body return a value?
@@ -765,7 +765,10 @@ bool Parser::parse_lambda(Node* out) {
     } else {
         at = body_end + 1;
     }
-    if (generic_names.empty() && list.empty() && !cap_this) {
+    // A lambda with default arguments stays an object even when it captures nothing ([expr.prim.lambda.closure] 4: the
+    // defaults belong to its operator(); a function pointer has none): `rgb(38, 38, 42)` with
+    // `[](int r, int g, int b, int a = 255)` (VehicleBuilder.hpp, Round 35; before "wrong number of arguments to rgb").
+    if (generic_names.empty() && list.empty() && !cap_this && decl.param_defaults.empty()) {
         *out = node_name(qname);
         return true;
     }
@@ -1605,6 +1608,7 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = cur().real != 0 ? cur().real : 1;
         if (cur().real == 0) {
             out->type.wide = cur().ity >= 2;
+            out->type.long_word = cur().long_lit;
             out->type.is_unsigned = cur().ity == 1 || cur().ity == 3;
             // A number is kept in the form its type gives: sign-extended int, zero-extended unsigned int.
             if (cur().ity == 0) out->number = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(out->number)));
@@ -3223,6 +3227,20 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                                               &ctor_stmt))
                                 return false;
                             chosen.kids.push_back(std::move(ctor_stmt));
+                            continue;
+                        }
+                        if (lvalue(*branch) && class_has_copy(ta.struct_id)) {
+                            // `c ? f() : s` with an lvalue s: s is copied into the result by the copy constructor
+                            // ([expr.cond] 7.1, the lvalue-to-rvalue conversion of a class makes a copy). Before Round 35
+                            // its bytes were copied, so the result shared s's buffer and its destructor freed it
+                            // (Layers::Name in engine/include/okay/Scene/Layers.hpp: `s.empty() ? ("Layer " + ...) : s`).
+                            Node copy_stmt;
+                            std::vector<Node> cargs;
+                            cargs.push_back(std::move(*branch));
+                            if (!special_call(ta.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs),
+                                              &copy_stmt))
+                                return false;
+                            chosen.kids.push_back(std::move(copy_stmt));
                             continue;
                         }
                         Node assign;

@@ -1458,18 +1458,14 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     }
     if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
         const int sid = decl.type.struct_id;
-        if (decl.type.is_array() && !decl.type.more.empty()) {
-            error = "an array of objects needs one dimension";
-            return false;
-        }
         if (is_static) {
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
             if (decl.type.is_array()) {
                 // static C a[N]; or static C a[] = {...}; ([stmt.dcl] 3): every element is made the first time control
                 // passes the declaration, under the guard, and the whole array is destroyed at the program end.
-                if (!decl.type.more.empty()) {
-                    error = "a static local array of objects needs one dimension";
+                if (!decl.type.more.empty() && has_init) {
+                    error = "a static local array of objects of more than one dimension takes no initializer";
                     return false;
                 }
                 Node then_block;

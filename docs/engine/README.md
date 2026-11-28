@@ -26,6 +26,7 @@
 - [Optimization tools](optimization_tools.md): Engine-side algorithms for feature map area 27: LOD generation, occlusion culling, batching, streaming and a scene analysis report.
 - [Performance log](perf_log.md): Owner request (2026-11-15): "work on optimization for the engine, improve FPS." This page is the record: what was measured, what was changed, and the numbers before and after.
 - [Prefabs](prefabs.md): Prefabs, overrides, nested prefabs and variants, and Prefab mode in the editor.
+- [Automation (design note)](automation.md): the one table of commands that scripts, tests and AI agents (through `okay mcp`) run to work the engine and the editor, and how to add one.
 - [Properties (reflection)](properties.md): The property registry lets code read, write and watch a component's fields **by name**, without knowing the component's C++ type.
 - [Save games](save_games.md): Save slots and the save game framework underneath them.
 - [Scene diff, merge, canonical form and migration](scene_diff_merge.md): Engine-side libraries that let version control work with scene (`.okayscene`) and prefab (`.okayprefab`) files.

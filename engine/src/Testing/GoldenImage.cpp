@@ -7,13 +7,16 @@
 #include "okay/Scene/Scene.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace okay::testing {
 
 bool RenderSceneToImage(const Scene& scene, Image& out, const SceneRenderOptions& options, std::string* error) {
     Camera* cam = options.camera;
-    if (!cam) {
+    const SceneRenderOptions::View& view = options.view;
+    if (view.use) cam = nullptr;
+    else if (!cam) {
         cam = scene.mainCamera;
         if (!CameraUsable(cam)) {
             cam = nullptr;
@@ -21,7 +24,7 @@ bool RenderSceneToImage(const Scene& scene, Image& out, const SceneRenderOptions
                 if (CameraUsable(c)) { cam = c; break; }
         }
     }
-    if (!cam || !cam->transform) {
+    if (!view.use && (!cam || !cam->transform)) {
         if (error) *error = "the scene has no enabled camera to draw from";
         return false;
     }
@@ -30,10 +33,26 @@ bool RenderSceneToImage(const Scene& scene, Image& out, const SceneRenderOptions
     const int ss = std::max(1, std::min(options.supersample, 8));
 
     ApplySceneLight(scene);
-    const Mat4 vp = cam->ProjectionMatrix((float)w / (float)h) * cam->ViewMatrix();
+    const float aspect = (float)w / (float)h;
+    Mat4 vp;
+    Vec3 eye;
+    if (view.use) {
+        // Up is world up unless the view looks straight up or down.
+        const Vec3 d = view.target - view.eye;
+        const Vec3 up = (std::fabs(d.x) < 1e-4f && std::fabs(d.z) < 1e-4f) ? Vec3{0, 0, -1} : Vec3::Up;
+        const float nearP = view.nearClip > 1e-3f ? view.nearClip : 1e-3f, farP = view.farClip > nearP + 0.01f ? view.farClip : nearP + 0.01f;
+        const Mat4 proj = view.orthographic
+            ? Mat4::Ortho(-view.orthographicSize * aspect, view.orthographicSize * aspect, -view.orthographicSize, view.orthographicSize, nearP, farP)
+            : Mat4::Perspective(std::max(1.0f, std::min(170.0f, view.fovDegrees)), aspect, nearP, farP);
+        vp = proj * Mat4::LookAt(view.eye, view.target, up);
+        eye = view.eye;
+    } else {
+        vp = cam->ProjectionMatrix(aspect) * cam->ViewMatrix();
+        eye = cam->transform->Position();
+    }
     Raster work;
     std::vector<std::uint32_t> averaged;
-    const std::uint32_t* px = RenderMeshesSS(work, averaged, scene, vp, cam->transform->Position(), w, h, ss, cam->ignoreObject);
+    const std::uint32_t* px = RenderMeshesSS(work, averaged, scene, vp, eye, w, h, ss, cam ? cam->ignoreObject : nullptr);
 
     // The pass leaves pixels it never touched transparent; show `background` there. The
     // colour channels are already weighted by coverage, so the background fills what is left.

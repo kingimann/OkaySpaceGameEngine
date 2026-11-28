@@ -17,6 +17,7 @@
 // control and commit it.
 // ---------------------------------------------------------------------------
 #include "okay/Graphics/Image.hpp"
+#include "okay/Math/Vec3.hpp"
 #include "okay/Render/Color.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -168,6 +169,17 @@ struct SceneRenderOptions {
     /// The camera to draw from; null = the scene's main camera, or else the first
     /// enabled one.
     Camera* camera = nullptr;
+    /// Draw from this view instead of a camera (the editor's Scene view, an automation
+    /// command's eye and target): no camera object is needed.
+    struct View {
+        bool use = false;
+        Vec3 eye{0, 0, 10};
+        Vec3 target{0, 0, 0};
+        float fovDegrees = 60.0f;        ///< vertical, perspective
+        bool orthographic = false;
+        float orthographicSize = 5.0f;   ///< half the visible height, orthographic
+        float nearClip = 0.1f, farClip = 1000.0f;
+    } view;
 };
 
 /// Draw the scene's 3D meshes with the engine's software renderer into `out` (RGBA, opaque).

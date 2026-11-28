@@ -199,6 +199,27 @@ public:
         block_[head_ + at] = std::move(copy);
         return block_ + head_ + at;
     }
+    // [sequence.reqmts] a.insert(p, i, j) (Round 35, OwnLinuxAudio.cpp's queue of bytes): the items of [first, last)
+    // go before pos, in order. They are added at the end and then turned into place (three reversals).
+    template <typename It>
+    T* insert(T* pos, It first, It last) {
+        const size_t at = (size_t)(pos - (block_ + head_));
+        const size_t old = size_;
+        for (; first != last; ++first) push_back(T(*first));
+        okay_reverse__(at, old);
+        okay_reverse__(old, size_);
+        okay_reverse__(at, size_);
+        return block_ + head_ + at;
+    }
+    void okay_reverse__(size_t from, size_t to) {
+        while (from + 1 < to) {
+            --to;
+            T t(std::move(block_[head_ + from]));
+            block_[head_ + from] = std::move(block_[head_ + to]);
+            block_[head_ + to] = std::move(t);
+            ++from;
+        }
+    }
     void swap(deque& other) {
         T* b = block_; block_ = other.block_; other.block_ = b;
         size_t h = head_; head_ = other.head_; other.head_ = h;

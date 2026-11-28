@@ -19,10 +19,6 @@ struct Parser {
     std::map<std::string, uint64_t> enum_values;
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
-    // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
-    // its static locals are COMDAT objects named from it (Round 36).
-    bool cur_fn_inline = false;
-    std::string cur_fn_symbol;
     // The namespaces open at the top level: "a::b" and its decorated form "b@a" (innermost first).
     std::string current_ns;
     // The namespaces named by `using namespace`, in the order written.
@@ -1198,6 +1194,10 @@ struct Parser {
     int cur_special = 0;
     bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
+    // The function whose body is being read is inline and shared by every file (FuncDecl::is_inline), and its symbol:
+    // its static locals are COMDAT objects named from it (Round 36).
+    bool cur_fn_inline = false;
+    std::string cur_fn_symbol{};
     int cur_inherit_sid = -1;  // the base whose constructor the implicit constructor being made inherits (Round 34)
     int rv_count = 0;
     // The adjustor thunks the secondary tables name (Round 29): made as functions at the end of the file.

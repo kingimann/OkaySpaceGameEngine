@@ -96,7 +96,11 @@ bool BeginMenuBar() {
         place(bw, h, x, y);
     }
     barFrame();
-    g_curBar = ((unsigned)(int)std::floor(x) * 73856093u) ^ ((unsigned)(int)std::floor(y) * 19349663u) ^ 0x6ba5u;
+    {   // the bar's id from where it is drawn; a far-away place (a hidden window lays out at 1e30) is clamped first, because
+        // turning a float larger than any int into an int is undefined (UBSan: "1e+30 is outside the range of ... 'int'")
+        const auto cell = [](float v) { return (unsigned)(int)std::floor(std::fmax(-1.0e9f, std::fmin(1.0e9f, v))); };
+        g_curBar = (cell(x) * 73856093u) ^ (cell(y) * 19349663u) ^ 0x6ba5u;
+    }
     {   // Alt tapped alone: open the first menu of the first bar (Windows' menu key); Alt again or Escape closes it
         bool other = g_pressed || g_rPressed || g_mPressed || g_in.wheel != 0.0f || g_in.mouseDown || g_in.ctrl || g_in.shift
                   || g_in.enter || g_in.escape || g_in.up || g_in.down || g_in.left || g_in.right || g_in.backspace || g_in.del || (g_in.text && *g_in.text);

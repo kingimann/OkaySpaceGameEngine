@@ -483,8 +483,34 @@ bool Parser::parse_lambda(Node* out) {
     }
     // The captured variables: the named ones, then (for = or &) every visible local the body mentions.
     std::vector<Cap> list;
+    // A name the lambda around this one captured ([co] inside [this, co] { ... }; [expr.prim.lambda.capture] 10: the
+    // variable is captured from the outer closure): its value is that closure's member (through its address for one
+    // captured by reference). Round 36, OkayScriptVM_Coroutine.cpp; before "unknown name co".
+    const bool in_lambda = cur_class >= 0 && structs[static_cast<size_t>(cur_class)].name.compare(0, 5, "__lam") == 0 &&
+                           local_visible("this");
+    auto outer_member = [&](const std::string& n) {
+        return in_lambda && !local_visible(n) && find_field_named(structs[static_cast<size_t>(cur_class)], n) >= 0;
+    };
+    auto cap_value = [&](const Cap& c) {
+        if (c.src.empty() && outer_member(c.name)) {
+            Node f;
+            f.kind = Node::Field;
+            f.op = TArrow;
+            f.text = c.name;
+            f.kids.push_back(node_name("this"));
+            if (structs[static_cast<size_t>(cur_class)].ref_caps.count(c.name) > 0) {
+                Node d;
+                d.kind = Node::Unary;
+                d.op = TStar;
+                d.kids.push_back(std::move(f));
+                return d;
+            }
+            return f;
+        }
+        return node_name(c.src.empty() ? c.name : c.src);
+    };
     for (const Cap& c : caps)
-        if (!c.src.empty() || local_visible(c.name)) list.push_back(c);
+        if (!c.src.empty() || local_visible(c.name) || outer_member(c.name)) list.push_back(c);
     if (default_value || default_ref) {
         for (size_t i = body_at; i < body_end; ++i) {
             if (tokens[i].kind != TIdent || !local_visible(tokens[i].text) || tokens[i].text == "this") continue;
@@ -531,7 +557,7 @@ bool Parser::parse_lambda(Node* out) {
         def.lam_outer = cur_class;
     }
     for (const Cap& c : list) {
-        Node probe = node_name(c.src.empty() ? c.name : c.src);
+        Node probe = cap_value(c);
         Type vt;
         if (!static_type(probe, &vt)) {
             error = "cannot tell the type of the captured variable " + c.name;
@@ -801,7 +827,7 @@ bool Parser::parse_lambda(Node* out) {
         target.op = TDot;
         target.text = c.name;
         target.kids.push_back(node_name(hidden.name));
-        Node value = node_name(c.src.empty() ? c.name : c.src);
+        Node value = cap_value(c);
         Type vt;
         static_type(value, &vt);
         if (c.ref && !vt.is_array()) value = node_addr(std::move(value));

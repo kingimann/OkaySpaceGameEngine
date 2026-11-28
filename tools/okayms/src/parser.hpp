@@ -537,6 +537,10 @@ struct Parser {
                 Token c = t;
                 c.kind = TConst;
                 c.text = "const";
+                // A constexpr function is an inline function ([dcl.constexpr] 1): an internal symbol in each file, as
+                // for `inline` (Round 36: StringId.hpp's `constexpr StringId operator""_sid` in two objects was
+                // "duplicate symbol"). A constexpr variable is const, so internal already.
+                c.inl = true;
                 out.push_back(c);
                 continue;
             }
@@ -9989,10 +9993,18 @@ struct Parser {
         }
         // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,
         // so two files can both use vector<int> or the same inline function): template instances and virtual tables.
+        // A template instance is told by its decorated name: a template-id in the qualified name, before the first "@@"
+        // (`??$make_unique@...`, `?get@?$Box@H@@...`). Round 36: before, any "?$" counted, also in a parameter's type, so
+        // `CommandLine::Parse(const std::vector<std::string>&)` (`...@@QEAA_NAEBV?$vector@...`) became internal and
+        // another object could not call it ("undefined symbol").
+        auto template_instance = [](const std::string& sym) {
+            const size_t end = sym.find("@@");
+            return sym.compare(0, 1, "?") == 0 && sym.substr(0, end).find("?$") != std::string::npos;
+        };
         for (FuncDecl& f : funcs)
-            if (f.defined && f.symbol.find("?$") != std::string::npos) f.is_static = true;
+            if (f.defined && template_instance(f.symbol)) f.is_static = true;
         for (Global& g : globals)
-            if (!g.comdat && (g.vtable || g.name.find("?$") != std::string::npos)) g.is_static = true;
+            if (!g.comdat && (g.vtable || template_instance(g.name))) g.is_static = true;
         for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
         static_objs.clear();
         // The start-up tables (Round 35; PE/COFF "Grouped Sections"). A file without main (or entry) puts the address of

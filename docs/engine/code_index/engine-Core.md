@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 83 headers, 526 names.
+Back to the [code index](../code_index.md). 83 headers, 543 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -259,6 +259,8 @@ Back to the [code index](../code_index.md). 83 headers, 526 names.
 - `ClampFrameDelta` function, line 15: Keep one long frame (a breakpoint, a window drag, a slow load) from making physics and
 - `FrameTimer` class, line 25: Measures the time between frames and clamps it:
 - `FrameLimiter` class, line 74: Holds the frame rate to a target by sleeping out the rest of each frame. A frame that
+- `SettledPicture` class, line 121: Whether a UI's picture has stopped changing. Feed it one fingerprint per drawn frame (OkayUI::DrawDataHash mixed with
+- `UiFrameRate` function, line 140: The frame rate a UI loop holds: 'activeFps', or 'idleFps' (when lower) once nothing was put in for 'idleAfterSeconds'
 
 ## `engine/include/okay/Core/FrameRecord.hpp`
 
@@ -464,11 +466,25 @@ Back to the [code index](../code_index.md). 83 headers, 526 names.
 
 ## `engine/include/okay/Core/Memory.hpp`
 
-- `AllocStats` struct, line 20: Counters shared by FrameArena and PoolAllocator.
-- `FrameArena` class, line 49: A linear ("bump") allocator for per-frame scratch memory. Allocate as much as you
-- `ArenaScope` class, line 273: Rewinds an arena to where it was when the scope began.
-- `ArenaAllocator` struct, line 288: A standard-library allocator over a FrameArena: 'std::vector<int, ArenaAllocator<int>> v{&arena};'
-- `PoolAllocator` class, line 311: A pool of T with stable addresses and a free list: Create() hands out a slot
+- `AllocStats` struct, line 26: Counters shared by FrameArena and PoolAllocator.
+- `FrameArena` class, line 55: A linear ("bump") allocator for per-frame scratch memory. Allocate as much as you
+- `ArenaScope` class, line 279: Rewinds an arena to where it was when the scope began.
+- `ArenaAllocator` struct, line 294: A standard-library allocator over a FrameArena: 'std::vector<int, ArenaAllocator<int>> v{&arena};'
+- `PoolAllocator` class, line 317: A pool of T with stable addresses and a free list: Create() hands out a slot
+- `ProcessMemory` struct, line 482: The process's memory as the operating system counts it. Zero fields when unknown.
+- `QueryProcessMemory` function, line 491: Reads the numbers above (Linux /proc/self/status; Windows K32GetProcessMemoryInfo, looked up at run time).
+- `HeapInUseBytes` function, line 496: The bytes the C library's heap hands out now (malloc / new): glibc mallinfo2 on Linux, a HeapWalk of every process heap on
+- `ParseProcStatus` function, line 499: Parses the text of a /proc/<pid>/status file (the Linux branch of QueryProcessMemory; tested on its own).
+- `AddMemoryCounter` function, line 503: A named byte counter for the report: 'name' reads like "Fonts: editor font cache". 'bytes' is called on the main
+- `RemoveMemoryCounter` function, line 504
+- `MemoryCounters` function, line 506: The current value of every counter, in the order they were added.
+- `MemoryReportText` function, line 510: "title: resident X MB, private Y MB, peak Z MB" then one line per counter, biggest first, and the share of the
+- `MemoryReportWanted` function, line 514: True when OKAY_MEMORY_REPORT is set to something other than "" or "0": the editor and the launcher then print
+- `MemoryReportEverySeconds` function, line 518: How often a running program reports, from OKAY_MEMORY_REPORT: a number of seconds of at least 5 ("60") = every that many
+- `EmitMemoryReport` function, line 521: The programs' report: MemoryReportText(title) printed to stdout and appended, with the time, to
+- `MemoryReportTick` function, line 524: Call once per frame from a main loop: emits the report when MemoryReportEverySeconds says one is due. 'seconds' = time since
+- `ProcessAgeMs` function, line 530: Milliseconds since this process started, as the operating system recorded the start (Linux: /proc/self/stat starttime
+- `StartupMark` function, line 534: A start-up milestone ("first frame drawn", "interactive"): with OKAY_STARTUP_REPORT=1 the line "<title>: <what> at N ms (heap M MB)"
 
 ## `engine/include/okay/Core/PathSafety.hpp`
 
@@ -640,12 +656,13 @@ Back to the [code index](../code_index.md). 83 headers, 526 names.
 
 ## `engine/include/okay/Core/StringUtil.hpp`
 
-- `LowerAscii` function, line 11: ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
-- `UpperAscii` function, line 18: ASCII-only uppercase: bytes 'a'..'z' become 'A'..'Z', every other byte is left as it is (the DOM's tagName).
-- `LowerAsciiChar` function, line 25: One byte of LowerAscii (for readers that fold as they scan).
-- `EqualsNoCaseAscii` function, line 28: ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
-- `Trim` function, line 40: 's' without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
-- `HexDigitValue` function, line 49: The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
+- `LowerAscii` function, line 12: ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
+- `UpperAscii` function, line 19: ASCII-only uppercase: bytes 'a'..'z' become 'A'..'Z', every other byte is left as it is (the DOM's tagName).
+- `LowerAsciiChar` function, line 26: One byte of LowerAscii (for readers that fold as they scan).
+- `EqualsNoCaseAscii` function, line 29: ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
+- `Trim` function, line 41: 's' without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
+- `SplitTrimmed` function, line 50: 's' cut at every 'sep', each piece trimmed (Trim), the empty pieces left out: "a, b,,c " -> {"a", "b", "c"}.
+- `HexDigitValue` function, line 64: The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
 
 ## `engine/include/okay/Core/Subtitles.hpp`
 

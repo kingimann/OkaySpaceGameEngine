@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 32 headers, 630 names.
+Back to the [code index](../code_index.md). 33 headers, 659 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -25,9 +25,9 @@ Back to the [code index](../code_index.md). 32 headers, 630 names.
 - `TargetPinFor` function, line 75: Which data input of a node type is its optional "Target" object input (the
 - `VsNode` class, line 80: Base class for a node in a visual script. Nodes come in two flavors:
 - `NodeGraph` class, line 153: A directed graph of nodes wired together by data and execution links.
-- `VsRuntimeError` struct, line 450: Where a runtime error happened. 'SetRuntimeErrorHook' receives one of these
-- `SetRuntimeErrorHook` function, line 459
-- `VsLoopLatch` struct, line 463: Bookkeeping a loop keeps so a Delay inside its body pauses the loop and the
+- `VsRuntimeError` struct, line 456: Where a runtime error happened. 'SetRuntimeErrorHook' receives one of these
+- `SetRuntimeErrorHook` function, line 465
+- `VsLoopLatch` struct, line 469: Bookkeeping a loop keeps so a Delay inside its body pauses the loop and the
 
 ## `engine/include/okay/VisualScript/Nodes.hpp`
 
@@ -623,6 +623,29 @@ Back to the [code index](../code_index.md). 32 headers, 630 names.
 - `BuiltinSignature` function, line 28: Shared pin signature of every Fn.* node: four optional arguments, one result.
 - `CoverageTableMarkdown` function, line 31: System-level coverage (FEATURE_MAP area, how a graph reaches it, the node).
 
+## `engine/include/okay/VisualScript/VsCustomNodes.hpp`
+
+- `CustomNodePrefix` function, line 41: The prefix of every custom node type ("Custom.double_it").
+- `IsCustomNodeType` function, line 43: True for a "Custom.<name>" type (registered or not).
+- `CustomNodeLanguageFor` function, line 46: The script language of a custom-node file, from its extension: "okayscript" (.okay, .okayscript), "lua", "cs"; ""
+- `CustomNodeDecl` struct, line 49: One node a script declares.
+- `CustomNodeScript` struct, line 56: What a script file declares, read without running it.
+- `ParseCustomNodeScript` function, line 63: Read the node declarations of 'text' (language as CustomNodeLanguageFor gives it).
+- `LoadCustomNodeScript` function, line 67: Load a custom-node script and register its nodes; a type the file no longer declares is taken out. Loading the same
+- `LoadCustomNodeText` function, line 69: The same with the text given (an unsaved buffer, a test).
+- `UnloadCustomNodeScript` function, line 71: Forget a loaded file and take its nodes out.
+- `PollCustomNodeScripts` function, line 74: Look at every loaded file again and reload the ones that changed on disk (hot reload). The number reloaded. Cheap to
+- `ScanCustomNodeFolder` function, line 76: Load every script under 'folder' (recursively; .okay, .okayscript, .lua, .cs) that declares a node. The number of files.
+- `LoadedCustomNodeScripts` function, line 78: The files loaded now.
+- `CustomNodesRevision` function, line 80: Counts up whenever a custom node is added, changed or taken out.
+- `CustomNodeLibsInGraphText` function, line 83: The 'nodelib' paths of a graph's text, in order, each once.
+- `ResolveCustomNodeLib` function, line 86: Where a 'nodelib' path is: as written, then beside 'graphFile', then in each folder above it. "" when not found or
+- `LoadCustomNodeLibs` function, line 88: Load each 'nodelib' of a graph's text. The number loaded.
+- `MakeMissingCustomNode` function, line 91: The placeholder kept for a custom node whose type is missing: it keeps its pins and wires, says why, and does not run.
+- `IsMissingCustomNode` function, line 93: True for that placeholder.
+- `CustomVersionSpec` struct, line 96: "Make a custom version": a new script that declares a custom node with the same pins as a built-in node.
+- `CustomVersionFunctionName` function, line 112: A function name for a custom version of 'title' that is not a registered type yet ("add_custom", "add_custom_2").
+
 ## `engine/include/okay/VisualScript/VsDebug.hpp`
 
 - `VsDebugger` class, line 24
@@ -660,11 +683,19 @@ Back to the [code index](../code_index.md). 32 headers, 630 names.
 
 ## `engine/include/okay/VisualScript/VsNodeRegistry.hpp`
 
-- `VsNodeEntry` struct, line 14
-- `FindRegisteredVsNode` function, line 24
-- `VsNodeSuppressed` function, line 27: True when this type was registered by a module that is currently off.
-- `RegisteredVsNodeTypes` function, line 30: Registered type names. 'enabledOnly' drops nodes whose module is off.
-- `RegisterWeaponVsNodes` function, line 34: The weapon nodes (swing, fire, reload, ammo, set). Owned by the weapons module;
+- `VsPinSpec` struct, line 25: One data pin of a registered node: its label, what it carries and the value typed into it when nothing is wired
+- `VsNodeInfo` struct, line 32: What the editor shows of a registered node, and where it was written.
+- `VsNodeEntry` struct, line 45
+- `RegisterNodeType` function, line 62: Add or replace a node type with its pins, category and help (work package 1 of the custom nodes). The entry is
+- `UnregisterNodeType` function, line 64: Take a type out (its script was deleted or no longer defines it). Graphs that use it keep a placeholder.
+- `FindRegisteredVsNode` function, line 67: The entry for 'type', or null. The pointer stays valid for the life of the program.
+- `VsNodeSuppressed` function, line 74: True when this type was registered by a module that is currently off.
+- `RegisteredVsNodeTypes` function, line 77: Registered type names. 'enabledOnly' drops nodes whose module is off.
+- `CustomVsNodeTypes` function, line 79: The custom node types (RegisterNodeType), in the order they were first registered.
+- `CustomVsNodeInfo` function, line 81: A copy of a custom type's info; false when 'type' is not a registered custom node.
+- `CustomVsNodeSignature` function, line 83: The pin types of a custom node, or null (SignatureFor reads this).
+- `VsNodeRegistryRevision` function, line 85: Counts up every time a registered node is added, changed or removed.
+- `RegisterWeaponVsNodes` function, line 89: The weapon nodes (swing, fire, reload, ammo, set). Owned by the weapons module;
 
 ## `engine/include/okay/VisualScript/VsPinType.hpp`
 
@@ -694,18 +725,19 @@ Back to the [code index](../code_index.md). 32 headers, 630 names.
 - `ConstType` function, line 26: The type a Const node's typed value has ("3" number, "true" bool, else text).
 - `OutputType` function, line 28: The output type of 'type''s pin 'pin' given the node's text field (Const).
 - `InputType` function, line 29
-- `DeclOutType` function, line 34: Pin types that come from declared variables: Get Var / Get Scene Var / Get Global Var
-- `DeclInType` function, line 35
-- `PinCompatible` function, line 40: Can a value of type 'from' feed an input of type 'to' and mean something?
-- `PinTypeName` function, line 41
-- `ConversionHint` function, line 43: What to use instead when 'from' can't feed 'to' ("" when there's no tip).
-- `FunctionSig` struct, line 49: A visual-script function's signature, written in its Function node's text
-- `ParseFunctionSignature` function, line 55: False (with 'error' saying what's wrong) when 'text' isn't a valid signature.
-- `FunctionNameOf` function, line 57: The function name a signature text starts with (whatever is before '('), trimmed.
-- `VsIssue` struct, line 63: One problem found in a graph. 'node' is the node's id in the file/editor
-- `ValidateGraphText` function, line 74: Check a graph (OkayVS text): wires between pins that don't fit, nodes no
-- `SceneGraphIssue` struct, line 78: Every visual script in a scene, checked. 'object' names the GameObject, 'graph'
-- `ValidateSceneGraphs` function, line 84
+- `PinTypeFromName` function, line 32: A pin type from its name as a function signature or a custom node writes it ("Number", "float", "Text", "Vector3",
+- `DeclOutType` function, line 37: Pin types that come from declared variables: Get Var / Get Scene Var / Get Global Var
+- `DeclInType` function, line 38
+- `PinCompatible` function, line 43: Can a value of type 'from' feed an input of type 'to' and mean something?
+- `PinTypeName` function, line 44
+- `ConversionHint` function, line 46: What to use instead when 'from' can't feed 'to' ("" when there's no tip).
+- `FunctionSig` struct, line 52: A visual-script function's signature, written in its Function node's text
+- `ParseFunctionSignature` function, line 58: False (with 'error' saying what's wrong) when 'text' isn't a valid signature.
+- `FunctionNameOf` function, line 60: The function name a signature text starts with (whatever is before '('), trimmed.
+- `VsIssue` struct, line 66: One problem found in a graph. 'node' is the node's id in the file/editor
+- `ValidateGraphText` function, line 77: Check a graph (OkayVS text): wires between pins that don't fit, nodes no
+- `SceneGraphIssue` struct, line 81: Every visual script in a scene, checked. 'object' names the GameObject, 'graph'
+- `ValidateSceneGraphs` function, line 87
 
 ## `engine/include/okay/VisualScript/VsValue.hpp`
 

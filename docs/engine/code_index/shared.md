@@ -867,9 +867,9 @@ Back to the [code index](../code_index.md). 76 headers, 1101 names.
 - `LockMutex` function, line 76: 0 on success (like SDL_LockMutex); locking a null mutex does nothing and succeeds.
 - `UnlockMutex` function, line 85
 - `Thread` struct, line 97
-- `CreateThread` function, line 122: Start 'fn(data)' on a new thread. 'name' is only for humans (kept for the call shape; not used). Null when the system refuses.
-- `WaitThread` function, line 136: Wait for the thread to end, store its return value in '*status' (when given) and free the record.
-- `DetachThread` function, line 148: Let the thread run on its own; its record is freed when it ends. Do not use the pointer afterwards.
+- `CreateThread` function, line 127: Start 'fn(data)' on a new thread. 'name' is only for humans (kept for the call shape; not used). Null when the system refuses.
+- `WaitThread` function, line 141: Wait for the thread to end, store its return value in '*status' (when given) and free the record.
+- `DetachThread` function, line 153: Let the thread run on its own; its record is freed when it ends. Do not use the pointer afterwards.
 
 ## `shared/OkayUIAppKit.hpp`
 
@@ -1331,4 +1331,4 @@ Back to the [code index](../code_index.md). 76 headers, 1101 names.
 
 ## `shared/VisualScriptAppImpl.hpp`
 
-- `VisualScriptApp` struct, line 54
+- `VisualScriptApp` struct, line 55

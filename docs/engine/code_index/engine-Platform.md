@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 31 headers, 268 names.
+Back to the [code index](../code_index.md). 31 headers, 274 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -242,9 +242,14 @@ Back to the [code index](../code_index.md). 31 headers, 268 names.
 - `BlendMode` enum, line 30
 - `ScaleMode` enum, line 31
 - `TextureDesc` struct, line 33
-- `Painter` class, line 43
-- `PainterDesc` struct, line 131
-- `CreateGLPainter` function, line 143: opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
+- `TextureTally` struct, line 45: What every painter's textures hold now (width * height * 4 bytes each), for the memory report (okay/Core/Memory.hpp). The
+- `PainterTextures` function, line 46
+- `PainterTextureChanges` function, line 49: Goes up whenever any painter makes, frees or uploads into a texture: with OkayUI::DrawDataHash it tells a host whether the
+- `NotePainterTextureChange` function, line 50
+- `CountedTexture` class, line 53: One texture's share of PainterTextures(), held inside the backend's texture record: Count() once the texture exists, and the
+- `Painter` class, line 64
+- `PainterDesc` struct, line 152
+- `CreateGLPainter` function, line 164: opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
 
 ## `engine/include/okay/Platform/Parties.hpp`
 
@@ -285,14 +290,15 @@ Back to the [code index](../code_index.md). 31 headers, 268 names.
 - `Gamepad` class, line 289
 - `InitFlags` struct, line 334: ---- The backend ---------------------------------------------------------------
 - `Backend` class, line 338
-- `CpuCount` function, line 473: Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
-- `SystemRamMB` function, line 474
-- `TicksMs` function, line 479: ---- Free functions on the default backend ------------------------------------
-- `TicksMs32` function, line 481: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
-- `PerfCounter` function, line 482
-- `PerfFrequency` function, line 483
-- `DelayMs` function, line 484
-- `Log` function, line 486: Log one line through the default backend (stderr when there is none).
+- `CpuCount` function, line 480: Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
+- `SystemRamMB` function, line 481
+- `TicksMs` function, line 486: ---- Free functions on the default backend ------------------------------------
+- `TicksMs32` function, line 488: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
+- `PerfCounter` function, line 489
+- `PerfFrequency` function, line 490
+- `DelayMs` function, line 491
+- `WakeMainLoop` function, line 494: WakeWait on the default backend (nothing when there is none). Safe from any thread: a background job calls it when its
+- `Log` function, line 496: Log one line through the default backend (stderr when there is none).
 
 ## `engine/include/okay/Platform/PlayFab/PlayFab.hpp`
 

@@ -17,11 +17,11 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Browser | 15 | 206 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 261 | 746 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 83 | 526 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 83 | 543 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 83 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
-| engine-Graphics | 6 | 37 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
+| engine-Graphics | 6 | 38 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
 | engine-Input | 22 | 115 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
 | engine-JavaScript | 2 | 31 | [code_index/engine-JavaScript.md](code_index/engine-JavaScript.md) |
@@ -32,7 +32,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Net | 34 | 167 | [code_index/engine-Net.md](code_index/engine-Net.md) |
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |
 | engine-Physics | 30 | 156 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
-| engine-Platform | 31 | 268 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
+| engine-Platform | 31 | 274 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
 | engine-Render | 52 | 518 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 131 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
@@ -40,6 +40,6 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Testing | 5 | 43 | [code_index/engine-Testing.md](code_index/engine-Testing.md) |
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 15 | 71 | [code_index/engine-UI.md](code_index/engine-UI.md) |
-| engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
-| okayui | 12 | 685 | [code_index/okayui.md](code_index/okayui.md) |
+| engine-VisualScript | 33 | 659 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
+| okayui | 12 | 688 | [code_index/okayui.md](code_index/okayui.md) |
 | shared | 76 | 1101 | [code_index/shared.md](code_index/shared.md) |

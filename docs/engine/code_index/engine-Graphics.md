@@ -2,7 +2,7 @@
 
 # Code index: engine-Graphics
 
-Back to the [code index](../code_index.md). 6 headers, 37 names.
+Back to the [code index](../code_index.md). 6 headers, 38 names.
 
 ## `engine/include/okay/Graphics/ColorVision.hpp`
 
@@ -43,15 +43,16 @@ Back to the [code index](../code_index.md). 6 headers, 37 names.
 ## `engine/include/okay/Graphics/TtfFont.hpp`
 
 - `TtfFont` class, line 23: A TrueType/OpenType font rasterized into a CPU glyph atlas, so imported
-- `TtfCoverageGamma` function, line 134: The power small-text coverage is raised to for a face baked at 'deviceHeight' pixels: 0.78 up to 9 px, fading
-- `GetFont` function, line 139: Process-wide font cache: returns a loaded font for 'path' (baked once and reused),
-- `BuiltinUIFont` function, line 142: The launcher's font (Roboto Medium, built into the engine), baked once.
-- `EmbeddedUIFontData` function, line 144: The raw bytes of that font (decompressed once). False if unavailable.
-- `SceneUIFont` function, line 147: A scene's default UI font (Scene::uiFont): "" = the built-in launcher font,
-- `SetActiveUIFont` function, line 150: The font screen-space text without its own font uses (hosts set it from the
-- `ActiveUIFont` function, line 151
-- `FontForText` function, line 158: The font to draw UTF-8 'text' with: 'wanted' (nullptr = the 8x8 bitmap font,
-- `SystemFallbackFonts` function, line 160: Installed fonts the fallback looks at, best first (the ones that exist here).
+- `TtfCoverageGamma` function, line 139: The power small-text coverage is raised to for a face baked at 'deviceHeight' pixels: 0.78 up to 9 px, fading
+- `GetFont` function, line 144: Process-wide font cache: returns a loaded font for 'path' (baked once and reused),
+- `BuiltinUIFont` function, line 147: The launcher's font (Roboto Medium, built into the engine), baked once.
+- `EmbeddedUIFontData` function, line 149: The raw bytes of that font (decompressed once). False if unavailable.
+- `SceneUIFont` function, line 152: A scene's default UI font (Scene::uiFont): "" = the built-in launcher font,
+- `SetActiveUIFont` function, line 155: The font screen-space text without its own font uses (hosts set it from the
+- `ActiveUIFont` function, line 156
+- `FontForText` function, line 163: The font to draw UTF-8 'text' with: 'wanted' (nullptr = the 8x8 bitmap font,
+- `SystemFallbackFonts` function, line 165: Installed fonts the fallback looks at, best first (the ones that exist here).
+- `FontCacheBytes` function, line 167: The bytes GetFont's cache and BuiltinUIFont hold (TtfFont::MemoryBytes of each), for the memory report.
 
 ## `engine/include/okay/Graphics/TtfRaster.hpp`
 

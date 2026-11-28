@@ -84,6 +84,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a coroutine stops early | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a crash loses work | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | a CSS rule does nothing | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
+| a custom node's body error names the line | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
 | a custom tag or layer name is lost on restart | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a custom widget does not repeat | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
 | a custom-drawn panel does not clip | [40.7](40-okayui-library.md#407-draw-list-cursor-item-state-and-disabled-blocks) Draw list, cursor, item state and disabled blocks |
@@ -127,7 +128,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a game starts the wrong player | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | a generated node's pins differ from the table | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | a golden image test fails | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
-| a graph from a plugin author loads with missing nodes | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
+| a graph loads with "custom node ... is missing | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
 | a grenade does not push crates | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | a gunshot cuts off the previous one | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a hand snaps to a new target | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
@@ -660,6 +661,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I want an AI agent to build my level | [41.15](41-build-tools-infra.md#4115-engine-automation-commands-and-the-mcp-server) Engine automation commands and the MCP server |
 | I want an example plugin to copy | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | I want players to design their character | [30.1](20-35-planned.md#301-customization) Customization |
+| I want to change what a built-in node does | [24.3](20-35-planned.md#243-custom-nodes) Custom nodes |
 | I want to commit from the editor | [28.1](20-35-planned.md#281-git-integration) Git integration |
 | I want to make and build a game from a terminal | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | I want to paint forests | [29.2](20-35-planned.md#292-vegetation-painting) Vegetation painting |

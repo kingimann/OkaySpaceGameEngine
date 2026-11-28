@@ -788,7 +788,9 @@ void Scene::DispatchPointer() {
     // camera ray against 3D colliders so OnMouse* fires on meshes; in
     // a 2D (orthographic) scene we pick by SpriteRenderer / BoxCollider2D bounds.
     GameObject* hit = nullptr;
-    if (mainCamera && mainCamera->projection == Camera::Projection::Perspective) {
+    if (worldPointerFilter && worldPointerFilter(*this)) {
+        // The pointer is over UI and the scene's Event System keeps those clicks off the world: no world object is hit.
+    } else if (mainCamera && mainCamera->projection == Camera::Projection::Perspective) {
         Vec3 ro, rd;
         mainCamera->ScreenPointToRay(mp.x, mp.y, w, h, ro, rd);
         Physics3D phys;

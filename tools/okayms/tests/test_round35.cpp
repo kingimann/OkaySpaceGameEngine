@@ -257,6 +257,63 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Round 35 language items behind the Windows survey's next blockers:
+// - a lambda with default arguments called without them ([expr.prim.lambda.closure] 4; VehicleBuilder.hpp's
+//   `[](int r, int g, int b, int a = 255)`, 3 files; before "wrong number of arguments to rgb");
+// - arrays of objects of more than one dimension: local, static local and global ([dcl.array] 6, [class.base.init];
+//   NavMeshBake.cpp's `Vec3 buf[2][9]`; before "an array of objects needs one dimension");
+// - `T (&a)[N]` and `T (&a)[M][N]` parameters, with T deduced from an array argument ([dcl.ref], [temp.deduct.call] 3;
+//   MdlReader.cpp, UVUnwrap.cpp; before "expected ')'").
+static void r35_language(Tally& tally) {
+    std::printf("r35_language\n");
+    okayms_test::run_both(kRun, tally, "language", std::string(kAlloc) + R"OKMS(
+#include <cstdint>
+#include <string>
+struct Color { int r, g, b, a; static Color FromBytes(int r, int g, int b, int a) { return Color{r, g, b, a}; } };
+struct Vec3 { float x, y, z; Vec3() : x(1), y(2), z(3) {} Vec3(float a, float b, float c) : x(a), y(b), z(c) {} };
+static int alive = 0;
+struct Obj { int v; Obj() : v(4) { ++alive; } ~Obj() { --alive; } };
+static Obj g_grid[2][3];
+static float Slab(float z0) {
+  Vec3 buf[2][9];
+  buf[0][0] = Vec3(0, 0, z0);
+  buf[1][8] = Vec3(5, 6, 7);
+  const Vec3* in = buf[1];
+  return buf[0][0].z + in[8].x + buf[1][3].y;
+}
+template <class T> bool CornersIn(const T (&v)[3], std::int32_t n) { return v[0] >= 0 && v[1] >= 0 && v[2] >= 0 && v[0] < n && v[1] < n && v[2] < n; }
+static int Sum3(const int (&v)[3]) { int s = 0; for (int i = 0; i < 3; ++i) s += v[i]; return s; }
+static void Bump(int (&v)[3]) { v[1] += 10; }
+int entry(void) {
+  auto rgb = [](int r, int g, int b, int a = 255) { return Color::FromBytes(r, g, b, a); };
+  const Color dark = rgb(38, 38, 42), glass = rgb(150, 205, 235, 70);
+  CK(1, dark.a == 255 && glass.a == 70 && dark.b == 42);
+  int base = 10;
+  auto add = [&](int x, int y = 2) { return base + x + y; };
+  CK(2, add(1) == 13 && add(1, 5) == 16);
+  CK(3, Slab(10) == 17);
+  CK(4, alive == 6 && g_grid[1][2].v == 4);
+  {
+    Obj local[3][2];
+    CK(5, alive == 12 && local[2][1].v == 4);
+    static std::string names[2][2];
+    names[1][1] = "x";
+    CK(6, names[1][1] == "x" && names[0][1].empty());
+  }
+  CK(7, alive == 6);
+  int tri[3] = {0, 4, 2};
+  CK(8, CornersIn(tri, 5) && !CornersIn(tri, 4) && Sum3(tri) == 6);
+  Bump(tri);
+  CK(9, tri[1] == 14);
+  double c[3][3] = {{1, 0, 0}, {0, 2, 0}, {0, 0, 3}};
+  auto power = [&](const double (&m)[3][3], double v[3]) { double t = 0; for (int i = 0; i < 3; ++i) t += m[i][i] * v[i]; return t; };
+  double v[3] = {1, 1, 1};
+  CK(10, power(c, v) == 6);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -265,5 +322,6 @@ int main(int argc, char** argv) {
     r35_preprocessor_library(tally);
     r35_thread_local(tally);
     r35_wrong_code(tally);
-    return tally.finish(4);
+    r35_language(tally);
+    return tally.finish(5);
 }

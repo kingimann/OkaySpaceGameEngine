@@ -52,6 +52,18 @@ public:
         units_.push_back((C)0);
         return *this;
     }
+    // n copies of c ([string.assign] 12; Round 37, Platform.cpp's `w.assign(w.size() * 2, L'\0')`).
+    basic_ustring__& assign(size_t n, C c) {
+        units_.clear();
+        for (size_t i = 0; i < n; ++i) units_.push_back(c);
+        units_.push_back((C)0);
+        return *this;
+    }
+    basic_ustring__& assign(const C* s) { return assign(s, length_of(s)); }
+    basic_ustring__& assign(const basic_ustring__& o) {
+        units_ = o.units_;
+        return *this;
+    }
 
     size_t size() const { return units_.size() - 1; }
     size_t length() const { return units_.size() - 1; }

@@ -211,6 +211,90 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Single-file blockers of the Windows survey (Round 37), each from ISO/IEC 14882:
+// - a range for over a braced list of class objects made from variables (`for (const std::string& p : {org, app})`,
+//   [stmt.ranged] 1, [dcl.init.list] 5; Platform.cpp, SequencePlayer.cpp, SaveGame.cpp): the objects are made, and
+//   destroyed after the loop, also when the body returns or breaks;
+// - `final` and `override` as variable names after a `)` ([lex.name] 2; NetworkManager.cpp's `if (k) final = true;`);
+// - `const char* const* C::f()` defined outside the class (Mcp.cpp);
+// - an enumeration and a class of one name in two namespaces ([basic.lookup.unqual]; Automation.cpp's struct Result
+//   beside okay::bindings' enum class Result);
+// - casts to function pointer types `(R (*)(A))p` and `reinterpret_cast<R (__stdcall *)(A)>(p)` ([expr.cast],
+//   [dcl.name]; GLPainter.cpp);
+// - `::f(x)` in a member function also named f calls the global f ([namespace.qual]; OwnWin32.cpp's ::SwapBuffers);
+// - vector::insert(pos, first, last) with other iterators ([sequence.reqmts]; Packet.hpp), offsetof
+//   ([support.types.layout]), wstring::assign(n, c) and find_last_of ([string.assign], [string.find.last.of]).
+static void r37_single_file_blockers(Tally& tally) {
+    std::printf("r37_single_file_blockers\n");
+    okayms_test::run_both(kRun, tally, "single_file_blockers", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+#include <cstddef>
+static int g_live = 0;
+struct T { std::string s; T(const std::string& v) : s(v) { ++g_live; } T(const T& o) : s(o.s) { ++g_live; } ~T() { --g_live; } };
+static int Joined(const std::string& a, const std::string& b) {
+  std::string all;
+  for (const std::string& part : {a, b, a + "!"}) all += part;
+  return (int)all.size();
+}
+static int FirstLong(const std::string& a, const std::string& b) {
+  for (const T& t : {T(a), T(b)}) if (t.s.size() > 3) return (int)t.s.size();
+  return 0;
+}
+static int Breaks(const std::string& a) {
+  int n = 0;
+  for (const T& t : {T(a), T(a + a), T(a)}) { ++n; if (t.s.size() > 2) break; }
+  return n;
+}
+namespace bindings { enum class Result { NotFound, Ok, Error }; }
+namespace automation {
+struct Result { int ok; static Result Make(int v); };
+Result Result::Make(int v) { Result r; r.ok = v; return r; }
+}
+struct Versions { static const char* const* List(int* count); };
+static const char* const kList[] = {"2024-11-05", "2025-03-26"};
+const char* const* Versions::List(int* count) { if (count) *count = 2; return kList; }
+static int Twice(int x) { return 2 * x; }
+static void* Address() { return (void*)&Twice; }
+static int Swap(int v) { return v + 100; }
+struct Window { int Swap(int v) { return ::Swap(v) + 1; } };
+struct Vert { float x, y; unsigned char r, g, b, a; float u, v; };
+int entry(void) {
+  CK(1, Joined("ab", "cde") == 8);
+  CK(2, FirstLong("ab", "lengthy") == 7 && g_live == 0);
+  CK(3, Breaks("xy") == 2 && g_live == 0);
+  bool final = false;
+  int k = 3;
+  if (k > 2) final = true;
+  bool override = final;
+  CK(4, final && override);
+  automation::Result r = automation::Result::Make(5);
+  bindings::Result e = bindings::Result::Ok;
+  CK(5, r.ok == 5 && e == bindings::Result::Ok);
+  int count = 0;
+  const char* const* list = Versions::List(&count);
+  CK(6, count == 2 && list[1][3] == '5');
+  int (*f1)(int) = (int (*)(int))Address();
+  int (*f2)(int) = reinterpret_cast<int (__stdcall *)(int)>(Address());
+  CK(7, f1(4) == 8 && f2(5) == 10);
+  Window w;
+  CK(8, w.Swap(1) == 102);
+  std::vector<unsigned char> bytes;
+  std::string text = "hey";
+  bytes.insert(bytes.end(), text.begin(), text.end());
+  std::vector<int> nums{1, 2};
+  nums.insert(nums.end(), {3, 4, 5});
+  CK(9, bytes.size() == 3 && bytes[2] == 'y' && nums.size() == 5 && nums[4] == 5);
+  CK(10, offsetof(Vert, r) == 8 && offsetof(Vert, u) == 12 && sizeof(Vert) == 20);
+  std::wstring ws(L"C:\\dir/file");
+  CK(11, ws.find_last_of(L"\\/") == 6 && ws.find_last_of(L"\\") == 2);
+  ws.assign(4, L'z');
+  CK(12, ws.size() == 4 && ws[3] == L'z');
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -220,5 +304,6 @@ int main(int argc, char** argv) {
     r37_wide_path(tally);
     r37_by_value_unwind(tally);
     r37_win32_layouts(tally);
-    return tally.finish(5);
+    r37_single_file_blockers(tally);
+    return tally.finish(6);
 }

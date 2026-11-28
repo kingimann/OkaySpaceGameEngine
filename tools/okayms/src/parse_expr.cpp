@@ -2638,6 +2638,23 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
+            if (is(TLParen) && at + 2 < tokens.size() && tokens[at + 1].kind == TStar && tokens[at + 2].kind == TRParen) {
+                // (R (*)(A, B))p and reinterpret_cast<R (*)(A, B)>(p): a cast to a function pointer type, an abstract
+                // declarator ([dcl.name] 1, [expr.cast]; Round 37, GLPainter.cpp's loader). The type is made as a
+                // template argument's R(*)(A, B) is (parse_one_arg).
+                next();
+                next();
+                next();
+                Declarator fd;
+                if (!expect(TLParen, "'('") || !parse_param_list(&fd)) return false;
+                FuncType ft;
+                ft.ret = ty;
+                ft.params = fd.params;
+                ft.vararg = fd.vararg;
+                ty.pointers += 1;
+                ty.func_id = static_cast<int>(func_types.size());
+                func_types.push_back(ft);
+            }
             if (is(TAmp) || is(TAndAnd)) {
                 // (T&)x, (const T&)x, (T&&)x, and static_cast<const Base&>(derived), which is read as that: the object x
                 // seen as a T ([expr.static.cast] 2, [expr.cast]), here *(T*)&x. When x already has type T (and is not

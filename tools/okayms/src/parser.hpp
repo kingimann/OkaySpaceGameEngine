@@ -547,7 +547,13 @@ struct Parser {
             // `bool ok = true, final = false;`); Round 31 and before dropped the word everywhere.
             if (t.kind == TIdent && (t.text == "override" || t.text == "final")) {
                 const Tok nk = i + 1 < tokens.size() ? tokens[i + 1].kind : TEnd;
-                const bool next_ok = nk == TLBrace || nk == TSemi || nk == TAssign || nk == TColon ||
+                // Before `=` only as `= 0`, `= default` or `= delete` (Round 37: NetworkManager.cpp's
+                // `if (m_kicked) final = true;` lost its variable after the `)`).
+                const bool assign_ok =
+                    nk == TAssign && i + 2 < tokens.size() &&
+                    ((tokens[i + 2].kind == TNumber && tokens[i + 2].number == 0) || tokens[i + 2].kind == TDefault ||
+                     (tokens[i + 2].kind == TIdent && tokens[i + 2].text == "delete"));
+                const bool next_ok = nk == TLBrace || nk == TSemi || assign_ok || nk == TColon ||
                                      (nk == TIdent && (tokens[i + 1].text == "override" || tokens[i + 1].text == "final" ||
                                                        tokens[i + 1].text == "try" || tokens[i + 1].text == "noexcept"));
                 bool prev_ok = false;
@@ -885,6 +891,11 @@ struct Parser {
                     for (size_t k = i + 2; k < j; ++k) {
                         // volatile is dropped here too; `T *const` inside the cast loses its const as above.
                         if (tokens[k].kind == TIdent && tokens[k].text == "volatile") continue;
+                        // A calling convention in a function pointer type (`R (__stdcall *)(A)`; Round 37) is dropped
+                        // as it is everywhere else (one convention on x64).
+                        if (tokens[k].kind == TIdent && (tokens[k].text == "__stdcall" || tokens[k].text == "__cdecl" ||
+                                                         tokens[k].text == "__fastcall" || tokens[k].text == "__thiscall"))
+                            continue;
                         if (tokens[k].kind == TConst && !out.empty() && out.back().kind == TStar) continue;
                         out.push_back(tokens[k]);
                     }
@@ -2755,7 +2766,11 @@ struct Parser {
                     ed.nest = struct_nest;
                     enum_types_declared.push_back(ed);
                 }
-                typedefs[cur().text] = enum_type;
+                // At namespace scope the name is kept with its namespace, as a typedef's is (Round 37: okay::bindings'
+                // `enum class Result` replaced okay::automation's struct Result in every namespace after it; Automation.cpp,
+                // "expected ';'" at `Result Result::Fail(...)`).
+                if (struct_nest == 0 && cur_locals == nullptr) declare_ns_typedef(cur().text, enum_type);
+                else typedefs[cur().text] = enum_type;
                 if (struct_nest == 0) enum_ns_[enum_type.enum_id] = current_ns;
                 cur_enum_id = enum_type.enum_id;
                 next();
@@ -4707,6 +4722,9 @@ struct Parser {
             q.is_ref = false;
             if (q.pointers > 0 || q.is_array() || q.func_id >= 0) return n <= 1 ? 2 : -1;
             if (q.base != 3) return n <= 1 ? 0 : -1;
+            // A std::initializer_list<T> parameter takes any braced list ([over.ics.list] 5; Round 37: v.insert(pos, {a,
+            // b, c}) was not viable, and a member template insert of the same name was tried instead).
+            if (is_init_list_class(q)) return 0;
             return class_takes_list(q.struct_id, n) ? 4 : -1;
         }
         Type a;
@@ -4726,6 +4744,13 @@ struct Parser {
             // A function (or pointer to one) for a function pointer parameter: the signatures decide ([over.ics.scs]),
             // so operator<<(ios_base& (*)(ios_base&)) takes std::hex and the const void* overload does not win.
             if (a.func_id >= 0 && p.func_id >= 0) return same_signature(a.func_id, p.func_id) ? 0 : -1;
+            {
+                // A pointer to another arithmetic type is not viable ([conv.ptr]; Round 37: `char*` for a
+                // `const unsigned char*` parameter ranked as an exact match, so vector<uint8_t>::insert(pos, const T*,
+                // const T*) hid the iterator template for a string's chars).
+                std::string what;
+                if (arith_ptr_mismatch(arg, p, &what)) return -1;
+            }
             if (a.pointers == p.pointers && a.base == p.base && (p.base != 3 || a.struct_id == p.struct_id) &&
                 (a.func_id >= 0) == (p.func_id >= 0))
                 return 0;
@@ -10511,10 +10536,21 @@ struct Parser {
             bool exported = false;
             Type type;
             if (!parse_type(&type, &imported, &exported)) return false;
-            while (!is_typedef && is(TStar) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
-                   tokens[at + 2].kind == TColonColon) {
-                ++type.pointers;
-                next();
+            {
+                // T* C::f() and `const char* const* C::f()` (Round 37, Mcp.cpp's McpServer::SupportedVersions): the
+                // stars, and the const after a star, of a member function's result written outside the class. The
+                // result type is the one the class declared.
+                size_t k = at;
+                int stars = 0;
+                while (k < tokens.size() && (tokens[k].kind == TStar || (stars > 0 && tokens[k].kind == TConst))) {
+                    if (tokens[k].kind == TStar) ++stars;
+                    ++k;
+                }
+                if (!is_typedef && stars > 0 && k + 1 < tokens.size() && tokens[k].kind == TIdent &&
+                    tokens[k + 1].kind == TColonColon) {
+                    type.pointers += stars;
+                    at = k;
+                }
             }
             if (!is_typedef && (is(TAmp) || is(TAndAnd)) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
                 tokens[at + 2].kind == TColonColon && class_name_at(at + 1)) {

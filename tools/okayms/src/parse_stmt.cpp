@@ -1758,9 +1758,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     Node range;
     Node list_init;
     bool braced_range = false;
+    bool braced_class = false;
+    int braced_sid = -1;
+    size_t list_temps_from = 0;
     Type range_type;
     if (is(TLBrace)) {
         // for (T x : {a, b, c}): the list is stored in a hidden array that the loop runs over ([stmt.ranged]).
+        list_temps_from = stmt_temps.size();
         if (!parse_init(&list_init)) return false;
         if (!expect(TRParen, "')'")) return false;
         if (list_init.kids.empty()) {
@@ -1797,6 +1801,12 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         range = node_name(array_local.name);
         range_type = array_local.type;
         braced_range = true;
+        // for (const std::string& p : {org, app}): elements of a class are made by their constructors from the
+        // list's values (copy-initialization, [dcl.init.list] 5) and destroyed after the loop (Round 37; before,
+        // "initializer must be a constant", 3 files).
+        braced_class = elem_type.base == 3 && elem_type.pointers == 0 && !elem_type.is_array() && elem_type.struct_id >= 0 &&
+                       (obj_needs_ctor(elem_type) || obj_needs_dtor(elem_type));
+        braced_sid = elem_type.struct_id;
     } else if (!parse_expr(0, &range)) {
         return false;
     } else if (!expect(TRParen, "')'")) {
@@ -1960,6 +1970,15 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         if (!parse_type(&declared, &imp, &exp)) return false;
     }
     const int saved_depth = scope_depth;
+    if (braced_class) {
+        // The list's objects live around the loop: a return or a throw in the body destroys them too.
+        dscopes.emplace_back();
+        DObj list_obj;
+        list_obj.name = range.text;
+        list_obj.sid = braced_sid;
+        list_obj.count = range_type.array_len;
+        dscopes.back().push_back(list_obj);
+    }
     push_scope();
     dscopes.emplace_back();
     Local index;
@@ -2065,7 +2084,27 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     *out = Node{};
     out->kind = Node::Block;
     out->text = "scope";
-    if (braced_range) {
+    if (braced_range && braced_class) {
+        for (size_t i = 0; i < list_init.kids.size(); ++i) {
+            Node slot;
+            slot.kind = Node::Index;
+            slot.kids.push_back(range);
+            slot.kids.push_back(int_node(static_cast<long long>(i)));
+            std::vector<Node> cargs;
+            cargs.push_back(std::move(list_init.kids[i]));
+            Node call;
+            if (!special_call(braced_sid, "<ctor>", node_addr(std::move(slot)), std::move(cargs), &call)) return false;
+            out->kids.push_back(std::move(call));
+        }
+        // The temporaries the list's values needed (T(a), a + "!") end with the range's initializer, once the array's
+        // objects are made from them ([class.temporary] 4), so a return in the body does not leave them alive.
+        for (size_t i = stmt_temps.size(); i-- > list_temps_from;) {
+            Node call;
+            if (!temp_end_call(stmt_temps[i], &call)) return false;
+            out->kids.push_back(std::move(call));
+        }
+        if (stmt_temps.size() > list_temps_from) stmt_temps.resize(list_temps_from);
+    } else if (braced_range) {
         Node store;
         store.kind = Node::Assign;
         store.number = 1;
@@ -2090,6 +2129,12 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         out->kids.push_back(std::move(stmt));
     }
     out->kids.push_back(std::move(loop));
+    if (braced_class) {
+        std::vector<Node> list_dt;
+        if (!dtor_nodes(dscopes.size() - 1, &list_dt)) return false;
+        for (Node& n : list_dt) out->kids.push_back(std::move(n));
+        dscopes.pop_back();
+    }
     if (iter_class && obj_needs_dtor(iter_type)) {
         for (const std::string& n : {range_end.name, index.name}) {
             Node call;

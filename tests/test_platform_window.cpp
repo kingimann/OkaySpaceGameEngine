@@ -22,12 +22,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-#if defined(__has_include)
-#if __has_include(<SDL.h>)
-#include <SDL.h>
-#define OKAY_TEST_HAVE_SDL_HEADERS 1
-#endif
-#endif
 
 using namespace okay::platform;
 
@@ -113,7 +107,6 @@ int main(int argc, char** argv) {
     if (!IsCompiledIn(kind)) { std::cout << "SKIP: backend " << argv[1] << " not compiled in\n"; return 77; }
     if (!std::getenv("DISPLAY")) { std::cout << "SKIP: no $DISPLAY (run through tests/run_under_xvfb.sh)\n"; return 77; }
     if (std::system("command -v xdotool >/dev/null 2>&1") != 0) { std::cout << "SKIP: xdotool not installed\n"; return 77; }
-    setenv("SDL_VIDEODRIVER", "x11", 1);   // the sdl2 backend must talk to the same server
 
     Backend* b = Get(kind);
     CHECK(b != nullptr);
@@ -140,7 +133,7 @@ int main(int argc, char** argv) {
     int px = 0, py = 0;
     win->GetPosition(px, py);
     CHECK(Near(px, 100, 40) && Near(py, 80, 40));   // a window manager may add a frame offset
-    if (kind == BackendKind::Own) {   // NativeHandle is the X window id for `own` (an SDL_Window* for sdl2)
+    if (kind == BackendKind::Own) {   // NativeHandle is the X window id
         char id[32]; std::snprintf(id, sizeof id, "%lu", (unsigned long)(uintptr_t)win->NativeHandle());
         const std::string name = Sh(std::string("xdotool getwindowname ") + id + " 2>/dev/null");
         std::cout << "  window name as the server sees it: " << name << "\n";
@@ -284,7 +277,7 @@ int main(int argc, char** argv) {
     // KeyForChar: the physical key that types a letter on the CURRENT layout (US here).
     CHECK(b->KeyForChar('a') == Key::A && b->KeyForChar('z') == Key::Z && b->KeyForChar('w') == Key::W);
     CHECK(b->KeyForChar('1') == Key::N1 && b->KeyForChar('0') == Key::N0 && b->KeyForChar(' ') == Key::Space);
-    CHECK(b->KeyForChar('A') == Key::A || b->KeyForChar('A') == Key::Unknown);   // sdl2 maps the keycode 'A' to nothing
+    CHECK(b->KeyForChar('A') == Key::A || b->KeyForChar('A') == Key::Unknown);
     CHECK(b->KeyForChar('!') == Key::Unknown);
     // ModState follows the held modifier keys.
     Inject(*b, "keydown shift", 100);
@@ -444,91 +437,6 @@ int main(int argc, char** argv) {
         CHECK(b->BasePath().size() > 1);
     }
 
-#ifdef OKAY_TEST_HAVE_SDL_HEADERS
-    // ---- WrapSdl2Window: a non-owning Window over a window the app made itself ------------------
-    if (kind == BackendKind::Sdl2) {
-        SDL_Window* raw = SDL_CreateWindow("wrapped", 50, 50, 210, 130, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
-        CHECK(raw != nullptr);
-        CHECK(WrapSdl2Window(nullptr) == nullptr);
-        if (raw) {
-            auto ww = WrapSdl2Window(raw);
-            CHECK(ww != nullptr);
-            if (ww) {
-                CHECK(ww->Kind() == BackendKind::Sdl2 && ww->NativeHandle() == raw);
-                CHECK(ww->Id() == SDL_GetWindowID(raw));
-                int gw = 0, gh = 0, sw = 0, sh = 0;
-                ww->GetSize(gw, gh);
-                SDL_GetWindowSize(raw, &sw, &sh);
-                CHECK(gw == sw && gh == sh && gw == 210 && gh == 130);
-                SDL_DisplayMode dm;
-                const int sdlHz = (SDL_GetWindowDisplayMode(raw, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
-                CHECK(ww->RefreshRateHz() == sdlHz);
-                CHECK(ww->IsFocused() == ((SDL_GetWindowFlags(raw) & SDL_WINDOW_INPUT_FOCUS) != 0));
-                CHECK(b->TouchDeviceCount() == SDL_GetNumTouchDevices());
-                // Window state and focus queries match what SDL says (the apps used SDL_GetWindowFlags and friends).
-                const Uint32 fl = SDL_GetWindowFlags(raw);
-                CHECK(ww->IsMinimized() == ((fl & SDL_WINDOW_MINIMIZED) != 0));
-                CHECK(ww->IsVisible() == ((fl & SDL_WINDOW_HIDDEN) == 0));
-                CHECK(ww->HasMouseFocus() == ((fl & SDL_WINDOW_MOUSE_FOCUS) != 0));
-                CHECK(ww->HasInputFocus() == ww->IsFocused());
-                SDL_Window* kf = SDL_GetKeyboardFocus(); SDL_Window* mf = SDL_GetMouseFocus();
-                CHECK(b->KeyboardFocusWindowId() == (kf ? SDL_GetWindowID(kf) : 0u));
-                CHECK(b->MouseFocusWindowId() == (mf ? SDL_GetWindowID(mf) : 0u));
-                CHECK(b->NativeHandleFromId(ww->Id()) == (void*)raw && b->NativeHandleFromId(0) == nullptr && b->NativeHandleFromId(0x7fffff) == nullptr);
-                CHECK(ww->Win32Handle() == nullptr);   // not Windows
-                (void)ww->SetInputFocus();             // refused or accepted by the video driver, never a crash
-                ww->Hide();
-                CHECK(!ww->IsVisible());
-                ww->Show();
-                CHECK(ww->IsVisible());
-                // Taskbar flash: accepted (or refused by the video driver) without a crash, and Stop ends it.
-                (void)ww->Flash(FlashMode::Briefly);
-                (void)ww->Flash(FlashMode::UntilFocused);
-                (void)ww->Flash(FlashMode::Stop);
-                // A GL context made through the wrapper, and the current-GL save / restore the editor uses.
-                const GLCurrent before = b->CurrentGL();
-                if (ww->CreateGLContext(GLAttributes{})) {
-                    const GLCurrent mine = b->CurrentGL();
-                    CHECK(mine.window == raw && mine.context != nullptr);
-                    CHECK(b->RestoreGL(before));
-                    const GLCurrent back = b->CurrentGL();
-                    CHECK(back.window == before.window && back.context == before.context);
-                    CHECK(ww->MakeCurrent());
-                    CHECK(b->CurrentGL().context == mine.context);
-                    b->ReleaseCurrent();
-                } else {
-                    std::cout << "  (no GL context for the wrapped window: GL part skipped)\n";
-                }
-            }
-            ww.reset();
-            CHECK(SDL_GetWindowID(raw) != 0);   // the wrapper did not destroy the app's window
-            SDL_DestroyWindow(raw);
-        }
-    }
-#endif
-#ifdef OKAY_TEST_HAVE_SDL_HEADERS
-    if (kind == BackendKind::Sdl2) {
-        // Touch and natural-scrolling events cannot come from XTEST: push them as SDL would.
-        SDL_Event fe; SDL_memset(&fe, 0, sizeof(fe));
-        fe.type = SDL_FINGERDOWN; fe.tfinger.fingerId = 7; fe.tfinger.x = 0.25f; fe.tfinger.y = 0.75f;
-        SDL_PushEvent(&fe);
-        fe.type = SDL_FINGERMOTION; fe.tfinger.x = 0.5f; SDL_PushEvent(&fe);
-        fe.type = SDL_FINGERUP; SDL_PushEvent(&fe);
-        SDL_Event we; SDL_memset(&we, 0, sizeof(we));
-        we.type = SDL_MOUSEWHEEL; we.wheel.y = -2; we.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
-        SDL_PushEvent(&we);
-        we.wheel.y = 3; we.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
-        SDL_PushEvent(&we);
-        ev = Pump(*b, 50);
-        const Event* fd0 = Find(ev, EventType::FingerDown);
-        CHECK(fd0 && fd0->fingerId == 7 && fd0->fx == 0.25f && fd0->fy == 0.75f);
-        CHECK(Find(ev, EventType::FingerMotion, [](const Event& e) { return e.fx == 0.5f; }) != nullptr);
-        CHECK(Count(ev, EventType::FingerUp) == 1);
-        // Flipped: wheelY is "up = +y" (so +2) and wheelFlipped says the OS value was -2.
-        CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return e.wheelFlipped && e.wheelY == 2.0f; }) != nullptr);
-        CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return !e.wheelFlipped && e.wheelY == 3.0f; }) != nullptr);
-    }
-#endif
 
     // ---- visibility / focus / destroy -----------------------------------------------------------
     CHECK(win->IsVisible());

@@ -1,15 +1,13 @@
 // Headless pictures (software renderer, same UI pass as the game) of the UI library slice 2 parts: the game HUD parts, rich text
 // links and icons, and the whole example scene. Not a real window.
-#define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/UILibrary.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/UI/UILayoutUpdate.hpp"
-#include "okay/UI/UIPainterSDL.hpp"
+#include "ui_soft_render.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
-#include <SDL.h>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -23,33 +21,13 @@ namespace {
 
 bool Render(const std::string& path, int width, int height, const std::function<void(Scene&)>& build,
             const std::function<void(Scene&)>& after = nullptr) {
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    if (!ren) {
-        if (surf) SDL_FreeSurface(surf);
-        return false;
-    }
-    std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 18, 22, 32, 255);
-    SDL_RenderClear(ren);
     Scene scene("shot");
     scene.physicsEnabled = false;
     scene.uiFont = "pixel";
     build(scene);
-    ui2d::SDLPainter painter(ren, &cache, "");
-    ui2d::RenderSceneUI(scene, painter, width, height);
-    SDL_RenderPresent(ren);
+    Image img;
+    if (!okaytest::SoftRenderSceneUI(scene, width, height, img, false, 18, 22, 32)) return false;
     if (after) after(scene);
-    Image img(width, height);
-    for (int y = 0; y < height; ++y) {
-        const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
-        for (int x = 0; x < width; ++x)
-            img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
-    }
-    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     int drawn = 0;
     const unsigned char* px = img.Data();
     for (int i = 0; i < width * height; ++i)

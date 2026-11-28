@@ -2,7 +2,8 @@
 // Private shared state and helpers of the OkayUI toolkit (okayui/src/OkayUI*.cpp). The toolkit keeps its state in file-scope
 // variables; the families that were split out of OkayUI.cpp (tooltips, tables, draw list; O1 in docs/engine/modularization_plan.md) reach it through these
 // declarations. Not part of the public API (that is okay/UI/OkayUI.hpp). Definitions stay in OkayUI.cpp.
-#include <SDL.h>
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"
@@ -10,6 +11,14 @@
 #include "okay/Graphics/TtfFont.hpp"   // okay::TtfFont: the fallback fonts g_fbFonts
 
 namespace OkayUI {
+
+// The batch's own vertex, colour and rectangle types (the public DrawVertex has the same 20-byte layout; see the
+// static_asserts in OkayUI.cpp).
+struct VtxPoint { float x, y; };
+struct VtxColor { unsigned char r, g, b, a; };
+struct BatchVertex { VtxPoint position; VtxColor color; VtxPoint tex_coord; };
+struct PxRect { int x, y, w, h; };
+
 namespace ui_core {
 
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
@@ -22,13 +31,13 @@ extern int g_dropped;
 extern bool g_rowClipper;
 extern bool g_cullRow;
 inline void noteDrop() { ++g_dropped; }
-extern SDL_Vertex g_verts[kMaxVerts];
+extern BatchVertex g_verts[kMaxVerts];
 extern int g_nv;
 extern int g_idx[kMaxIdx];
 extern int g_ni;
 // Overlay batch: popups (Combo lists) and tooltips draw here, then it's appended
 // AFTER the main batch each frame so it composites on top of later widgets.
-extern SDL_Vertex g_ovVerts[kMaxVerts];
+extern BatchVertex g_ovVerts[kMaxVerts];
 extern int g_onv;
 extern int g_ovIdx[kMaxIdx];
 extern int g_oni;
@@ -37,12 +46,12 @@ extern bool g_toOverlay;
 // solid-white patch, so shapes + text share one texture (and one draw call). Spans
 // carry kAtlasTex as a placeholder; EndFrame swaps in the renderer's real texture.
 extern bool g_look;
-extern SDL_Texture* g_defTex;
+extern Tex g_defTex;
 extern float g_whiteU, g_whiteV;
 // Texture changes inside the overlay batch (fallback-font text in toasts and
 // popups): the overlay index each starts at. mergeOverlay turns them into spans.
 // An overlay span carries its texture and, since popups may hold clipped child regions (a scrolling list in a modal), its clip rectangle.
-struct OverlaySpan { int startIdx; SDL_Texture* tex; bool clipOn = false; int clipX = 0, clipY = 0, clipW = 0, clipH = 0; };
+struct OverlaySpan { int startIdx; Tex tex; bool clipOn = false; int clipX = 0, clipY = 0, clipW = 0, clipH = 0; };
 constexpr int kMaxOvSpans = 128;
 extern OverlaySpan g_ovSpans[kMaxOvSpans];
 extern int g_clipBase;
@@ -53,21 +62,21 @@ extern int g_novSpans;
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
 // texture. A span records the index where a state begins; EndFrame draws each range
 // with the matching clip rect + texture. The overlay batch is never clipped.
-struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
+struct DrawSpan { int startIdx; bool on; PxRect rect; Tex tex; };
 constexpr int kMaxSpans = 1024;   // 128 before window z-order, then 256: reordering adds a span per window segment (the editor's frame went past 256 and was left unordered)
 extern DrawSpan g_spans[kMaxSpans];
 extern int g_nspans;
-extern SDL_Rect g_clipStack[16];
+extern PxRect g_clipStack[16];
 extern int g_clipTop;
 // Current draw state; a span is emitted whenever clip or texture changes.
 extern bool g_curClipOn;
-extern SDL_Rect g_curClipRect;
-extern SDL_Texture* g_curTex;
+extern PxRect g_curClipRect;
+extern Tex g_curTex;
 // Record a span at the current index position (coalescing if no geometry was added
 // since the previous span).
 void pushSpan();
 // Switch the bound texture for subsequent geometry (nullptr = untextured/flat color).
-void setTexture(SDL_Texture* t);
+void setTexture(Tex t);
 extern Input g_in;
 // Item state for the IsItem* queries: the id of the last widget that registered itself, and which id was
 // active when the frame began (so "activated" and "deactivated" are edges). place() clears g_lastId.
@@ -245,8 +254,8 @@ extern float g_nextItemW;
 float availW();
 void place(float w, float h, float& x, float& y);
 extern bool g_prevInOverlay;   // the last item is a row of an open menu list: IsItemHovered asks the overlay rule (place() clears it)
-inline SDL_Color toColor(const unsigned char c[4]) {
-    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
+inline VtxColor toColor(const unsigned char c[4]) {
+    VtxColor sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
     if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
         const unsigned char* p = g_theme.panel;   // (so stacked layers of one widget do not blend through each other)
         sc.r = (unsigned char)((sc.r + p[0]) / 2); sc.g = (unsigned char)((sc.g + p[1]) / 2); sc.b = (unsigned char)((sc.b + p[2]) / 2);
@@ -257,7 +266,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]);
 // A textured quad: binds `tex`, samples uv [u0,v0]..[u1,v1], modulated by `tint`
 // (use white for the raw image). Reverts to the untextured state afterward so the
 // next flat quad starts a new span. Textured geometry always goes to the main batch.
-void texQuad(float x, float y, float w, float h, SDL_Texture* tex, float u0, float v0, float u1, float v1, const unsigned char tint[4]);
+void texQuad(float x, float y, float w, float h, Tex tex, float u0, float v0, float u1, float v1, const unsigned char tint[4]);
 // A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
 void quadPts(float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy, const unsigned char c[4]);
 // An axis-aligned quad whose four corners each have their own color; the GPU
@@ -278,7 +287,7 @@ void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int 
 void rrect(float x, float y, float w, float h, float rad, const unsigned char c[4]);
 // Text with characters the atlas lacks: every glyph from the engine font `f`, bound
 // to its atlas (a span of its own; in the overlay, an overlay span).
-void bindTexture(SDL_Texture* t);
+void bindTexture(Tex t);
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]);
 // `c` with its alpha scaled (0..1), into `out`.
@@ -513,7 +522,7 @@ inline void registerWindowRect(int id, unsigned long long z, float x, float y, f
     if (g_wCurN < 64) g_wCur[g_wCurN++] = WinRect{id, z, x, y, w, h};
 }
 // Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
-struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
+struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; PxRect clip; Tex tex; };
 constexpr int kMaxWinRecs = 256;   // windows' geometry runs of a frame (a window drawn in pieces, the dock host's late drawing, has several)
 constexpr int kDockHostRecId = 0x0d0c4057;   // the record id of geometry drawn on the dock host's list
 extern WinRec g_wrec[kMaxWinRecs]; extern int g_nwrec; extern int g_wrecOpen;
@@ -531,7 +540,7 @@ inline bool hitOverlay(float x, float y, float w, float h) {
 inline bool inClip() {
     if (g_clipTop <= g_clipBase) return true;   // no clip of its own (none at all, or a popup body with no clipped child in it)
     if (g_toOverlay && g_popupTop == 0) return true;   // an overlay drawn outside any popup body (a tooltip, a menu list): never clipped
-    const SDL_Rect& c = g_clipStack[g_clipTop - 1];
+    const PxRect& c = g_clipStack[g_clipTop - 1];
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
 inline int clampPx(float v, int nan) {
@@ -585,7 +594,7 @@ extern int g_nextOpen;
 extern int g_toggledId;
 extern bool g_mPressed;
 extern float g_pressX, g_pressY;
-extern SDL_Texture* const kAtlasTex;
+extern Tex const kAtlasTex;
 extern int g_nfb;
 extern okay::TtfFont* g_fbFonts[8];
 extern unsigned g_frame;

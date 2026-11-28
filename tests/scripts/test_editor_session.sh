@@ -24,8 +24,8 @@ run() {
     name=$1; shift; text=$1; shift
     mkdir -p "$work/$name" "$work/home"
     printf '%s\n' "$text" > "$work/$name/script.txt"
-    ( cd "$work/$name" && env DISPLAY="$disp" HOME="$work/home" XDG_CONFIG_HOME="$work/home/config" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 \
-        OKAY_UPDATE_ON_LAUNCH=0 OKAY_PLATFORM_BACKEND=sdl2 OKAY_EDITOR_CONFIG_DIR="$work/cfg" OKAY_TEST_SCRIPT="$work/$name/script.txt" \
+    ( cd "$work/$name" && env DISPLAY="$disp" HOME="$work/home" XDG_CONFIG_HOME="$work/home/config" OKAY_ALSA_DEVICE=null LIBGL_ALWAYS_SOFTWARE=1 \
+        OKAY_UPDATE_ON_LAUNCH=0 OKAY_EDITOR_CONFIG_DIR="$work/cfg" OKAY_TEST_SCRIPT="$work/$name/script.txt" \
         $gate $extra timeout -s KILL 120 "$ed" --dev "$@" >"$work/$name/app.log" 2>&1 )
     code=$?
 }

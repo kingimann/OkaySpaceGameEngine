@@ -89,7 +89,7 @@ inline int ApplyEnvironment() {
 // ---- The line -------------------------------------------------------------------------------------------------------
 
 struct Info {
-    std::string platform;               // "sdl2" / "own"
+    std::string platform;               // "own" ("sdl2" in reports of builds from before 2026-11-27)
     std::string http;                   // "winhttp" / "own" / "none" (a build with no HTTP client)
     std::vector<std::string> ownReaders;   // short names of the opt-in formats read by our own reader
     std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
@@ -134,7 +134,6 @@ inline Info Gather(const char* ui = nullptr) {
     Info i;
     namespace pl = okay::platform;
     pl::BackendKind k = pl::DefaultKind();
-    if (!pl::IsCompiledIn(k)) k = (k == pl::BackendKind::Own) ? pl::BackendKind::Sdl2 : pl::BackendKind::Own;
     i.platform = pl::BackendName(k);
 
 #if defined(_WIN32)   // the same test as the NativeHttp.hpp include above (that header is not included on Windows)

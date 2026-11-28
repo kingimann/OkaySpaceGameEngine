@@ -5,7 +5,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
-#include <SDL.h>
 #include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICompat.hpp"

@@ -69,7 +69,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
@@ -149,7 +149,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
@@ -159,7 +159,7 @@ jobs:
           restore-keys: |
             ccache-ubuntu-player-
 
-      # Compile the standalone player (engine + SDL2, no ImGui) so player
+      # Compile the standalone player (engine + our own platform layer) so player
       # regressions are caught — the default build leaves it off. The sandbox game and the
       # example programs (netdemo, physicsdemo) are built here too: they only need the engine,
       # and the "Build & test (Ubuntu)" job no longer builds them, so they are still compiled
@@ -203,7 +203,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
@@ -213,7 +213,7 @@ jobs:
           restore-keys: |
             ccache-ubuntu-editor-
 
-      # Build the editor (OkayUI + SDL2) and run its headless self-test so
+      # Build the editor (OkayUI + our own platform layer) and run its headless self-test so
       # editor regressions are caught. --selftest returns before any SDL/display
       # use, so it runs on the CI box with no GPU.
       - name: Build & self-test editor
@@ -265,8 +265,6 @@ jobs:
 
       - name: Export a game and check its visual scripts
         run: |
-          bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y libsdl2-dev
           chmod +x bin/okay-player bin/OkayEngine
           tests/export/verify.sh bin/OkayEngine
 
@@ -307,7 +305,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache
 
       # Same rule as the other jobs (#953): every run restores, only a push to main saves. This job was the critical path
       # (about 21.6 min, of which a 16.3 min build with no cache). Linking is not cached, so the link share stays.
@@ -400,7 +398,7 @@ jobs:
           # The OkayUI tests live in build-asan/okayui and read golden files by path: run them headless.
           for t in $OKAYUI_TESTS; do
             echo "== $t"
-            (cd "$GITHUB_WORKSPACE" && SDL_VIDEODRIVER=dummy "build-asan/okayui/$t") || failed="$failed $t"
+            (cd "$GITHUB_WORKSPACE" && "build-asan/okayui/$t") || failed="$failed $t"
           done
           # The Xbox UWP tests live in build-asan/platform/xbox_uwp.
           for t in $XBOX_TESTS; do
@@ -429,7 +427,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache
 
       - name: Restore the corpus files
         id: corpus-src
@@ -493,7 +491,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev openssl libssl-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build openssl libssl-dev
 
       - name: Configure
         run: |
@@ -537,7 +535,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache openssl libssl-dev xvfb
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache openssl libssl-dev xvfb
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
@@ -603,7 +601,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build
 
       - name: Configure
         run: |
@@ -623,7 +621,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150  # 120 was too short for a build with almost nothing cached: PR #1356 changed widely included backend headers and was cancelled at 92% (the editor's large files) on 2026-11-27. Build jobs are now capped by memory (2 on a 16 GB runner, build-windows-dist.sh), so cold builds take longer; a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
     env:
-      SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
@@ -671,13 +668,8 @@ jobs:
           path: ~/apt-cache
           key: apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Fetch SDL2 and libsodium (MinGW)
+      - name: Fetch libsodium (MinGW)
         run: |
-          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
-            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
-            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
-          mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
-          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
           echo "OKAY_SODIUM_MINGW_PREFIX=$(bash scripts/fetch-libsodium-mingw.sh "$PWD")" >> "$GITHUB_ENV"   # pinned SHA-256
 
       - name: Restore compiler cache
@@ -701,17 +693,15 @@ jobs:
             -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
             -DOKAY_BUILD_PLAYER=OFF -DOKAY_BUILD_EDITOR=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
-            -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
+            -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset test_poly_ops test_okayui_render_sdlhost
+            test_polymesh test_mesh_asset test_poly_ops
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
-             build-win-tests/okayui/test_okayui_render_sdlhost.exe \
-             "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
+             win-tests/
 
       # How well the compiler cache worked and which files took longest (read these to find what slows the job).
       - name: Compiler cache and build time report
@@ -764,9 +754,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          # test_okayui_render_sdlhost: OkayUI's own Direct3D 11 renderer inside SDL's direct3d11 renderer (OKAY_UI_OWN_RENDER), on the
-          # runner's Direct3D 11 device (no GPU: Windows' software adapter); it says SKIPPED for a renderer SDL cannot make here.
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops", "test_okayui_render_sdlhost") {
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }
@@ -865,8 +853,8 @@ jobs:
           restore-keys: |
             ccache-web-
 
-      # Pull in Emscripten. This runner has network, so Emscripten's SDL2 port is
-      # fetched + cached here (the one online step the web build needs).
+      # Pull in Emscripten (cached). The web player uses no Emscripten port (no SDL2 since
+      # 2026-11-27: engine/src/Platform/WebBackend.cpp), so nothing else is downloaded.
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v15
         with:
@@ -1051,7 +1039,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache libsodium-dev pkg-config curl
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build ccache libsodium-dev pkg-config curl
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5

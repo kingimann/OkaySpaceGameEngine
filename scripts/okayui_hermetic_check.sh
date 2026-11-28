@@ -27,9 +27,8 @@ run() {  # name, command...
 }
 for t in "$@"; do
   echo "== $t"
-  export SDL_VIDEODRIVER=dummy
   run normal "$t"
-  run "empty environment" env -i SDL_VIDEODRIVER=dummy "$t"
+  run "empty environment" env -i "$t"
   run "TZ Auckland, LANG ja" env TZ=Pacific/Auckland LANG=ja_JP.UTF-8 LC_ALL=ja_JP.UTF-8 "$t"
   run "TZ Los Angeles, LANG de" env TZ=America/Los_Angeles LANG=de_DE.UTF-8 "$t"
   run "other HOME and cwd" bash -c "cd '$tmp/cwd' && HOME='$tmp/home' XDG_DATA_HOME='$tmp/home' XDG_CONFIG_HOME='$tmp/home' '$t'"
@@ -37,7 +36,7 @@ for t in "$@"; do
     run "clock +46 days" env LD_PRELOAD="$tmp/shim.so" FAKE_OFFSET=4000000 "$t"
     run "clock -2.8 years" env LD_PRELOAD="$tmp/shim.so" FAKE_OFFSET=-90000000 "$t"
   else echo "  skip [clock shift: no C compiler]"; fi
-  if unshare -n true 2>/dev/null; then run "no network (unshare -n)" unshare -n env SDL_VIDEODRIVER=dummy "$t"; else echo "  skip [no network: unshare -n not allowed]"; fi
+  if unshare -n true 2>/dev/null; then run "no network (unshare -n)" unshare -n env "$t"; else echo "  skip [no network: unshare -n not allowed]"; fi
   run "fake HTTP proxy answering junk" env http_proxy=http://127.0.0.1:18765 https_proxy=http://127.0.0.1:18765 HTTP_PROXY=http://127.0.0.1:18765 HTTPS_PROXY=http://127.0.0.1:18765 ALL_PROXY=http://127.0.0.1:18765 "$t"
   if unshare -m true 2>/dev/null; then run "installed fonts hidden" unshare -m bash -c "mount --bind '$tmp/empty-fonts' /usr/share/fonts && '$t'"; else echo "  skip [fonts hidden: no mount namespace]"; fi
 done

@@ -48,7 +48,6 @@ public:
     }
 
     PainterKind Kind() const override { return PainterKind::Software; }
-    void* NativeRenderer() override { return nullptr; }
 
     // ---- target ---------------------------------------------------------------------------
     void OutputSize(int* w, int* h) override { SyncSize(); if (w) *w = m_w; if (h) *h = m_h; }
@@ -404,10 +403,6 @@ std::unique_ptr<okay::platform::Painter> CreateBitmapPainter(int w, int h) {
 }
 
 std::unique_ptr<okay::platform::Painter> CreateWindowPainter(okay::platform::Window& w, const okay::platform::PainterDesc& d, std::string* err) {
-    if (w.Kind() == okay::platform::BackendKind::Sdl2) {
-        if (err) *err = "an sdl2 window is drawn through SDL_Renderer; the software painter needs a window of the own backend";
-        return nullptr;
-    }
     int dw = 0, dh = 0;
     w.GetDrawableSize(dw, dh);
     if (dw < 1 || dh < 1) { if (err) *err = "the window has no drawable size"; return nullptr; }

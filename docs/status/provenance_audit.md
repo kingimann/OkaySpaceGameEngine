@@ -281,7 +281,7 @@ All of these are in `docs/status/THIRD_PARTY.md`. Notice files were checked by l
 
 | Piece | Where | Licence status | Notice file present? |
 |---|---|---|---|
-| SDL2 | system package, `SDL2.dll` bundled in Windows builds | zlib | No file in the repository (not vendored). The Windows distribution ships the DLL; whether it ships `COPYING.txt` is **unverified** |
+| SDL2 | Emscripten's port in the web build only (until 2026-11-27 also the system package and `SDL2.dll` in Windows builds) | zlib | No file in the repository (not vendored). The desktop programs no longer contain or ship it; the web build's notice is item 4 of `dist/THIRD_PARTY_NOTICES.txt` |
 | Dear ImGui | none since 2026-11-27 (was downloaded at configure time) | MIT | Removed: the editor and the launcher are compiled against OkayUI only; `dist/THIRD_PARTY_NOTICES.txt` item 5 is kept empty |
 | ufbx | deleted 2026-11-23 (was `engine/third_party/ufbx/`) | MIT or public domain, both offered | No longer in the repository |
 | Assimp 5.4.3 | deleted 2026-11-24 (was downloaded at configure time, `engine/CMakeLists.txt`, optional) | BSD 3-clause | No longer built or linked; its `test/` folder is still fetched by CI as corpus data only (not shipped) |

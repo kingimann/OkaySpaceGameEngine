@@ -226,7 +226,7 @@ private:
         opt.programButtons = true;
         opt.smoothScroll = false;
         const S::BrowserViewResult res = S::DrawBrowserView(host.Tab(), 0, 0, (float)m_o.width, (float)m_o.height,
-            [&host](const std::string& src) { return (SDL_Texture*)host.ImageFor(src); }, opt);
+            [&host](const std::string& src) { return (okay::ui2d::Tex)host.ImageFor(src); }, opt);
         UI::EndFrameData();
         m_painter->SetDrawColor(255, 255, 255, 255);
         m_painter->Clear();

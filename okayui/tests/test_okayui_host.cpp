@@ -1,5 +1,5 @@
-// The OkayUI host layer (shared/OkayUIHost.hpp): SDL events in, OkayUI::Input out, and the hosted region that decides who owns
-// the mouse. No window: the events are plain SDL_Event structs.
+// The OkayUI host layer (shared/OkayUIHost.hpp): okay::platform events in, OkayUI::Input out, and the hosted region that decides who
+// owns the mouse. No window: the events are plain okay::platform::Event values.
 #include "test_framework.hpp"
 #include "OkayUIHost.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
@@ -11,13 +11,18 @@
 using namespace okayuihost;
 namespace UI = OkayUI;
 
-static SDL_Event Text(const char* s) { SDL_Event e; std::memset(&e, 0, sizeof(e)); e.type = SDL_TEXTINPUT; std::strncpy(e.text.text, s, sizeof(e.text.text) - 1); return e; }
-static SDL_Event Key(SDL_Keycode k, Uint16 mod = 0, bool down = true, bool repeat = false) {
-    SDL_Event e; std::memset(&e, 0, sizeof(e));
-    e.type = down ? SDL_KEYDOWN : SDL_KEYUP; e.key.keysym.sym = k; e.key.keysym.mod = mod; e.key.repeat = repeat ? 1 : 0;
-    return e;
+using PK = okay::platform::Key;
+using okay::platform::Event;
+using okay::platform::EventType;
+static Event Text(const char* t) { Event e; e.type = EventType::TextInput; e.text = t; return e; }
+static Event Key(PK k, std::uint32_t mods = 0, bool down = true, bool repeat = false) {
+    Event e; e.type = down ? EventType::KeyDown : EventType::KeyUp; e.key = k; e.mods = mods; e.repeat = repeat; return e;
 }
-static SDL_Event Wheel(int y, Uint32 dir = SDL_MOUSEWHEEL_NORMAL) { SDL_Event e; std::memset(&e, 0, sizeof(e)); e.type = SDL_MOUSEWHEEL; e.wheel.y = y; e.wheel.direction = dir; return e; }
+/// A wheel notch count as the device reports it; `flipped` = the OS's natural scrolling (the event then carries it turned back).
+static Event Wheel(int y, bool flipped = false) {
+    Event e; e.type = EventType::MouseWheel; e.wheelY = (float)(flipped ? -y : y); e.wheelFlipped = flipped; return e;
+}
+static Event Button(int button, bool down = true) { Event e; e.type = down ? EventType::MouseButtonDown : EventType::MouseButtonUp; e.button = button; return e; }
 
 // One frame of a 400x200 window holding only the CodeEdit `ed`, fed from the collector `c`. `keys` is whether OkayUI may
 // have the keyboard this frame (Build's last argument).
@@ -34,9 +39,9 @@ int main() {
     {   // text and every key edge reach the input when keys are delivered; the state is one-shot
         InputCollector c;
         c.Feed(Text("ab")); c.Feed(Text("\xC3\xA9"));
-        for (SDL_Keycode k : {SDLK_BACKSPACE, SDLK_DELETE, SDLK_LEFT, SDLK_RIGHT, SDLK_HOME, SDLK_END, SDLK_RETURN, SDLK_ESCAPE}) c.Feed(Key(k));
-        c.Feed(Key(SDLK_a, KMOD_CTRL));
-        c.Feed(Key(SDLK_LEFT, KMOD_LSHIFT));
+        for (PK k : {PK::Backspace, PK::Delete, PK::Left, PK::Right, PK::Home, PK::End, PK::Return, PK::Escape}) c.Feed(Key(k));
+        c.Feed(Key(PK::A, okay::platform::ModCtrl));
+        c.Feed(Key(PK::Left, okay::platform::ModShift));
         UI::Input in = c.Build(10, 20, true, false, false, true);
         CHECK(in.mouseX == 10 && in.mouseY == 20 && in.mouseDown && !in.rightDown && !in.blocked);
         CHECK(in.text && !std::strcmp(in.text, "ab\xC3\xA9"));
@@ -46,37 +51,37 @@ int main() {
     }
     {   // a plain 'a' is not select-all; the Command key counts like Ctrl; shift follows the latest key event
         InputCollector c;
-        c.Feed(Key(SDLK_a));
+        c.Feed(Key(PK::A));
         CHECK(!c.Build(0, 0, false, false, false, true).selectAll);
-        c.Feed(Key(SDLK_a, KMOD_GUI));
+        c.Feed(Key(PK::A, okay::platform::ModGui));
         CHECK(c.Build(0, 0, false, false, false, true).selectAll);
-        c.Feed(Key(SDLK_LSHIFT, KMOD_LSHIFT));
+        c.Feed(Key(PK::LShift, okay::platform::ModShift));
         CHECK(c.Build(0, 0, false, false, false, true).shift);
-        c.Feed(Key(SDLK_LSHIFT, 0, false));
+        c.Feed(Key(PK::LShift, 0, false));
         CHECK(!c.Build(0, 0, false, false, false, true).shift);
     }
     {   // key repeat: each repeated KEYDOWN is another edge (OkayUI wants one per press or repeat)
         InputCollector c;
-        c.Feed(Key(SDLK_BACKSPACE, 0, true, true));
+        c.Feed(Key(PK::Backspace, 0, true, true));
         CHECK(c.Build(0, 0, false, false, false, true).backspace);
     }
     {   // a click that goes down and up between two frames is not lost: down for one frame, up for the next
         InputCollector c;
-        SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_LEFT;
-        SDL_Event u = d; u.type = SDL_MOUSEBUTTONUP;
+        Event d = Button(okay::platform::MouseLeft);
+        Event u = Button(okay::platform::MouseLeft, false);
         c.Feed(d); c.Feed(u);
         CHECK(c.Build(5, 5, false, false, false, false).mouseDown);          // the state sampled at the frame says "up", the event says it was pressed
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
-        d.button.button = SDL_BUTTON_RIGHT; c.Feed(d);
+        d.button = okay::platform::MouseRight; c.Feed(d);
         const UI::Input r = c.Build(5, 5, false, false, false, false);
         CHECK(r.rightDown && !r.mouseDown);
-        SDL_Event m = d; m.button.button = SDL_BUTTON_MIDDLE; c.Feed(m);      // other buttons are not OkayUI's
+        Event m = d; m.button = okay::platform::MouseMiddle; c.Feed(m);      // other buttons are not OkayUI's
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
     }
     {   // two clicks between two frames (a fast double click at a low frame rate): two presses, each an up-then-down edge
         InputCollector c;
-        SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_LEFT;
-        SDL_Event u = d; u.type = SDL_MOUSEBUTTONUP;
+        Event d = Button(okay::platform::MouseLeft);
+        Event u = Button(okay::platform::MouseLeft, false);
         c.Feed(d); c.Feed(u); c.Feed(d); c.Feed(u);
         CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
@@ -97,7 +102,7 @@ int main() {
     }
     {   // keys are dropped, not kept, when OkayUI may not have them: nothing arrives a frame late
         InputCollector c;
-        c.Feed(Text("x")); c.Feed(Key(SDLK_BACKSPACE));
+        c.Feed(Text("x")); c.Feed(Key(PK::Backspace));
         const UI::Input dropped = c.Build(0, 0, false, false, false, false);
         CHECK(dropped.text == nullptr && !dropped.backspace);
         const UI::Input next = c.Build(0, 0, false, false, false, true);
@@ -107,7 +112,7 @@ int main() {
         InputCollector c;
         c.Feed(Wheel(2)); c.Feed(Wheel(1));
         CHECK(c.Build(0, 0, false, false, false, false).wheel == 3.0f);
-        c.Feed(Wheel(2, SDL_MOUSEWHEEL_FLIPPED));
+        c.Feed(Wheel(2, true));
         CHECK(c.Build(0, 0, false, false, false, false).wheel == -2.0f);
         CHECK(c.Build(0, 0, false, false, false, false).wheel == 0.0f);
     }
@@ -119,48 +124,48 @@ int main() {
     }
     {   // the keys a code editor needs: Up/Down, the clipboard shortcuts, the ctrl state and the held named keys
         InputCollector c;
-        c.Feed(Key(SDLK_UP)); c.Feed(Key(SDLK_DOWN));
-        c.Feed(Key(SDLK_c, KMOD_CTRL)); c.Feed(Key(SDLK_x, KMOD_LCTRL)); c.Feed(Key(SDLK_v, KMOD_GUI));
+        c.Feed(Key(PK::Up)); c.Feed(Key(PK::Down));
+        c.Feed(Key(PK::C, okay::platform::ModCtrl)); c.Feed(Key(PK::X, okay::platform::ModCtrl)); c.Feed(Key(PK::V, okay::platform::ModGui));
         UI::Input in = c.Build(0, 0, false, false, false, true);
         CHECK(in.up && in.down && in.copy && in.cut && in.paste && in.ctrl);
         CHECK(in.keyDown[UI::KeyId_C] && in.keyDown[UI::KeyId_X] && in.keyDown[UI::KeyId_V]);   // pressed and released in one frame still shows once
         in = c.Build(0, 0, false, false, false, true);
         CHECK(!in.up && !in.down && !in.copy && !in.cut && !in.paste);   // edges are one-shot
         CHECK(in.ctrl);                                                  // ...ctrl is a state: it stays until a key event says otherwise
-        c.Feed(Key(SDLK_c)); c.Feed(Key(SDLK_x)); c.Feed(Key(SDLK_v));   // without ctrl they are plain letters
+        c.Feed(Key(PK::C)); c.Feed(Key(PK::X)); c.Feed(Key(PK::V));   // without ctrl they are plain letters
         in = c.Build(0, 0, false, false, false, true);
         CHECK(!in.copy && !in.cut && !in.paste && !in.ctrl);
     }
     {   // named keys are held states: down until the key-up, so IsKeyPressed can see the edge and its own repeat
         InputCollector c;
-        c.Feed(Key(SDLK_PAGEUP)); c.Feed(Key(SDLK_TAB)); c.Feed(Key(SDLK_z, KMOD_CTRL)); c.Feed(Key(SDLK_y, KMOD_CTRL));
+        c.Feed(Key(PK::PageUp)); c.Feed(Key(PK::Tab)); c.Feed(Key(PK::Z, okay::platform::ModCtrl)); c.Feed(Key(PK::Y, okay::platform::ModCtrl));
         UI::Input in = c.Build(0, 0, false, false, false, true);
         CHECK(in.keyDown[UI::KeyId_PageUp] && in.keyDown[UI::KeyId_Tab] && in.keyDown[UI::KeyId_Z] && in.keyDown[UI::KeyId_Y] && !in.keyDown[UI::KeyId_PageDown]);
         in = c.Build(0, 0, false, false, false, true);
         CHECK(in.keyDown[UI::KeyId_PageUp] && in.keyDown[UI::KeyId_Tab]);   // still held
-        c.Feed(Key(SDLK_PAGEUP, 0, false)); c.Feed(Key(SDLK_TAB, 0, false));
+        c.Feed(Key(PK::PageUp, 0, false)); c.Feed(Key(PK::Tab, 0, false));
         in = c.Build(0, 0, false, false, false, true);
         CHECK(!in.keyDown[UI::KeyId_PageUp] && !in.keyDown[UI::KeyId_Tab] && in.keyDown[UI::KeyId_Z]);
-        c.Feed(Key(SDLK_PAGEDOWN)); c.Feed(Key(SDLK_F5));
+        c.Feed(Key(PK::PageDown)); c.Feed(Key(PK::F5));
         in = c.Build(0, 0, false, false, false, false);                       // not delivered while OkayUI may not have the keyboard...
         CHECK(!in.keyDown[UI::KeyId_PageDown] && !in.up);
         in = c.Build(0, 0, false, false, false, true);                        // ...and the held state is still known afterwards
         CHECK(in.keyDown[UI::KeyId_PageDown] && in.keyDown[UI::KeyId_F5]);
-        CHECK(InputCollector::KeyIdOf(SDLK_F13) == UI::KeyId_None && InputCollector::KeyIdOf(SDLK_a) == UI::KeyId_A &&
-              InputCollector::KeyIdOf(SDLK_9) == UI::KeyId_9 && InputCollector::KeyIdOf(SDLK_RCTRL) == UI::KeyId_Ctrl);
+        CHECK(InputCollector::KeyIdOf((PK)104, 0) == UI::KeyId_None && InputCollector::KeyIdOf(PK::A, 'a') == UI::KeyId_A &&   // 104: F13
+              InputCollector::KeyIdOf(PK::N9, '9') == UI::KeyId_9 && InputCollector::KeyIdOf(PK::RCtrl, 0) == UI::KeyId_Ctrl);
         // '/' and Alt are named keys too: the code editor's Ctrl+/ (comment) and Alt+Up / Alt+Down (move lines)
-        CHECK(InputCollector::KeyIdOf(SDLK_SLASH) == UI::KeyId_Slash && InputCollector::KeyIdOf(SDLK_LALT) == UI::KeyId_Alt);
-        c.Feed(Key(SDLK_SLASH, KMOD_CTRL));
+        CHECK(InputCollector::KeyIdOf(PK::Slash, '/') == UI::KeyId_Slash && InputCollector::KeyIdOf(PK::LAlt, 0) == UI::KeyId_Alt);
+        c.Feed(Key(PK::Slash, okay::platform::ModCtrl));
         in = c.Build(0, 0, false, false, false, true);
         CHECK(in.keyDown[UI::KeyId_Slash] && in.ctrl);
-        using PK2 = okay::platform::Key;
+        using PK2 = PK;
         CHECK(InputCollector::KeyIdOf(PK2::Slash, 0) == UI::KeyId_Slash && InputCollector::KeyIdOf(PK2::Slash, '/') == UI::KeyId_Slash);
         // the code editor's fold keys
-        CHECK(InputCollector::KeyIdOf(SDLK_LEFTBRACKET) == UI::KeyId_LeftBracket && InputCollector::KeyIdOf(SDLK_RIGHTBRACKET) == UI::KeyId_RightBracket);
+        CHECK(InputCollector::KeyIdOf(PK::LeftBracket, '[') == UI::KeyId_LeftBracket && InputCollector::KeyIdOf(PK::RightBracket, ']') == UI::KeyId_RightBracket);
         CHECK(InputCollector::KeyIdOf(PK2::LeftBracket, 0) == UI::KeyId_LeftBracket && InputCollector::KeyIdOf(PK2::RightBracket, ']') == UI::KeyId_RightBracket);
         CHECK(InputCollector::KeyIdOf(PK2::LAlt, 0) == UI::KeyId_Alt);
     }
-    {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
+    {   // end to end: a CodeEdit driven only by platform events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
         okayuitest::Reset();
         okayuitest::Sim sim(400, 200);
         UI::CodeEdit ed;
@@ -169,32 +174,32 @@ int main() {
         auto frame = [&]() { CodeEditFrame(ed, c); };
         frame(); ed.Focus(); frame();
         // One key per frame, then its release (what a person's keyboard does): the keys of a frame are applied in a fixed order.
-        auto tap = [&](SDL_Keycode k, Uint16 mod = 0) { c.Feed(Key(k, mod)); frame(); c.Feed(Key(k, 0, false)); frame(); };
-        tap(SDLK_DOWN);
+        auto tap = [&](PK k, std::uint32_t mod = 0) { c.Feed(Key(k, mod)); frame(); c.Feed(Key(k, 0, false)); frame(); };
+        tap(PK::Down);
         CHECK(ed.Caret().line == 1);
-        tap(SDLK_UP);
+        tap(PK::Up);
         CHECK(ed.Caret().line == 0);
-        tap(SDLK_END);
-        tap(SDLK_LEFT, KMOD_LCTRL);                                  // word-left from the end of "one two"
+        tap(PK::End);
+        tap(PK::Left, okay::platform::ModCtrl);                                  // word-left from the end of "one two"
         CHECK(ed.Caret().line == 0 && ed.Caret().col == 4);
-        tap(SDLK_RIGHT, KMOD_LSHIFT | KMOD_LCTRL);
+        tap(PK::Right, okay::platform::ModShift | okay::platform::ModCtrl);
         CHECK(ed.SelectedText() == "two");
-        tap(SDLK_c, KMOD_LCTRL);
+        tap(PK::C, okay::platform::ModCtrl);
         CHECK(std::string(UI::GetClipboardText()) == "two");
-        tap(SDLK_END);
-        tap(SDLK_v, KMOD_LCTRL);
+        tap(PK::End);
+        tap(PK::V, okay::platform::ModCtrl);
         CHECK(ed.Line(0) == "one twotwo");
-        tap(SDLK_z, KMOD_LCTRL);
+        tap(PK::Z, okay::platform::ModCtrl);
         CHECK(ed.Line(0) == "one two");
-        tap(SDLK_y, KMOD_LCTRL);
+        tap(PK::Y, okay::platform::ModCtrl);
         CHECK(ed.Line(0) == "one twotwo");
-        tap(SDLK_HOME, KMOD_LCTRL);
+        tap(PK::Home, okay::platform::ModCtrl);
         CHECK(ed.Caret().line == 0 && ed.Caret().col == 0);
-        tap(SDLK_TAB);
+        tap(PK::Tab);
         CHECK(ed.Line(0) == "    one twotwo");
     }
-    {   // input method (IME) composition through the collector: SDL_TEXTEDITING and the seam's TextEditing event give the preedit to a
-        // focused CodeEdit every frame until it is cleared; the finished text arrives as typed text (SDL_TEXTINPUT)
+    {   // input method (IME) composition through the collector: the TextEditing event gives the preedit to a
+        // focused CodeEdit every frame until it is cleared; the finished text arrives as typed text (TextInput)
         okayuitest::Reset();
         okayuitest::Sim sim(400, 200);
         UI::CodeEdit ed;
@@ -203,10 +208,8 @@ int main() {
         auto frame = [&]() { CodeEditFrame(ed, c); };
         frame(); ed.Focus(); frame();
         ed.SetCaret(UI::CodePos{0, 1});
-        SDL_Event e{};
-        e.type = SDL_TEXTEDITING;
-        std::snprintf(e.edit.text, sizeof e.edit.text, "%s", "\xe3\x81\x8b");   // a kana being composed
-        e.edit.start = 1; e.edit.length = 0;
+        Event e; e.type = EventType::TextEditing;
+        e.text = "\xe3\x81\x8b"; e.x = 1;   // a kana being composed, caret after it
         c.Feed(e);
         frame();
         CHECK(ed.Composing());
@@ -214,14 +217,12 @@ int main() {
         frame();
         CHECK(ed.Composing());                             // a state: still composing on the next frame
         CHECK(ed.ImeCompositionRect().w > 0.0f);           // where the host puts the candidate window
-        e.edit.text[0] = 0; c.Feed(e);                     // the input method clears the preedit...
-        SDL_Event t{}; t.type = SDL_TEXTINPUT;
-        std::snprintf(t.text.text, sizeof t.text.text, "%s", "\xe3\x81\x8b");
-        c.Feed(t);                                         // ...and sends the finished text
+        e.text.clear(); c.Feed(e);                         // the input method clears the preedit...
+        c.Feed(Text("\xe3\x81\x8b"));                       // ...and sends the finished text
         frame();
         CHECK(!ed.Composing());
         CHECK(ed.Line(0) == "a\xe3\x81\x8b" "b");
-        // the seam's event the same way (the editor feeds okay::platform events)
+        // again, then cancelled
         okay::platform::Event pe; pe.type = okay::platform::EventType::TextEditing; pe.text = "xy"; pe.x = 1;
         c.Feed(pe);
         frame();
@@ -309,7 +310,7 @@ int main() {
         r.NextFrame(); r.NextFrame();                          // the menu closed: no longer kept from ImGui
         CHECK(!r.OwnsOverlay(400, 300));
     }
-    {   // end to end through OkayUI: typed text from SDL events edits a focused field; a blocked frame does not click
+    {   // end to end through OkayUI: typed text from platform events edits a focused field; a blocked frame does not click
         okayuitest::Reset();
         okayuitest::Sim sim(300, 100);
         char buf[32] = "";
@@ -335,46 +336,37 @@ int main() {
         c.Feed(Text("hi")); c.Feed(Text("!"));
         frame(c.Build(cx, cy, false, false, false, true));
         CHECK(!std::strcmp(buf, "hi!"));
-        c.Feed(Key(SDLK_BACKSPACE));
+        c.Feed(Key(PK::Backspace));
         frame(c.Build(cx, cy, false, false, false, true));
         CHECK(!std::strcmp(buf, "hi"));
-        c.Feed(Key(SDLK_ESCAPE));
+        c.Feed(Key(PK::Escape));
         frame(c.Build(cx, cy, false, false, false, true));
         CHECK(!UI::WantsTextInput());
     }
-    {   // the okay::platform::Event path gives the same Input as the SDL one for the same sequence of events
-        using okay::platform::Event; using okay::platform::EventType; using PK = okay::platform::Key;
-        auto pText = [](const char* t) { Event e; e.type = EventType::TextInput; e.text = t; return e; };
-        auto pKey = [](PK k, uint32_t mods = 0, bool down = true) { Event e; e.type = down ? EventType::KeyDown : EventType::KeyUp; e.key = k; e.mods = mods; return e; };
-        struct Pair { SDL_Keycode sym; PK key; };
-        const Pair keys[] = {{SDLK_BACKSPACE, PK::Backspace}, {SDLK_DELETE, PK::Delete}, {SDLK_LEFT, PK::Left}, {SDLK_RIGHT, PK::Right},
-            {SDLK_HOME, PK::Home}, {SDLK_END, PK::End}, {SDLK_RETURN, PK::Return}, {SDLK_ESCAPE, PK::Escape}, {SDLK_UP, PK::Up},
-            {SDLK_DOWN, PK::Down}, {SDLK_TAB, PK::Tab}, {SDLK_F5, PK::F5}, {SDLK_SPACE, PK::Space}, {SDLK_PAGEUP, PK::PageUp}};
-        InputCollector s, p;
-        s.Feed(Text("ab")); p.Feed(pText("ab"));
-        s.Feed(Text("\xC3\xA9")); p.Feed(pText("\xC3\xA9"));
-        for (const Pair& k : keys) { s.Feed(Key(k.sym)); p.Feed(pKey(k.key)); }
-        s.Feed(Key(SDLK_w)); p.Feed(pKey(PK::W));
-        s.Feed(Key(SDLK_3)); p.Feed(pKey(PK::N3));
-        s.Feed(Key(SDLK_a, KMOD_CTRL)); p.Feed(pKey(PK::A, okay::platform::ModCtrl));
-        s.Feed(Key(SDLK_c, KMOD_GUI)); p.Feed(pKey(PK::C, okay::platform::ModGui));
-        s.Feed(Key(SDLK_x, KMOD_CTRL)); p.Feed(pKey(PK::X, okay::platform::ModCtrl));
-        s.Feed(Key(SDLK_v, KMOD_CTRL)); p.Feed(pKey(PK::V, okay::platform::ModCtrl));
-        s.Feed(Key(SDLK_LSHIFT, KMOD_LSHIFT)); p.Feed(pKey(PK::LShift, okay::platform::ModShift));
-        s.Feed(Wheel(2)); { Event w; w.type = EventType::MouseWheel; w.wheelY = 2; p.Feed(w); }
-        s.Feed(Wheel(3, SDL_MOUSEWHEEL_FLIPPED)); { Event w; w.type = EventType::MouseWheel; w.wheelY = -3; w.wheelFlipped = true; p.Feed(w); }
-        { SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_RIGHT; s.Feed(d);
-          Event e; e.type = EventType::MouseButtonDown; e.button = okay::platform::MouseRight; p.Feed(e); }
-        const UI::Input a = s.Build(1, 2, false, false, false, true), b = p.Build(1, 2, false, false, false, true);
-        CHECK(a.text && b.text && !std::strcmp(a.text, b.text));
-        CHECK(a.backspace == b.backspace && a.del == b.del && a.left == b.left && a.right == b.right && a.home == b.home && a.end == b.end);
-        CHECK(a.enter == b.enter && a.escape == b.escape && a.up == b.up && a.down == b.down);
-        CHECK(a.selectAll == b.selectAll && a.copy == b.copy && a.cut == b.cut && a.paste == b.paste);
-        CHECK(a.shift == b.shift && a.ctrl == b.ctrl && a.wheel == b.wheel && a.rightDown == b.rightDown);
-        bool sameKeys = true;
-        for (int k = 0; k < UI::KeyId_COUNT; ++k) sameKeys = sameKeys && a.keyDown[k] == b.keyDown[k];
-        CHECK(sameKeys);
-        CHECK(b.backspace && b.selectAll && b.copy && b.cut && b.paste && b.wheel == -1.0f && a.wheel == -1.0f);
+    {   // a mixed sequence of platform events gives the Input the frame expects
+        auto pText = [](const char* t) { return Text(t); };
+        auto pKey = [](PK k, uint32_t mods = 0, bool down = true) { return Key(k, mods, down); };
+        const PK keys[] = {PK::Backspace, PK::Delete, PK::Left, PK::Right, PK::Home, PK::End, PK::Return, PK::Escape, PK::Up,
+                           PK::Down, PK::Tab, PK::F5, PK::Space, PK::PageUp};
+        InputCollector p;
+        p.Feed(pText("ab"));
+        p.Feed(pText("\xC3\xA9"));
+        for (PK k : keys) p.Feed(pKey(k));
+        p.Feed(pKey(PK::W));
+        p.Feed(pKey(PK::N3));
+        p.Feed(pKey(PK::A, okay::platform::ModCtrl));
+        p.Feed(pKey(PK::C, okay::platform::ModGui));
+        p.Feed(pKey(PK::X, okay::platform::ModCtrl));
+        p.Feed(pKey(PK::V, okay::platform::ModCtrl));
+        p.Feed(pKey(PK::LShift, okay::platform::ModShift));
+        p.Feed(Wheel(2));
+        p.Feed(Wheel(3, true));
+        p.Feed(Button(okay::platform::MouseRight));
+        const UI::Input b = p.Build(1, 2, false, false, false, true);
+        CHECK(b.text && !std::strcmp(b.text, "ab\xC3\xA9"));
+        CHECK(b.del && b.left && b.right && b.home && b.end && b.enter && b.escape && b.up && b.down);
+        CHECK(b.shift && b.ctrl && b.rightDown);
+        CHECK(b.backspace && b.selectAll && b.copy && b.cut && b.paste && b.wheel == -1.0f);
         CHECK(b.keyDown[UI::KeyId_W] && b.keyDown[UI::KeyId_3] && b.keyDown[UI::KeyId_F1 + 4] && b.keyDown[UI::KeyId_Tab]);
         // a layout where the "a" key types "q" (AZERTY): Ctrl on that key is the shortcut of the letter it types
         InputCollector az;

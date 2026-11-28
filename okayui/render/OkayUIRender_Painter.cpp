@@ -15,7 +15,7 @@ class PainterBackend final : public Backend {
 public:
     explicit PainterBackend(plat::Painter& p) : m_p(p) {}
     ~PainterBackend() override { for (auto& kv : m_tex) m_p.DestroyTexture(kv.second.tex); }
-    const char* Name() const override { return m_p.Kind() == plat::PainterKind::Sdl2 ? "painter-sdl2" : "painter-software"; }
+    const char* Name() const override { return m_p.Kind() == plat::PainterKind::OpenGL ? "painter-opengl" : "painter-software"; }
     Caps Capabilities() const override { Caps c; c.maxTexture = 16384; return c; }
 
     TexId CreateTexture(int w, int h, bool linear, const std::uint8_t* rgba) override {

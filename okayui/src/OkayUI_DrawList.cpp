@@ -51,7 +51,7 @@ struct ListScope {
 // cos(pi / n) for n = 3..128, worked out once: the mitre of a regular n-gon's stroke.
 float cosHalfTurn(int n) {
     static float t[129] = {};
-    if (t[n] == 0.0f) t[n] = SDL_cosf(3.14159265f / (float)n);
+    if (t[n] == 0.0f) t[n] = std::cos(3.14159265f / (float)n);
     return t[n];
 }
 
@@ -80,7 +80,7 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
     Vec2 off[kMaxPath];
     auto segNormal = [&](int a, int b) {
         float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
-        const float l = SDL_sqrtf(dx * dx + dy * dy);
+        const float l = std::sqrt(dx * dx + dy * dy);
         return Vec2{ -dy / l, dx / l };
     };
     for (int i = 0; i < m; ++i) {
@@ -88,7 +88,7 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
         const Vec2 nb = hasNext ? segNormal(i, (i + 1) % m) : segNormal(i - 1, i);
         const Vec2 na = hasPrev ? segNormal((i + m - 1) % m, i) : nb;
         float mx = na.x + nb.x, my = na.y + nb.y;
-        const float ml = SDL_sqrtf(mx * mx + my * my);
+        const float ml = std::sqrt(mx * mx + my * my);
         if (ml < 1.0e-4f) { off[i] = Vec2{ na.x * half, na.y * half }; continue; }   // a U-turn: no mitre
         mx /= ml; my /= ml;
         float k = mx * na.x + my * na.y;                  // cos of half the turn angle
@@ -126,7 +126,7 @@ int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad
             const float PI = 3.14159265f;
             const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
             for (int k = 0; k < 4; ++k)
-                for (int i = 0; i <= 6; ++i) { const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f; c[k][i] = SDL_cosf(a); s[k][i] = SDL_sinf(a); }
+                for (int i = 0; i <= 6; ++i) { const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f; c[k][i] = std::cos(a); s[k][i] = std::sin(a); }
         }
     };
     static const Arcs A;
@@ -325,21 +325,21 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     drawText(pos.x, pos.y, text, scale, c);
 }
 
-void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
+void DrawList::AddImage(Tex tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
     if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
     ListScope s(false, bottomHost); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
     texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
 }
 
 // A textured convex polygon: a fan from point 0, each point with its own texture coordinate.
-static void texPoly(SDL_Texture* tex, const Vec2* p, const Vec2* uv, int n, const unsigned char tint[4]) {
+static void texPoly(Tex tex, const Vec2* p, const Vec2* uv, int n, const unsigned char tint[4]) {
     if (g_cullRow || n < 3) return;
     setTexture(tex);
     if (g_nv + n > kMaxVerts || g_ni + (n - 2) * 3 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
-    const SDL_Color sc = toColor(tint);
+    const VtxColor sc = toColor(tint);
     const int base = g_nv;
     for (int i = 0; i < n; ++i) {
-        SDL_Vertex v; v.color = sc; v.position.x = p[i].x; v.position.y = p[i].y; v.tex_coord.x = uv[i].x; v.tex_coord.y = uv[i].y;
+        BatchVertex v; v.color = sc; v.position.x = p[i].x; v.position.y = p[i].y; v.tex_coord.x = uv[i].x; v.tex_coord.y = uv[i].y;
         g_verts[g_nv++] = v;
     }
     for (int i = 1; i + 1 < n; ++i) { g_idx[g_ni++] = base; g_idx[g_ni++] = base + i; g_idx[g_ni++] = base + i + 1; }
@@ -406,7 +406,7 @@ static int rectPath(Vec2 mn, Vec2 mx, float rounding, int flags, Vec2* pts) {
                       { mn.x + rounding, mx.y - rounding, 1.57079633f, DrawFlags_RoundCornersBottomLeft, mn.x, mx.y } };
     int n = 0;
     for (const C& c : cs) {
-        if (rounding >= 0.5f && (flags & c.bit)) for (int i = 0; i <= arc; ++i) { const float a = c.a0 + 1.57079633f * (float)i / (float)arc; pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) }; }
+        if (rounding >= 0.5f && (flags & c.bit)) for (int i = 0; i <= arc; ++i) { const float a = c.a0 + 1.57079633f * (float)i / (float)arc; pts[n++] = Vec2{ c.cx + rounding * std::cos(a), c.cy + rounding * std::sin(a) }; }
         else pts[n++] = Vec2{c.px, c.py};
     }
     return n;
@@ -432,14 +432,14 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, const char* text
     AddText(pos, col, static_cast<const char*>(buf), 0.0f);
 }
 
-void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
+void DrawList::AddImageQuad(Tex tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
     if (!tex || !finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4) || !finite2(uv1) || !finite2(uv2) || !finite2(uv3) || !finite2(uv4)) return;
     ListScope s(false, bottomHost); unsigned char c[4]; unpack(tint, c);
     const Vec2 p[4] = {p1, p2, p3, p4}, uv[4] = {uv1, uv2, uv3, uv4};
     texPoly(tex, p, uv, 4, c);
 }
 
-void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags) const {
+void DrawList::AddImageRounded(Tex tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags) const {
     if (!tex || !finite2(mn) || !finite2(mx) || !finite2(uv0) || !finite2(uv1) || mx.x <= mn.x || mx.y <= mn.y) return;
     if (!std::isfinite(rounding) || rounding < 0.0f) rounding = 0.0f;
     const float w = mx.x - mn.x, h = mx.y - mn.y;
@@ -462,7 +462,7 @@ void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec
         if (flags & c.bit) {
             for (int i = 0; i <= arc; ++i) {
                 const float a = c.a0 + 1.57079633f * (float)i / (float)arc;
-                pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) };
+                pts[n++] = Vec2{ c.cx + rounding * std::cos(a), c.cy + rounding * std::sin(a) };
             }
         } else pts[n++] = Vec2{c.px, c.py};
     }
@@ -485,16 +485,16 @@ void DrawList::AddNgon(Vec2 center, float radius, Color32 col, int n, float th) 
     if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
     if (n > 128) n = 128;
     Vec2 p[128];
-    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
+    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * std::cos(a), center.y + radius * std::sin(a) }; }
     AddPolyline(p, n, col, true, th);
 }
 static int ellipsePoints(Vec2 c, Vec2 r, float rot, int seg, Vec2* p) {
     if (seg <= 0) seg = 32;
     if (seg < 3) seg = 3;
     if (seg > 128) seg = 128;
-    const float cr = SDL_cosf(rot), sr = SDL_sinf(rot);
+    const float cr = std::cos(rot), sr = std::sin(rot);
     for (int i = 0; i < seg; ++i) {
-        const float a = 6.28318531f * (float)i / (float)seg, ex = r.x * SDL_cosf(a), ey = r.y * SDL_sinf(a);
+        const float a = 6.28318531f * (float)i / (float)seg, ex = r.x * std::cos(a), ey = r.y * std::sin(a);
         p[i] = Vec2{ c.x + ex * cr - ey * sr, c.y + ex * sr + ey * cr };
     }
     return seg;
@@ -514,7 +514,7 @@ void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int n) cons
     if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
     if (n > 128) n = 128;
     Vec2 p[128];
-    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
+    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * std::cos(a), center.y + radius * std::sin(a) }; }
     AddConvexPolyFilled(p, n, col);
 }
 
@@ -533,7 +533,7 @@ void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segm
     if (n > 128) n = 128;
     for (int i = 0; i <= n; ++i) {
         const float a = a0 + (a1 - a0) * (float)i / (float)n;
-        PathLineTo(Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) });
+        PathLineTo(Vec2{ center.x + radius * std::cos(a), center.y + radius * std::sin(a) });
     }
 }
 void DrawList::PathRect(Vec2 mn, Vec2 mx, float rounding, int) const {
@@ -561,19 +561,19 @@ const DrawListHandle& GetDockHostDrawList() { return g_dockHostList; }
 DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : (bottomHost ? &g_dockHostList : &g_windowList)); }
 // ---- raw geometry ----
 Vec2 GetFontTexUvWhitePixel() { return Vec2{g_whiteU, g_whiteV}; }
-namespace { SDL_Texture* g_texStack[8]; int g_texTop = 0; }
+namespace { Tex g_texStack[8]; int g_texTop = 0; }
 void DrawList::PrimReserve(int idxCount, int vtxCount) const {
     (void)idxCount; (void)vtxCount;
     _VtxCurrentIdx = (unsigned)(overlay ? g_onv : g_nv);
 }
 void DrawList::PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const {
     ListScope s(overlay, bottomHost);
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int& nv = g_toOverlay ? g_onv : g_nv;
     if ((g_cullRow && !g_toOverlay)) return;
     if (nv + 1 > kMaxVerts) { noteDrop(); return; }
     unsigned char c[4]; unpack(col, c);
-    SDL_Vertex v; v.color = toColor(c);
+    BatchVertex v; v.color = toColor(c);
     v.position.x = std::isfinite(pos.x) ? pos.x : 0.0f; v.position.y = std::isfinite(pos.y) ? pos.y : 0.0f;
     v.tex_coord.x = std::isfinite(uv.x) ? uv.x : 0.0f; v.tex_coord.y = std::isfinite(uv.y) ? uv.y : 0.0f;
     V[nv++] = v;

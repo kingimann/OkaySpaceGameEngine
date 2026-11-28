@@ -201,7 +201,7 @@ struct CustomSurface {
 class Raster {
 public:
     int width = 0, height = 0;
-    std::vector<std::uint32_t> color;   // ABGR8888 (matches SDL_PIXELFORMAT_ABGR8888)
+    std::vector<std::uint32_t> color;   // ABGR8888 as a 32-bit value: bytes R, G, B, A in memory (little-endian)
     std::vector<float>         depth;    // smaller = nearer; cleared to +inf
     // Optional G-buffer for screen-space ambient occlusion (filled by the
     // per-pixel path when SSAO is enabled; empty otherwise).

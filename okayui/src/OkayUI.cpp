@@ -13,18 +13,16 @@
 #include "okay/UI/OkayUIDesign.hpp"   // the design in force (DefaultTheme)
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers and the system clipboard
 #include <cstddef>  // offsetof
 #include <cstdarg>
 #include <cstring>
 #include <string>
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
-// All rendering goes through SDL_RenderGeometry (SDL >= 2.0.18), which is exactly
-// the call Dear ImGui's SDL_Renderer backend uses — so OkayUI shares ImGui's GPU
-// pipeline (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) and can never
-// conflict with it. No STL is used here: fixed C arrays, C strings, plain ints.
+// OkayUI builds the frame's geometry (GetDrawData); a backend draws it: okay::platform::Painter through
+// OkayUI::soft::FrameDrawer (okayui/soft), or a render backend (okayui/render). No STL is used here:
+// fixed C arrays, C strings, plain ints.
 
 namespace OkayUI {
 void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock layout too
@@ -37,14 +35,14 @@ namespace ui_core {
 int g_dropped = 0;
 bool g_rowClipper = true;   // the table row clipper (SetTableRowClipping)
 bool g_cullRow = false;   // a table row wholly outside the clip: its geometry is skipped, not emitted (see TableNextRow)
-SDL_Vertex g_verts[kMaxVerts];
+BatchVertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
 int        g_ni = 0;
 
 // Overlay batch: popups (Combo lists) and tooltips draw here, then it's appended
 // AFTER the main batch each frame so it composites on top of later widgets.
-SDL_Vertex g_ovVerts[kMaxVerts];
+BatchVertex g_ovVerts[kMaxVerts];
 int        g_onv = 0;
 int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
@@ -52,36 +50,34 @@ bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batc
 
 // The launcher look: text comes from a TrueType atlas, and flat shapes sample its
 // solid-white patch, so shapes + text share one texture (and one draw call). Spans
-// carry kAtlasTex as a placeholder; EndFrame swaps in the renderer's real texture.
+// carry kAtlasTex as a placeholder; the backend swaps in its own texture (DrawData::atlasTexture).
 bool g_look = false;
 const fontatlas::Atlas* g_ttf = nullptr;            // set while the look is on and the atlas built
-SDL_Texture* const kAtlasTex = (SDL_Texture*)(void*)&g_ttf;   // placeholder (never dereferenced)
-SDL_Texture* g_defTex = nullptr;                    // texture for flat geometry (nullptr / kAtlasTex)
+Tex const kAtlasTex = (Tex)(void*)&g_ttf;   // placeholder (never dereferenced)
+Tex g_defTex = nullptr;                    // texture for flat geometry (nullptr / kAtlasTex)
 float g_whiteU = 0.0f, g_whiteV = 0.0f;             // uv of an opaque texel for flat geometry
-SDL_Texture*  g_atlasTex = nullptr;                 // the atlas on g_atlasR
-SDL_Renderer* g_atlasR = nullptr;
 // Engine fonts drawing text the atlas lacks (fontatlas::FallbackFont). Their spans
-// carry the font's address as a placeholder; EndFrame binds the font's atlas.
+// carry the font's address as a placeholder; the backend binds the font's atlas (FallbackFontOf).
 okay::TtfFont* g_fbFonts[8];
 int            g_nfb = 0;
 OverlaySpan g_ovSpans[kMaxOvSpans];
 int g_clipBase = 0;
 int         g_novSpans = 0;
-SDL_Texture* fallbackTex(okay::TtfFont* f) {
-    for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (SDL_Texture*)(void*)f;
+Tex fallbackTex(okay::TtfFont* f) {
+    for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (Tex)(void*)f;
     if (g_nfb == 8) return nullptr;
     g_fbFonts[g_nfb++] = f;
-    return (SDL_Texture*)(void*)f;
+    return (Tex)(void*)f;
 }
 
 DrawSpan g_spans[kMaxSpans];
 int      g_nspans = 0;
-SDL_Rect g_clipStack[16];
+PxRect g_clipStack[16];
 int      g_clipTop = 0;
 // Current draw state; a span is emitted whenever clip or texture changes.
 bool         g_curClipOn = false;
-SDL_Rect     g_curClipRect = { 0, 0, 0, 0 };
-SDL_Texture* g_curTex = nullptr;
+PxRect     g_curClipRect = { 0, 0, 0, 0 };
+Tex g_curTex = nullptr;
 // Record a span at the current index position (coalescing if no geometry was added
 // since the previous span).
 void pushSpan() {
@@ -92,9 +88,9 @@ void pushSpan() {
     if (g_nspans < kMaxSpans) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
 }
 // Backwards-compatible helper used by the clip API.
-void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
+void pushClipSpan(bool on, PxRect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
 // Switch the bound texture for subsequent geometry (nullptr = untextured/flat color).
-void setTexture(SDL_Texture* t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
+void setTexture(Tex t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
 
 Input g_in;                      // this frame's input
 // Item state for the IsItem* queries: the id of the last widget that registered itself, and which id was
@@ -490,21 +486,21 @@ void place(float w, float h, float& x, float& y) {
 // a scrolling child, a section scrolled out of view). The overlay batch has no clip and is never culled.
 inline bool clippedAway(float x0, float y0, float x1, float y1) {
     if (g_toOverlay || !g_curClipOn) return false;
-    const SDL_Rect& r = g_curClipRect;
+    const PxRect& r = g_curClipRect;
     return x1 <= (float)r.x || y1 <= (float)r.y || x0 >= (float)(r.x + r.w) || y0 >= (float)(r.y + r.h);
 }
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     if (clippedAway(x, y, x + w, y + h)) return;
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }   // batch full: counted and reported
-    const SDL_Color sc = toColor(c);
+    const VtxColor sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v;
+    VtxPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    BatchVertex v;
     v.color = sc; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     V[nv++] = v;
     v.position.x = x + w; v.position.y = y;     V[nv++] = v;
@@ -517,14 +513,14 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
 // A textured quad: binds `tex`, samples uv [u0,v0]..[u1,v1], modulated by `tint`
 // (use white for the raw image). Reverts to the untextured state afterward so the
 // next flat quad starts a new span. Textured geometry always goes to the main batch.
-void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
+void texQuad(float x, float y, float w, float h, Tex tex,
              float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
     if (g_cullRow) return;
     setTexture(tex);
     if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
-    const SDL_Color sc = toColor(tint);
+    const VtxColor sc = toColor(tint);
     const int base = g_nv;
-    SDL_Vertex v; v.color = sc;
+    BatchVertex v; v.color = sc;
     v.position.x = x;     v.position.y = y;     v.tex_coord.x = u0; v.tex_coord.y = v0; g_verts[g_nv++] = v;
     v.position.x = x + w; v.position.y = y;     v.tex_coord.x = u1; v.tex_coord.y = v0; g_verts[g_nv++] = v;
     v.position.x = x + w; v.position.y = y + h; v.tex_coord.x = u1; v.tex_coord.y = v1; g_verts[g_nv++] = v;
@@ -537,16 +533,16 @@ void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
 // A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
 void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
              float dx, float dy, const unsigned char c[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
-    const SDL_Color sc = toColor(c);
+    const VtxColor sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    VtxPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    BatchVertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
@@ -560,15 +556,15 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
 void gradQuad(float x, float y, float w, float h,
               const unsigned char tl[4], const unsigned char tr[4],
               const unsigned char br[4], const unsigned char bl[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.tex_coord = uv;
+    VtxPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    BatchVertex v; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     v.color = toColor(tl); V[nv++] = v;
     v.position.x = x + w; v.position.y = y;     v.color = toColor(tr); V[nv++] = v;
     v.position.x = x + w; v.position.y = y + h; v.color = toColor(br); V[nv++] = v;
@@ -582,7 +578,7 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
     float dx = x1 - x0, dy = y1 - y0;
     float len = dx * dx + dy * dy;
     if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
-    len = 1.0f / SDL_sqrtf(len);
+    len = 1.0f / std::sqrt(len);
     // Perpendicular unit vector * half thickness.
     float px = -dy * len * th * 0.5f, py = dx * len * th * 0.5f;
     quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
@@ -590,16 +586,16 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
 
 // A single filled triangle.
 void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) { noteDrop(); return; }
-    const SDL_Color sc = toColor(c);
+    const VtxColor sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    VtxPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    BatchVertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
@@ -613,7 +609,7 @@ const float* unitCircle(int n) {
     if (!table[n]) {
         float* t = new float[(std::size_t)n * 2];
         const float step = 6.2831853f / n;
-        for (int i = 1; i <= n; ++i) { const float a = step * i; t[(i - 1) * 2] = SDL_cosf(a); t[(i - 1) * 2 + 1] = SDL_sinf(a); }
+        for (int i = 1; i <= n; ++i) { const float a = step * i; t[(i - 1) * 2] = std::cos(a); t[(i - 1) * 2 + 1] = std::sin(a); }
         table[n] = t;
     }
     return table[n];
@@ -623,14 +619,14 @@ const float* unitCircle(int n) {
 void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments) {
     if (segments < 3) segments = 3;
     if (segments > 128) segments = 128;
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + segments + 2 > kMaxVerts || ni + segments * 3 > kMaxIdx) { noteDrop(); return; }
     const float* u = unitCircle(segments);
-    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    BatchVertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
     const int base = nv;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
     v.position.x = cx + radius; v.position.y = cy; V[nv++] = v;   // angle 0
@@ -647,20 +643,20 @@ struct CornerTable {
         const float a0[4] = {PI, 1.5f * PI, 0.0f, 0.5f * PI}, a1[4] = {1.5f * PI, 2.0f * PI, 0.5f * PI, PI};
         for (int q = 0; q < 4; ++q) {
             const float step = (a1[q] - a0[q]) / 5;
-            for (int i = 0; i <= 5; ++i) { const float a = i == 0 ? a0[q] : a0[q] + step * i; c[q][i] = SDL_cosf(a); s[q][i] = SDL_sinf(a); }
+            for (int i = 0; i <= 5; ++i) { const float a = i == 0 ? a0[q] : a0[q] + step * i; c[q][i] = std::cos(a); s[q][i] = std::sin(a); }
         }
     }
 };
 // One corner as a fan that shares its centre and rim points (7 vertices, 5 triangles): the same triangles arcFan emits.
 void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
     static const CornerTable T;
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 7 > kMaxVerts || ni + 15 > kMaxIdx) { noteDrop(); return; }
-    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    BatchVertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
     const int base = nv;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
     for (int i = 0; i <= 5; ++i) { v.position.x = cx + r * T.c[q][i]; v.position.y = cy + r * T.s[q][i]; V[nv++] = v; }
@@ -685,7 +681,7 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
 
 // Text with characters the atlas lacks: every glyph from the engine font `f`, bound
 // to its atlas (a span of its own; in the overlay, an overlay span).
-void bindTexture(SDL_Texture* t) {
+void bindTexture(Tex t) {
     if (!g_toOverlay) { setTexture(t); return; }
     if (g_novSpans > 0 && g_ovSpans[g_novSpans - 1].startIdx == g_oni) { g_ovSpans[g_novSpans - 1].tex = t; return; }
     OverlaySpan s = g_novSpans > 0 ? g_ovSpans[g_novSpans - 1] : OverlaySpan{g_oni, t};   // the clip in force goes on
@@ -712,14 +708,14 @@ void overlayClipToStack() {
 }
 void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (g_cullRow && !g_toOverlay) return;
-    SDL_Texture* tex = fallbackTex(f);
+    Tex tex = fallbackTex(f);
     if (!tex) return;
     f->Prepare(str);   // bake its new characters before reading the atlas size
     const float px = fH() * s, k = px / f->BakeHeight();
     const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
     const float base = y + f->Ascent(px);
-    const SDL_Color sc = toColor(c);
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    const VtxColor sc = toColor(c);
+    BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
@@ -734,7 +730,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
             const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
             const float u0 = g->x0 / aw, v0 = g->y0 / ah, u1 = g->x1 / aw, v1 = g->y1 / ah;
             const int b0 = nv;
-            SDL_Vertex v; v.color = sc;
+            BatchVertex v; v.color = sc;
             v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
             v.position.x = x1; v.position.y = y0; v.tex_coord.x = u1; v.tex_coord.y = v0; V[nv++] = v;
             v.position.x = x1; v.position.y = y1; v.tex_coord.x = u1; v.tex_coord.y = v1; V[nv++] = v;
@@ -759,13 +755,13 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
-        float pen = exact ? SDL_floorf(x + 0.5f) : x;
-        const float base = exact ? SDL_floorf(y + z.ascent * k + 0.5f) : y + z.ascent * k;
-        SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+        float pen = exact ? std::floor(x + 0.5f) : x;
+        const float base = exact ? std::floor(y + z.ascent * k + 0.5f) : y + z.ascent * k;
+        BatchVertex* V = g_toOverlay ? g_ovVerts : g_verts;
         int*        I = g_toOverlay ? g_ovIdx   : g_idx;
         int&        nv = g_toOverlay ? g_onv : g_nv;
         int&        ni = g_toOverlay ? g_oni : g_ni;
-        const SDL_Color sc = toColor(c);
+        const VtxColor sc = toColor(c);
         for (const char* p = str; *p;) {
             const fontatlas::Glyph* g = asciiGlyph(z, p); if (!g) g = z.Find('?');
             if (!g) continue;
@@ -773,7 +769,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
                 const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
                 const int b0 = nv;
-                SDL_Vertex v; v.color = sc;
+                BatchVertex v; v.color = sc;
                 v.position.x = x0; v.position.y = y0; v.tex_coord.x = g->u0; v.tex_coord.y = g->v0; V[nv++] = v;
                 v.position.x = x1; v.position.y = y0; v.tex_coord.x = g->u1; v.tex_coord.y = g->v0; V[nv++] = v;
                 v.position.x = x1; v.position.y = y1; v.tex_coord.x = g->u1; v.tex_coord.y = g->v1; V[nv++] = v;
@@ -1037,7 +1033,7 @@ void reorderWindows() {
     static DrawSpan nsp[kMaxSpans];
     int nn = 0, nns = 0;
     bool fail = false;
-    auto stateAt = [&](int idx) { DrawSpan st{0, false, SDL_Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
+    auto stateAt = [&](int idx) { DrawSpan st{0, false, PxRect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
     auto emit = [&](int a, int b) {
         if (b <= a || fail) return;
         int inner = 0;   // the spans that start inside [a, b): exactly what this run adds besides its first
@@ -1519,7 +1515,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
-    if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
+    if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, PxRect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     const int fit = g_nv - base;   // overlay vertices that made it in
@@ -1586,10 +1582,10 @@ void finalizeFrame() {
 }
 } // namespace
 
-static_assert(sizeof(DrawVertex) == sizeof(SDL_Vertex), "DrawVertex must match SDL_Vertex");
-static_assert(offsetof(DrawVertex, x) == offsetof(SDL_Vertex, position), "DrawVertex layout");
-static_assert(offsetof(DrawVertex, r) == offsetof(SDL_Vertex, color), "DrawVertex layout");
-static_assert(offsetof(DrawVertex, u) == offsetof(SDL_Vertex, tex_coord), "DrawVertex layout");
+static_assert(sizeof(DrawVertex) == sizeof(BatchVertex), "DrawVertex must match BatchVertex");
+static_assert(offsetof(DrawVertex, x) == offsetof(BatchVertex, position), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, r) == offsetof(BatchVertex, color), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, u) == offsetof(BatchVertex, tex_coord), "DrawVertex layout");
 
 namespace {
 // The span list as backend-neutral commands: the same index ranges, clip rectangles
@@ -1598,14 +1594,14 @@ namespace {
 DrawCmd g_cmds[kMaxSpans + 2];
 int buildCmds() {
     int n = 0;
-    auto add = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* tex) {
+    auto add = [&](int from, int to, bool on, const PxRect& r, Tex tex) {
         if (to <= from || n >= kMaxSpans + 2) return;
         DrawCmd& c = g_cmds[n++];
         c.idxOffset = from; c.idxCount = to - from;
         c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
         c.texture = (const void*)tex;
     };
-    const SDL_Rect none = { 0, 0, 0, 0 };
+    const PxRect none = { 0, 0, 0, 0 };
     if (g_nspans == 0) { add(0, g_ni, false, none, g_defTex); return n; }
     add(0, g_spans[0].startIdx, false, none, g_defTex);
     for (int s = 0; s < g_nspans; ++s)
@@ -1678,32 +1674,12 @@ okay::TtfFont* FallbackFontOf(const void* texture) {
 
 void EndFrameData() { finalizeFrame(); }
 
-// The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
-SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
-    for (int i = 0; i < g_nfb; ++i)
-        if (t == (SDL_Texture*)(void*)g_fbFonts[i]) return fontatlas::FallbackTexture(r, g_fbFonts[i]);
-    if (t != kAtlasTex) return t;
-    if (!g_ttf || !g_ttf->ok) return nullptr;
-    if (!g_atlasTex || g_atlasR != r) {
-        g_atlasTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, g_ttf->w, g_ttf->h);
-        g_atlasR = r;
-        if (g_atlasTex) {
-            SDL_UpdateTexture(g_atlasTex, nullptr, g_ttf->rgba, g_ttf->w * 4);
-            SDL_SetTextureBlendMode(g_atlasTex, SDL_BLENDMODE_BLEND);
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-            SDL_SetTextureScaleMode(g_atlasTex, SDL_ScaleModeLinear);
-#endif
-        }
-    }
-    return g_atlasTex;
-}
-
 // Toasts: a few short messages stacked in the bottom-right corner (see Toast()).
-struct ToastSlot { char text[160]; int kind; Uint32 until; Uint32 born; };
+struct ToastSlot { char text[160]; int kind; std::uint32_t until; std::uint32_t born; };
 ToastSlot g_toasts[4];
 int       g_ntoasts = 0;
 void drawToasts(float screenW, float screenH) {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     int k = 0;
     for (int i = 0; i < g_ntoasts; ++i) if (g_toasts[i].until > now) g_toasts[k++] = g_toasts[i];
     g_ntoasts = k;
@@ -1740,46 +1716,6 @@ void drawToasts(float screenW, float screenH) {
 void EndFrameData(int outputWidth, int outputHeight) {
     if (g_ntoasts && outputWidth > 0 && outputHeight > 0) drawToasts((float)outputWidth, (float)outputHeight);
     finalizeFrame();
-}
-
-void EndFrame(SDL_Renderer* r) {
-    if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
-    finalizeFrame();
-    DrawFinishedFrame(r);
-}
-
-void DrawFinishedFrame(SDL_Renderer* r) {
-    if (!r || g_nv == 0 || g_ni == 0) return;
-    SDL_Texture* const defTex = resolveTex(r, g_defTex);
-    // Save/restore the renderer's blend mode so we never disturb ImGui or anything
-    // else that draws through the same SDL_Renderer.
-    SDL_BlendMode prev = SDL_BLENDMODE_NONE;
-    SDL_GetRenderDrawBlendMode(r, &prev);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (g_nspans == 0) {
-        SDL_RenderGeometry(r, defTex, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
-    } else {
-        // Draw each contiguous index range under its clip rect. Ranges run from one
-        // span's startIdx to the next span's (last extends to g_ni).
-        SDL_bool hadClip = SDL_RenderIsClipEnabled(r);
-        SDL_Rect savedClip; SDL_RenderGetClipRect(r, &savedClip);
-        // Geometry before the first span (window frames drawn pre-clip) is unclipped.
-        if (g_spans[0].startIdx > 0) {
-            SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, defTex, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
-        }
-        for (int s = 0; s < g_nspans; ++s) {
-            int from = g_spans[s].startIdx;
-            int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
-            if (to <= from) continue;
-            if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
-            else               SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, resolveTex(r, g_spans[s].tex), g_verts, g_nv, &g_idx[from], to - from);
-        }
-        // Restore the renderer's prior clip state.
-        SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
-    }
-    SDL_SetRenderDrawBlendMode(r, prev);
 }
 
 namespace { float g_userSavedScale = 0.0f; }   // textScale before a user font set its own (0: none active)
@@ -1967,13 +1903,13 @@ void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
 
 void PushClipRect(Vec2 mn, Vec2 mx, bool) { PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y); }
 bool BeginChild(unsigned id, Vec2 size, int childFlags, int windowFlags) { char name[24]; std::snprintf(name, sizeof name, "##%u", id); return BeginChild(name, size, childFlags, windowFlags); }
-bool ImageButton(const char* id, SDL_Texture* tex, Vec2 size, Vec2, Vec2, Vec4, Vec4) { return ImageButton(id, tex, size.x, size.y); }
+bool ImageButton(const char* id, Tex tex, Vec2 size, Vec2, Vec2, Vec4, Vec4) { return ImageButton(id, tex, size.x, size.y); }
 void Render() { EndFrameData(); }
 void PushClipRect(float x, float y, float w, float h) {
-    SDL_Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
+    PxRect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
     // Intersect with the enclosing clip so nested regions never draw outside a parent.
     if (g_clipTop > g_clipBase) {
-        SDL_Rect& p = g_clipStack[g_clipTop - 1];
+        PxRect& p = g_clipStack[g_clipTop - 1];
         int x0 = r.x > p.x ? r.x : p.x, y0 = r.y > p.y ? r.y : p.y;
         int x1 = (r.x + r.w) < (p.x + p.w) ? (r.x + r.w) : (p.x + p.w);
         int y1 = (r.y + r.h) < (p.y + p.h) ? (r.y + r.h) : (p.y + p.h);
@@ -1988,7 +1924,7 @@ void PopClipRect() {
     if (g_clipTop > g_clipBase) --g_clipTop;
     if (g_toOverlay) { overlayClipToStack(); return; }
     if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);   // (back in the main batch: the window's clips below the base count again)
-    else               pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });
+    else               pushClipSpan(false, PxRect{ 0, 0, 0, 0 });
 }
 
 void Spacing(float h) {
@@ -2647,7 +2583,7 @@ static bool Knob_raw(const char* label, float* value, float minV, float maxV, fl
     fillCircle(cx, cy, rad * 0.82f, g_theme.panel);
     float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
     const float a = 2.35619f + t * 4.71239f;   // 135deg + t*270deg (radians)
-    line(cx, cy, cx + SDL_cosf(a) * rad, cy + SDL_sinf(a) * rad, 2.5f, g_theme.accent);
+    line(cx, cy, cx + std::cos(a) * rad, cy + std::sin(a) * rad, 2.5f, g_theme.accent);
     if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return changed;
 }
@@ -2734,14 +2670,14 @@ void LabelText(const char* label, const char* value) {
     }
 }
 
-void DrawTexture(SDL_Texture* tex, float x, float y, float w, float h,
+void DrawTexture(Tex tex, float x, float y, float w, float h,
                  unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     if (!tex) return;
     const unsigned char tint[4] = { r, g, b, a };
     texQuad(x, y, w, h, tex, 0.0f, 0.0f, 1.0f, 1.0f, tint);
 }
 
-void Image(SDL_Texture* tex, float w, float h,
+void Image(Tex tex, float w, float h,
            unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     if (!g_lay.active) return;
     if (w <= 0.0f) w = rowH() * 2.0f;
@@ -2750,7 +2686,7 @@ void Image(SDL_Texture* tex, float w, float h,
     DrawTexture(tex, x, y, w, h, r, g, b, a);
 }
 
-bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
+bool ImageButton(const char* id, Tex tex, float w, float h) {
     if (!g_lay.active) return false;
     const int hid = hashLabel(id);
     if (w <= 0.0f) w = rowH() * 2.0f;
@@ -2909,7 +2845,7 @@ namespace {
 // the current window, else the display; always cut to the display when the host gave one.
 void visibleSpanY(float& top, float& bottom) {
     top = -1e30f; bottom = 1e30f;
-    if (g_clipTop > g_clipBase) { const SDL_Rect& r = g_clipStack[g_clipTop - 1]; top = (float)r.y; bottom = (float)(r.y + r.h); }
+    if (g_clipTop > g_clipBase) { const PxRect& r = g_clipStack[g_clipTop - 1]; top = (float)r.y; bottom = (float)(r.y + r.h); }
     else if (g_curWin.valid) { top = g_curWin.y; bottom = g_curWin.y + g_curWin.h; }
     if (g_dispH > 0.0f) { top = std::max(top, 0.0f); bottom = std::min(bottom, g_dispH); }
 }
@@ -3552,7 +3488,7 @@ void Toast(const char* text, int kind, float seconds) {
     t.text[i] = 0;
     t.kind = kind;
     t.born = okay::platform::TicksMs32();
-    t.until = t.born + (Uint32)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
+    t.until = t.born + (std::uint32_t)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
 }
 
 
@@ -3590,19 +3526,19 @@ void SetClipboardText(const char* text) {
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
     std::memcpy(g_clip, text, n); g_clip[n] = 0;
     trimPartialChar(g_clip);
-    if (PlatformClipboardSet(g_clip)) return;          // a platform feed owns the clipboard (no SDL)
-    SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
+    if (PlatformClipboardSet(g_clip)) return;          // a platform feed owns the clipboard
+    if (okay::platform::Backend* b = okay::platform::Default()) b->SetClipboardText(g_clip);   // fails quietly with no window system: the copy above is enough
 }
 const char* GetClipboardText() {
     bool installed = false;
     if (const char* pc = PlatformClipboardGet(&installed)) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
     if (installed) { g_clip[0] = 0; return g_clip; }   // a platform feed owns the clipboard and it is empty (another program emptied it): paste nothing, as Dear ImGui does
-    if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
-        if (sys[0] && std::strcmp(sys, g_clip) != 0) {
-            std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
-            std::memcpy(g_clip, sys, n); g_clip[n] = 0; trimPartialChar(g_clip);
+    if (okay::platform::Backend* b = okay::platform::Default()) {   // someone else may have copied something since
+        const std::string sys = b->GetClipboardText();
+        if (!sys.empty() && std::strcmp(sys.c_str(), g_clip) != 0) {
+            std::size_t n = sys.size(); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
+            std::memcpy(g_clip, sys.data(), n); g_clip[n] = 0; trimPartialChar(g_clip);
         }
-        SDL_free(sys);
     }
     return g_clip;
 }
@@ -3616,9 +3552,9 @@ const char* GetClipboardText() {
 // where they are. Switching channel saves the current run, cuts the batch back to the split point and lays the other channel's run down
 // again; a merge lays all runs down in channel order. Clip and texture state at the split is the state every channel starts from.
 namespace {
-struct SpanSave { int rel; bool on; SDL_Rect rect; SDL_Texture* tex; };
-struct Chan { std::vector<int> idx; std::vector<SpanSave> spans; bool started = false; bool eOn = false; SDL_Rect eRect{0, 0, 0, 0}; SDL_Texture* eTex = nullptr; };
-struct SplitState { bool on = false; int count = 1, cur = 0, baseIdx = 0, baseSpans = 0; bool bOn = false; SDL_Rect bRect{0, 0, 0, 0}; SDL_Texture* bTex = nullptr; Chan ch[8]; };
+struct SpanSave { int rel; bool on; PxRect rect; Tex tex; };
+struct Chan { std::vector<int> idx; std::vector<SpanSave> spans; bool started = false; bool eOn = false; PxRect eRect{0, 0, 0, 0}; Tex eTex = nullptr; };
+struct SplitState { bool on = false; int count = 1, cur = 0, baseIdx = 0, baseSpans = 0; bool bOn = false; PxRect bRect{0, 0, 0, 0}; Tex bTex = nullptr; Chan ch[8]; };
 SplitState g_split;
 void saveChan(Chan& c) {
     c.idx.assign(g_idx + g_split.baseIdx, g_idx + g_ni);
@@ -3752,13 +3688,13 @@ bool IsAnyItemActive()   { return g_active != 0; }                              
 bool IsItemVisible() {                                                                // the last item overlaps the current clip rectangle
     if (!g_lay.active) return false;
     float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
-    if (g_clipTop > g_clipBase) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    if (g_clipTop > g_clipBase) { const PxRect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return g_lay.prevX < x1 && g_lay.prevX + g_lay.prevW > x0 && g_lay.prevY < y1 && g_lay.prevY + g_lay.prevH > y0;
 }
 bool IsRectVisible(Vec2 min, Vec2 max) {
     if (!g_lay.active) return false;
     float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
-    if (g_clipTop > g_clipBase) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    if (g_clipTop > g_clipBase) { const PxRect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return min.x < x1 && max.x > x0 && min.y < y1 && max.y > y0;
 }
 bool IsRectVisible(Vec2 size) { const Vec2 p = GetCursorScreenPos(); return IsRectVisible(p, Vec2{p.x + size.x, p.y + size.y}); }

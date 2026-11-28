@@ -157,11 +157,11 @@ static void default_table_turns_everything_on() {
     DropEnv(AppliedVar());
     Context ctx; ctx.windows = true; ctx.okayUi = true;
     auto got = Apply(Parse("", Items()), Items(), ctx);
-    CHECK(JoinIds(got) == "ownrender,browser");                                // platform is not offered on Windows
+    CHECK(JoinIds(got) == "browser");                                          // platform and ownrender went with SDL2, okayui and inspector with Dear ImGui
     CHECK(Get("OKAY_BROWSER") && std::string(Get("OKAY_BROWSER")) == "1");     // the Browser page (launcher/BrowserPage.hpp) starts on
     CHECK(Get("OKAY_OWN_HTTP") == nullptr && Get("OKAY_PLATFORM_BACKEND") == nullptr);
     CHECK(Get("OKAY_UI_BACKEND") == nullptr && Get("OKAY_UI_INSPECTOR") == nullptr);   // the removed items set nothing
-    CHECK(Get("OKAY_UI_OWN_RENDER") && std::string(Get("OKAY_UI_OWN_RENDER")) == "1");
+    CHECK(Get("OKAY_UI_OWN_RENDER") == nullptr);   // the SDL renderer host it chose is gone: nothing sets the variable
     CHECK(Get("OKAY_OWN_WAV") == nullptr);   // the WAV switch was deleted: nothing sets its variable
     for (std::size_t i = 0; i < saved.size(); ++i) { if (had[i]) PutEnv(names[i], saved[i].c_str()); else DropEnv(names[i]); }
     DropEnv(AppliedVar());

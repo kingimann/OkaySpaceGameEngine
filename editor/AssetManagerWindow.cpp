@@ -121,7 +121,7 @@ void DrawAssetManager(EditorState& ed) {
         if (con->DockId) ImGui::SetNextWindowDockID(con->DockId, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Asset Manager", &g_showAssetManager)) { ImGui::End(); return; }
     static std::vector<DlAsset> s_items;
-    static Uint32 s_nextScan = 0;
+    static std::uint32_t s_nextScan = 0;
     static char s_search[96] = "";
     static int s_cat = -1;          // -1 = all
     static bool s_grid = false;
@@ -200,7 +200,7 @@ void DrawAssetManager(EditorState& ed) {
     auto tile = [&](const DlAsset& a, float sz) {
         ImVec2 p = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        SDL_Texture* th = a.cat == 2 && a.size < 32ll * 1024 * 1024 ? GetThumb(a.path) : nullptr;
+        okay::ui2d::Tex th = a.cat == 2 && a.size < 32ll * 1024 * 1024 ? GetThumb(a.path) : nullptr;
         if (th) ImGui::Image((ImTextureID)th, ImVec2(sz, sz));
         else {
             ImGui::Dummy(ImVec2(sz, sz));

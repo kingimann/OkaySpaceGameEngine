@@ -1,5 +1,5 @@
 // In-game UI must stay crisp when magnified (owner report: "if you zoom in it's pixelated").
-// The scene in ui_crisp_scene.hpp is drawn by the real UI pass on SDL's software renderer at 1x..4x
+// The scene in ui_crisp_scene.hpp is drawn by the real UI pass on the software painter at 1x..4x
 // of its 320x180 reference canvas and measured:
 //   * text, circles, rings and pictures are rasterised at the physical pixel size, not magnified
 //     from a small bitmap ("block detail": how much a render varies inside an aligned block; a

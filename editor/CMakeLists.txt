@@ -1,24 +1,12 @@
 # OkaySpace Editor: the desktop editor. Its sources are written in Dear ImGui's names and compiled only against OkayUI's compatibility
 # layer (okayui/probe first on the include path: "imgui.h" and "ImGuiPainterRenderer.hpp" are OkayUI's), so no Dear ImGui is in it
 # (2026-11-27, docs/ui/own_ui_toolkit.md section 33). Input: shared/ImGuiPlatformFeed.hpp; drawing: OkayUI's frame through the window's
-# okay::platform::Painter. Needs SDL2 dev libraries (the window on Windows). Enable from the top level with -DOKAY_BUILD_EDITOR=ON.
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND OR NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
-    message(WARNING "okay-editor needs SDL2 dev libraries and OkayUI; skipping.")
+# okay::platform::Painter; the window, events, audio and gamepads are our own okay::platform backend (no SDL). Enable from the top
+# level with -DOKAY_BUILD_EDITOR=ON.
+if(NOT TARGET okay_ui OR NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
+    message(WARNING "okay-editor needs OkayUI; skipping.")
     return()
 endif()
-
-# SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
-# the editor ships as a single self-contained .exe (no SDL2.dll alongside).
-option(OKAY_EDITOR_STATIC_SDL "Statically link SDL2 into the editor" OFF)
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
-    set(OKAY_SDL_LIB SDL2::SDL2-static)
-elseif(TARGET SDL2::SDL2)
-    set(OKAY_SDL_LIB SDL2::SDL2)
-else()
-    set(OKAY_SDL_LIB ${SDL2_LIBRARIES})
-endif()
-# Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     HangWatchdog.cpp                                                   # the hang watchdog: a stuck main loop is reported (okay_hang.txt) and, on Windows, Wait / Close is offered
@@ -89,7 +77,7 @@ target_compile_features(okay-editor PRIVATE cxx_std_17)
 target_include_directories(okay-editor BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's
 target_include_directories(okay-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher   # editor/: shared/ScriptIdeApp.hpp includes ScriptIde.hpp
     ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
-target_link_libraries(okay-editor PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
+target_link_libraries(okay-editor PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft)
 # View > Panels > Command Line (shared/CommandLinePanel.hpp): okay's commands run inside the editor. okay_cli_panel is made after
 # this folder (top CMakeLists.txt, with okay_cli_lib), so it is named through generator expressions; without it the panel is absent.
 target_link_libraries(okay-editor PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)

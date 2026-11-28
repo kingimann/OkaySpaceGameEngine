@@ -1,11 +1,9 @@
 #pragma once
-// The editor and launcher still own an SDL_Renderer* and keep SDL_Texture* handles. This header is how their 2D renderer calls reach
-// okay::platform::Painter without touching those handles: one wrapper per renderer, kept in a small table, and one function per
-// thing the apps do. With the sdl2 painter (the only one these apps use today) each function is the SDL call it replaces; the point
-// is that the apps no longer say "SDL" for it, so a different painter can stand behind the same calls later.
-//
-// A texture made here is an SDL_Texture* only in disguise (the opaque ui2d::Tex of the sdl2 painter); give it back to these functions,
-// to okay::platform::Painter, or to ImGui's SDL renderer backend (which draws it with SDL_RenderGeometry).
+// The apps' 2D renderer: an okay::platform::Painter per window (the OpenGL painter, or the software painter when a window has no
+// GL; shared/OwnPainter.hpp picks), made by CreateRenderer and owned by the small table here until DestroyRenderer. The free
+// functions below are the calls the apps make on it, so their code reads the same whichever painter stands behind the window.
+// Textures are okay::ui2d::Tex handles made by the painter; give them back only to these functions or to the same painter.
+// (Until 2026-11-27 the handle was an SDL_Renderer* and these functions were the SDL calls they replaced; SDL2 is gone.)
 #include "okay/Platform/Painter.hpp"
 
 #include <cstdint>
@@ -13,116 +11,100 @@
 #include <string>
 #include <unordered_map>
 
-struct SDL_Renderer;
-struct SDL_Texture;
-
 namespace okay::pb {
 
+/// The renderer handle the apps keep: the painter itself.
+using Renderer = okay::platform::Painter;
+using Tex = okay::ui2d::Tex;
+
 namespace detail {
-inline std::unordered_map<void*, std::unique_ptr<okay::platform::Painter>>& Table() {
+inline std::unordered_map<okay::platform::Painter*, std::unique_ptr<okay::platform::Painter>>& Table() {
     // Never destroyed on purpose: a renderer that is still open at exit (the launcher's chat window keeps its own until the process
-    // ends) must not be freed by a static destructor after SDL has shut down.
-    static auto* t = new std::unordered_map<void*, std::unique_ptr<okay::platform::Painter>>();
+    // ends) must not be freed by a static destructor after the platform backend has shut down.
+    static auto* t = new std::unordered_map<okay::platform::Painter*, std::unique_ptr<okay::platform::Painter>>();
     return *t;
 }
 }
 
-/// A function that makes a painter for a window of the own backend (the software painter lives in okayui, the OpenGL one in the engine;
-/// the app that links them registers one, usually okay::pb::MakeOwnPainter from OwnPainter.hpp). It gets CreateRenderer's vsync and
-/// accelerated wishes. Without one, CreateRenderer for such a window returns null.
+/// A function that makes a painter for a window (the software painter lives in okayui, the OpenGL one in the engine; the app that
+/// links them registers one, usually okay::pb::MakeOwnPainter from OwnPainter.hpp). It gets CreateRenderer's vsync and accelerated
+/// wishes. Without one, CreateRenderer returns null.
 using OwnPainterFactory = std::unique_ptr<okay::platform::Painter> (*)(okay::platform::Window&, const okay::platform::PainterDesc&);
 inline OwnPainterFactory& OwnFactory() { static OwnPainterFactory f = nullptr; return f; }
 inline void SetOwnPainterFactory(OwnPainterFactory f) { OwnFactory() = f; }
 
-/// The painter that stands for `ren` (made on first use; null for a null renderer).
-inline okay::platform::Painter* For(SDL_Renderer* ren) {
-    if (!ren) return nullptr;
-    auto& t = detail::Table();
-    auto it = t.find(ren);
-    if (it == t.end()) it = t.emplace(ren, okay::platform::WrapSdl2Renderer(ren)).first;
-    return it->second.get();
-}
-/// One function told about a renderer that is about to be destroyed, while it still works (OkayUI's own renderer frees its GL objects
-/// there: shared/OkayUIFrame.hpp). Null = none.
-using ForgetHook = void (*)(SDL_Renderer*);
+/// The painter that stands for `ren` (it is the painter; kept so call sites read the same as before).
+inline okay::platform::Painter* For(Renderer* ren) { return ren; }
+/// One function told about a renderer that is about to be destroyed, while it still works (OkayUI's frame drawer frees its
+/// textures there: shared/OkayUIFrame.hpp). Null = none.
+using ForgetHook = void (*)(Renderer*);
 inline ForgetHook& OnForget() { static ForgetHook h = nullptr; return h; }
-/// Forget the wrapper of a renderer that is about to be destroyed (a new renderer may get the same address).
-inline void Forget(SDL_Renderer* ren) { if (ren && OnForget()) OnForget()(ren); detail::Table().erase(ren); }
+/// Tell the hook that `ren` is about to go and drop it from the table (destroying it when the table owns it).
+inline void Forget(Renderer* ren) { if (ren && OnForget()) OnForget()(ren); detail::Table().erase(ren); }
 
 enum class Access { Static, Streaming, Target };
 
-/// A new RGBA8 texture. `rgba` (w * h * 4, top row first) may be null. Like SDL_CreateTexture + SDL_SetTextureBlendMode + SDL_SetTextureScaleMode.
-inline SDL_Texture* CreateTexture(SDL_Renderer* ren, int w, int h, Access acc = Access::Static, bool blend = true, bool linear = false,
-                                  const std::uint8_t* rgba = nullptr) {
-    okay::platform::Painter* p = For(ren);
-    if (!p) return nullptr;
+/// A new RGBA8 texture. `rgba` (w * h * 4, top row first) may be null.
+inline Tex CreateTexture(Renderer* ren, int w, int h, Access acc = Access::Static, bool blend = true, bool linear = false,
+                         const std::uint8_t* rgba = nullptr) {
+    if (!ren) return nullptr;
     okay::platform::TextureDesc d;
     d.width = w; d.height = h;
     d.blend = blend ? okay::platform::BlendMode::Blend : okay::platform::BlendMode::None;
     d.scale = linear ? okay::platform::ScaleMode::Linear : okay::platform::ScaleMode::Nearest;
     d.streaming = acc == Access::Streaming; d.target = acc == Access::Target;
-    return (SDL_Texture*)p->CreateTexture(d, rgba);
+    return ren->CreateTexture(d, rgba);
 }
-inline void DestroyTexture(SDL_Renderer* ren, SDL_Texture* t) { if (t) if (auto* p = For(ren)) p->DestroyTexture((okay::ui2d::Tex)t); }
+inline void DestroyTexture(Renderer* ren, Tex t) { if (t && ren) ren->DestroyTexture(t); }
 /// Replace the pixels of `t` (rect null = all) with RGBA8 laid out with `pitch` bytes per row. `rect` is {x, y, w, h}.
-inline bool UpdateTexture(SDL_Renderer* ren, SDL_Texture* t, const int* rect, const void* px, int pitch) {
-    auto* p = For(ren);
-    if (!p || !t) return false;
+inline bool UpdateTexture(Renderer* ren, Tex t, const int* rect, const void* px, int pitch) {
+    if (!ren || !t) return false;
     okay::ui2d::Rect r; if (rect) { r.x = rect[0]; r.y = rect[1]; r.w = rect[2]; r.h = rect[3]; }
-    return p->UpdateTexture((okay::ui2d::Tex)t, rect ? &r : nullptr, px, pitch);
+    return ren->UpdateTexture(t, rect ? &r : nullptr, px, pitch);
 }
-inline void QueryTexture(SDL_Renderer* ren, SDL_Texture* t, int* w, int* h) {
+inline void QueryTexture(Renderer* ren, Tex t, int* w, int* h) {
     if (w) *w = 0;
     if (h) *h = 0;
-    if (t) if (auto* p = For(ren)) p->QueryTexture((okay::ui2d::Tex)t, w, h);
+    if (t && ren) ren->QueryTexture(t, w, h);
 }
-inline void SetTextureBlend(SDL_Renderer* ren, SDL_Texture* t, bool blend) {
-    if (t) if (auto* p = For(ren)) p->SetTextureBlendMode((okay::ui2d::Tex)t, blend ? okay::platform::BlendMode::Blend : okay::platform::BlendMode::None);
+inline void SetTextureBlend(Renderer* ren, Tex t, bool blend) {
+    if (t && ren) ren->SetTextureBlendMode(t, blend ? okay::platform::BlendMode::Blend : okay::platform::BlendMode::None);
 }
-inline void SetTextureLinear(SDL_Renderer* ren, SDL_Texture* t, bool linear) {
-    if (t) if (auto* p = For(ren)) p->SetTextureScaleMode((okay::ui2d::Tex)t, linear ? okay::platform::ScaleMode::Linear : okay::platform::ScaleMode::Nearest);
+inline void SetTextureLinear(Renderer* ren, Tex t, bool linear) {
+    if (t && ren) ren->SetTextureScaleMode(t, linear ? okay::platform::ScaleMode::Linear : okay::platform::ScaleMode::Nearest);
 }
 
 // ---- the frame ----
-inline void Clear(SDL_Renderer* ren) { if (auto* p = For(ren)) p->Clear(); }
-inline void Present(SDL_Renderer* ren) { if (auto* p = For(ren)) p->Present(); }
-inline void OutputSize(SDL_Renderer* ren, int* w, int* h) { if (auto* p = For(ren)) p->OutputSize(w, h); }
-inline void SetVSync(SDL_Renderer* ren, bool on) { if (auto* p = For(ren)) p->SetVSync(on); }
-inline void SetScale(SDL_Renderer* ren, float sx, float sy) { if (auto* p = For(ren)) p->SetScale(sx, sy); }
-inline void SetDrawColor(SDL_Renderer* ren, std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) { if (auto* p = For(ren)) p->SetDrawColor(r, g, b, a); }
-inline void GetDrawColor(SDL_Renderer* ren, std::uint8_t* r, std::uint8_t* g, std::uint8_t* b, std::uint8_t* a) {
-    if (auto* p = For(ren)) p->GetDrawColor(r, g, b, a);
+inline void Clear(Renderer* ren) { if (ren) ren->Clear(); }
+inline void Present(Renderer* ren) { if (ren) ren->Present(); }
+inline void OutputSize(Renderer* ren, int* w, int* h) { if (ren) ren->OutputSize(w, h); }
+inline void SetVSync(Renderer* ren, bool on) { if (ren) ren->SetVSync(on); }
+inline void SetScale(Renderer* ren, float sx, float sy) { if (ren) ren->SetScale(sx, sy); }
+inline void SetDrawColor(Renderer* ren, std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) { if (ren) ren->SetDrawColor(r, g, b, a); }
+inline void GetDrawColor(Renderer* ren, std::uint8_t* r, std::uint8_t* g, std::uint8_t* b, std::uint8_t* a) {
+    if (ren) ren->GetDrawColor(r, g, b, a);
 }
-inline void DrawPoint(SDL_Renderer* ren, int x, int y) { if (auto* p = For(ren)) p->DrawPoint(x, y); }
-inline void Flush(SDL_Renderer* ren) { if (auto* p = For(ren)) p->Flush(); }
-inline bool ReadPixels(SDL_Renderer* ren, std::vector<std::uint8_t>& rgba, int& w, int& h) { auto* p = For(ren); return p && p->ReadPixels(rgba, w, h); }
-inline std::string DriverName(SDL_Renderer* ren) { auto* p = For(ren); return p ? p->DriverName() : std::string(); }
-inline bool IsAccelerated(SDL_Renderer* ren) { auto* p = For(ren); return p && p->IsAccelerated(); }
-inline SDL_Texture* GetRenderTarget(SDL_Renderer* ren) { auto* p = For(ren); return p ? (SDL_Texture*)p->GetRenderTarget() : nullptr; }
-inline bool SetRenderTarget(SDL_Renderer* ren, SDL_Texture* t) { auto* p = For(ren); return p && p->SetRenderTarget((okay::ui2d::Tex)t); }
+inline void DrawPoint(Renderer* ren, int x, int y) { if (ren) ren->DrawPoint(x, y); }
+inline void Flush(Renderer* ren) { if (ren) ren->Flush(); }
+inline bool ReadPixels(Renderer* ren, std::vector<std::uint8_t>& rgba, int& w, int& h) { return ren && ren->ReadPixels(rgba, w, h); }
+inline std::string DriverName(Renderer* ren) { return ren ? ren->DriverName() : std::string(); }
+inline bool IsAccelerated(Renderer* ren) { return ren && ren->IsAccelerated(); }
+inline Tex GetRenderTarget(Renderer* ren) { return ren ? ren->GetRenderTarget() : nullptr; }
+inline bool SetRenderTarget(Renderer* ren, Tex t) { return ren && ren->SetRenderTarget(t); }
 
-/// A renderer for an SDL window made by the sdl2 backend: accelerated, else any (what the apps asked SDL for). Null on failure.
-/// For an own-backend window the returned pointer is NOT an SDL_Renderer (it is only the key of the own painter, OpenGL or software): use it with these functions
-/// and the Painter, never with an SDL_* call.
-/// The table owns the painter and with it the renderer: end it with DestroyRenderer (before the window goes).
-inline SDL_Renderer* CreateRenderer(okay::platform::Window& w, bool vsync = false, std::string* err = nullptr, bool requireAccelerated = false) {
+/// The painter for window `w`, made by the registered factory (OwnPainter.hpp: OpenGL, else software). Null on failure (`err` says
+/// why). The table owns it: end it with DestroyRenderer (before the window goes).
+inline Renderer* CreateRenderer(okay::platform::Window& w, bool vsync = false, std::string* err = nullptr, bool requireAccelerated = false) {
     okay::platform::PainterDesc d; d.vsync = vsync; d.requireAccelerated = requireAccelerated;
     std::unique_ptr<okay::platform::Painter> p;
-    if (w.Kind() == okay::platform::BackendKind::Own) {   // an own-backend window: no SDL_Renderer exists; the handle is the painter's own address
-        if (OwnFactory()) p = OwnFactory()(w, d);
-        else if (err) *err = "no painter factory for own-backend windows is registered";
-        if (!p) return nullptr;
-        SDL_Renderer* h = reinterpret_cast<SDL_Renderer*>(p.get());
-        detail::Table()[h] = std::move(p);
-        return h;
-    }
-    p = okay::platform::CreateSdl2Painter(w, d, err);
+    if (OwnFactory()) p = OwnFactory()(w, d);
+    else if (err) *err = "no painter factory is registered (okay::pb::SetOwnPainterFactory)";
     if (!p) return nullptr;
-    SDL_Renderer* r = (SDL_Renderer*)p->NativeRenderer();
-    detail::Table()[r] = std::move(p);
-    return r;
+    Renderer* h = p.get();
+    detail::Table()[h] = std::move(p);
+    return h;
 }
-/// Destroys a renderer made by CreateRenderer (its painter owns it); for one the app made another way, only forgets the wrapper.
-inline void DestroyRenderer(SDL_Renderer* ren) { Forget(ren); }
+/// Destroys a renderer made by CreateRenderer.
+inline void DestroyRenderer(Renderer* ren) { Forget(ren); }
 
 } // namespace okay::pb

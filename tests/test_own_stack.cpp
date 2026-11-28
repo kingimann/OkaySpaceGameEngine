@@ -17,7 +17,7 @@
 #include <string>
 
 #ifndef OKAY_EXPECT_PLATFORM   // tests/CMakeLists.txt passes the configured OKAY_PLATFORM_BACKEND
-#define OKAY_EXPECT_PLATFORM "sdl2"
+#define OKAY_EXPECT_PLATFORM "own"
 #endif
 
 using namespace okay::ownstack;

@@ -1,28 +1,20 @@
 #pragma once
-// Hosting OkayUI inside an SDL + Dear ImGui application (the launcher, the editor). This is the part that is the same for
-// every host: turning SDL events into the OkayUI::Input of one frame, and deciding who owns the mouse and the keyboard
-// when an OkayUI region sits inside an ImGui window. It has no ImGui in it, so the tests can drive it with plain SDL_Event
-// structs (tests/test_okayui_host.cpp).
+// Hosting OkayUI in an application (the launcher, the editor). This is the part that is the same for every host: turning
+// okay::platform events into the OkayUI::Input of one frame, and deciding who owns the mouse and the keyboard when an OkayUI
+// region sits inside a host window. The tests drive it with plain okay::platform::Event values (tests/test_okayui_host.cpp).
 //
 // The frame, as the apps run it:
-//     events:   collector.Feed(e)                       for every SDL event, next to ImGui_ImplSDL2_ProcessEvent
-//     start:    OkayUI::BeginFrame(collector.Build(...))   before the ImGui panels are submitted
-//     panels:   a hosted screen asks ImGui for a rectangle (an InvisibleButton over it, so ImGui treats it as an item and
-//               not as free window space), tells the host with Region::Offer(rect, hovered), then draws its OkayUI screen
-//               into the rectangle
-//     end:      OkayUI::EndFrame(renderer)              after ImGui's draw data, so OkayUI is on top
+//     events:   collector.Feed(e)                       for every okay::platform event
+//     start:    OkayUI::BeginFrame(collector.Build(...))
+//     panels:   a hosted screen asks for a rectangle, tells the host with Region::Offer(rect, hovered), then draws its OkayUI
+//               screen into the rectangle
+//     end:      okay::pb::OkayUIEndFrame(renderer)      (shared/OkayUIFrame.hpp)
 // OkayUI draws on top of every ImGui window, so a hosted region must not be one that other ImGui windows or menus are
 // meant to cover (documented in docs/ui/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUIDesign.hpp"
 #include "okay/Platform/Platform.hpp"
 
-// SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
-// the apps run their own entry point, so keep that rename off wherever this header is the first to include SDL.
-#ifndef SDL_MAIN_HANDLED
-#  define SDL_MAIN_HANDLED
-#endif
-#include <SDL.h>
 
 #include <cstring>
 
@@ -31,74 +23,13 @@ namespace okayuihost {
 /// Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
 enum class HostKeys { None, Held, All };
 
-/// Collects what OkayUI needs from SDL events between two frames.
+/// Collects what OkayUI needs from okay::platform events between two frames.
 class InputCollector {
 public:
-    /// Feed every SDL event (the host may also pass it to ImGui; the collector never consumes events).
-    void Feed(const SDL_Event& e) {
-        switch (e.type) {
-        case SDL_TEXTINPUT: {
-            const std::size_t have = std::strlen(m_text);
-            const std::size_t add = std::strlen(e.text.text);
-            if (have + add < sizeof(m_text)) std::memcpy(m_text + have, e.text.text, add + 1);   // a full buffer drops the rest
-            break;
-        }
-        case SDL_TEXTEDITING:       // the input method's preedit (a state until it is cleared); the finished text comes as SDL_TEXTINPUT
-            SetComposition(e.edit.text, e.edit.start);
-            break;
-        case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
-            if (e.button.button == SDL_BUTTON_LEFT) ++m_leftTaps;
-            else if (e.button.button == SDL_BUTTON_RIGHT) ++m_rightTaps;
-            break;
-        case SDL_MOUSEWHEEL: {
-            float y = (float)e.wheel.y;
-            if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) y = -y;
-            m_wheel += y;
-            break;
-        }
-        case SDL_KEYDOWN:
-        case SDL_KEYUP: {
-            const bool down = e.type != SDL_KEYUP;
-            m_shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-            const bool ctrl = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
-            m_ctrl = ctrl;
-            if (down) { m_ctrlAtPress |= ctrl; m_shiftAtPress |= m_shift; }   // (see m_ctrlAtPress)
-            {   // held state of the named keys (Input::keyDown); a press and release between two frames still shows for one frame
-                const int id = KeyIdOf(e.key.keysym.sym);
-                if (id != OkayUI::KeyId_None) {
-                    m_keyHeld[id] = down;
-                    if (down) m_keyTap[id] = true;
-                }
-            }
-            if (!down) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
-            switch (e.key.keysym.sym) {
-            case SDLK_BACKSPACE: m_back = true; break;
-            case SDLK_DELETE:    m_del = true; break;
-            case SDLK_LEFT:      m_left = true; break;
-            case SDLK_RIGHT:     m_right = true; break;
-            case SDLK_HOME:      m_home = true; break;
-            case SDLK_END:       m_end = true; break;
-            case SDLK_RETURN:
-            case SDLK_KP_ENTER:  m_enter = true; break;
-            case SDLK_ESCAPE:    m_escape = true; break;
-            case SDLK_UP:        m_up = true; break;
-            case SDLK_DOWN:      m_down = true; break;
-            case SDLK_a:         if (ctrl) m_selectAll = true; break;
-            case SDLK_c:         if (ctrl) m_copy = true; break;
-            case SDLK_x:         if (ctrl) m_cut = true; break;
-            case SDLK_v:         if (ctrl) m_paste = true; break;
-            default: break;
-            }
-            break;
-        }
-        default: break;
-        }
-    }
-
-    /// The same as Feed(SDL_Event) for an okay::platform event, so an app that polls the seam needs no SDL event here.
+    /// Feed every okay::platform event (the collector never consumes events).
     /// Only the kinds OkayUI wants are read (text, left and right button down, wheel, key down and up); any other is ignored.
     /// `layoutChar` is what the key types on the current layout ('a'..'z', '0'..'9', ' '; 0 = none): Backend::CharForKey(e.key).
-    /// It decides the Ctrl+A/C/X/V shortcuts and the letter keys the way the SDL version does with the key symbol (an AZERTY
+    /// It decides the Ctrl+A/C/X/V shortcuts and the letter keys by the layout's character (an AZERTY
     /// keyboard's Ctrl+Q is select-all there, because its "a" key is where "q" is). Pass 0 to assume a US layout.
     void Feed(const okay::platform::Event& e, char layoutChar = 0) {
         using okay::platform::EventType;
@@ -110,7 +41,7 @@ public:
             if (have + add < sizeof(m_text)) { std::memcpy(m_text + have, e.text.data(), add); m_text[have + add] = 0; }   // a full buffer drops the rest
             break;
         }
-        case EventType::TextEditing:   // the input method's preedit, as SDL_TEXTEDITING above (x = caret in code points)
+        case EventType::TextEditing:   // the input method's preedit (x = caret in code points)
             SetComposition(e.text.c_str(), e.x);
             break;
         case EventType::MouseButtonDown:
@@ -118,7 +49,7 @@ public:
             else if (e.button == okay::platform::MouseRight) ++m_rightTaps;
             break;
         case EventType::MouseWheel:
-            m_wheel += e.wheelY;   // already "up = +y" whatever the OS scrolling setting is (the SDL path undoes SDL's flip to get the same)
+            m_wheel += e.wheelY;   // already "up = +y" whatever the OS scrolling setting is
             break;
         case EventType::KeyDown:
         case EventType::KeyUp: {
@@ -200,31 +131,8 @@ public:
         return in;
     }
 
-    /// The OkayUI key a SDL keycode stands for (KeyId_None for the keys OkayUI does not name).
-    static int KeyIdOf(SDL_Keycode k) {
-        using namespace OkayUI;
-        if (k >= SDLK_a && k <= SDLK_z) return KeyId_A + (int)(k - SDLK_a);
-        if (k >= SDLK_0 && k <= SDLK_9) return KeyId_0 + (int)(k - SDLK_0);
-        if (k >= SDLK_F1 && k <= SDLK_F12) return KeyId_F1 + (int)(k - SDLK_F1);
-        switch (k) {
-        case SDLK_TAB: return KeyId_Tab;       case SDLK_LEFT: return KeyId_Left;     case SDLK_RIGHT: return KeyId_Right;
-        case SDLK_UP: return KeyId_Up;         case SDLK_DOWN: return KeyId_Down;     case SDLK_PAGEUP: return KeyId_PageUp;
-        case SDLK_PAGEDOWN: return KeyId_PageDown; case SDLK_HOME: return KeyId_Home; case SDLK_END: return KeyId_End;
-        case SDLK_INSERT: return KeyId_Insert; case SDLK_DELETE: return KeyId_Delete; case SDLK_BACKSPACE: return KeyId_Backspace;
-        case SDLK_SPACE: return KeyId_Space;   case SDLK_RETURN: case SDLK_KP_ENTER: return KeyId_Enter;
-        case SDLK_ESCAPE: return KeyId_Escape;
-        case SDLK_LCTRL: case SDLK_RCTRL: return KeyId_Ctrl;
-        case SDLK_LSHIFT: case SDLK_RSHIFT: return KeyId_Shift;
-        case SDLK_LALT: case SDLK_RALT: return KeyId_Alt;
-        case SDLK_SLASH: return KeyId_Slash;     // the code editor's Ctrl+/ (comment lines)
-        case SDLK_LEFTBRACKET: return KeyId_LeftBracket;     // the code editor's fold keys (Ctrl+Shift+[ and ], Ctrl+Alt+[ and ])
-        case SDLK_RIGHTBRACKET: return KeyId_RightBracket;
-        default: return KeyId_None;
-        }
-    }
-
     /// The OkayUI key a platform key stands for. `layoutChar` is the character the key types on the current layout (the letters and
-    /// digits follow the layout, as SDL's key symbols do); everything else goes by the physical key.
+    /// digits follow the layout); everything else goes by the physical key.
     static int KeyIdOf(okay::platform::Key k, char layoutChar) {
         using namespace OkayUI;
         using K = okay::platform::Key;
@@ -390,7 +298,7 @@ inline bool WantsKeyboard() { return OkayUI::WantsTextInput(); }
 
 } // namespace okayuihost
 
-// ---- The host half without SDL and without Dear ImGui's backends: okay::platform events in, okay::platform::Painter out ------------------
+// ---- The host half for a window that runs OkayUI alone: okay::platform events in, okay::platform::Painter out ------------------
 // Define OKAYUI_HOST_PLATFORM before including this header to get it (it needs okay/Platform and okayui/soft on the include path, the
 // okay_ui_soft library). This is what replaces, for a window that runs OkayUI alone, the Dear ImGui backend calls of the editor and launcher
 // (listed in docs/ui/own_ui_toolkit.md 6.18):

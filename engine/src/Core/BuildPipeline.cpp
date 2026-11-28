@@ -217,7 +217,7 @@ FileKind KindOf(const std::string& relPath) {
     static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclips", "okaydialogue",
                                               "okayquests", "okayseq", "okaysequence", "json", "txt", "csv", "xml", "okaynav", "okayanimator"};
     if (e == "exe") return FileKind::Executable;
-    if (e == "dll" || e == "so" || e == "dylib" || p.find("libSDL2") != std::string::npos) return FileKind::Library;
+    if (e == "dll" || e == "so" || e == "dylib" || p.find(".so.") != std::string::npos) return FileKind::Library;   // (libfoo.so.1: a versioned shared library)
     if (e == "okayscene") return FileKind::Scene;
     if (e == "okayconfig" || e == "okayprefs") return FileKind::Config;
     if (tex.count(e)) return FileKind::Texture;

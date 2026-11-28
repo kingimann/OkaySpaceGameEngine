@@ -37,7 +37,7 @@ void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resize
 // SetNextWindowBgAlpha: scale the alpha of the body geometry a window just drew (vertices from `from` on); the title bar and the content are drawn after and are not touched.
 static void scaleBodyAlpha(int from, float a) {
     if (!(a >= 0.0f) || a >= 1.0f || g_toOverlay) return;
-    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (Uint8)(g_verts[i].color.a * a + 0.5f);
+    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (unsigned char)(g_verts[i].color.a * a + 0.5f);
 }
 
 namespace {

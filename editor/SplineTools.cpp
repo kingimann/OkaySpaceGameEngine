@@ -580,7 +580,7 @@ void DrawLinesAndTrails(EditorState& ed, ImDrawList* dl, const Mat4& vp, const V
                      ignore, cullingMask, occluded);
     const ImVec2 white = ImGui::GetFontTexUvWhitePixel();
     for (const LineDraw& d : draws) {
-        SDL_Texture* tex = d.texture.empty() ? nullptr : GetThumb(d.texture);
+        okay::ui2d::Tex tex = d.texture.empty() ? nullptr : GetThumb(d.texture);
         if (tex) dl->PushTexture(ImTextureRef((ImTextureID)tex));
         const int count = (int)d.tris.size();
         dl->PrimReserve(count, count);

@@ -95,7 +95,7 @@ bool tblRowOutside(float top, float h) {
         if (g_tbl.rowFrozen) return false;
         clipTop = g_tbl.frozenBottom; clipBot = g_tbl.oy + g_tbl.oh;
     } else if (g_clipTop > g_clipBase) {
-        const SDL_Rect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
+        const PxRect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
     } else if (g_dispH > 0.0f) {
         clipTop = 0.0f; clipBot = g_dispH;
     } else return false;

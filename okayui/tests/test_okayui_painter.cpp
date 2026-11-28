@@ -1,13 +1,9 @@
-// okay::platform::Painter, headless, on both implementations:
-//   software  the CPU painter the own backend draws with (OkayUI::soft::CreateBitmapPainter)
-//   sdl2      SDL's software renderer on an RGBA surface (okay::platform::CreateSdl2SurfacePainter)
-// The same drawing runs on each and the pixels are checked against numbers worked out by hand, so the two
-// cannot drift apart: exact for rects, clip, 1:1 and nearest texture copies and flat triangles; within one
-// level of rounding for alpha blending and colour / alpha modulation (SDL truncates, the software painter
-// rounds). Features SDL's software renderer does not have (bilinear sampling, rotation about a point,
-// hostile input) are checked on the software painter only and say so.
-// Then OkayUI's own frame goes through FrameDrawer (OkayUI::soft) on both painters and is compared with the
-// committed golden images and with the draw-list rasteriser.
+// okay::platform::Painter, headless, on the software painter (OkayUI::soft::CreateBitmapPainter), the CPU painter the
+// own backend draws with. The pixels are checked against numbers worked out by hand: exact for rects, clip, 1:1 and nearest
+// texture copies and flat triangles, alpha blending and colour / alpha modulation; also bilinear sampling, rotation about a
+// point and hostile input. (Until 2026-11-27 the same suite also ran on SDL's software renderer, within one level of rounding.)
+// Then OkayUI's own frame goes through FrameDrawer (OkayUI::soft) and is compared with the committed golden images and with the
+// draw-list rasteriser.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "../demo/DemoScene.hpp"
@@ -72,9 +68,7 @@ void Suite(plat::Painter& p, const char* label, bool software) {
     int w = 0, h = 0;
     p.OutputSize(&w, &h);
     CHECK(w == 64 && h == 48);
-    const bool wasNative = p.NativeRenderer() != nullptr;
-    CHECK(wasNative == !software);                        // an SDL_Renderer behind sdl2 only
-    CHECK(p.Kind() == (software ? plat::PainterKind::Software : plat::PainterKind::Sdl2));
+    CHECK(p.Kind() == plat::PainterKind::Software);
 
     {   // clear, flat rects, null rect = the whole target
         Fill(p, 10, 20, 30);
@@ -424,13 +418,10 @@ int main() {
         auto sw = UI::soft::CreateBitmapPainter(64, 48);
         CHECK(sw != nullptr);
         if (sw) Suite(*sw, "software (own)", true);
-        auto sd = plat::CreateSdl2SurfacePainter(64, 48);
-        CHECK(sd != nullptr);
-        if (sd) Suite(*sd, "sdl2 (SDL software renderer on a surface)", false);
     }
     {   // render targets, flush, driver name and GeometryRaw, the same on both painters
-        for (int which = 0; which < 2; ++which) {
-            auto p = which == 0 ? UI::soft::CreateBitmapPainter(32, 32) : plat::CreateSdl2SurfacePainter(32, 32);
+        for (int once = 0; once < 1; ++once) {
+            auto p = UI::soft::CreateBitmapPainter(32, 32);
             if (!p) { CHECK(false); continue; }
             CHECK(!p->DriverName().empty());
             CHECK(p->GetRenderTarget() == nullptr);
@@ -439,7 +430,7 @@ int main() {
             CHECK(tgt != nullptr);
             plat::TextureDesc plain; plain.width = 8; plain.height = 8;
             ui2d::Tex notTarget = p->CreateTexture(plain, nullptr);
-            CHECK(!p->SetRenderTarget(notTarget) || which == 1);   // sdl2 refuses it too, but only the software painter is required to say so here
+            CHECK(!p->SetRenderTarget(notTarget));
             if (!tgt) continue;
             Fill(*p, 0, 0, 255);                                   // the window is blue
             CHECK(p->SetRenderTarget(tgt));
@@ -476,8 +467,8 @@ int main() {
     }
     CHECK(UI::soft::CreateBitmapPainter(0, 10) == nullptr && UI::soft::CreateBitmapPainter(10, 100000) == nullptr);
     {   // the shared cache and font atlas upload, on both painters
-        for (int which = 0; which < 2; ++which) {
-            auto p = which == 0 ? UI::soft::CreateBitmapPainter(16, 16) : plat::CreateSdl2SurfacePainter(16, 16);
+        for (int once = 0; once < 1; ++once) {
+            auto p = UI::soft::CreateBitmapPainter(16, 16);
             if (!p) { CHECK(false); continue; }
             CHECK(p->LoadTexture("") == nullptr);
             CHECK(p->LoadTexture("/definitely/not/here.png") == nullptr);     // a miss, remembered
@@ -490,22 +481,14 @@ int main() {
         okayuidemo::State st;
         okayuidemo::RunScript(sim, st);
         auto sw = UI::soft::CreateBitmapPainter(800, 780);
-        auto sd = plat::CreateSdl2SurfacePainter(800, 780);
-        CHECK(sw && sd);
-        if (sw && sd) {
+        CHECK(sw != nullptr);
+        if (sw) {
             const Bitmap viaSoft = ViaPainter(*sw, 800, 780);
-            const Bitmap viaSdl = ViaPainter(*sd, 800, 780);
             GoldenCheck("demo_window", viaSoft);                         // golden image
             const Bitmap ref = sim.Draw(12, 14, 20);
             const double d = DiffShare(viaSoft, ref, 0);
             std::cout << "  classic: software painter vs draw-list rasteriser, differing pixels " << d * 100 << " %\n";
             CHECK(d == 0.0);                                             // the same rasteriser: identical
-            const double ds = DiffShare(viaSdl, viaSoft, 2);
-            std::cout << "  classic: sdl2 painter vs software painter, differing pixels (> 2 levels) " << ds * 100 << " %\n";
-            // The design's rounded corners, circles, chevrons and shadows give far more edge pixels than the old square look, and the
-            // two rasterisers' fill rules put such an edge one pixel apart (2.7% of the picture, all on edges: checked by eye on the
-            // difference picture). Interiors still agree exactly.
-            CHECK(ds < 0.035);
         }
     }
     {   // launcher look: glyph atlas texture, sampled linearly by the painter like a GPU does
@@ -515,18 +498,13 @@ int main() {
         okayuidemo::State st;
         okayuidemo::RunScript(sim, st);
         auto sw = UI::soft::CreateBitmapPainter(800, 780);
-        auto sd = plat::CreateSdl2SurfacePainter(800, 780);
-        CHECK(sw && sd);
-        if (sw && sd) {
+        CHECK(sw != nullptr);
+        if (sw) {
             const Bitmap viaSoft = ViaPainter(*sw, 800, 780);
-            const Bitmap viaSdl = ViaPainter(*sd, 800, 780);
             const Bitmap ref = sim.Draw(12, 14, 20);        // nearest-sampled atlas
             const double d = DiffShare(viaSoft, ref, 8);
             std::cout << "  launcher look: software painter (linear) vs golden-style rasteriser (nearest), differing > 8 levels " << d * 100 << " %\n";
             CHECK(d < 0.03);                                // glyph edges only
-            const double ds = DiffShare(viaSdl, viaSoft, 8);
-            std::cout << "  launcher look: sdl2 painter vs software painter, differing > 8 levels " << ds * 100 << " %\n";
-            CHECK(ds < 0.03);
         }
         UI::UseLauncherLook(false);
     }

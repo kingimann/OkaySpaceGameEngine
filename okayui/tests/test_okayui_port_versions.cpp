@@ -1,7 +1,7 @@
 // Run, not just compile: the launcher's Versions page (launcher/VersionsUI.cpp over launcher/VersionsManager.cpp and VersionsNet.cpp), a Dear ImGui page
 // compiled against OkayUI through the probe stand-in imgui.h and drawn headless. Fake state: a temporary launcher folder with two installed versions, an
 // offline host (the text fetch always fails; nothing is downloaded), no-op callbacks. See docs/ui/own_ui_toolkit.md 6.14.
-#include <SDL.h>
+#include "okay/Platform/Platform.hpp"
 #include <ctime>
 #include <unistd.h>
 #include "test_framework.hpp"
@@ -80,7 +80,7 @@ static int ShotRun(const std::string& out) {
         if (UI::Begin("Versions", nullptr, UI::Window_NoMove | UI::Window_NoResize)) okayversionsui::DrawPage(host);
         UI::End();
     };
-    for (int i = 0; i < 2000 && !okayversionsui::IndexLoaded(); ++i) { SDL_Delay(5); s.Frame(ui); }
+    for (int i = 0; i < 2000 && !okayversionsui::IndexLoaded(); ++i) { okay::platform::DelayMs(5); s.Frame(ui); }
     for (int i = 0; i < 60; ++i) s.Frame(ui);
     bool ok = WritePng(out + "/versions_banner_and_test_builds.png", s.Draw(24, 26, 32));
     host.programsNote = "This launcher is v2.903.8.115 (test build), but the editor is still v2.903.8.114 (test build): the last update didn't replace it. "
@@ -126,11 +126,11 @@ int main() {
         UI::End();
     };
     for (int i = 0; i < 6; ++i) s.Frame(ui);
-    // The version lookup is a background job (an SDL thread): the page shows "Looking up the version list" until Tick has taken its result and "Couldn't reach ..."
+    // The version lookup is a background job (a background thread): the page shows "Looking up the version list" until Tick has taken its result and "Couldn't reach ..."
     // after. A golden taken at whatever moment the worker happened to finish differs from machine to machine (CI saw 7,316 pixels differ), so draw, with a short pause,
     // until the lookup ended and its result was taken (okayversionsui::IndexLoaded; at most 10 seconds, a loaded CI machine may be slow to start the thread), then
     // until the picture has stopped changing for 40 frames in a row.
-    for (int i = 0; i < 2000 && !okayversionsui::IndexLoaded(); ++i) { SDL_Delay(5); s.Frame(ui); }
+    for (int i = 0; i < 2000 && !okayversionsui::IndexLoaded(); ++i) { okay::platform::DelayMs(5); s.Frame(ui); }
     CHECK(okayversionsui::IndexLoaded() && !okayversionsui::IndexBusy());
     auto pictureHash = [] {
         const UI::DrawData dd = UI::GetDrawData();
@@ -140,7 +140,7 @@ int main() {
         return h ^ (unsigned)dd.indexCount * 2654435761u;
     };
     unsigned last = 0; int stable = 0;
-    for (int i = 0; i < 800 && stable < 40; ++i) { SDL_Delay(5); s.Frame(ui); const unsigned h = pictureHash(); stable = (h == last && i > 0) ? stable + 1 : 0; last = h; }
+    for (int i = 0; i < 800 && stable < 40; ++i) { okay::platform::DelayMs(5); s.Frame(ui); const unsigned h = pictureHash(); stable = (h == last && i > 0) ? stable + 1 : 0; last = h; }
     CHECK(stable >= 40);
     const UI::DrawData d = UI::GetDrawData();
     CHECK(d.vertexCount > 300 && d.indexCount > 400 && d.dropped == 0);

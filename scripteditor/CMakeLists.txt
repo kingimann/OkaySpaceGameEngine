@@ -45,10 +45,9 @@ if(OKAY_BUILD_TESTS AND OKAY_BUILD_OKAYUI_TESTS AND TARGET okay_ui_render AND NO
     target_include_directories(test_okayui_script_ide_app PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests)
     target_compile_definitions(test_okayui_script_ide_app PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/okayui/tests/golden")
     add_test(NAME okayui_script_ide_app COMMAND test_okayui_script_ide_app)
-    set_tests_properties(okayui_script_ide_app PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    # The program starts on a project folder, draws a few frames and ends by itself, with no display (SDL's dummy video driver).
+    # The program starts on a project folder, draws a few frames and ends by itself, on a private Xvfb display (skipped without Xvfb).
     add_test(NAME script_editor_program_starts
-             COMMAND okay-script-editor --frames 5 ${CMAKE_SOURCE_DIR}/examples/lua)
-    set_tests_properties(script_editor_program_starts PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;OKAY_PLATFORM_BACKEND=sdl2"
+             COMMAND sh ${CMAKE_SOURCE_DIR}/tests/run_under_xvfb.sh $<TARGET_FILE:okay-script-editor> --frames 5 ${CMAKE_SOURCE_DIR}/examples/lua)
+    set_tests_properties(script_editor_program_starts PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "OKAY_OWN_PAINTER=software"
                          PASS_REGULAR_EXPRESSION "\\[script-editor\\] settings .*folder .*examples/lua")
 endif()

@@ -225,8 +225,53 @@ int main() {
         fs::create_directories(top / "okay-visual-script");        // a folder with the name is not a program
         CHECK(FindPrograms(dirs).size() == 2);
         CHECK(FindPrograms({}).empty() && FindPrograms({""}).empty());
+        CHECK(ProgramDirs(top.string()) == dirs);   // the launcher's folder, then Tools
+        CHECK(ProgramDirs("").empty());
         std::error_code ec;
         fs::remove_all(top, ec);
+    }
+
+    {   // ---- starting them from the Create page and the Browser page: the arguments, and the missing-program message ----
+        CHECK(ToolPrograms()[0].target == ToolTarget::Address);   // the browser takes addresses (browser/main.cpp)
+        CHECK(ToolPrograms()[1].target == ToolTarget::Folder);    // the Script Editor and Visual Script take a project folder
+        CHECK(ToolPrograms()[2].target == ToolTarget::Folder);
+        const FoundProgram ed{"Script Editor", "", "/opt/okay/Tools/okay-script-editor", ToolTarget::Folder};
+        const FoundProgram web{"Browser", "", "/opt/okay/Tools/okay-browser", ToolTarget::Address};
+        CHECK(ToolProgramArgv(ed, "") == (std::vector<std::string>{ed.path}));   // no project: the program alone
+        const fs::path proj = fs::temp_directory_path() / "My Game";
+        CHECK(ToolProgramArgv(ed, proj.string()) == (std::vector<std::string>{ed.path, proj.string()}));   // one argument, spaces and all
+        const std::vector<std::string> rel = ToolProgramArgv(ed, "-rf");   // a folder never reads as an option: made absolute
+        CHECK(rel.size() == 2 && fs::path(rel[1]).is_absolute() && rel[1][0] != '-');
+        CHECK(ToolProgramArgv(web, "https://okayspace.example/a b") == (std::vector<std::string>{web.path, "https://okayspace.example/a b"}));
+        CHECK(ToolProgramArgv(web, "http://x.example/") == (std::vector<std::string>{web.path, "http://x.example/"}));
+        CHECK(ToolProgramArgv(web, "about:newtab") == (std::vector<std::string>{web.path}));   // our own page: the browser's home page
+        CHECK(ToolProgramArgv(web, "--play") == (std::vector<std::string>{web.path}));         // never an option: nothing is played
+        CHECK(ToolProgramArgv(web, "file:///etc/passwd") == (std::vector<std::string>{web.path}));
+        CHECK(ToolProgramArgv(web, "/home/me") == (std::vector<std::string>{web.path}));       // a folder is not an address
+
+        // A program that is not installed (an older install): a plain sentence that names it, nothing is started.
+        const std::string miss = MissingProgramMessage("Visual Script");
+        CHECK(miss.find("Visual Script") != std::string::npos && miss.find("not installed") != std::string::npos);
+        CHECK(miss.find("OkaySpaceVisualScript.exe") != std::string::npos);   // the file it looked for
+        std::string msg;
+        CHECK(!StartTool({}, "Visual Script", "", msg));
+        CHECK(msg == miss);
+        CHECK(!StartTool({web}, "Script Editor", proj.string(), msg) && msg == MissingProgramMessage("Script Editor"));
+        CHECK(!StartTool({}, "Nonsense", "", msg) && msg.find("Nonsense") != std::string::npos);
+#if !defined(_WIN32)
+        // A project folder that is gone: said plainly, nothing started.
+        const FoundProgram tru{"Script Editor", "", "/bin/true", ToolTarget::Folder};
+        CHECK(!StartTool({tru}, "Script Editor", (proj / "gone_folder_xyz").string(), msg));
+        CHECK(msg.find("not found") != std::string::npos);
+        // A real start does not wait for the program (it is detached): /bin/true stands in for the editor.
+        const fs::path here = fs::temp_directory_path();
+        CHECK(StartTool({tru}, "Script Editor", here.string(), msg));
+        CHECK(msg.find("Script Editor") != std::string::npos);
+        CHECK(StartTool({tru}, "Script Editor", (proj.parent_path() / "").string(), msg));   // a trailing slash: still its name
+        CHECK(msg == "Script Editor opened on " + proj.parent_path().filename().string() + ".");
+        const FoundProgram truWeb{"Browser", "", "/bin/true", ToolTarget::Address};
+        CHECK(StartTool({truWeb}, "Browser", "https://x.example/", msg));
+#endif
     }
 
 #if !defined(_WIN32)

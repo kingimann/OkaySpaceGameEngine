@@ -43,6 +43,10 @@ void DrawProgramsRow(const Host& host);
 /// Starts one of host.programs (found by FindPrograms) in a window of its own, without a shell, in the picked project's
 /// folder, and toasts the result. The Command line page's row and the launcher's side menu both use it.
 bool OpenProgram(const Host& host, const FoundProgram& p);
+/// Starts the program called `label` (ToolPrograms) on `target`: a project folder for the Script Editor and Visual Script, a
+/// web address for the browser, "" for neither (StartTool: no shell, not waited for). Toasts how it went, and a plain
+/// sentence when the program is not installed. The Create page's Tools row and project cards and the Browser page use it.
+bool OpenTool(const Host& host, const std::string& label, const std::string& target);
 /// The page body, under the launcher's section header.
 void DrawPage(const Host& host);
 /// Ends every tab's shell and running command. Call before the launcher closes.

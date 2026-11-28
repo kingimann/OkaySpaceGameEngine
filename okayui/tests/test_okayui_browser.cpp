@@ -217,6 +217,32 @@ int main() {
         }
     }
 
+    // ---- the launcher's Browser page: an "Open in its own window" button just before the menu button (owner, 2026-11-28);
+    // the browser program's own toolbar does not have it ----
+    for (bool withButton : {false, true}) {
+        br::BrowserTab tabW;
+        tabW.SetAnyOrigin(true);
+        CHECK(tabW.Open("https://own.test/"));
+        tabW.TakeFetches();
+        tabW.DeliverPage("https://own.test/", true, 200, "<body><p>page</p></body>");
+        S::AddressField field;
+        S::BrowserViewOptions opt;
+        opt.address = &field;
+        opt.hostButtons = false;
+        opt.programButtons = true;
+        opt.ownWindowButton = withButton;
+        Sim simW(480, 320);
+        S::BrowserViewResult rW;
+        bool asked = false, menu = false;
+        auto uiW = [&] { rW = S::DrawBrowserView(tabW, 0, 0, 480, 320, S::BrowserImageFn(), opt); asked |= rW.ownWindow; menu |= rW.menu; };
+        simW.Frames(3, uiW);
+        const OkayUI::Rect mb = rW.menuButton;
+        simW.Click(mb.x - 2.0f - mb.w * 0.5f, mb.y + mb.h * 0.5f, uiW);   // where the button goes: just left of the menu
+        simW.Frames(2, uiW);
+        CHECK(asked == withButton);
+        CHECK(!menu);   // the menu button is still its own
+    }
+
     // ---- round 2 of the look: text selection with the mouse in the browser program's view; Ctrl+C copies it, Ctrl+A selects
     // all of the page's text; a press on a link still follows the link and selects nothing ----
     {

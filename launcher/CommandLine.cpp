@@ -138,7 +138,7 @@ std::vector<std::string> ProgramDirs(const std::string& launcherDir) {
     return {launcherDir, (fs::u8path(launcherDir) / "Tools").u8string()};
 }
 
-std::vector<std::string> ToolArgv(const FoundProgram& p, const std::string& target) {
+std::vector<std::string> ToolProgramArgv(const FoundProgram& p, const std::string& target) {
     std::vector<std::string> argv = {p.path};
     if (target.empty()) return argv;
     if (p.target == ToolTarget::Address) {
@@ -167,7 +167,7 @@ bool StartTool(const std::vector<FoundProgram>& found, const std::string& label,
     for (const FoundProgram& f : found)
         if (f.label == label) { p = &f; break; }
     if (!p) { message = MissingProgramMessage(label); return false; }
-    const std::vector<std::string> argv = ToolArgv(*p, target);
+    const std::vector<std::string> argv = ToolProgramArgv(*p, target);
     std::string cwd = fs::u8path(p->path).parent_path().u8string();
     if (p->target == ToolTarget::Folder && argv.size() > 1) {
         std::error_code ec;

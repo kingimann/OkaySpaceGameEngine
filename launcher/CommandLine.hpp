@@ -178,11 +178,11 @@ std::vector<std::string> ProgramDirs(const std::string& launcherDir);
 /// { p.path, target } as one argument (no shell sees it). A folder is made absolute, so it never reads as an option. An
 /// address must be http or https; anything else (our own about: pages, a file, an option such as --play) is left out, so
 /// the browser is only ever started to browse: these are editing and browsing tools, nothing is played from here.
-std::vector<std::string> ToolArgv(const FoundProgram& p, const std::string& target);
+std::vector<std::string> ToolProgramArgv(const FoundProgram& p, const std::string& target);
 /// The plain sentence shown when the program called `label` is not installed (an older install): it names the program and
 /// the file the launcher looked for, and says how to get it.
 std::string MissingProgramMessage(const std::string& label);
-/// Start the program called `label` from `found` (FindPrograms) on `target` (ToolArgv), in a window of its own and without
+/// Start the program called `label` from `found` (FindPrograms) on `target` (ToolProgramArgv), in a window of its own and without
 /// waiting for it (okaycli::StartDetached, no shell). It runs in the project folder, or the program's own folder. False when
 /// it is missing, the folder is gone or it could not start; `message` is what to show the person either way.
 bool StartTool(const std::vector<FoundProgram>& found, const std::string& label, const std::string& target, std::string& message);

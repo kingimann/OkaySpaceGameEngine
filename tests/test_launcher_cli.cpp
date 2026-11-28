@@ -237,17 +237,17 @@ int main() {
         CHECK(ToolPrograms()[2].target == ToolTarget::Folder);
         const FoundProgram ed{"Script Editor", "", "/opt/okay/Tools/okay-script-editor", ToolTarget::Folder};
         const FoundProgram web{"Browser", "", "/opt/okay/Tools/okay-browser", ToolTarget::Address};
-        CHECK(ToolArgv(ed, "") == (std::vector<std::string>{ed.path}));   // no project: the program alone
+        CHECK(ToolProgramArgv(ed, "") == (std::vector<std::string>{ed.path}));   // no project: the program alone
         const fs::path proj = fs::temp_directory_path() / "My Game";
-        CHECK(ToolArgv(ed, proj.string()) == (std::vector<std::string>{ed.path, proj.string()}));   // one argument, spaces and all
-        const std::vector<std::string> rel = ToolArgv(ed, "-rf");   // a folder never reads as an option: made absolute
+        CHECK(ToolProgramArgv(ed, proj.string()) == (std::vector<std::string>{ed.path, proj.string()}));   // one argument, spaces and all
+        const std::vector<std::string> rel = ToolProgramArgv(ed, "-rf");   // a folder never reads as an option: made absolute
         CHECK(rel.size() == 2 && fs::path(rel[1]).is_absolute() && rel[1][0] != '-');
-        CHECK(ToolArgv(web, "https://okayspace.example/a b") == (std::vector<std::string>{web.path, "https://okayspace.example/a b"}));
-        CHECK(ToolArgv(web, "http://x.example/") == (std::vector<std::string>{web.path, "http://x.example/"}));
-        CHECK(ToolArgv(web, "about:newtab") == (std::vector<std::string>{web.path}));   // our own page: the browser's home page
-        CHECK(ToolArgv(web, "--play") == (std::vector<std::string>{web.path}));         // never an option: nothing is played
-        CHECK(ToolArgv(web, "file:///etc/passwd") == (std::vector<std::string>{web.path}));
-        CHECK(ToolArgv(web, "/home/me") == (std::vector<std::string>{web.path}));       // a folder is not an address
+        CHECK(ToolProgramArgv(web, "https://okayspace.example/a b") == (std::vector<std::string>{web.path, "https://okayspace.example/a b"}));
+        CHECK(ToolProgramArgv(web, "http://x.example/") == (std::vector<std::string>{web.path, "http://x.example/"}));
+        CHECK(ToolProgramArgv(web, "about:newtab") == (std::vector<std::string>{web.path}));   // our own page: the browser's home page
+        CHECK(ToolProgramArgv(web, "--play") == (std::vector<std::string>{web.path}));         // never an option: nothing is played
+        CHECK(ToolProgramArgv(web, "file:///etc/passwd") == (std::vector<std::string>{web.path}));
+        CHECK(ToolProgramArgv(web, "/home/me") == (std::vector<std::string>{web.path}));       // a folder is not an address
 
         // A program that is not installed (an older install): a plain sentence that names it, nothing is started.
         const std::string miss = MissingProgramMessage("Visual Script");

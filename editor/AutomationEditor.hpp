@@ -28,12 +28,18 @@ public:
     void BeginEdit(const std::string& name) override;
     void EndEdit(bool ok) override;
     bool EditorView(float eye[3], float target[3], bool& orthographic, float& size) const override;
+    /// The running editor: View > Automation Link's "Allow scripts from Automation" (ScriptsFlag). A headless host an
+    /// agent started itself: allowed.
+    bool ScriptsAllowed() const override;
+    /// A notice line in the Console (the editor's log): "Automation ran a script (N lines, lua)".
+    void NoteScriptRun(const std::string& language, int lines) override;
 
 private:
     okay::editor::EditorState& m_ed;
     std::string m_kind;
     std::uint64_t m_revision = 0;
     int m_depth = 0;
+    bool m_group = false;
 };
 
 /// Hand the editor's commands to the automation table (once; later calls do nothing). The hosts call it before they
@@ -59,6 +65,9 @@ std::string ProjectFile(const okay::editor::EditorState& ed, const std::string& 
 /// The menu toggle's flag. Read from (and written back to) the editor's per-user file automation_link.txt the first time
 /// it is used, so the choice is remembered; off by default.
 bool& LinkFlag();
+/// View > Automation Link's "Allow scripts from Automation" (script.run). On by default (owner, 2026-11-28); remembered
+/// with the link's own choice in automation_link.txt.
+bool& ScriptsFlag();
 /// Once a frame on the main thread: start or stop the link to follow LinkFlag(), then answer what clients sent (each
 /// line is run through an McpServer on `ed`). Never waits.
 void LinkFrame(okay::editor::EditorState& ed);
@@ -68,6 +77,15 @@ void LinkFrame(okay::editor::EditorState& ed);
 bool LinkPoll(okay::editor::EditorState& ed, bool on, const std::string& kind = "editor");
 /// "Automation link on (port 51234, 1 client)" / "" when off: for the status bar or the menu tip.
 std::string LinkStatus();
+/// For the Connect to Claude panel: agents connected now, the last command one ran ("" = none yet), the project the
+/// link serves.
+int LinkClients();
+std::string LinkLastCommand();
+std::string LinkProject();
+/// The Connect to Claude panel (AutomationPanel.cpp): open or not (View > Automation Link toggles it; it opens by itself
+/// when the link is turned on), and drawing it. `exeDir` is the editor's folder (where okay.exe is looked for).
+bool& PanelFlag();
+void DrawConnectPanel(okay::editor::EditorState& ed, const std::string& exeDir);
 /// Stop the link now (the editor is closing).
 void LinkShutdown();
 

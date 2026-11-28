@@ -10,9 +10,17 @@ namespace okayscript {
 namespace detail {
 template <class V> V Arith(Tok op, const V& a, const V& b);   // Eval.ipp
 // The error names the function only when it is raised: building that text on every call cost a heap allocation.
+/// One step of the thread's StepBudget (Runtime.hpp): a loop turn or a call.
+inline void ChargeStep() {
+    long long& left = StepBudget();
+    if (left < 0) return;
+    if (left == 0) throw RuntimeError("the script used up its step budget and was stopped (an endless loop?)", 0);
+    --left;
+}
 struct CallDepthGuard {
     int& depth;
     template <class MakeWhat> CallDepthGuard(int& d, int max, MakeWhat what) : depth(d) {
+        ChargeStep();
         if (depth >= max) throw RuntimeError(std::string(what()) + " calls itself too deeply (endless recursion?)", 0);
         ++depth;
     }
@@ -647,6 +655,7 @@ template <class V> void BasicRuntime<V>::FireSubs(const std::string& event, std:
 }
 
 template <class V> void BasicRuntime<V>::CountIteration(long long& n, const char* what) const {
+    detail::ChargeStep();
     if (limits.maxLoopIterations > 0 && ++n > limits.maxLoopIterations)
         throw RuntimeError(std::string(what) + " exceeded iteration limit", 0);
 }
